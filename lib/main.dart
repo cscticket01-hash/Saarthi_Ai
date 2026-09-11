@@ -40,7 +40,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   // Hardcoded API Key (Settings popup se Key input hata diya gaya hai)
-  final String _fixedApiKey = 'AQ.Ab8RN6J5TDAgdO1ZyXXyrXE3sDCrzIgm60AVwIrXhzIh1gIEHw';
+  final String _fixedApiKey = 'AQ.Ab8RN6JX4R6qO2LXEcAIiXndcfRJ2PoqQPpUlx3NrRWUWCaNkg';
   
   final TextEditingController _controller = TextEditingController();
   final List<Map<String, dynamic>> _messages = [];
@@ -151,7 +151,7 @@ class _ChatScreenState extends State<ChatScreen> {
    // 2. Direct Gemini REST API Call
     try {
       final response = await http.post(
-        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent'),
+        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'),
         headers: {
           'Content-Type': 'application/json',
           'X-goog-api-key': _fixedApiKey,
