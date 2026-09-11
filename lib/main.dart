@@ -148,54 +148,51 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // 2. Direct Gemini Streaming Chat (Smart Auto Model Routing)
+   // 2. Direct Gemini REST API Call
     try {
-      final lower = text.toLowerCase();
-      final isComplex = lower.contains('solve') ||
-                        lower.contains('code') ||
-                        lower.contains('explain') ||
-                        lower.contains('reason') ||
-                        lower.contains('difference') ||
-                        text.length > 140;
-
-      // Casual / chote sawal par fast response, mushkil sawal par deep reasoning
-      final targetModel = isComplex ? 'gemini-3.6-pro' : 'gemini-3.6-flash';
-
-      final model = GenerativeModel(
-        model: 'gemini-pro',
-        apiKey: _fixedApiKey,
+      final response = await http.post(
+        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$_fixedApiKey'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'contents': [
+            {
+              'parts': [
+                {'text': text}
+              ]
+            }
+          ]
+        }),
       );
 
-      setState(() {
-        _messages.add({
-          'sender': 'saarthi',
-          'text': '',
-        });
-        _isLoading = false;
-      });
-
-      final int botMessageIndex = _messages.length - 1;
-      final responseStream = model.generateContentStream([Content.text(text)]);
-
-      await for (final chunk in responseStream) {
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        final reply = data['candidates'][0]['content']['parts'][0]['text'];
         setState(() {
-          _messages[botMessageIndex]['text'] =
-              (_messages[botMessageIndex]['text'] ?? '') + (chunk.text ?? '');
+          _messages.add({
+            'sender': 'saarthi',
+            'text': reply,
+          });
+        });
+      } else {
+        setState(() {
+          _messages.add({
+            'sender': 'saarthi',
+            'text': 'Error: ${response.statusCode} - ${response.body}',
+          });
         });
       }
     } catch (e) {
       setState(() {
         _messages.add({
           'sender': 'saarthi',
-          'text': 'Gemini Error: $e',
+          'text': 'Connection Error: $e',
         });
       });
     } finally {
       setState(() {
         _isLoading = false;
       });
-    }
-  }
+    } 
 
   void _openSettings() {
     final epController = TextEditingController(text: _customEndpoint);
