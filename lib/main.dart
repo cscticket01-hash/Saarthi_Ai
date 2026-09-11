@@ -40,7 +40,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   // Hardcoded API Key (Settings popup se Key input hata diya gaya hai)
-  final String _fixedApiKey = 'AQ.Ab8RN6JX4R6qO2LXEcAIiXndcfRJ2PoqQPpUlx3NrRWUWCaNkg';
+  static const String _fixedApiKey = String.fromEnvironment('GEMINI_API_KEY');
   
   final TextEditingController _controller = TextEditingController();
   final List<Map<String, dynamic>> _messages = [];
