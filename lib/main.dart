@@ -192,7 +192,8 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _isLoading = false;
       });
-    } 
+    }
+  } 
 
   void _openSettings() {
     final epController = TextEditingController(text: _customEndpoint);
