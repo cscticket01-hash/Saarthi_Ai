@@ -153,7 +153,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final response = await http.post(
         Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'),
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
           'X-goog-api-key': _fixedApiKey,
         },
         body: jsonEncode({
