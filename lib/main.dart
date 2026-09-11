@@ -162,7 +162,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final targetModel = isComplex ? 'gemini-3.6-pro' : 'gemini-3.6-flash';
 
       final model = GenerativeModel(
-        model: 'gemini-1.5-flash-latest',
+        model: 'gemini-pro',
         apiKey: _fixedApiKey,
       );
 
