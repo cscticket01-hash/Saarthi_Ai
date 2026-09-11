@@ -9,8 +9,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  google_generative_ai: ^0.4.6
-  flutter_secure_storage: ^9.2.2
+  google_generative_ai: ^0.4.0
+  flutter_secure_storage: ^9.0.0
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:
