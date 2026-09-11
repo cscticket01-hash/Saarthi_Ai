@@ -46,7 +46,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final String _defaultApiKey = 'AQ.Ab8RN6IeHhhjllm56fiyJKcsL6y9glQaZ8TSEpEWxbWVsdA_eA';
   String _customEndpoint = '';
-
+String _selectedModel = 'gemini-1.5-flash';
+  
   @override
   void initState() {
     super.initState();
@@ -68,7 +69,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final activeKey = (savedKey != null && savedKey.isNotEmpty) ? savedKey : _defaultApiKey;
 
     _geminiModel = GenerativeModel(
-      model: 'gemini-3.6-flash',
+      model: _selectedModel,
       apiKey: activeKey,
     );
   }
@@ -249,6 +250,34 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: const Text('Saarthi AI 🇮🇳'),
         actions: [
+          DropdownButton<String>(
+            value: _selectedModel,
+            dropdownColor: const Color(0xFF222222),
+            underline: const SizedBox(),
+            icon: const Icon(Icons.psychology, color: Colors.purpleAccent),
+            items: const [
+              DropdownMenuItem(
+                value: 'gemini-1.5-flash',
+                child: Text('⚡ Fast', style: TextStyle(fontSize: 13)),
+              ),
+              DropdownMenuItem(
+                value: 'gemini-2.0-flash',
+                child: Text('⚖️ Medium', style: TextStyle(fontSize: 13)),
+              ),
+              DropdownMenuItem(
+                value: 'gemini-2.0-flash-thinking-exp',
+                child: Text('🧠 Deep', style: TextStyle(fontSize: 13)),
+              ),
+            ],
+            onChanged: (val) {
+              if (val != null) {
+                setState(() {
+                  _selectedModel = val;
+                });
+                _initAI();
+              }
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: _openSettings,
