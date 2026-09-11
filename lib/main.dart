@@ -1,5 +1,5 @@
-import 'dart:typed_data';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -33,34 +33,33 @@ class SaarthiChatScreen extends StatefulWidget {
 class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final List<Map<String, dynamic>> _messages = [];
-  final _storage = const FlutterSecureStorage();
-  final ImagePicker _picker = ImagePicker();
-
-  GenerativeModel? _model;
   bool _isLoading = false;
   Uint8List? _selectedImageBytes;
-  String _provider = 'Gemini (Cloud)'; // Default provider
+  final ImagePicker _picker = ImagePicker();
+  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
+  String _provider = 'Gemini Pro';
+  String? _customEndpoint;
+  GenerativeModel? _geminiModel;
 
   @override
   void initState() {
     super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    String? p = await _storage.read(key: 'AI_PROVIDER');
+    String? e = await _storage.read(key: 'CUSTOM_ENDPOINT');
+    if (p != null) _provider = p;
+    if (e != null) _customEndpoint = e;
     _initAI();
   }
 
   Future<void> _initAI() async {
     String? apiKey = await _storage.read(key: 'AI_API_KEY');
-    String? savedProvider = await _storage.read(key: 'AI_PROVIDER');
-    if (savedProvider != null) _provider = savedProvider;
-
-    if (apiKey != null && apiKey.trim().isNotEmpty) {
-      setState(() {
-        if (_provider == 'Gemini (Cloud)') {
-          _model = GenerativeModel(
-            model: 'gemini-3.6-flash',
-            apiKey: apiKey.trim(),
-          );
-        }
-      });
+    if (apiKey != null && apiKey.isNotEmpty) {
+      _geminiModel = GenerativeModel(model: 'gemini-1.5-flash', apiKey: apiKey);
     }
   }
 
@@ -74,7 +73,7 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
     }
   }
 
-  void _sendMessage() async {
+  Future<void> _sendMessage() async {
     final text = _controller.text.trim();
     if (text.isEmpty && _selectedImageBytes == null) return;
 
@@ -86,45 +85,22 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
         'image': imageBytes,
       });
       _isLoading = true;
+      _controller.clear();
       _selectedImageBytes = null;
     });
-    _controller.clear();
-
-    String? apiKey = await _storage.read(key: 'AI_API_KEY');
-    if (apiKey == null || apiKey.isEmpty) {
-      setState(() {
-        _isLoading = false;
-        _messages.add({
-          'sender': 'saarthi',
-          'text': '⚠️ Pehle Settings icon (⚙️) me jakar API Key save karein!'
-        });
-      });
-      _showSettingsDialog();
-      return;
-    }
 
     if (_provider == 'Open-Source (Custom Endpoint)') {
-      String? endpoint = await _storage.read(key: 'CUSTOM_ENDPOINT');
-      if (endpoint == null || endpoint.isEmpty) {
-        setState(() {
-          _isLoading = false;
-          _messages.add({
-            'sender': 'saarthi',
-            'text': '⚠️ Settings me Server URL daalna bhool gaye!'
-          });
-        });
-        return;
+      String endpoint = _customEndpoint ?? '';
+      if (endpoint.endsWith('/')) {
+        endpoint = endpoint.substring(0, endpoint.length - 1);
       }
 
-     try {
-        // Photo ko simple Base64 text me convert karna
-        String base64Image = base64Encode(imageBytes!);
+      try {
+        String base64Image = imageBytes != null ? base64Encode(imageBytes) : '';
 
         final response = await http.post(
           Uri.parse('$endpoint/animate_base64'),
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'image_base64': base64Image,
             'prompt': text.isNotEmpty ? text : 'dance',
@@ -155,7 +131,6 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
             'text': 'Connection Error: ${e.toString()}',
           });
         });
-      }
       } finally {
         setState(() {
           _isLoading = false;
@@ -164,28 +139,28 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
       return;
     }
 
-    // Default Gemini AI Logic
+    // Gemini Default Logic
     try {
       List<Part> parts = [];
-      if (imageBytes != null) {
-        parts.add(DataPart('image/jpeg', imageBytes));
-      }
-      if (text.isNotEmpty) {
-        parts.add(TextPart(text));
+      if (text.isNotEmpty) parts.add(TextPart(text));
+      if (imageBytes != null) parts.add(DataPart('image/jpeg', imageBytes));
+
+      if (_geminiModel == null) {
+        throw Exception("API Key set nahi hai! Settings (⚙️) mein jakar Gemini API Key ya Colab URL dalein.");
       }
 
-      final response = await _model!.generateContent([Content.multi(parts)]);
+      final response = await _geminiModel!.generateContent([Content.multi(parts)]);
       setState(() {
         _messages.add({
           'sender': 'saarthi',
-          'text': response.text ?? 'Response generate nahi hua.'
+          'text': response.text ?? 'Koi uttar nahi mila.',
         });
       });
     } catch (e) {
       setState(() {
         _messages.add({
           'sender': 'saarthi',
-          'text': 'Error: ${e.toString()}'
+          'text': 'Error: ${e.toString()}',
         });
       });
     } finally {
@@ -195,27 +170,25 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
     }
   }
 
-  void _showSettingsDialog() {
+  void _openSettings() {
     final keyController = TextEditingController();
-    final urlController = TextEditingController();
+    final urlController = TextEditingController(text: _customEndpoint ?? '');
 
     showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
+      builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('AI Server Settings'),
+          title: const Text('Settings ⚙️'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('AI Provider Select Karein:', style: TextStyle(fontWeight: FontWeight.bold)),
                 DropdownButton<String>(
-                  value: _provider,
                   isExpanded: true,
+                  value: _provider,
                   items: const [
-                    DropdownMenuItem(value: 'Gemini (Cloud)', child: Text('Google Gemini (Text/Vision)')),
-                    DropdownMenuItem(value: 'Open-Source (Custom Endpoint)', child: Text('Open-Source Video (Colab/Self-host)')),
+                    DropdownMenuItem(value: 'Gemini Pro', child: Text('Gemini Flash / Pro')),
+                    DropdownMenuItem(value: 'Open-Source (Custom Endpoint)', child: Text('Colab / Local Server')),
                   ],
                   onChanged: (val) {
                     if (val != null) {
@@ -225,21 +198,20 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
                   },
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: keyController,
-                  decoration: const InputDecoration(
-                    labelText: 'API Key',
-                    hintText: 'Paste Gemini ya Open-Source Key',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
                 if (_provider == 'Open-Source (Custom Endpoint)') ...[
-                  const SizedBox(height: 12),
                   TextField(
                     controller: urlController,
                     decoration: const InputDecoration(
-                      labelText: 'Server URL (Colab / Localhost)',
-                      hintText: 'https://xyz.ngrok-free.app',
+                      labelText: 'Colab Cloudflare URL',
+                      hintText: 'https://xxxx.trycloudflare.com',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ] else ...[
+                  TextField(
+                    controller: keyController,
+                    decoration: const InputDecoration(
+                      labelText: 'Gemini API Key',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -248,24 +220,21 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
             ElevatedButton(
               onPressed: () async {
-                final key = keyController.text.trim();
-                if (key.isNotEmpty) {
-                  await _storage.write(key: 'AI_API_KEY', value: key);
-                  await _storage.write(key: 'AI_PROVIDER', value: _provider);
-                  if (urlController.text.isNotEmpty) {
-                    await _storage.write(key: 'CUSTOM_ENDPOINT', value: urlController.text.trim());
-                  }
+                await _storage.write(key: 'AI_PROVIDER', value: _provider);
+                if (_provider == 'Open-Source (Custom Endpoint)') {
+                  await _storage.write(key: 'CUSTOM_ENDPOINT', value: urlController.text.trim());
+                  _customEndpoint = urlController.text.trim();
+                } else {
+                  await _storage.write(key: 'AI_API_KEY', value: keyController.text.trim());
                   await _initAI();
-                  if (mounted) {
-                    Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Settings Save Ho Gayi!')),
-                    );
-                  }
                 }
+                if (mounted) Navigator.pop(context);
               },
               child: const Text('Save'),
             ),
@@ -283,8 +252,7 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
-            tooltip: 'AI Settings',
-            onPressed: _showSettingsDialog,
+            onPressed: _openSettings,
           )
         ],
       ),
@@ -292,14 +260,9 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
         children: [
           Expanded(
             child: _messages.isEmpty
-                ? const Center(
-                    child: Text(
-                      'Saarthi AI me aapka swagat hai!\nPhoto chunein ya prompt likhein.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey, fontSize: 16),
-                    ),
-                  )
+                ? const Center(child: Text('Saarthi AI mein aapka swagat hai! Prompt likhein ya photo chunein.'))
                 : ListView.builder(
+                    padding: const EdgeInsets.all(12),
                     itemCount: _messages.length,
                     itemBuilder: (context, i) {
                       final msg = _messages[i];
@@ -307,35 +270,38 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
                       return Align(
                         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                         child: Container(
-                          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
+                          margin: const EdgeInsets.symmetric(vertical: 6),
                           padding: const EdgeInsets.all(12),
-                          constraints: BoxConstraints(
-                            maxWidth: MediaQuery.of(context).size.width * 0.75,
-                          ),
+                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
                           decoration: BoxDecoration(
-                            color: isUser ? Colors.deepPurple : Colors.grey.shade800,
+                            color: isUser ? const Color(0xFF673AB7) : const Color(0xFF1F2C34),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (msg['image'] != null)
+                              if (msg['image'] != null) ...[
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
-                                  child: Image.memory(
-                                    msg['image'],
-                                    height: 150,
-                                    width: double.infinity,
-                                    fit: BoxFit.cover,
+                                  child: Image.memory(msg['image'], fit: BoxFit.cover),
+                                ),
+                                const SizedBox(height: 8),
+                              ],
+                              if (msg['text'] != null && msg['text'].toString().isNotEmpty)
+                                Text(msg['text'], style: const TextStyle(color: Colors.white, fontSize: 14)),
+                              if (msg['video_base64'] != null) ...[
+                                const SizedBox(height: 10),
+                                Container(
+                                  height: 160,
+                                  decoration: BoxDecoration(
+                                    color: Colors.black26,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Center(
+                                    child: Icon(Icons.check_circle_outline_rounded, color: Color(0xFF25D366), size: 48),
                                   ),
                                 ),
-                              if (msg['image'] != null && (msg['text'] as String).isNotEmpty)
-                                const SizedBox(height: 8),
-                              if ((msg['text'] as String).isNotEmpty)
-                                Text(
-                                  msg['text'] ?? '',
-                                  style: const TextStyle(color: Colors.white, fontSize: 15),
-                                ),
+                              ]
                             ],
                           ),
                         ),
@@ -343,33 +309,33 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
                     },
                   ),
           ),
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TypingIndicator(),
+              ),
+            ),
           if (_selectedImageBytes != null)
             Container(
-              padding: const EdgeInsets.all(8),
-              color: Colors.black26,
-              child: Row(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              alignment: Alignment.centerLeft,
+              child: Stack(
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: Image.memory(_selectedImageBytes!, height: 60, width: 60, fit: BoxFit.cover),
                   ),
-                  const SizedBox(width: 8),
-                  const Text('Photo Selected'),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.red),
-                    onPressed: () => setState(() => _selectedImageBytes = null),
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: GestureDetector(
+                      onTap: () => setState(() => _selectedImageBytes = null),
+                      child: const CircleAvatar(radius: 10, backgroundColor: Colors.black, child: Icon(Icons.close, size: 12, color: Colors.white)),
+                    ),
                   ),
                 ],
-              ),
-            ),
-          if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.all(8.0),
-              child: SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
           Padding(
@@ -377,30 +343,83 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
             child: Row(
               children: [
                 IconButton(
-                  icon: const Icon(Icons.photo_library),
-                  color: Colors.deepPurpleAccent,
+                  icon: const Icon(Icons.image, color: Colors.purpleAccent),
                   onPressed: _pickImage,
                 ),
                 Expanded(
                   child: TextField(
                     controller: _controller,
+                    onSubmitted: (_) => _sendMessage(),
                     decoration: const InputDecoration(
                       hintText: 'Prompt likhiye ya command dijiye...',
-                      border: OutlineInputBorder(),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(24))),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     ),
-                    onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 IconButton(
-                  icon: const Icon(Icons.send),
-                  color: Colors.deepPurpleAccent,
+                  icon: const Icon(Icons.send, color: Colors.purpleAccent),
                   onPressed: _sendMessage,
                 ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// Typing Indicator Widget
+class TypingIndicator extends StatefulWidget {
+  const TypingIndicator({super.key});
+  @override
+  State<TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<TypingIndicator> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200))..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F2C34),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: List.generate(3, (index) {
+          return AnimatedBuilder(
+            animation: _controller,
+            builder: (context, child) {
+              double value = ((_controller.value * 3) - index).clamp(0.0, 1.0);
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.3 + (0.7 * value)),
+                ),
+              );
+            },
+          );
+        }),
       ),
     );
   }
