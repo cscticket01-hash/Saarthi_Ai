@@ -44,7 +44,7 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
     if (apiKey != null && apiKey.trim().isNotEmpty) {
       setState(() {
         _model = GenerativeModel(
-          model:'gemini-pro',
+          model:'gemini-2.0-flash',
           apiKey: apiKey.trim(),
         );
       });
