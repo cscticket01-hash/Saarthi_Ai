@@ -68,7 +68,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final activeKey = (savedKey != null && savedKey.isNotEmpty) ? savedKey : _defaultApiKey;
 
     _geminiModel = GenerativeModel(
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.6-flash',
       apiKey: activeKey,
     );
   }
@@ -184,15 +184,37 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _openSettings() {
     final epController = TextEditingController(text: _customEndpoint);
+    final keyController = TextEditingController();
+
+    // Pehle se saved key read karein
+    _storage.read(key: 'AI_API_KEY').then((val) {
+      if (val != null) keyController.text = val;
+    });
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Server Settings'),
-        content: TextField(
-          controller: epController,
-          decoration: const InputDecoration(
-            labelText: 'Colab Cloudflare URL',
-            hintText: 'https://xxxx.trycloudflare.com',
+        title: const Text('Settings'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: keyController,
+                decoration: const InputDecoration(
+                  labelText: 'Gemini API Key',
+                  hintText: 'AIzaSy...',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: epController,
+                decoration: const InputDecoration(
+                  labelText: 'Colab Cloudflare URL',
+                  hintText: 'https://xxxx.trycloudflare.com',
+                ),
+              ),
+            ],
           ),
         ),
         actions: [
@@ -202,10 +224,17 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              await _storage.write(key: 'CUSTOM_ENDPOINT', value: epController.text.trim());
+              final newKey = keyController.text.trim();
+              final newEndpoint = epController.text.trim();
+
+              await _storage.write(key: 'AI_API_KEY', value: newKey);
+              await _storage.write(key: 'CUSTOM_ENDPOINT', value: newEndpoint);
+
               setState(() {
-                _customEndpoint = epController.text.trim();
+                _customEndpoint = newEndpoint;
               });
+
+              await _initAI();
               Navigator.pop(ctx);
             },
             child: const Text('Save'),
@@ -214,7 +243,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
