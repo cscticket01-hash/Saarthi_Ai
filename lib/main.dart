@@ -115,28 +115,46 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
         return;
       }
 
-      try {
-        var request = http.MultipartRequest('POST', Uri.parse('$endpoint/animate'));
-        request.fields['prompt'] = text.isNotEmpty ? text : 'animate photo';
-        if (imageBytes != null) {
-          request.files.add(http.MultipartFile.fromBytes('file', imageBytes, filename: 'input.jpg'));
-        }
-        var streamedResponse = await request.send();
-        var response = await http.Response.fromStream(streamedResponse);
+     try {
+        // Photo ko simple Base64 text me convert karna
+        String base64Image = base64Encode(imageBytes!);
 
-        setState(() {
-          _messages.add({
-            'sender': 'saarthi',
-            'text': '⚡ Colab Server Response: ${response.body}'
+        final response = await http.post(
+          Uri.parse('$endpoint/animate_base64'),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'image_base64': base64Image,
+            'prompt': text.isNotEmpty ? text : 'dance',
+          }),
+        );
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          setState(() {
+            _messages.add({
+              'sender': 'saarthi',
+              'text': '🎬 Video safalta-purvak ban gayi hai!',
+              'video_base64': data['video_base64'],
+            });
           });
-        });
+        } else {
+          setState(() {
+            _messages.add({
+              'sender': 'saarthi',
+              'text': 'Server Error: ${response.statusCode} - ${response.body}',
+            });
+          });
+        }
       } catch (e) {
         setState(() {
           _messages.add({
             'sender': 'saarthi',
-            'text': 'Server Error: ${e.toString()}'
+            'text': 'Connection Error: ${e.toString()}',
           });
         });
+      }
       } finally {
         setState(() {
           _isLoading = false;
