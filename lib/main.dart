@@ -18,9 +18,13 @@ class SaarthiApp extends StatelessWidget {
     return MaterialApp(
       title: 'Saarthi AI',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        primaryColor: const Color(0xFF6200EE),
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF0B141A), // WhatsApp Chat Background
+        appBarTheme: const AppBarTheme(
+          backgroundColor: const Color(0xFF1F2C34), // WhatsApp Header
+          elevation: 1,
+        ),
       ),
       home: const ChatScreen(),
     );
@@ -35,6 +39,9 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  // Hardcoded API Key (Settings popup se Key input hata diya gaya hai)
+  final String _fixedApiKey = 'AQ.Ab8RN6KJe5j-CDTLB2pEUSPYl65_cpKC9wgFgyowqy-bjiaz8w';
+  
   final TextEditingController _controller = TextEditingController();
   final List<Map<String, dynamic>> _messages = [];
   final ImagePicker _picker = ImagePicker();
@@ -42,36 +49,21 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _isLoading = false;
   Uint8List? _selectedImageBytes;
-  GenerativeModel? _geminiModel;
-
-  final String _defaultApiKey = 'AQ.Ab8RN6IeHhhjllm56fiyJKcsL6y9glQaZ8TSEpEWxbWVsdA_eA';
   String _customEndpoint = '';
-String _selectedModel = 'gemini-1.5-flash';
-  
+
   @override
   void initState() {
     super.initState();
-    _loadSettings();
-    _initAI();
+    _loadEndpoint();
   }
 
-  Future<void> _loadSettings() async {
+  Future<void> _loadEndpoint() async {
     final ep = await _storage.read(key: 'CUSTOM_ENDPOINT');
     if (ep != null) {
       setState(() {
         _customEndpoint = ep;
       });
     }
-  }
-
-  Future<void> _initAI() async {
-    final savedKey = await _storage.read(key: 'AI_API_KEY');
-    final activeKey = (savedKey != null && savedKey.isNotEmpty) ? savedKey : _defaultApiKey;
-
-    _geminiModel = GenerativeModel(
-      model: _selectedModel,
-      apiKey: activeKey,
-    );
   }
 
   Future<void> _pickImage() async {
@@ -101,7 +93,7 @@ String _selectedModel = 'gemini-1.5-flash';
       _selectedImageBytes = null;
     });
 
-    // 1. Photo attach hai -> Colab Video Engine chalega
+    // 1. Photo attach hone par Colab Video Trigger
     if (imageBytes != null) {
       try {
         String endpoint = _customEndpoint.trim();
@@ -110,7 +102,7 @@ String _selectedModel = 'gemini-1.5-flash';
         }
 
         if (endpoint.isEmpty) {
-          throw Exception('Settings me Colab Cloudflare URL set nahi hai.');
+          throw Exception('Settings me Colab Cloudflare URL set karein.');
         }
 
         final base64Image = base64Encode(imageBytes);
@@ -120,7 +112,7 @@ String _selectedModel = 'gemini-1.5-flash';
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'image_base64': base64Image,
-            'prompt': text.isNotEmpty ? text : 'dance',
+            'prompt': text.isNotEmpty ? text : 'animate motion',
           }),
         );
 
@@ -156,19 +148,41 @@ String _selectedModel = 'gemini-1.5-flash';
       return;
     }
 
-    // 2. Sirf Text hai -> Direct Gemini AI Chat
+    // 2. Direct Gemini Streaming Chat (Smart Auto Model Routing)
     try {
-      if (_geminiModel == null) {
-        await _initAI();
-      }
+      final lower = text.toLowerCase();
+      final isComplex = lower.contains('solve') ||
+                        lower.contains('code') ||
+                        lower.contains('explain') ||
+                        lower.contains('reason') ||
+                        lower.contains('difference') ||
+                        text.length > 140;
 
-      final response = await _geminiModel!.generateContent([Content.text(text)]);
+      // Casual / chote sawal par fast response, mushkil sawal par deep reasoning
+      final targetModel = isComplex ? 'gemini-3.6-pro' : 'gemini-3.6-flash';
+
+      final model = GenerativeModel(
+        model: targetModel,
+        apiKey: _fixedApiKey,
+      );
+
       setState(() {
         _messages.add({
           'sender': 'saarthi',
-          'text': response.text ?? 'Koi uttar nahi mila.',
+          'text': '',
         });
+        _isLoading = false;
       });
+
+      final int botMessageIndex = _messages.length - 1;
+      final responseStream = model.generateContentStream([Content.text(text)]);
+
+      await for (final chunk in responseStream) {
+        setState(() {
+          _messages[botMessageIndex]['text'] =
+              (_messages[botMessageIndex]['text'] ?? '') + (chunk.text ?? '');
+        });
+      }
     } catch (e) {
       setState(() {
         _messages.add({
@@ -185,101 +199,69 @@ String _selectedModel = 'gemini-1.5-flash';
 
   void _openSettings() {
     final epController = TextEditingController(text: _customEndpoint);
-    final keyController = TextEditingController();
-
-    // Pehle se saved key read karein
-    _storage.read(key: 'AI_API_KEY').then((val) {
-      if (val != null) keyController.text = val;
-    });
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Settings'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: keyController,
-                decoration: const InputDecoration(
-                  labelText: 'Gemini API Key',
-                  hintText: 'AIzaSy...',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: epController,
-                decoration: const InputDecoration(
-                  labelText: 'Colab Cloudflare URL',
-                  hintText: 'https://xxxx.trycloudflare.com',
-                ),
-              ),
-            ],
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Server Settings', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: epController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            labelText: 'Colab Cloudflare URL',
+            labelStyle: TextStyle(color: Color(0xFF00A884)),
+            hintText: 'https://xxxx.trycloudflare.com',
+            focusedBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF00A884)),
+            ),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
             onPressed: () async {
-              final newKey = keyController.text.trim();
               final newEndpoint = epController.text.trim();
-
-              await _storage.write(key: 'AI_API_KEY', value: newKey);
               await _storage.write(key: 'CUSTOM_ENDPOINT', value: newEndpoint);
-
               setState(() {
                 _customEndpoint = newEndpoint;
               });
-
-              await _initAI();
               Navigator.pop(ctx);
             },
-            child: const Text('Save'),
+            child: const Text('Save', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Saarthi AI 🇮🇳'),
+        title: Row(
+          children: [
+            const CircleAvatar(
+              backgroundColor: Color(0xFF00A884),
+              child: Icon(Icons.psychology, color: Colors.white),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text('Saarthi AI 🇮🇳', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                Text('online', style: TextStyle(fontSize: 12, color: Color(0xFF00A884))),
+              ],
+            ),
+          ],
+        ),
         actions: [
-          DropdownButton<String>(
-            value: _selectedModel,
-            dropdownColor: const Color(0xFF222222),
-            underline: const SizedBox(),
-            icon: const Icon(Icons.psychology, color: Colors.purpleAccent),
-            items: const [
-              DropdownMenuItem(
-                value: 'gemini-1.5-flash',
-                child: Text('⚡ Fast', style: TextStyle(fontSize: 13)),
-              ),
-              DropdownMenuItem(
-                value: 'gemini-2.0-flash',
-                child: Text('⚖️ Medium', style: TextStyle(fontSize: 13)),
-              ),
-              DropdownMenuItem(
-                value: 'gemini-2.0-flash-thinking-exp',
-                child: Text('🧠 Deep', style: TextStyle(fontSize: 13)),
-              ),
-            ],
-            onChanged: (val) {
-              if (val != null) {
-                setState(() {
-                  _selectedModel = val;
-                });
-                _initAI();
-              }
-            },
-          ),
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.more_vert, color: Colors.grey),
             onPressed: _openSettings,
           ),
         ],
@@ -288,7 +270,7 @@ String _selectedModel = 'gemini-1.5-flash';
         children: [
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               itemCount: _messages.length,
               itemBuilder: (ctx, i) {
                 final m = _messages[i];
@@ -296,27 +278,38 @@ String _selectedModel = 'gemini-1.5-flash';
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 6),
-                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: isUser ? const Color(0xFF6200EE) : const Color(0xFF2C2C2C),
-                      borderRadius: BorderRadius.circular(10),
+                      color: isUser ? const Color(0xFF005C4B) : const Color(0xFF1F2C34), // WhatsApp Bubble Colors
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(10),
+                        topRight: const Radius.circular(10),
+                        bottomLeft: Radius.circular(isUser ? 10 : 0),
+                        bottomRight: Radius.circular(isUser ? 0 : 10),
+                      ),
                     ),
-                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (m['image'] != null)
                           Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Image.memory(m['image'], height: 200, fit: BoxFit.cover),
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.memory(m['image'], height: 200, fit: BoxFit.cover),
+                            ),
                           ),
                         if (m['text'] != null && m['text'].toString().isNotEmpty)
-                          Text(m['text'], style: const TextStyle(color: Colors.white, fontSize: 15)),
+                          Text(
+                            m['text'],
+                            style: const TextStyle(color: Colors.white, fontSize: 15),
+                          ),
                         if (m['video_base64'] != null)
                           const Padding(
-                            padding: EdgeInsets.only(top: 8),
-                            child: Text('🎥 Video ready on server.', style: TextStyle(color: Colors.greenAccent)),
+                            padding: EdgeInsets.only(top: 6),
+                            child: Text('🎬 Video ready!', style: TextStyle(color: Color(0xFF25D366), fontWeight: FontWeight.bold)),
                           ),
                       ],
                     ),
@@ -328,43 +321,63 @@ String _selectedModel = 'gemini-1.5-flash';
           if (_selectedImageBytes != null)
             Container(
               padding: const EdgeInsets.all(8),
-              color: Colors.black26,
+              color: const Color(0xFF1F2C34),
               child: Row(
                 children: [
-                  Image.memory(_selectedImageBytes!, width: 50, height: 50, fit: BoxFit.cover),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.memory(_selectedImageBytes!, width: 45, height: 45, fit: BoxFit.cover),
+                  ),
                   const SizedBox(width: 10),
-                  const Text('Photo attached'),
+                  const Text('Photo attached', style: TextStyle(color: Colors.white70)),
                   const Spacer(),
                   IconButton(
-                    icon: const Icon(Icons.close),
+                    icon: const Icon(Icons.close, color: Colors.grey),
                     onPressed: () => setState(() => _selectedImageBytes = null),
                   ),
                 ],
               ),
             ),
-          if (_isLoading) const LinearProgressIndicator(),
+          if (_isLoading)
+            const LinearProgressIndicator(
+              backgroundColor: Color(0xFF1F2C34),
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00A884)),
+            ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            color: const Color(0xFF1E1E1E),
+            color: const Color(0xFF1F2C34),
             child: Row(
               children: [
                 IconButton(
-                  icon: const Icon(Icons.image, color: Colors.purpleAccent),
+                  icon: const Icon(Icons.attach_file, color: Colors.grey),
                   onPressed: _pickImage,
                 ),
                 Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    decoration: const InputDecoration(
-                      hintText: 'Prompt likhiye ya command dijiye...',
-                      border: InputBorder.none,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2A3942),
+                      borderRadius: BorderRadius.circular(24),
                     ),
-                    onSubmitted: (_) => _sendMessage(),
+                    child: TextField(
+                      controller: _controller,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        hintText: 'Message',
+                        hintStyle: TextStyle(color: Colors.grey),
+                        border: InputBorder.none,
+                      ),
+                      onSubmitted: (_) => _sendMessage(),
+                    ),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.send, color: Colors.purpleAccent),
-                  onPressed: _sendMessage,
+                const SizedBox(width: 6),
+                CircleAvatar(
+                  backgroundColor: const Color(0xFF00A884),
+                  child: IconButton(
+                    icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                    onPressed: _sendMessage,
+                  ),
                 ),
               ],
             ),
