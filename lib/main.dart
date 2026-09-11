@@ -89,7 +89,7 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
       _selectedImageBytes = null;
     });
 
-    if (_provider == 'Open-Source (Custom Endpoint)') {
+   if (_provider == 'Open-Source (Custom Endpoint)' && imageBytes != null) {
       String endpoint = _customEndpoint ?? '';
       if (endpoint.endsWith('/')) {
         endpoint = endpoint.substring(0, endpoint.length - 1);
