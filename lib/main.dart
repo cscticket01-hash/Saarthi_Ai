@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
 
 void main() => runApp(const SaarthiApp());
 
@@ -102,14 +103,45 @@ class _SaarthiChatScreenState extends State<SaarthiChatScreen> {
     }
 
     if (_provider == 'Open-Source (Custom Endpoint)') {
-      // Future Open-Source video generator connection logic
-      setState(() {
-        _isLoading = false;
-        _messages.add({
-          'sender': 'saarthi',
-          'text': '🚀 Open-source server connect ho gaya! Video generating pipeline ready.'
+      String? endpoint = await _storage.read(key: 'CUSTOM_ENDPOINT');
+      if (endpoint == null || endpoint.isEmpty) {
+        setState(() {
+          _isLoading = false;
+          _messages.add({
+            'sender': 'saarthi',
+            'text': '⚠️ Settings me Server URL daalna bhool gaye!'
+          });
         });
-      });
+        return;
+      }
+
+      try {
+        var request = http.MultipartRequest('POST', Uri.parse('$endpoint/animate'));
+        request.fields['prompt'] = text.isNotEmpty ? text : 'animate photo';
+        if (imageBytes != null) {
+          request.files.add(http.MultipartFile.fromBytes('file', imageBytes, filename: 'input.jpg'));
+        }
+        var streamedResponse = await request.send();
+        var response = await http.Response.fromStream(streamedResponse);
+
+        setState(() {
+          _messages.add({
+            'sender': 'saarthi',
+            'text': '⚡ Colab Server Response: ${response.body}'
+          });
+        });
+      } catch (e) {
+        setState(() {
+          _messages.add({
+            'sender': 'saarthi',
+            'text': 'Server Error: ${e.toString()}'
+          });
+        });
+      } finally {
+        setState(() {
+          _isLoading = false;
+        });
+      }
       return;
     }
 
