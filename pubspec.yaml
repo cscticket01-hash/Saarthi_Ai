@@ -1,5 +1,5 @@
 name: saarthi_ai
-description: A personal AI assistant app.
+description: "Saarthi AI Assistant"
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -11,8 +11,11 @@ dependencies:
     sdk: flutter
   google_generative_ai: ^0.4.6
   flutter_secure_storage: ^9.2.2
-  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true
-  
