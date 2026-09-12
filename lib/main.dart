@@ -157,6 +157,13 @@ class _ChatScreenState extends State<ChatScreen> {
           'X-goog-api-key': _fixedApiKey,
         },
         body: jsonEncode({
+          'system_instruction': {
+            'parts': [
+              {
+                'text': 'Aapka naam Saarthi AI hai. Jab bhi koi aapka naam ya model puche, toh hamesha kahein ki aap Saarthi AI hain.'
+              }
+            ]
+          },
           'contents': [
             {
               'parts': [
@@ -165,7 +172,6 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           ]
         }),
-      );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
