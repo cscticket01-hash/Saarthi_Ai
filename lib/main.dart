@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -81,6 +82,20 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _loadEndpoint();
+   final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .collection('chats')
+          .orderBy('timestamp', descending: false)
+          .snapshots()
+          .listen((snapshot) {
+        setState(() {
+          _messages = snapshot.docs.map((doc) => doc.data()).toList();
+        });
+      });
+    }
   }
 
   Future<void> _loadEndpoint() async {
@@ -118,7 +133,18 @@ class _ChatScreenState extends State<ChatScreen> {
       _controller.clear();
       _selectedImageBytes = null;
     });
-
+final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .collection('chats')
+          .add({
+        'sender': 'user',
+        'text': text,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    }
     // 1. Photo attach hone par Colab Video Trigger
     if (imageBytes != null) {
       try {
@@ -206,6 +232,17 @@ class _ChatScreenState extends State<ChatScreen> {
             'text': reply,
           });
         });
+if (currentUser != null) {
+        FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .collection('chats')
+            .add({
+          'sender': 'saarthi',
+          'text': reply,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }       
       } else {
         setState(() {
           _messages.add({
