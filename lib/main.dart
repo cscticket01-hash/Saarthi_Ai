@@ -82,7 +82,8 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _loadEndpoint();
-   final currentUser = FirebaseAuth.instance.currentUser;
+
+    final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser != null) {
       FirebaseFirestore.instance
           .collection('users')
@@ -91,11 +92,12 @@ class _ChatScreenState extends State<ChatScreen> {
           .orderBy('timestamp', descending: false)
           .snapshots()
           .listen((snapshot) {
-       setState(() {
+        setState(() {
           _messages.clear();
           for (var doc in snapshot.docs) {
             _messages.add(Map<String, dynamic>.from(doc.data()));
           }
+        });
       });
     }
   }
@@ -206,40 +208,27 @@ final currentUser = FirebaseAuth.instance.currentUser;
     try {
       final response = await http.post(
         Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $_fixedApiKey',
-        },
-        body: jsonEncode({
-          'model': 'openai/gpt-oss-120b',
-          'messages': [
-            {
-              'role': 'system',
-              'content': 'You are Saarthi AI, a smart assistant running on Saarthi High-Speed Indian Cloud Servers. Never mention OpenAI, Meta, Groq, or Llama; if asked about server/model, say you run on Saarthi High-Speed Indian Cloud Servers. Default language: start strictly in English. If user talks in another language (Hindi, Bengali, etc.), mirror their exact script: if they type in Roman/English alphabet (e.g., Hinglish/Benglish), reply in Roman alphabet; if they type in native native script (like বাংলা or देवनागरी), reply in that script. Response length: always keep replies very short, crisp, and WhatsApp-style (1-2 sentences). Only provide long or detailed explanations when explicitly asked words like "explain", "detail", "bada karke", or "sajao". Once answered, revert back to short replies for next messages.'
-            },
-            {
-              'role': 'user',
-              'content': text
-            }
-          ]
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        final reply = data['choices'][0]['message']['content'];
-        setState(() {
-          _messages.add({
-            'sender': 'saarthi',
-            'text': reply,
-          });
+        if (response.statusCode == 200) {
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      final reply = data['choices'][0]['message']['content'];
+      setState(() {
+        _messages.add({
+          'sender': 'saarthi',
+          'text': reply,
         });
-if (currentUser != null) {
+
+      if (currentUser != null) {
         FirebaseFirestore.instance
             .collection('users')
             .doc(currentUser.uid)
             .collection('chats')
             .add({
+          'sender': 'saarthi',
+          'text': reply,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }
+    } else {
           'sender': 'saarthi',
           'text': reply,
           'timestamp': FieldValue.serverTimestamp(),
