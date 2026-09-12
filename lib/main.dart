@@ -91,9 +91,11 @@ class _ChatScreenState extends State<ChatScreen> {
           .orderBy('timestamp', descending: false)
           .snapshots()
           .listen((snapshot) {
-        setState(() {
-          _messages = snapshot.docs.map((doc) => doc.data()).toList();
-        });
+       setState(() {
+          _messages.clear();
+          for (var doc in snapshot.docs) {
+            _messages.add(Map<String, dynamic>.from(doc.data()));
+          }
       });
     }
   }
