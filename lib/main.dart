@@ -206,8 +206,26 @@ final currentUser = FirebaseAuth.instance.currentUser;
 
    // 2. Direct Gemini REST API Call
     try {
-      final response = await http.post(
+final response = await http.post(
         Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_fixedApiKey',
+        },
+        body: jsonEncode({
+          'model': 'openai/gpt-oss-120b',
+          'messages': [
+            {
+              'role': 'system',
+              'content': 'You are Saarthi AI, a smart assistant running on Saarthi High-Speed Indian Cloud Servers.',
+            },
+            {
+              'role': 'user',
+              'content': text,
+            }
+          ],
+        }),
+      );
         if (response.statusCode == 200) {
       final data = jsonDecode(utf8.decode(response.bodyBytes));
       final reply = data['choices'][0]['message']['content'];
