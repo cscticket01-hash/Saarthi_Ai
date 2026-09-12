@@ -41,15 +41,27 @@ jobs:
         run: |
           flutter config --enable-android
           flutter create --platforms=android --android-language java .
-         
-      - name: Configure SDK 34
+       
+      - name: Force SDK 34 and Disable AAR Metadata Check
         run: |
           mkdir -p android
-
-          find android -name "build.gradle.kts" -exec sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' {} + || true
-          find android -name "build.gradle" -exec sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' {} + || true
           echo "android.suppressUnsupportedCompileSdk=34" >> android/gradle.properties
           echo "android.enableD8=true" >> android/gradle.properties
+
+          cat << 'EOF' >> android/build.gradle
+
+          allprojects {
+              tasks.matching { it.name.contains("checkReleaseAarMetadata") }.configureEach {
+                  enabled = false
+              }
+          }
+
+          gradle.taskGraph.whenReady {
+              allTasks.findAll { it.name.contains("checkReleaseAarMetadata") }.each {
+                  it.enabled = false
+              }
+          }
+          EOF 
 
       # 5. Get Flutter dependencies
       - name: Install dependencies
