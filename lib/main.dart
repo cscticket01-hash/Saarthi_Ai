@@ -151,7 +151,7 @@ class _ChatScreenState extends State<ChatScreen> {
    // 2. Direct Gemini REST API Call
     try {
       final response = await http.post(
-        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent'),
+        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'),
         headers: {
           'Content-Type': 'application/json',
           'X-goog-api-key': _fixedApiKey,
