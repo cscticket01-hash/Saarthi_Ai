@@ -43,24 +43,13 @@ jobs:
           flutter create --platforms=android --android-language java .
           echo "android.suppressUnsupportedCompileSdk=34" >> android/gradle.properties
          
-      - name: Force SDK 34 for all plugins
+      - name: Configure SDK 34 and Bypass Checks
         run: |
           mkdir -p android
-          cat << 'EOF' >> android/build.gradle
-
-          subprojects {
-              afterEvaluate { project ->
-                  if (project.hasProperty("android")) {
-                      android {
-                          compileSdkVersion 34
-                      }
-                  }
-              }
-              tasks.matching { it.name.contains("checkReleaseAarMetadata") }.configureEach {
-                  enabled = false
-              }
-          }
-          EOF
+          find android -name "build.gradle.kts" -exec sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' {} + || true
+          find android -name "build.gradle" -exec sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' {} + || true
+          echo "android.suppressUnsupportedCompileSdk=34" >> android/gradle.properties
+          echo "android.enableD8=true" >> android/gradle.properties
 
       # 5. Get Flutter dependencies
       - name: Install dependencies
