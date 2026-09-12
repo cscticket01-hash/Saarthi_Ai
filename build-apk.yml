@@ -28,6 +28,24 @@ jobs:
       - name: Generate Android project files
         run: flutter create --platforms=android .
 
+      - name: Force CompileSdk 34 & Fix Subproject SDKs
+        run: |
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' android/app/build.gradle
+          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/g' android/app/build.gradle
+          
+          cat << 'EOF' >> android/build.gradle
+
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty("android")) {
+                      android {
+                          compileSdkVersion 34
+                      }
+                  }
+              }
+          }
+          EOF
+
       - name: Add Permissions to AndroidManifest
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
