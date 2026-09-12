@@ -291,6 +291,13 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+         IconButton(
+            icon: const Icon(Icons.logout, color: Colors.white),
+            tooltip: 'Logout',
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.more_vert, color: Colors.grey),
             onPressed: _openSettings,
