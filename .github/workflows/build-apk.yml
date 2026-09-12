@@ -47,21 +47,8 @@ jobs:
           mkdir -p android
           echo "android.suppressUnsupportedCompileSdk=34" >> android/gradle.properties
           echo "android.enableD8=true" >> android/gradle.properties
-
-          cat << 'EOF' >> android/build.gradle
-
-          allprojects {
-              tasks.matching { it.name.contains("checkReleaseAarMetadata") }.configureEach {
-                  enabled = false
-              }
-          }
-
-          gradle.taskGraph.whenReady {
-              allTasks.findAll { it.name.contains("checkReleaseAarMetadata") }.each {
-                  it.enabled = false
-              }
-          }
-          EOF 
+          echo 'allprojects { tasks.matching { it.name.contains("checkReleaseAarMetadata") }.configureEach { enabled = false } }' >> android/build.gradle
+          echo 'gradle.taskGraph.whenReady { allTasks.findAll { it.name.contains("checkReleaseAarMetadata") }.each { it.enabled = false } }' >> android/build.gradle
 
       # 5. Get Flutter dependencies
       - name: Install dependencies
