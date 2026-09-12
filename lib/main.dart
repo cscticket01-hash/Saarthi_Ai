@@ -246,12 +246,7 @@ final response = await http.post(
           'timestamp': FieldValue.serverTimestamp(),
         });
       }
-    } else {
-          'sender': 'saarthi',
-          'text': reply,
-          'timestamp': FieldValue.serverTimestamp(),
-        });
-      }       
+    
       } else {
         setState(() {
           _messages.add({
