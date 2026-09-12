@@ -234,6 +234,7 @@ final response = await http.post(
           'sender': 'saarthi',
           'text': reply,
         });
+      });
 
       if (currentUser != null) {
         FirebaseFirestore.instance
@@ -246,7 +247,7 @@ final response = await http.post(
           'timestamp': FieldValue.serverTimestamp(),
         });
       }
-    
+    }
       } else {
         setState(() {
           _messages.add({
