@@ -77,6 +77,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isLoading = false;
   Uint8List? _selectedImageBytes;
   String _customEndpoint = '';
+ DateTime? _lastMessageTime;
 
   @override
   void initState() {
@@ -122,6 +123,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
+   final now = DateTime.now();
+    if (_lastMessageTime != null && now.difference(_lastMessageTime!).inSeconds < 3) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Kripya agla message bhejne se pehle 3 second rukein!'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+    _lastMessageTime = now;
     final text = _controller.text.trim();
     if (text.isEmpty && _selectedImageBytes == null) return;
 
