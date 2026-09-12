@@ -32,10 +32,8 @@ jobs:
           ls -la android/app/
       - name: Force SDK 34 & Disable AAR Check
         run: |
-          if [ -f android/app/build.gradle ]; then
-            sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' android/app/build.gradle
-            sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/g' android/app/build.gradle
-          fi
+          find . -name "build.gradle" -path "*/android/app/*" -exec sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' {} + || true
+          find . -name "build.gradle" -path "*/android/app/*" -exec sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/g' {} + || true
           
           mkdir -p android
           cat << 'EOF' >> android/build.gradle
