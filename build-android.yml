@@ -32,27 +32,18 @@ jobs:
           ls -la android/app/
       - name: Force SDK 34 & Disable AAR Check
         run: |
-          find . -name "build.gradle" -path "*/android/app/*" -exec sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' {} + || true
-          find . -name "build.gradle" -path "*/android/app/*" -exec sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/g' {} + || true
-          
-          mkdir -p android
-          cat << 'EOF' >> android/build.gradle
+          # Agar Groovy build file hai toh replace karein
+          find android -name "build.gradle" -exec sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' {} + || true
+          find android -name "build.gradle" -exec sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/g' {} + || true
 
-          allprojects {
-              subprojects {
-                  afterEvaluate { project ->
-                      if (project.hasProperty("android")) {
-                          android {
-                              compileSdkVersion 34
-                          }
-                      }
-                  }
-                  tasks.matching { it.name.contains("checkReleaseAarMetadata") }.configureEach {
-                      enabled = false
-                  }
-              }
-          }
-          EOF
+          # Agar Kotlin DSL (.kts) build file hai toh replace karein
+          find android -name "build.gradle.kts" -exec sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' {} + || true
+          find android -name "build.gradle.kts" -exec sed -i 's/targetSdk = flutter.targetSdkVersion/targetSdk = 34/g' {} + || true
+
+          # Disable checkReleaseAarMetadata via gradle.properties taaki evaluate cycle break na ho
+          mkdir -p android
+          echo "android.enableD8=true" >> android/gradle.properties
+          echo "android.suppressUnsupportedCompileSdk=34" >> android/gradle.properties
 
       - name: Add Permissions to AndroidManifest
         run: |
