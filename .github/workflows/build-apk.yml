@@ -35,6 +35,13 @@ jobs:
         run: |
           flutter --version
           flutter doctor -v
+          
+      # 4.1 Generate Android folder
+      - name: Generate Android project files
+        run: |
+          flutter config --enable-android
+          flutter create --platforms=android --android-language java .
+          echo "android.suppressUnsupportedCompileSdk=34" >> android/gradle.properties
 
       # 5. Get Flutter dependencies
       - name: Install dependencies
