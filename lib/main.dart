@@ -151,31 +151,29 @@ class _ChatScreenState extends State<ChatScreen> {
    // 2. Direct Gemini REST API Call
     try {
       final response = await http.post(
-        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'),
+        Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
         headers: {
           'Content-Type': 'application/json',
-          'X-goog-api-key': _fixedApiKey,
+          'Authorization': 'Bearer $_fixedApiKey',
         },
         body: jsonEncode({
-          'system_instruction': {
-            'parts': [
-              {
-                'text': 'Aapka naam Saarthi AI hai. Jab bhi koi aapka naam ya model puche, toh hamesha kahein ki aap Saarthi AI hain.'
-              }
-            ]
-          },
-          'contents': [
+          'model': 'llama-3.3-70b-versatile',
+          'messages': [
             {
-              'parts': [
-                {'text': text}
-              ]
+              'role': 'system',
+              'content': 'Aapka naam Saarthi AI hai. Hamesha Saarthi AI ban kar madad karein.'
+            },
+            {
+              'role': 'user',
+              'content': text
             }
           ]
-        }));
+        }),
+      );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
-        final reply = data['candidates'][0]['content']['parts'][0]['text'];
+        final reply = data['choices'][0]['message']['content'];
         setState(() {
           _messages.add({
             'sender': 'saarthi',
