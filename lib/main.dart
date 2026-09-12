@@ -171,7 +171,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ]
             }
           ]
-        }),
+        }));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
