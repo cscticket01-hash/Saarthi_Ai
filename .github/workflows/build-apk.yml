@@ -42,25 +42,17 @@ jobs:
           flutter config --enable-android
           flutter create --platforms=android --android-language java .
          
-      - name: Configure SDK 36
+      - name: Configure SDK 34
         run: |
           mkdir -p android
-          yes | sdkmanager --licenses
-          sdkmanager "platforms;android-36"
-          find android -name "build.gradle.kts" -exec sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/g' {} + || true
-          find android -name "build.gradle" -exec sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 36/g' {} + || true
-          echo "android.suppressUnsupportedCompileSdk=36" >> android/gradle.properties
+
+          find android -name "build.gradle.kts" -exec sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' {} + || true
+          find android -name "build.gradle" -exec sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' {} + || true
+          echo "android.suppressUnsupportedCompileSdk=34" >> android/gradle.properties
+          echo "android.enableD8=true" >> android/gradle.properties
 
       # 5. Get Flutter dependencies
       - name: Install dependencies
-        run: flutter pub get
-
-      # 6. Clean previous build
-      - name: Clean Flutter build
-        run: flutter clean
-
-      # 7. Get dependencies again after clean
-      - name: Get dependencies
         run: flutter pub get
 
       # 8. Build release APK
