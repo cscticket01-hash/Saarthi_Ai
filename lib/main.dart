@@ -12,7 +12,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: const FirebaseOptions(
-      apiKey: "AIzaSyDherXWiNIbKzOBEFuf2VOpHvu7U6R-W3A",
+      apiKey: "AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A",
       appId: "1:751405981184:web:f1240e05c084bac7b242e5",
       messagingSenderId: "751405981184",
       projectId: "saarthi-ai-df12b",
