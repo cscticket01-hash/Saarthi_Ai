@@ -157,7 +157,7 @@ class _ChatScreenState extends State<ChatScreen> {
           'Authorization': 'Bearer $_fixedApiKey',
         },
         body: jsonEncode({
-          'model': 'llama-3.1-8b-instant',
+          'model': 'openai/gpt-oss-120b',
           'messages': [
             {
               'role': 'system',
