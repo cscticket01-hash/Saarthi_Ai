@@ -279,7 +279,7 @@ drawer: Drawer(
                   onPressed: _startNewChat,
                   icon: const Icon(Icons.add, color: Colors.white),
                   label: const Text(
-                    '+ New Chat',
+                    ' New Chat',
                     style: TextStyle(color: Colors.white, fontSize: 16),
                   ),
                 ),
