@@ -61,6 +61,8 @@ class AiChatScreen extends StatefulWidget {
 class _AiChatScreenState extends State<AiChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  bool _isLoading = false;
+  String _preferredLanguage = 'en';
 
   List<ChatSession> chatSessions = [
     ChatSession(
@@ -102,27 +104,67 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   void _sendMessage() {
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isLoading) return;
 
     setState(() {
       chatSessions[currentSessionIndex].messages.add({'sender': 'user', 'text': text});
       _messageController.clear();
+      _isLoading = true;
     });
 
-    // Mock AI response
-    Future.delayed(const Duration(milliseconds: 600), () {
+    _scrollToBottom();
+
+    // 2 second anti-spam delay + dynamic language response
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
+
+      final lower = text.toLowerCase();
+
+      // Language switch commands
+      if (lower.contains('hindi me') || lower.contains('speak hindi') || lower.contains('talk in hindi') || lower.contains('in hindi')) {
+        _preferredLanguage = 'hi';
+      } else if (lower.contains('english me') || lower.contains('speak english') || lower.contains('talk in english') || lower.contains('in english')) {
+        _preferredLanguage = 'en';
+      }
+
+      bool isHindi = _preferredLanguage == 'hi';
+      
+      final hindiKeywords = ['kon', 'kya', 'kaise', 'naam', 'tum', 'aap', 'mera', 'bhai', 'namaste', 'batao', 'kaha', 'kar', 'rahe'];
+      if (RegExp(r'[\u0900-\u097F]').hasMatch(text) || hindiKeywords.any((k) => lower.contains(k))) {
+        isHindi = true;
+      } else if (RegExp(r'^[a-zA-Z0-9\s\?!.,]+$').hasMatch(text) && _preferredLanguage != 'hi') {
+        isHindi = false;
+      }
+
+      String replyText = '';
+      if (isHindi) {
+        if (lower.contains('kon') || lower.contains('who')) {
+          replyText = 'मैं सारथी AI हूँ—आपका व्यक्तिगत डिजिटल सहायक। बताइए, आज मैं आपकी क्या मदद कर सकता हूँ?';
+        } else if (lower.contains('naam') || lower.contains('name')) {
+          replyText = 'मेरा नाम सारथी AI है। मैं आपकी सहायता के लिए हमेशा तैयार हूँ।';
+        } else {
+          replyText = 'नमस्ते! मुझे आपका संदेश मिला। मैं सारथी AI हूँ, बताइए मैं आपके इस कार्य में कैसे सहायता करूँ?';
+        }
+      } else {
+        if (lower.contains('who') || lower.contains('kon')) {
+          replyText = "I am Saarthi AI—your personal AI assistant. How can I help you today?";
+        } else if (lower.contains('name') || lower.contains('naam')) {
+          replyText = "My name is Saarthi AI. I'm always here to assist you.";
+        } else {
+          replyText = "Hello! I received your message. I am Saarthi AI, how can I assist you with this?";
+        }
+      }
+
       setState(() {
+        _isLoading = false;
         chatSessions[currentSessionIndex].messages.add({
           'sender': 'ai',
-          'text': 'Aapka message mila: "$text". Main process kar raha hoon.'
+          'text': replyText,
         });
       });
       _scrollToBottom();
     });
-
-    _scrollToBottom();
   }
-
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -207,8 +249,22 @@ class _AiChatScreenState extends State<AiChatScreen> {
             child: ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.all(12),
-              itemCount: currentChat.messages.length,
+              itemCount: currentChat.messages.length + (_isLoading ? 1 : 0),
               itemBuilder: (context, index) {
+                if (_isLoading && index == currentChat.messages.length) {
+  return Align(
+    alignment: Alignment.centerLeft,
+    child: Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF202C33),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: const Text('AI typing...', style: TextStyle(color: Colors.white70, fontSize: 14)),
+    ),
+  );
+}
                 final msg = currentChat.messages[index];
                 final isUser = msg['sender'] == 'user';
 
@@ -255,7 +311,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
                 const SizedBox(width: 8),
                 CircleAvatar(
                   backgroundColor: const Color(0xFF00A884),
-                  child: IconButton(
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : IconButton(
                     icon: const Icon(Icons.send, color: Colors.white, size: 20),
                     onPressed: _sendMessage,
                   ),
@@ -269,6 +331,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
 }
 
+// ----------------- PHONEBOOK / CONTACT LIST SCREEN -----------------
 // ----------------- PHONEBOOK / CONTACT LIST SCREEN -----------------
 class PhonebookScreen extends StatelessWidget {
   const PhonebookScreen({super.key});
