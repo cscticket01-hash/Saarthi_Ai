@@ -328,6 +328,31 @@ drawer: Drawer(
                   },
                 ),
               ),
+              const Divider(color: Colors.white24, height: 1),
+              Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: ListTile(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  tileColor: Colors.redAccent.withOpacity(0.1),
+                  leading: const Icon(Icons.logout, color: Colors.redAccent),
+                  title: const Text(
+                    'Logout',
+                    style: TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  onTap: () async {
+                    await FirebaseAuth.instance.signOut();
+                    if (context.mounted) {
+                      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+                    }
+                  },
+                ),
+              ),              
             ],
           ),
         ),
