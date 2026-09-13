@@ -85,9 +85,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
       final newChat = ChatSession(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         title: 'Saarthi AI',
-        messages: [
-          {'sender': 'ai', 'text': 'Hello! New conversation started. How can I help?'},
-        ],
+        messages: [],
       );
       chatSessions.insert(0, newChat);
       currentSessionIndex = 0;
