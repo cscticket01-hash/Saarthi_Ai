@@ -38,21 +38,23 @@ class SaarthiApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0B141A), // WhatsApp Chat Background
+        scaffoldBackgroundColor: const Color(0xFF0B141A),
         appBarTheme: const AppBarTheme(
-          backgroundColor: const Color(0xFF1F2C34), // WhatsApp Header
+          backgroundColor: const Color(0xFF1F2C34),
           elevation: 1,
         ),
       ),
-home: StreamBuilder<User?>(
+      home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Scaffold(
-              body: Center(child: CircularProgressIndicator(color: Color(0xFF00A884))),
-            );
+              body: Center(
+                child: CircularProgressIndicator(color: Color(0xFF00A884)),
+                ),
+              );
           }
-          if (snapshot.hasData) {
+          if (snapshot.hasData && snapshot.data != null) {
             return const MainDashboardScreen();
           }
           return const AuthScreen();
@@ -566,20 +568,20 @@ Future<void> _signInWithGoogle() async {
     try {
       final userCredential = await FirebaseAuth.instance.getRedirectResult();
       if (userCredential.user != null && mounted) {
-        Navigator.pushReplacement(
-          context,
+        Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const MainDashboardScreen()),
+          (route) => false,
         );
       }
     } on FirebaseAuthException catch (e) {
-      // Agar stream ne pehle hi token read kar liya ho, toh error ignore karein:
+
       if (e.code != 'invalid-credential' && e.code != 'malformed-credential') {
         if (mounted) {
           setState(() => _errorMessage = e.message ?? 'Redirect Error');
         }
       }
     } catch (_) {
-      // Ignore background race errors
+
     }
   }
   Future<void> _submitAuth() async {
