@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class MainDashboardScreen extends StatefulWidget {
   const MainDashboardScreen({super.key});
@@ -62,7 +66,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
-  String _preferredLanguage = 'en';
+  static const String _groqApiKey = String.fromEnvironment('GROQ_API_KEY');
 
   List<ChatSession> chatSessions = [
     ChatSession(
@@ -102,7 +106,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     });
   }
 
-  void _sendMessage() {
+Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _isLoading) return;
 
@@ -114,56 +118,80 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
     _scrollToBottom();
 
-    // 2 second anti-spam delay + dynamic language response
-    Future.delayed(const Duration(seconds: 2), () {
-      if (!mounted) return;
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .collection('chats')
+          .add({
+        'sender': 'user',
+        'text': text,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    }
 
-      final lower = text.toLowerCase();
+    final delayFuture = Future.delayed(const Duration(seconds: 2));
+    String reply = '';
 
-      // Language switch commands
-      if (lower.contains('hindi me') || lower.contains('speak hindi') || lower.contains('talk in hindi') || lower.contains('in hindi')) {
-        _preferredLanguage = 'hi';
-      } else if (lower.contains('english me') || lower.contains('speak english') || lower.contains('talk in english') || lower.contains('in english')) {
-        _preferredLanguage = 'en';
-      }
+    try {
+      final response = await http.post(
+        Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Authorization': 'Bearer $_groqApiKey',
+        },
+        body: jsonEncode({
+          'model': 'llama-3.3-70b-versatile',
+          'messages': [
+            {
+              'role': 'system',
+              'content':
+                  'Aap Saarthi AI hain. User se bilkul natural Hinglish ya Hindi me seedhi aur to-the-point baatcheet karein jaise ek dost karta hai. Formal faltu dialogues jaise "Aapka message mila" ya "Main process kar raha hoon" bilkul nahi bolna. Seedha sawal ka direct jawab dena.'
+            },
+            {
+              'role': 'user',
+              'content': text,
+            }
+          ],
+          'temperature': 0.7,
+        }),
+      );
 
-      bool isHindi = _preferredLanguage == 'hi';
-      
-      final hindiKeywords = ['kon', 'kya', 'kaise', 'naam', 'tum', 'aap', 'mera', 'bhai', 'namaste', 'batao', 'kaha', 'kar', 'rahe'];
-      if (RegExp(r'[\u0900-\u097F]').hasMatch(text) || hindiKeywords.any((k) => lower.contains(k))) {
-        isHindi = true;
-      } else if (RegExp(r'^[a-zA-Z0-9\s\?!.,]+$').hasMatch(text) && _preferredLanguage != 'hi') {
-        isHindi = false;
-      }
-
-      String replyText = '';
-      if (isHindi) {
-        if (lower.contains('kon') || lower.contains('who')) {
-          replyText = 'मैं सारथी AI हूँ—आपका व्यक्तिगत डिजिटल सहायक। बताइए, आज मैं आपकी क्या मदद कर सकता हूँ?';
-        } else if (lower.contains('naam') || lower.contains('name')) {
-          replyText = 'मेरा नाम सारथी AI है। मैं आपकी सहायता के लिए हमेशा तैयार हूँ।';
-        } else {
-          replyText = 'नमस्ते! मुझे आपका संदेश मिला। मैं सारथी AI हूँ, बताइए मैं आपके इस कार्य में कैसे सहायता करूँ?';
-        }
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        reply = data['choices'][0]['message']['content'].toString().trim();
       } else {
-        if (lower.contains('who') || lower.contains('kon')) {
-          replyText = "I am Saarthi AI—your personal AI assistant. How can I help you today?";
-        } else if (lower.contains('name') || lower.contains('naam')) {
-          replyText = "My name is Saarthi AI. I'm always here to assist you.";
-        } else {
-          replyText = "Hello! I received your message. I am Saarthi AI, how can I assist you with this?";
-        }
+        reply = 'API Error: ${response.statusCode}. Key check karein.';
       }
+    } catch (e) {
+      reply = 'Network error: Internet check karein.';
+    }
 
+    await delayFuture;
+
+    if (mounted) {
       setState(() {
         _isLoading = false;
         chatSessions[currentSessionIndex].messages.add({
           'sender': 'ai',
-          'text': replyText,
+          'text': reply,
         });
       });
       _scrollToBottom();
-    });
+
+      if (currentUser != null) {
+        FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .collection('chats')
+            .add({
+          'sender': 'saarthi',
+          'text': reply,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }
+    }
   }
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
