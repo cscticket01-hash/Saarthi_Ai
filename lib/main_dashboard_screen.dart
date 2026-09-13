@@ -72,9 +72,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     ChatSession(
       id: '1',
       title: 'First Conversation',
-      messages: [
-        {'sender': 'ai', 'text': 'Hello! How can I assist you today?'},
-      ],
+      messages: [],
     ),
   ];
 
@@ -109,6 +107,15 @@ Future<void> _sendMessage() async {
     if (text.isEmpty || _isLoading) return;
 
     setState(() {
+      // Pehle message par title snippet update hoga
+      if (chatSessions[currentSessionIndex].messages.isEmpty) {
+        String cleanTitle = text.trim();
+        if (cleanTitle.length > 25) {
+          cleanTitle = '${cleanTitle.substring(0, 25)}...';
+        }
+        chatSessions[currentSessionIndex].title = cleanTitle;
+      }
+
       chatSessions[currentSessionIndex].messages.add({'sender': 'user', 'text': text});
       _messageController.clear();
       _isLoading = true;
@@ -220,24 +227,67 @@ Future<void> _sendMessage() async {
           ],
         ),
       ),
-      drawer: Drawer(
+drawer: Drawer(
         backgroundColor: const Color(0xFF1F2C34),
         child: SafeArea(
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 1. Logged-in User Email Header
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
+                decoration: const BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: Colors.white12, width: 1.0),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const CircleAvatar(
+                      radius: 16,
+                      backgroundColor: Color(0xFF00A884),
+                      child: Icon(Icons.person, color: Colors.white, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        FirebaseAuth.instance.currentUser?.email ?? 'user@gmail.com',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // 2. + New Chat Button
               Padding(
                 padding: const EdgeInsets.all(12.0),
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF00A884),
                     minimumSize: const Size(double.infinity, 45),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                   onPressed: _startNewChat,
                   icon: const Icon(Icons.add, color: Colors.white),
-                  label: const Text('+ New Chat', style: TextStyle(color: Colors.white, fontSize: 16)),
+                  label: const Text(
+                    '+ New Chat',
+                    style: TextStyle(color: Colors.white, fontSize: 16),
+                  ),
                 ),
               ),
-              const Divider(color: Colors.white24),
+
+              const Divider(color: Colors.white24, height: 1),
+
+              // 3. Chat History List
               Expanded(
                 child: ListView.builder(
                   itemCount: chatSessions.length,
@@ -246,20 +296,32 @@ Future<void> _sendMessage() async {
                     final isSelected = index == currentSessionIndex;
 
                     return ListTile(
-                      tileColor: isSelected ? const Color(0xFF2A3942) : Colors.transparent,
-                      leading: const Icon(Icons.chat_bubble_outline, color: Colors.white70),
+                      selected: isSelected,
+                      selectedTileColor: Colors.white.withOpacity(0.08),
+                      leading: const Icon(Icons.chat_bubble_outline, color: Colors.white70, size: 20),
                       title: Text(
                         session.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white),
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
                       ),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-                        onPressed: () => _deleteChat(index),
-                      ),
+                      trailing: chatSessions.length > 1
+                          ? IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                              onPressed: () {
+                                setState(() {
+                                  chatSessions.removeAt(index);
+                                  if (currentSessionIndex >= chatSessions.length) {
+                                    currentSessionIndex = chatSessions.length - 1;
+                                  }
+                                });
+                              },
+                            )
+                          : null,
                       onTap: () {
-                        setState(() => currentSessionIndex = index);
+                        setState(() {
+                          currentSessionIndex = index;
+                        });
                         Navigator.pop(context);
                       },
                     );
