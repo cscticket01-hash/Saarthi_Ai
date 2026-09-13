@@ -84,7 +84,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     setState(() {
       final newChat = ChatSession(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: 'New Chat ${chatSessions.length + 1}',
+        title: 'Saarthi AI',
         messages: [
           {'sender': 'ai', 'text': 'Hello! New conversation started. How can I help?'},
         ],
@@ -210,16 +210,17 @@ Future<void> _sendMessage() async {
     final currentChat = chatSessions[currentSessionIndex];
 
     return Scaffold(
-      backgroundColor: const Color(0xFF121B22),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: Text(currentChat.title, style: const TextStyle(fontSize: 18)),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.call),
-            onPressed: () {},
-          ),
-        ],
+        title: const Row(
+          children: [
+            Icon(Icons.smart_toy_rounded, color: Color(0xFF00E676)),
+            SizedBox(width: 10),
+            Text(
+              'Saarthi AI',
+              style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5),
+            ),
+          ],
+        ),
       ),
       drawer: Drawer(
         backgroundColor: const Color(0xFF1F2C34),
