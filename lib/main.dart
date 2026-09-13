@@ -542,7 +542,18 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isLogin = true;
   bool _isLoading = false;
   String _errorMessage = '';
-
+Future<void> _signInWithGoogle() async {
+    try {
+      GoogleAuthProvider googleProvider = GoogleAuthProvider();
+      googleProvider.setCustomParameters({'prompt': 'select_account'});
+      await FirebaseAuth.instance.signInWithPopup(googleProvider);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _errorMessage = 'Google Sign-In failed: $e');
+      }
+    }
+  }
+ 
   Future<void> _submitAuth() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
@@ -617,6 +628,36 @@ class _AuthScreenState extends State<AuthScreen> {
                   style: TextStyle(color: Colors.grey[400], fontSize: 14),
                 ),
                 const SizedBox(height: 24),
+               // Continue with Google Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white24),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: _signInWithGoogle,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Image.network(
+                          'https://fonts.gstatic.com/s/i/productlogos/googleg/v6/24px.svg',
+                          height: 20,
+                          width: 20,
+                          errorBuilder: (_, __, ___) => const Icon(Icons.g_mobiledata, color: Colors.blue, size: 24),
+                        ),
+                        const SizedBox(width: 10),
+                        const Text(
+                          'Continue with Google',
+                          style: TextStyle(color: Colors.black87, fontSize: 15, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
                 TextField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
