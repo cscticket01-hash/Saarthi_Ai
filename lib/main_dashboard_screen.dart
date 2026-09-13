@@ -162,7 +162,7 @@ Future<void> _sendMessage() async {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
         reply = data['choices'][0]['message']['content'].toString().trim();
       } else {
-        reply = 'API Error: ${response.statusCode}. Key check karein.';
+        reply = 'Status ${response.statusCode}: ${response.body}';
       }
     } catch (e) {
       reply = 'Network error: Internet check karein.';
