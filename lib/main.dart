@@ -546,14 +546,29 @@ Future<void> _signInWithGoogle() async {
     try {
       GoogleAuthProvider googleProvider = GoogleAuthProvider();
       googleProvider.setCustomParameters({'prompt': 'select_account'});
-      await FirebaseAuth.instance.signInWithPopup(googleProvider);
+      await FirebaseAuth.instance.signInWithRedirect(googleProvider);
     } catch (e) {
       if (mounted) {
         setState(() => _errorMessage = 'Google Sign-In failed: $e');
       }
     }
   }
- 
+
+ @override
+  void initState() {
+    super.initState();
+    _checkRedirectResult();
+  }
+
+  Future<void> _checkRedirectResult() async {
+    try {
+      await FirebaseAuth.instance.getRedirectResult();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _errorMessage = 'Redirect Login Error: $e');
+      }
+    }
+  }
   Future<void> _submitAuth() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
