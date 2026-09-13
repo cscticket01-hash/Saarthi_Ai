@@ -23,6 +23,8 @@ void main() async {
       storageBucket: "saarthi-ai-df12b.firebasestorage.app",
     ),
   );
+ 
+  await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
   runApp(const SaarthiApp());
 }
 
@@ -569,10 +571,15 @@ Future<void> _signInWithGoogle() async {
           MaterialPageRoute(builder: (context) => const MainDashboardScreen()),
         );
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _errorMessage = 'Redirect Error: $e');
+    } on FirebaseAuthException catch (e) {
+      // Agar stream ne pehle hi token read kar liya ho, toh error ignore karein:
+      if (e.code != 'invalid-credential' && e.code != 'malformed-credential') {
+        if (mounted) {
+          setState(() => _errorMessage = e.message ?? 'Redirect Error');
+        }
       }
+    } catch (_) {
+      // Ignore background race errors
     }
   }
   Future<void> _submitAuth() async {
