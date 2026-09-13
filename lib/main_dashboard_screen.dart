@@ -66,7 +66,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
-  static const String _groqApiKey = String.fromEnvironment('GROQ_API_KEY');
+  static const String _groqApiKey = String.fromEnvironment('GEMINI_API_KEY');
 
   List<ChatSession> chatSessions = [
     ChatSession(
