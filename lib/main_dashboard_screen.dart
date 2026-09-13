@@ -345,11 +345,9 @@ drawer: Drawer(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  onTap: () async {
-                    await FirebaseAuth.instance.signOut();
-                    if (context.mounted) {
-                      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
-                    }
+                  onTap: () {
+                    Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil('/', (route) => false);
+                    FirebaseAuth.instance.signOut();
                   },
                 ),
               ),              
