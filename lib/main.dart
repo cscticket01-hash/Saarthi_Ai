@@ -227,7 +227,7 @@ final response = await http.post(
           'Authorization': 'Bearer $_fixedApiKey',
         },
         body: jsonEncode({
-          'model': 'openai/gpt-oss-120b',
+          'model': 'llama-3.1-8b-instant',
           'messages': [
             {
               'role': 'system',
