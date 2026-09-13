@@ -285,9 +285,23 @@ drawer: Drawer(
                 ),
               ),
 
-              const Divider(color: Colors.white24, height: 1),
+             const Divider(color: Colors.white24, height: 1),
 
-              // 3. Chat History List
+              // Recents Heading
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+                child: Text(
+                  'Recents',
+                  style: TextStyle(
+                    color: Colors.grey,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+
+              // Gemini Style Chat List with Message Snippet
               Expanded(
                 child: ListView.builder(
                   itemCount: chatSessions.length,
@@ -295,27 +309,35 @@ drawer: Drawer(
                     final session = chatSessions[index];
                     final isSelected = index == currentSessionIndex;
 
+                    // Message snippet preview
+                    final previewSnippet = session.messages.isNotEmpty
+                        ? session.messages.first['text'] ?? ''
+                        : 'No messages yet';
+
                     return ListTile(
                       selected: isSelected,
                       selectedTileColor: Colors.white.withOpacity(0.08),
-                      leading: const Icon(Icons.chat_bubble_outline, color: Colors.white70, size: 20),
+                      leading: const Icon(Icons.chat_bubble_outline, color: Colors.white70, size: 18),
                       title: Text(
                         session.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      subtitle: Text(
+                        previewSnippet,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.grey, fontSize: 12),
                       ),
                       trailing: chatSessions.length > 1
                           ? IconButton(
                               icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-                              onPressed: () {
-                                setState(() {
-                                  chatSessions.removeAt(index);
-                                  if (currentSessionIndex >= chatSessions.length) {
-                                    currentSessionIndex = chatSessions.length - 1;
-                                  }
-                                });
-                              },
+                              onPressed: () => _deleteChat(index),
                             )
                           : null,
                       onTap: () {
