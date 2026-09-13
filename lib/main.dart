@@ -562,10 +562,16 @@ Future<void> _signInWithGoogle() async {
 
   Future<void> _checkRedirectResult() async {
     try {
-      await FirebaseAuth.instance.getRedirectResult();
+      final userCredential = await FirebaseAuth.instance.getRedirectResult();
+      if (userCredential.user != null && mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const MainDashboardScreen()),
+        );
+      }
     } catch (e) {
       if (mounted) {
-        setState(() => _errorMessage = 'Redirect Login Error: $e');
+        setState(() => _errorMessage = 'Redirect Error: $e');
       }
     }
   }
