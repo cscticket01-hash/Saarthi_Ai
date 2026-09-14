@@ -368,7 +368,6 @@ drawer: Drawer(
                     ),
                   ),
                   onTap: () {
-                    Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil('/', (route) => false);
                     FirebaseAuth.instance.signOut();
                   },
                 ),
