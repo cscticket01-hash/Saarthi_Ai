@@ -547,13 +547,21 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isLoading = false;
   String _errorMessage = '';
 Future<void> _signInWithGoogle() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
     try {
-      GoogleAuthProvider googleProvider = GoogleAuthProvider();
+      final googleProvider = GoogleAuthProvider();
       googleProvider.setCustomParameters({'prompt': 'select_account'});
-      await FirebaseAuth.instance.signInWithRedirect(googleProvider);
+      await FirebaseAuth.instance.signInWithPopup(googleProvider);
     } catch (e) {
       if (mounted) {
         setState(() => _errorMessage = 'Google Sign-In failed: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }
