@@ -191,7 +191,7 @@ Future<void> _sendMessage() async {
             .doc(currentUser.uid)
             .collection('chats')
             .add({
-          'sender': 'saarthi',
+          'sender': 'ai',
           'text': reply,
           'timestamp': FieldValue.serverTimestamp(),
         });
@@ -376,93 +376,88 @@ drawer: Drawer(
           ),
         ),
       ),
-      body: Column(
-        children: [
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(12),
-              itemCount: currentChat.messages.length + (_isLoading ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (_isLoading && index == currentChat.messages.length) {
-  return Align(
-    alignment: Alignment.centerLeft,
-    child: Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF202C33),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: const Text('AI typing...', style: TextStyle(color: Colors.white70, fontSize: 14)),
-    ),
-  );
-}
-                final msg = currentChat.messages[index];
-                final isUser = msg['sender'] == 'user';
+            child: StreamBuilder<User?>(
+              stream: FirebaseAuth.instance.authStateChanges(),
+              builder: (context, authSnap) {
+                final user = authSnap.data;
+                if (user == null) {
+                  return const Center(
+                    child: Text('Kripya Login karein', style: TextStyle(color: Colors.grey)),
+                  );
+                }
 
-                return Align(
-                  alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: isUser ? const Color(0xFF005C4B) : const Color(0xFF202C33),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      msg['text'] ?? '',
-                      style: const TextStyle(color: Colors.white, fontSize: 15),
-                    ),
-                  ),
+                return StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(user.uid)
+                      .collection('chats')
+                      .snapshots(),
+                  builder: (context, chatSnap) {
+                    if (chatSnap.connectionState == ConnectionState.waiting) {
+                      return const Center(
+                        child: CircularProgressIndicator(color: Color(0xFF00A884)),
+                      );
+                    }
+                    if (!chatSnap.hasData || chatSnap.data!.docs.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'Koi purani chat nahi mili. Message karein!',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      );
+                    }
+
+                    final docs = chatSnap.data!.docs;
+
+                    return ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(12),
+                      itemCount: docs.length + (_isLoading ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (_isLoading && index == docs.length) {
+                          return Align(
+                            alignment: Alignment.centerLeft,
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF202C33),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Text('AI typing...', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                            ),
+                          );
+                        }
+
+                        final m = docs[index].data() as Map<String, dynamic>;
+                        final isUser = m['sender'] == 'user';
+
+                        return Align(
+                          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: isUser ? const Color(0xFF005C4B) : const Color(0xFF202C33),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            constraints: BoxConstraints(
+                              maxWidth: MediaQuery.of(context).size.width * 0.8,
+                            ),
+                            child: Text(
+                              m['text'] ?? '',
+                              style: const TextStyle(color: Colors.white, fontSize: 15),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
                 );
               },
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            color: const Color(0xFF1F2C34),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      hintText: 'Message...',
-                      hintStyle: const TextStyle(color: Colors.grey),
-                      filled: true,
-                      fillColor: const Color(0xFF2A3942),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                CircleAvatar(
-                  backgroundColor: const Color(0xFF00A884),
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : IconButton(
-                    icon: const Icon(Icons.send, color: Colors.white, size: 20),
-                    onPressed: _sendMessage,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 // ----------------- PHONEBOOK / CONTACT LIST SCREEN -----------------
 // ----------------- PHONEBOOK / CONTACT LIST SCREEN -----------------
