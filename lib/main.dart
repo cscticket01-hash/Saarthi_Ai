@@ -416,51 +416,61 @@ final response = await http.post(
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              itemCount: _messages.length,
-              itemBuilder: (ctx, i) {
-                final m = _messages[i];
-                final isUser = m['sender'] == 'user';
-                return Align(
-                  alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: isUser ? const Color(0xFF005C4B) : const Color(0xFF1F2C34), // WhatsApp Bubble Colors
-                      borderRadius: BorderRadius.only(
-                        topLeft: const Radius.circular(10),
-                        topRight: const Radius.circular(10),
-                        bottomLeft: Radius.circular(isUser ? 10 : 0),
-                        bottomRight: Radius.circular(isUser ? 0 : 10),
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(FirebaseAuth.instance.currentUser?.uid)
+                  .collection('chats')
+                  .orderBy('timestamp', descending: false)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: Color(0xFF00A884)),
+                  );
+                }
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'Koi purani chat nahi mili. Message karein!',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  );
+                }
+
+                final docs = snapshot.data!.docs;
+
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  itemCount: docs.length,
+                  itemBuilder: (ctx, i) {
+                    final m = docs[i].data() as Map<String, dynamic>;
+                    final isUser = m['sender'] == 'user';
+
+                    return Align(
+                      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isUser ? const Color(0xFF005C4B) : const Color(0xFF1F2C34),
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(10),
+                            topRight: const Radius.circular(10),
+                            bottomLeft: Radius.circular(isUser ? 10 : 0),
+                            bottomRight: Radius.circular(isUser ? 0 : 10),
+                          ),
+                        ),
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(context).size.width * 0.8,
+                        ),
+                        child: Text(
+                          m['text'] ?? '',
+                          style: const TextStyle(color: Colors.white, fontSize: 15),
+                        ),
                       ),
-                    ),
-                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (m['image'] != null)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.memory(m['image'], height: 200, fit: BoxFit.cover),
-                            ),
-                          ),
-                        if (m['text'] != null && m['text'].toString().isNotEmpty)
-                          Text(
-                            m['text'],
-                            style: const TextStyle(color: Colors.white, fontSize: 15),
-                          ),
-                        if (m['video_base64'] != null)
-                          const Padding(
-                            padding: EdgeInsets.only(top: 6),
-                            child: Text('🎬 Video ready!', style: TextStyle(color: Color(0xFF25D366), fontWeight: FontWeight.bold)),
-                          ),
-                      ],
-                    ),
-                  ),
+                    );
+                  },
                 );
               },
             ),
