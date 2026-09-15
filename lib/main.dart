@@ -1,4 +1,4 @@
- import 'dart:convert';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -23,7 +23,7 @@ void main() async {
       storageBucket: "saarthi-ai-df12b.firebasestorage.app",
     ),
   );
- 
+
   await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
   runApp(const SaarthiApp());
 }
@@ -40,7 +40,7 @@ class SaarthiApp extends StatelessWidget {
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF0B141A),
         appBarTheme: const AppBarTheme(
-          backgroundColor: const Color(0xFF1F2C34),
+          backgroundColor: Color(0xFF1F2C34),
           elevation: 1,
         ),
       ),
@@ -54,8 +54,8 @@ class SaarthiApp extends StatelessWidget {
             return const Scaffold(
               body: Center(
                 child: CircularProgressIndicator(color: Color(0xFF00A884)),
-                ),
-              );
+              ),
+            );
           }
           if (snapshot.hasData && snapshot.data != null) {
             return const MainDashboardScreen();
@@ -75,41 +75,21 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  // Hardcoded API Key (Settings popup se Key input hata diya gaya hai)
   static const String _fixedApiKey = String.fromEnvironment('GEMINI_API_KEY');
-  
+
   final TextEditingController _controller = TextEditingController();
-  final List<Map<String, dynamic>> _messages = [];
   final ImagePicker _picker = ImagePicker();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
   bool _isLoading = false;
   Uint8List? _selectedImageBytes;
   String _customEndpoint = '';
- DateTime? _lastMessageTime;
+  DateTime? _lastMessageTime;
 
   @override
   void initState() {
     super.initState();
     _loadEndpoint();
-
-    final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser != null) {
-      FirebaseFirestore.instance
-          .collection('users')
-          .doc(currentUser.uid)
-          .collection('chats')
-          .orderBy('timestamp', descending: false)
-          .snapshots()
-          .listen((snapshot) {
-        setState(() {
-          _messages.clear();
-          for (var doc in snapshot.docs) {
-            _messages.add(Map<String, dynamic>.from(doc.data()));
-          }
-        });
-      });
-    }
   }
 
   Future<void> _loadEndpoint() async {
@@ -132,7 +112,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
-   final now = DateTime.now();
+    final now = DateTime.now();
     if (_lastMessageTime != null && now.difference(_lastMessageTime!).inSeconds < 3) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -147,20 +127,16 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty && _selectedImageBytes == null) return;
 
     final imageBytes = _selectedImageBytes;
+    final currentUser = FirebaseAuth.instance.currentUser;
 
     setState(() {
-      _messages.add({
-        'sender': 'user',
-        'text': text,
-        'image': imageBytes,
-      });
       _isLoading = true;
       _controller.clear();
       _selectedImageBytes = null;
     });
-final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser != null) {
-      FirebaseFirestore.instance
+
+    if (currentUser != null && text.isNotEmpty) {
+      await FirebaseFirestore.instance
           .collection('users')
           .doc(currentUser.uid)
           .collection('chats')
@@ -170,7 +146,8 @@ final currentUser = FirebaseAuth.instance.currentUser;
         'timestamp': FieldValue.serverTimestamp(),
       });
     }
-    // 1. Photo attach hone par Colab Video Trigger
+
+    // 1. Video Trigger
     if (imageBytes != null) {
       try {
         String endpoint = _customEndpoint.trim();
@@ -195,39 +172,52 @@ final currentUser = FirebaseAuth.instance.currentUser;
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
-          setState(() {
-            _messages.add({
+          if (currentUser != null) {
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(currentUser.uid)
+                .collection('chats')
+                .add({
               'sender': 'saarthi',
               'text': '🎬 Video safalta-purvak ban gayi!',
               'video_base64': data['video_base64'],
+              'timestamp': FieldValue.serverTimestamp(),
             });
-          });
+          }
         } else {
-          setState(() {
-            _messages.add({
+          if (currentUser != null) {
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(currentUser.uid)
+                .collection('chats')
+                .add({
               'sender': 'saarthi',
               'text': 'Server Error: ${response.statusCode} - ${response.body}',
+              'timestamp': FieldValue.serverTimestamp(),
             });
-          });
+          }
         }
       } catch (e) {
-        setState(() {
-          _messages.add({
+        if (currentUser != null) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(currentUser.uid)
+              .collection('chats')
+              .add({
             'sender': 'saarthi',
             'text': 'Connection Error: $e',
+            'timestamp': FieldValue.serverTimestamp(),
           });
-        });
+        }
       } finally {
-        setState(() {
-          _isLoading = false;
-        });
+        if (mounted) setState(() => _isLoading = false);
       }
       return;
     }
 
-   // 2. Direct Gemini REST API Call
+    // 2. Chat Completion Call
     try {
-final response = await http.post(
+      final response = await http.post(
         Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
         headers: {
           'Content-Type': 'application/json',
@@ -247,89 +237,50 @@ final response = await http.post(
           ],
         }),
       );
-        if (response.statusCode == 200) {
-      final data = jsonDecode(utf8.decode(response.bodyBytes));
-      final reply = data['choices'][0]['message']['content'];
-      setState(() {
-        _messages.add({
-          'sender': 'saarthi',
-          'text': reply,
-        });
-      });
 
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        final reply = data['choices'][0]['message']['content'];
+
+        if (currentUser != null) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(currentUser.uid)
+              .collection('chats')
+              .add({
+            'sender': 'saarthi',
+            'text': reply,
+            'timestamp': FieldValue.serverTimestamp(),
+          });
+        }
+      } else {
+        if (currentUser != null) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(currentUser.uid)
+              .collection('chats')
+              .add({
+            'sender': 'saarthi',
+            'text': 'Error: ${response.statusCode} - ${response.body}',
+            'timestamp': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+    } catch (e) {
       if (currentUser != null) {
-        FirebaseFirestore.instance
+        await FirebaseFirestore.instance
             .collection('users')
             .doc(currentUser.uid)
             .collection('chats')
             .add({
           'sender': 'saarthi',
-          'text': reply,
+          'text': 'Connection Error: $e',
           'timestamp': FieldValue.serverTimestamp(),
         });
       }
-    } else {
-        setState(() {
-          _messages.add({
-            'sender': 'saarthi',
-            'text': 'Error: ${response.statusCode} - ${response.body}',
-          });
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _messages.add({
-          'sender': 'saarthi',
-          'text': 'Connection Error: $e',
-        });
-      });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
-  } 
-
-  void _openSettings() {
-    final epController = TextEditingController(text: _customEndpoint);
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Server Settings', style: TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: epController,
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(
-            labelText: 'Colab Cloudflare URL',
-            labelStyle: TextStyle(color: Color(0xFF00A884)),
-            hintText: 'https://xxxx.trycloudflare.com',
-            focusedBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: Color(0xFF00A884)),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-            onPressed: () async {
-              final newEndpoint = epController.text.trim();
-              await _storage.write(key: 'CUSTOM_ENDPOINT', value: newEndpoint);
-              setState(() {
-                _customEndpoint = newEndpoint;
-              });
-              Navigator.pop(ctx);
-            },
-            child: const Text('Save', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -352,7 +303,7 @@ final response = await http.post(
             ),
           ],
         ),
-      actions: [
+        actions: [
           IconButton(
             icon: const Icon(Icons.call, color: Color(0xFF00A884)),
             tooltip: 'Voice Call',
@@ -371,34 +322,9 @@ final response = await http.post(
             onSelected: (value) async {
               if (value == 'logout') {
                 await FirebaseAuth.instance.signOut();
-              } else if (value == 'profile') {
-                // Profile
-              } else if (value == 'settings') {
-                // Settings
               }
             },
             itemBuilder: (BuildContext context) => [
-              const PopupMenuItem<String>(
-                value: 'profile',
-                child: Row(
-                  children: [
-                    Icon(Icons.person_outline, color: Colors.white70, size: 20),
-                    SizedBox(width: 10),
-                    Text('Profile', style: TextStyle(color: Colors.white)),
-                  ],
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'settings',
-                child: Row(
-                  children: [
-                    Icon(Icons.settings_outlined, color: Colors.white70, size: 20),
-                    SizedBox(width: 10),
-                    Text('Settings', style: TextStyle(color: Colors.white)),
-                  ],
-                ),
-              ),
-              const PopupMenuDivider(height: 1),
               const PopupMenuItem<String>(
                 value: 'logout',
                 child: Row(
@@ -464,9 +390,26 @@ final response = await http.post(
                         constraints: BoxConstraints(
                           maxWidth: MediaQuery.of(context).size.width * 0.8,
                         ),
-                        child: Text(
-                          m['text'] ?? '',
-                          style: const TextStyle(color: Colors.white, fontSize: 15),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (m['text'] != null && m['text'].toString().isNotEmpty)
+                              Text(
+                                m['text'],
+                                style: const TextStyle(color: Colors.white, fontSize: 15),
+                              ),
+                            if (m['video_base64'] != null)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 6),
+                                child: Text(
+                                  '🎬 Video ready!',
+                                  style: TextStyle(
+                                    color: Color(0xFF25D366),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     );
@@ -559,7 +502,8 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isLogin = true;
   bool _isLoading = false;
   String _errorMessage = '';
-Future<void> _signInWithGoogle() async {
+
+  Future<void> _signInWithGoogle() async {
     setState(() {
       _isLoading = true;
       _errorMessage = '';
@@ -579,32 +523,6 @@ Future<void> _signInWithGoogle() async {
     }
   }
 
- @override
-  void initState() {
-    super.initState();
-    _checkRedirectResult();
-  }
-
-  Future<void> _checkRedirectResult() async {
-    try {
-      final userCredential = await FirebaseAuth.instance.getRedirectResult();
-      if (userCredential.user != null && mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const MainDashboardScreen()),
-          (route) => false,
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-
-      if (e.code != 'invalid-credential' && e.code != 'malformed-credential') {
-        if (mounted) {
-          setState(() => _errorMessage = e.message ?? 'Redirect Error');
-        }
-      }
-    } catch (_) {
-
-    }
-  }
   Future<void> _submitAuth() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
@@ -679,7 +597,6 @@ Future<void> _signInWithGoogle() async {
                   style: TextStyle(color: Colors.grey[400], fontSize: 14),
                 ),
                 const SizedBox(height: 24),
-               // Continue with Google Button
                 SizedBox(
                   width: double.infinity,
                   height: 48,
