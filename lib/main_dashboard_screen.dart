@@ -66,6 +66,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
+  String _currentSessionId = DateTime.now().millisecondsSinceEpoch.toString();
   static const String _groqApiKey = String.fromEnvironment('GEMINI_API_KEY');
 
   List<ChatSession> chatSessions = [
@@ -87,8 +88,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
       );
       chatSessions.insert(0, newChat);
       currentSessionIndex = 0;
+      _currentSessionId = newChat.id;
     });
-    Navigator.pop(context); // Menu band karein
+    Navigator.pop(context);
   }
 
   void _deleteChat(int index) {
@@ -393,7 +395,10 @@ drawer: Drawer(
                   stream: FirebaseFirestore.instance
                       .collection('users')
                       .doc(user.uid)
+                      .collection('sessions')
+                      .doc(_currentSessionId)
                       .collection('chats')
+                      .orderBy('timestamp', descending: true)
                       .snapshots(),
                   builder: (context, chatSnap) {
                     if (chatSnap.connectionState == ConnectionState.waiting) {
@@ -415,6 +420,7 @@ drawer: Drawer(
                     return ListView.builder(
                       controller: _scrollController,
                       padding: const EdgeInsets.all(12),
+                      reverse: true,
                       itemCount: docs.length + (_isLoading ? 1 : 0),
                       itemBuilder: (context, index) {
                         if (_isLoading && index == docs.length) {
