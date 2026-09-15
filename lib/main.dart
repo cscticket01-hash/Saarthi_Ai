@@ -347,7 +347,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   .collection('users')
                   .doc(FirebaseAuth.instance.currentUser?.uid)
                   .collection('chats')
-                  .orderBy('timestamp', descending: false)
                   .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
