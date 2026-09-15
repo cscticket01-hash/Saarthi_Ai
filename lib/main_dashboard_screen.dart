@@ -376,6 +376,8 @@ drawer: Drawer(
           ),
         ),
       ),
+      body: Column(
+        children: [
           Expanded(
             child: StreamBuilder<User?>(
               stream: FirebaseAuth.instance.authStateChanges(),
@@ -458,7 +460,50 @@ drawer: Drawer(
               },
             ),
           ),
-
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            color: const Color(0xFF1F2C34),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _messageController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Message...',
+                      hintStyle: const TextStyle(color: Colors.grey),
+                      filled: true,
+                      fillColor: const Color(0xFF2A3942),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                CircleAvatar(
+                  backgroundColor: const Color(0xFF00A884),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : IconButton(
+                          icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                          onPressed: _sendMessage,
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 // ----------------- PHONEBOOK / CONTACT LIST SCREEN -----------------
 // ----------------- PHONEBOOK / CONTACT LIST SCREEN -----------------
 class PhonebookScreen extends StatelessWidget {
