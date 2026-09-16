@@ -902,6 +902,49 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       );
     }
   }
+  void _showNoticeDetailDialog(Map<String, dynamic> data) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00A884).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                data['category'] ?? 'General',
+                style: const TextStyle(color: Color(0xFF00A884), fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                data['title'] ?? '',
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Text(
+            data['description'] ?? '',
+            style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close', style: TextStyle(color: Color(0xFF00A884))),
+          ),
+        ],
+      ),
+    );
+  }
 
   // 2. Student Search Function
   Future<void> _searchStudent() async {
@@ -1314,35 +1357,101 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
                   const SizedBox(height: 24),
 
-                  // --- RIGHT BOTTOM: STUDENT ID CARD VIEW AREA ---
-                  _buildSectionHeader('Student ID Card View Area', Icons.contact_mail),
+                  // --- RIGHT BOTTOM: PUBLISHED NOTICES (SCROLLABLE + PREVIEW/EDIT/DELETE) ---
+                  _buildSectionHeader('Published Notices', Icons.article_outlined),
                   _buildCardWrapper(
-                    child: Container(
-                      height: 185,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white12),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.badge, color: Color(0xFF00A884), size: 42),
-                          SizedBox(height: 8),
-                          Text('Search a student on left to preview card here', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                        ],
+                    child: SizedBox(
+                      height: 280, // 4 notices ke baad scroll hoga
+                      child: StreamBuilder<QuerySnapshot>(
+                        stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+                          }
+                          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                            return const Center(
+                              child: Text('Koi notice published nahi hai.', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                            );
+                          }
+                          return ListView.builder(
+                            itemCount: snapshot.data!.docs.length,
+                            itemBuilder: (context, index) {
+                              final doc = snapshot.data!.docs[index];
+                              final data = doc.data() as Map<String, dynamic>;
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF121B22),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.white10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFF00A884).withOpacity(0.2),
+                                                  borderRadius: BorderRadius.circular(4),
+                                                ),
+                                                child: Text(
+                                                  data['category'] ?? 'General',
+                                                  style: const TextStyle(color: Color(0xFF00A884), fontSize: 10, fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: Text(
+                                                  data['title'] ?? '',
+                                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            data['description'] ?? '',
+                                            style: const TextStyle(color: Colors.grey, fontSize: 11),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    // 1. Preview
+                                    IconButton(
+                                      icon: const Icon(Icons.visibility, color: Colors.tealAccent, size: 18),
+                                      tooltip: 'Preview Notice',
+                                      onPressed: () => _showNoticeDetailDialog(data),
+                                    ),
+                                    // 2. Edit
+                                    IconButton(
+                                      icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 18),
+                                      tooltip: 'Edit Notice',
+                                      onPressed: () => _startEditNotice(doc.id, data),
+                                    ),
+                                    // 3. Delete
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                                      tooltip: 'Delete Notice',
+                                      onPressed: () => _deleteNotice(doc.id),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          );
+                        },
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildSectionHeader(String title, IconData icon) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0),
