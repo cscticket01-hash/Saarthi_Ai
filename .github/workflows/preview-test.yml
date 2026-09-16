@@ -18,6 +18,7 @@ jobs:
       - name: Build Web
         run: |
           flutter config --enable-web
+          flutter create . --platforms web
           flutter build web --release
 
       - name: Deploy to Firebase Preview Channel
