@@ -553,6 +553,10 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
               content: Text('Admin Login Safal hua!'),
             ),
           );
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
+          );   
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -796,6 +800,345 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+// ==================== ADMIN DASHBOARD SCREEN ====================
+class AdminDashboardScreen extends StatefulWidget {
+  const AdminDashboardScreen({super.key});
+
+  @override
+  State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
+}
+
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  // Notice controllers & state
+  final TextEditingController _noticeTitleController = TextEditingController();
+  final TextEditingController _noticeDescController = TextEditingController();
+  String _noticeCategory = 'Holiday';
+  final List<String> _noticeCategories = ['Holiday', 'Exam', 'Event', 'General'];
+
+  // Student Directory controllers
+  String _directoryClass = 'Class 1';
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _rollController = TextEditingController();
+  final TextEditingController _parentContactController = TextEditingController();
+
+  bool _isSaving = false;
+  final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
+
+  // 1. Notice Broadcast Function
+  Future<void> _publishNotice() async {
+    final title = _noticeTitleController.text.trim();
+    final desc = _noticeDescController.text.trim();
+    if (title.isEmpty || desc.isEmpty) return;
+
+    setState(() => _isSaving = true);
+    await FirebaseFirestore.instance.collection('school_notices').add({
+      'title': title,
+      'description': desc,
+      'category': _noticeCategory,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    _noticeTitleController.clear();
+    _noticeDescController.clear();
+    setState(() => _isSaving = false);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text('Notice students portal par broadcast ho gaya!'),
+        ),
+      );
+    }
+  }
+
+  // 2. Student Record Save Function
+  Future<void> _saveStudent() async {
+    final name = _nameController.text.trim();
+    final roll = _rollController.text.trim();
+    final contact = _parentContactController.text.trim();
+
+    if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kripya saari details bharein')),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    final docId = '${_directoryClass}_Roll_$roll';
+
+    await FirebaseFirestore.instance.collection('students_directory').doc(docId).set({
+      'name': name,
+      'rollNo': roll,
+      'className': _directoryClass,
+      'parentContact': contact,
+      'registeredAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    setState(() => _isSaving = false);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text('$name ka record save ho gaya!'),
+        ),
+      );
+    }
+  }
+
+  // 3. Digital ID Card Popup Generator
+  void _showIdCardPreview() {
+    final name = _nameController.text.trim().isEmpty ? 'Student Name' : _nameController.text.trim();
+    final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
+    final contact = _parentContactController.text.trim().isEmpty ? '+91 XXXXXXXXXX' : _parentContactController.text.trim();
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          width: 320,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1F2C34),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFF00A884), width: 1.5),
+            boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 10)],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.school, color: Color(0xFF00A884), size: 22),
+                  SizedBox(width: 8),
+                  Text(
+                    'SARASWATI VIDYANIKETAN',
+                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 0.8),
+                  ),
+                ],
+              ),
+              const Divider(color: Colors.white24, height: 24),
+              const CircleAvatar(
+                radius: 36,
+                backgroundColor: Color(0xFF121B22),
+                child: Icon(Icons.person, size: 45, color: Color(0xFF00A884)),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                name.toUpperCase(),
+                style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$_directoryClass  |  Roll No: $roll',
+                style: const TextStyle(color: Color(0xFF00A884), fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF121B22),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Parent Contact:', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    Text(contact, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close Preview', style: TextStyle(color: Colors.grey)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF121B22),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Admin Command Center'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // --- SECTION 1: DIGITAL NOTICE BOARD ---
+            _buildSectionHeader('Digital Notice Board', Icons.campaign),
+            _buildCardWrapper(
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: _noticeCategory,
+                          dropdownColor: const Color(0xFF1F2C34),
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Notice Type'),
+                          items: _noticeCategories.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
+                          onChanged: (val) => setState(() => _noticeCategory = val!),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _noticeTitleController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Title (e.g. Summer Vacation / Unit Test)'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _noticeDescController,
+                    maxLines: 2,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Details / Instructions...'),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                      onPressed: _isSaving ? null : _publishNotice,
+                      icon: const Icon(Icons.broadcast_on_personal, color: Colors.white, size: 18),
+                      label: const Text('Publish Notice', style: TextStyle(color: Colors.white)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // --- SECTION 2: STUDENT DIRECTORY & ID CARD ---
+            _buildSectionHeader('Student Directory & ID Cards', Icons.badge_outlined),
+            _buildCardWrapper(
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: _directoryClass,
+                          dropdownColor: const Color(0xFF1F2C34),
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Class'),
+                          items: _classList.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                          onChanged: (val) => setState(() => _directoryClass = val!),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: _rollController,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Roll No'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _nameController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Student Full Name'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _parentContactController,
+                    keyboardType: TextInputType.phone,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Parent Contact No'),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                          onPressed: _isSaving ? null : _saveStudent,
+                          icon: const Icon(Icons.save, color: Colors.white, size: 18),
+                          label: const Text('Save Record', style: TextStyle(color: Colors.white)),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFF00A884)),
+                          ),
+                          onPressed: _showIdCardPreview,
+                          icon: const Icon(Icons.visibility, color: Color(0xFF00A884), size: 18),
+                          label: const Text('ID Card', style: TextStyle(color: Color(0xFF00A884))),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        children: [
+          Icon(icon, color: const Color(0xFF00A884), size: 20),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCardWrapper({required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F2C34),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: child,
+    );
+  }
+
+  InputDecoration _inputDecoration(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+      filled: true,
+      fillColor: const Color(0xFF121B22),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide.none,
       ),
     );
   }
