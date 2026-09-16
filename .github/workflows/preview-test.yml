@@ -21,9 +21,8 @@ jobs:
           flutter create . --platforms web
           flutter build web --release
 
-      - name: Deploy to Netlify Test URL
-        id: deploy
-        run: |
-          npm install -g netlify-cli
-          OUTPUT=$(npx netlify deploy --dir=./build/web --open=false)
-          echo "$OUTPUT"
+      - name: Upload Test Result to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: saarthi-test-build
+          path: build/web
