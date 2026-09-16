@@ -4,6 +4,9 @@ on:
     branches:
       - dev
 
+permissions:
+  contents: write
+
 jobs:
   build_and_preview:
     runs-on: ubuntu-latest
@@ -15,13 +18,13 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Build Web
+      - name: Generate Web Files & Build
         run: |
           flutter config --enable-web
           flutter create . --platforms web
           flutter build web --release --base-href "/${{ github.event.repository.name }}/test/"
 
-      - name: Deploy to GitHub Pages (Test Folder)
+      - name: Deploy Test Folder to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
