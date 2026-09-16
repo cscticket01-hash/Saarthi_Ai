@@ -19,12 +19,12 @@ jobs:
         run: |
           flutter config --enable-web
           flutter create . --platforms web
-          flutter build web --release
+          flutter build web --release --base-href "/${{ github.event.repository.name }}/test/"
 
-      - name: Deploy to Firebase Preview Channel
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Deploy to GitHub Pages (Test Folder)
+        uses: peaceiris/actions-gh-pages@v3
         with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
-          projectId: saarthi-ai
-          channelId: test
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
+          destination_dir: test
+          keep_files: true
