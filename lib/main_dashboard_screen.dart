@@ -830,6 +830,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   bool _isSearchingStudent = false;
   final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
 
+  // Teacher List Data (Placeholder)
+  final List<Map<String, String>> _teachersList = [
+    {'name': 'Ramesh Sharma', 'subject': 'Mathematics', 'phone': '+91 9876543210'},
+    {'name': 'Priya Sen', 'subject': 'Bengali & English', 'phone': '+91 9876543211'},
+    {'name': 'Amit Paul', 'subject': 'Science', 'phone': '+91 9876543212'},
+  ];
+
   // 1. Notice Publish or Update Function
   Future<void> _saveNotice() async {
     final title = _noticeTitleController.text.trim();
@@ -839,7 +846,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     setState(() => _isSavingNotice = true);
 
     if (_editingNoticeId == null) {
-      // New notice add karein
       await FirebaseFirestore.instance.collection('school_notices').add({
         'title': title,
         'description': desc,
@@ -847,7 +853,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         'timestamp': FieldValue.serverTimestamp(),
       });
     } else {
-      // Existing notice update karein
       await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).update({
         'title': title,
         'description': desc,
@@ -898,7 +903,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
   }
 
-  // 2. Student Search Function (Class + Roll No se Firestore se fetch)
+  // 2. Student Search Function
   Future<void> _searchStudent() async {
     final roll = _rollController.text.trim();
     if (roll.isEmpty) {
@@ -941,7 +946,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     setState(() => _isSearchingStudent = false);
   }
 
-  // 3. Digital ID Card Popup Generator
+  // 3. Teacher Add Placeholder Dialog
+  void _openAddTeacherDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Add Teacher', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: const Text(
+          'Fields baad mein jode jayenge. Option abhi ready hai.',
+          style: TextStyle(color: Colors.grey, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close', style: TextStyle(color: Color(0xFF00A884))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 4. Digital ID Card Popup
   void _showIdCardPreview() {
     final name = _nameController.text.trim().isEmpty ? 'Student Name' : _nameController.text.trim();
     final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
@@ -1027,198 +1053,286 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // --- SECTION 1: DIGITAL NOTICE BOARD ---
-            _buildSectionHeader('Digital Notice Board', Icons.campaign),
-            _buildCardWrapper(
+            // ================= LEFT COLUMN =================
+            Expanded(
+              flex: 1,
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          value: _noticeCategory,
-                          dropdownColor: const Color(0xFF1F2C34),
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Notice Type'),
-                          items: _noticeCategories.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
-                          onChanged: (val) => setState(() => _noticeCategory = val!),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _noticeTitleController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Title (e.g. Summer Vacation / Unit Test)'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _noticeDescController,
-                    maxLines: 2,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Details / Instructions...'),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                          onPressed: _isSavingNotice ? null : _saveNotice,
-                          icon: Icon(_editingNoticeId == null ? Icons.campaign : Icons.check, color: Colors.white, size: 18),
-                          label: Text(
-                            _editingNoticeId == null ? 'Publish Notice' : 'Update Notice',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        ),
-                      ),
-                      if (_editingNoticeId != null) ...[
-                        const SizedBox(width: 8),
-                        IconButton(
-                          onPressed: _cancelNoticeEdit,
-                          icon: const Icon(Icons.close, color: Colors.redAccent),
-                          tooltip: 'Cancel Edit',
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(color: Colors.white24, height: 1),
-                  const SizedBox(height: 12),
-
-                  // Real-time Published Notices List with Edit & Delete
-                  StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
-                      }
-                      if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                        return const Text('Koi notice published nahi hai.', style: TextStyle(color: Colors.grey, fontSize: 13));
-                      }
-                      return ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: snapshot.data!.docs.length,
-                        itemBuilder: (context, index) {
-                          final doc = snapshot.data!.docs[index];
-                          final data = doc.data() as Map<String, dynamic>;
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF121B22),
-                              borderRadius: BorderRadius.circular(8),
+                  // --- DIGITAL NOTICE BOARD ---
+                  _buildSectionHeader('Digital Notice Board', Icons.campaign),
+                  _buildCardWrapper(
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: _noticeCategory,
+                                dropdownColor: const Color(0xFF1F2C34),
+                                style: const TextStyle(color: Colors.white),
+                                decoration: _inputDecoration('Notice Type'),
+                                items: _noticeCategories.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
+                                onChanged: (val) => setState(() => _noticeCategory = val!),
+                              ),
                             ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _noticeTitleController,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Title (e.g. Summer Vacation / Unit Test)'),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _noticeDescController,
+                          maxLines: 2,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Details / Instructions...'),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                                onPressed: _isSavingNotice ? null : _saveNotice,
+                                icon: Icon(_editingNoticeId == null ? Icons.campaign : Icons.check, color: Colors.white, size: 18),
+                                label: Text(
+                                  _editingNoticeId == null ? 'Publish Notice' : 'Update Notice',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              ),
+                            ),
+                            if (_editingNoticeId != null) ...[
+                              const SizedBox(width: 8),
+                              IconButton(
+                                onPressed: _cancelNoticeEdit,
+                                icon: const Icon(Icons.close, color: Colors.redAccent),
+                                tooltip: 'Cancel Edit',
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        const Divider(color: Colors.white24, height: 1),
+                        const SizedBox(height: 12),
+                        StreamBuilder<QuerySnapshot>(
+                          stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState == ConnectionState.waiting) {
+                              return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+                            }
+                            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                              return const Text('Koi notice published nahi hai.', style: TextStyle(color: Colors.grey, fontSize: 13));
+                            }
+                            return ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: snapshot.data!.docs.length,
+                              itemBuilder: (context, index) {
+                                final doc = snapshot.data!.docs[index];
+                                final data = doc.data() as Map<String, dynamic>;
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF121B22),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
                                     children: [
-                                      Text(
-                                        '[${data['category'] ?? 'General'}] ${data['title'] ?? ''}',
-                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              '[${data['category'] ?? 'General'}] ${data['title'] ?? ''}',
+                                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                            ),
+                                            Text(
+                                              data['description'] ?? '',
+                                              style: const TextStyle(color: Colors.grey, fontSize: 12),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                      Text(
-                                        data['description'] ?? '',
-                                        style: const TextStyle(color: Colors.grey, fontSize: 12),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 18),
+                                        onPressed: () => _startEditNotice(doc.id, data),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                                        onPressed: () => _deleteNotice(doc.id),
                                       ),
                                     ],
                                   ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 18),
-                                  onPressed: () => _startEditNotice(doc.id, data),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-                                  onPressed: () => _deleteNotice(doc.id),
-                                ),
-                              ],
+                                );
+                              },
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // --- STUDENT DIRECTORY ---
+                  _buildSectionHeader('Student Directory & ID Cards', Icons.badge_outlined),
+                  _buildCardWrapper(
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: _directoryClass,
+                                dropdownColor: const Color(0xFF1F2C34),
+                                style: const TextStyle(color: Colors.white),
+                                decoration: _inputDecoration('Class'),
+                                items: _classList.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                                onChanged: (val) => setState(() => _directoryClass = val!),
+                              ),
                             ),
-                          );
-                        },
-                      );
-                    },
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: _rollController,
+                                keyboardType: TextInputType.number,
+                                style: const TextStyle(color: Colors.white),
+                                decoration: _inputDecoration('Roll No'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _nameController,
+                          readOnly: true,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Student Full Name (Auto Fetched)'),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _parentContactController,
+                          readOnly: true,
+                          keyboardType: TextInputType.phone,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Parent Contact No (Auto Fetched)'),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                                onPressed: _isSearchingStudent ? null : _searchStudent,
+                                icon: const Icon(Icons.search, color: Colors.white, size: 18),
+                                label: Text(_isSearchingStudent ? 'Searching...' : 'Search Record', style: const TextStyle(color: Colors.white)),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Color(0xFF00A884)),
+                                ),
+                                onPressed: _showIdCardPreview,
+                                icon: const Icon(Icons.visibility, color: Color(0xFF00A884), size: 18),
+                                label: const Text('View ID Card', style: TextStyle(color: Color(0xFF00A884))),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 24),
 
-            // --- SECTION 2: STUDENT DIRECTORY & ID CARDS (SEARCH & VIEW) ---
-            _buildSectionHeader('Student Directory & ID Cards', Icons.badge_outlined),
-            _buildCardWrapper(
+            const SizedBox(width: 20),
+
+            // ================= RIGHT COLUMN =================
+            Expanded(
+              flex: 1,
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // --- RIGHT TOP: TEACHERS DIRECTORY ---
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          value: _directoryClass,
-                          dropdownColor: const Color(0xFF1F2C34),
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Class'),
-                          items: _classList.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                          onChanged: (val) => setState(() => _directoryClass = val!),
+                      _buildSectionHeader('Teachers Directory', Icons.person_add_alt_1),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF00A884),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: _rollController,
-                          keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Roll No'),
-                        ),
+                        onPressed: _openAddTeacherDialog,
+                        icon: const Icon(Icons.add, color: Colors.white, size: 16),
+                        label: const Text('Add Teacher', style: TextStyle(color: Colors.white, fontSize: 12)),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _nameController,
-                    readOnly: true,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Student Full Name (Auto Fetched)'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _parentContactController,
-                    readOnly: true,
-                    keyboardType: TextInputType.phone,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Parent Contact No (Auto Fetched)'),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                          onPressed: _isSearchingStudent ? null : _searchStudent,
-                          icon: const Icon(Icons.search, color: Colors.white, size: 18),
-                          label: Text(_isSearchingStudent ? 'Searching...' : 'Search Record', style: const TextStyle(color: Colors.white)),
+                  _buildCardWrapper(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Registered Teachers List:', style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 10),
+                        ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _teachersList.length,
+                          separatorBuilder: (ctx, i) => const Divider(color: Colors.white12, height: 12),
+                          itemBuilder: (context, index) {
+                            final teacher = _teachersList[index];
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              dense: true,
+                              leading: const CircleAvatar(
+                                radius: 18,
+                                backgroundColor: Color(0xFF121B22),
+                                child: Icon(Icons.school, color: Color(0xFF00A884), size: 18),
+                              ),
+                              title: Text(teacher['name']!, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                              subtitle: Text('${teacher['subject']} • ${teacher['phone']}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                              trailing: const Icon(Icons.more_vert, color: Colors.grey, size: 18),
+                            );
+                          },
                         ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // --- RIGHT BOTTOM: STUDENT ID CARD VIEW AREA ---
+                  _buildSectionHeader('Student ID Card View Area', Icons.contact_mail),
+                  _buildCardWrapper(
+                    child: Container(
+                      height: 185,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white12),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFF00A884)),
-                          ),
-                          onPressed: _showIdCardPreview,
-                          icon: const Icon(Icons.visibility, color: Color(0xFF00A884), size: 18),
-                          label: const Text('View ID Card', style: TextStyle(color: Color(0xFF00A884))),
-                        ),
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.badge, color: Color(0xFF00A884), size: 42),
+                          SizedBox(height: 8),
+                          Text('Search a student on left to preview card here', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ],
               ),
