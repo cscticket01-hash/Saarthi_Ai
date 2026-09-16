@@ -16,7 +16,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
 
   final List<Widget> _pages = [
     const AiChatScreen(),
-    const PhonebookScreen(),
+    const SchoolAdminLoginScreen(),
   ];
 
   @override
@@ -36,9 +36,9 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
             label: 'AI Chat',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.contacts_outlined),
-            activeIcon: Icon(Icons.contacts),
-            label: 'Phonebook',
+            icon: Icon(Icons.school_outlined),
+            activeIcon: Icon(Icons.school),
+            label: 'School Login',
           ),
         ],
       ),
@@ -500,42 +500,159 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
 }
 
-// ----------------- PHONEBOOK / CONTACT LIST SCREEN -----------------
-class PhonebookScreen extends StatelessWidget {
-  const PhonebookScreen({super.key});
+// ----------------- SCHOOL ADMIN LOGIN SCREEN -----------------
+class SchoolAdminLoginScreen extends StatefulWidget {
+  const SchoolAdminLoginScreen({super.key});
+
+  @override
+  State<SchoolAdminLoginScreen> createState() => _SchoolAdminLoginScreenState();
+}
+
+class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _obscurePassword = true;
+  bool _isLoggingIn = false;
+
+  Future<void> _handleAdminLogin() async {
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (username.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kripya Username aur Password bharein')),
+      );
+      return;
+    }
+
+    setState(() => _isLoggingIn = true);
+
+    try {
+      // Abhi testing ke liye direct check, baad mein Firebase Firestore se connect ho sakta hai
+      if (username == 'admin' && password == '123456') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF00A884),
+            content: Text('Admin Login Safal hua!'),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Galat Username ya Password!'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoggingIn = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final List<Map<String, String>> dummyContacts = [
-      {'name': 'Aakash Sharma', 'phone': '+91 9876543210'},
-      {'name': 'Pooja Verma', 'phone': '+91 9811122233'},
-      {'name': 'Ramesh Kumar', 'phone': '+91 9900011223'},
-    ];
-
     return Scaffold(
       backgroundColor: const Color(0xFF121B22),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Phonebook / Contacts'),
+        title: const Text('School Admin Portal'),
       ),
-      body: ListView.separated(
-        itemCount: dummyContacts.length,
-        separatorBuilder: (_, __) => const Divider(color: Colors.white10),
-        itemBuilder: (context, index) {
-          final contact = dummyContacts[index];
-          return ListTile(
-            leading: CircleAvatar(
-              backgroundColor: const Color(0xFF00A884),
-              child: Text(contact['name']![0], style: const TextStyle(color: Colors.white)),
-            ),
-            title: Text(contact['name']!, style: const TextStyle(color: Colors.white)),
-            subtitle: Text(contact['phone']!, style: const TextStyle(color: Colors.grey)),
-            trailing: IconButton(
-              icon: const Icon(Icons.call, color: Color(0xFF00A884)),
-              onPressed: () {},
-            ),
-          );
-        },
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.school_rounded, size: 70, color: Color(0xFF00A884)),
+              const SizedBox(height: 16),
+              const Text(
+                'ADMIN LOGIN',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 30),
+
+              // Username Field
+              TextField(
+                controller: _usernameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Username',
+                  hintStyle: const TextStyle(color: Colors.grey),
+                  prefixIcon: const Icon(Icons.person_outline, color: Color(0xFF00A884)),
+                  filled: true,
+                  fillColor: const Color(0xFF1F2C34),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Password Field
+              TextField(
+                controller: _passwordController,
+                obscureText: _obscurePassword,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Password',
+                  hintStyle: const TextStyle(color: Colors.grey),
+                  prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF00A884)),
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                      color: Colors.grey,
+                    ),
+                    onPressed: () {
+                      setState(() => _obscurePassword = !_obscurePassword);
+                    },
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF1F2C34),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Login Button
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: _isLoggingIn ? null : _handleAdminLogin,
+                  child: _isLoggingIn
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        )
+                      : const Text(
+                          'LOGIN',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
