@@ -500,7 +500,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
 }
 
-// ----------------- SCHOOL ADMIN LOGIN SCREEN -----------------
+// ----------------- SCHOOL PORTAL (ADMIN & STUDENT LOGIN) -----------------
 class SchoolAdminLoginScreen extends StatefulWidget {
   const SchoolAdminLoginScreen({super.key});
 
@@ -509,18 +509,31 @@ class SchoolAdminLoginScreen extends StatefulWidget {
 }
 
 class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
+  bool _isAdminMode = true; // true = Admin, false = Student
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoggingIn = false;
 
-  Future<void> _handleAdminLogin() async {
-    final username = _usernameController.text.trim();
+  void _switchRole(bool isAdmin) {
+    setState(() {
+      _isAdminMode = isAdmin;
+      _usernameController.clear();
+      _passwordController.clear();
+    });
+  }
+
+  Future<void> _handleLogin() async {
+    final idText = _usernameController.text.trim();
     final password = _passwordController.text.trim();
 
-    if (username.isEmpty || password.isEmpty) {
+    if (idText.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kripya Username aur Password bharein')),
+        SnackBar(
+          content: Text(_isAdminMode
+              ? 'Kripya Username aur Password bharein'
+              : 'Kripya Roll No / Student ID aur Password bharein'),
+        ),
       );
       return;
     }
@@ -528,21 +541,40 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
     setState(() => _isLoggingIn = true);
 
     try {
-      // Abhi testing ke liye direct check, baad mein Firebase Firestore se connect ho sakta hai
-      if (username == 'admin' && password == '123456') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Color(0xFF00A884),
-            content: Text('Admin Login Safal hua!'),
-          ),
-        );
+      if (_isAdminMode) {
+        // Admin credentials verification
+        if (idText == 'admin' && password == '123456') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Color(0xFF00A884),
+              content: Text('Admin Login Safal hua!'),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Colors.redAccent,
+              content: Text('Galat Admin Username ya Password!'),
+            ),
+          );
+        }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('Galat Username ya Password!'),
-          ),
-        );
+        // Student credentials verification (Testing ke liye)
+        if (idText == 'student' && password == '123456') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Color(0xFF00A884),
+              content: Text('Student Login Safal hua!'),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Colors.redAccent,
+              content: Text('Galat Student ID ya Password!'),
+            ),
+          );
+        }
       }
     } finally {
       if (mounted) setState(() => _isLoggingIn = false);
@@ -555,35 +587,102 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
       backgroundColor: const Color(0xFF121B22),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('School Admin Portal'),
+        title: const Text('School Portal'),
       ),
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.school_rounded, size: 70, color: Color(0xFF00A884)),
-              const SizedBox(height: 16),
-              const Text(
-                'ADMIN LOGIN',
-                style: TextStyle(
+              Icon(
+                _isAdminMode ? Icons.admin_panel_settings_rounded : Icons.school_rounded,
+                size: 65,
+                color: const Color(0xFF00A884),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _isAdminMode ? 'ADMIN LOGIN' : 'STUDENT LOGIN',
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 1.2,
                 ),
               ),
-              const SizedBox(height: 30),
+              const SizedBox(height: 24),
 
-              // Username Field
+              // Role Selector Tabs (Admin vs Student)
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1F2C34),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.all(4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => _switchRole(true),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          decoration: BoxDecoration(
+                            color: _isAdminMode ? const Color(0xFF00A884) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.security, size: 16, color: Colors.white),
+                              SizedBox(width: 6),
+                              Text(
+                                'Admin',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => _switchRole(false),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          decoration: BoxDecoration(
+                            color: !_isAdminMode ? const Color(0xFF00A884) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.person, size: 16, color: Colors.white),
+                              SizedBox(width: 6),
+                              Text(
+                                'Student',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Username / Roll No Field
               TextField(
                 controller: _usernameController,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  hintText: 'Username',
+                  hintText: _isAdminMode ? 'Username' : 'Student ID / Roll No',
                   hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.person_outline, color: Color(0xFF00A884)),
+                  prefixIcon: Icon(
+                    _isAdminMode ? Icons.person_outline : Icons.badge_outlined,
+                    color: const Color(0xFF00A884),
+                  ),
                   filled: true,
                   fillColor: const Color(0xFF1F2C34),
                   border: OutlineInputBorder(
@@ -633,18 +732,18 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  onPressed: _isLoggingIn ? null : _handleAdminLogin,
+                  onPressed: _isLoggingIn ? null : _handleLogin,
                   child: _isLoggingIn
                       ? const SizedBox(
                           height: 20,
                           width: 20,
                           child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                         )
-                      : const Text(
-                          'LOGIN',
-                          style: TextStyle(
+                      : Text(
+                          _isAdminMode ? 'LOGIN AS ADMIN' : 'LOGIN AS STUDENT',
+                          style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 16,
+                            fontSize: 15,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
