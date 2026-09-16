@@ -395,8 +395,6 @@ drawer: Drawer(
                   stream: FirebaseFirestore.instance
                       .collection('users')
                       .doc(user.uid)
-                      .collection('sessions')
-                      .doc(_currentSessionId)
                       .collection('chats')
                       .orderBy('timestamp', descending: true)
                       .snapshots(),
@@ -409,7 +407,6 @@ drawer: Drawer(
                     if (!chatSnap.hasData || chatSnap.data!.docs.isEmpty) {
                       return const Center(
                         child: Text(
-                          'Koi purani chat nahi mili. Message karein!',
                           style: TextStyle(color: Colors.grey),
                         ),
                       );
