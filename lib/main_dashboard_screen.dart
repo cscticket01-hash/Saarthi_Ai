@@ -372,7 +372,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                     if (!chatSnap.hasData || chatSnap.data!.docs.isEmpty) {
                       return const Center(
                         child: Text(
-                          'Koi message nahi hai. Nayi chat shuru karein!',
+                          'Nayi chat shuru karein!',
                           style: TextStyle(color: Colors.grey),
                         ),
                       );
@@ -385,12 +385,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
                       final tB = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
                       if (tA == null) return 1;
                       if (tB == null) return -1;
-                      return tA.compareTo(tB);
+                      return tB.compareTo(tA);
                     });
 
                     return ListView.builder(
                       controller: _scrollController,
                       padding: const EdgeInsets.all(12),
+                      reverse: true,
                       itemCount: docs.length + (_isLoading ? 1 : 0),
                       itemBuilder: (context, index) {
                         if (_isLoading && index == docs.length) {
