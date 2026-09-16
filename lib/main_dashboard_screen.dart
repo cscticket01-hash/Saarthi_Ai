@@ -514,6 +514,9 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoggingIn = false;
+  String _selectedClass = 'Class 1'; // Default class
+
+  final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
 
   void _switchRole(bool isAdmin) {
     setState(() {
@@ -672,6 +675,47 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
               ),
               const SizedBox(height: 24),
 
+              if (!_isAdminMode) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F2C34),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.class_outlined, color: Color(0xFF00A884)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _selectedClass,
+                            dropdownColor: const Color(0xFF1F2C34),
+                            icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
+                            style: const TextStyle(color: Colors.white, fontSize: 16),
+                            isExpanded: true,
+                            items: _classList.map((String value) {
+                              return DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(value),
+                              );
+                            }).toList(),
+                            onChanged: (newValue) {
+                              if (newValue != null) {
+                                setState(() {
+                                  _selectedClass = newValue;
+                                });
+                              }
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              
               // Username / Roll No Field
               TextField(
                 controller: _usernameController,
