@@ -818,6 +818,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final TextEditingController _noticeDescController = TextEditingController();
   String _noticeCategory = 'Holiday';
   final List<String> _noticeCategories = ['Holiday', 'Exam', 'Event', 'General'];
+  String? _editingNoticeId; // null = new notice, non-null = editing mode
 
   // Student Directory controllers
   String _directoryClass = 'Class 1';
@@ -825,78 +826,126 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final TextEditingController _rollController = TextEditingController();
   final TextEditingController _parentContactController = TextEditingController();
 
-  bool _isSaving = false;
+  bool _isSavingNotice = false;
+  bool _isSearchingStudent = false;
   final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
 
-  // 1. Notice Broadcast Function
-  Future<void> _publishNotice() async {
+  // 1. Notice Publish or Update Function
+  Future<void> _saveNotice() async {
     final title = _noticeTitleController.text.trim();
     final desc = _noticeDescController.text.trim();
     if (title.isEmpty || desc.isEmpty) return;
 
-    setState(() => _isSaving = true);
-    await FirebaseFirestore.instance.collection('school_notices').add({
-      'title': title,
-      'description': desc,
-      'category': _noticeCategory,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+    setState(() => _isSavingNotice = true);
 
-    _noticeTitleController.clear();
-    _noticeDescController.clear();
-    setState(() => _isSaving = false);
+    if (_editingNoticeId == null) {
+      // New notice add karein
+      await FirebaseFirestore.instance.collection('school_notices').add({
+        'title': title,
+        'description': desc,
+        'category': _noticeCategory,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } else {
+      // Existing notice update karein
+      await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).update({
+        'title': title,
+        'description': desc,
+        'category': _noticeCategory,
+        'lastEdited': FieldValue.serverTimestamp(),
+      });
+    }
+
+    _cancelNoticeEdit();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Color(0xFF00A884),
-          content: Text('Notice students portal par broadcast ho gaya!'),
+          content: Text('Notice successfully updated!'),
         ),
       );
     }
   }
 
-  // 2. Student Record Save Function
-  Future<void> _saveStudent() async {
-    final name = _nameController.text.trim();
-    final roll = _rollController.text.trim();
-    final contact = _parentContactController.text.trim();
+  void _startEditNotice(String id, Map<String, dynamic> data) {
+    setState(() {
+      _editingNoticeId = id;
+      _noticeTitleController.text = data['title'] ?? '';
+      _noticeDescController.text = data['description'] ?? '';
+      _noticeCategory = _noticeCategories.contains(data['category']) ? data['category'] : 'General';
+    });
+  }
 
-    if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
+  void _cancelNoticeEdit() {
+    setState(() {
+      _editingNoticeId = null;
+      _noticeTitleController.clear();
+      _noticeDescController.clear();
+      _isSavingNotice = false;
+    });
+  }
+
+  Future<void> _deleteNotice(String id) async {
+    await FirebaseFirestore.instance.collection('school_notices').doc(id).delete();
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kripya saari details bharein')),
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Notice delete ho gaya!'),
+        ),
+      );
+    }
+  }
+
+  // 2. Student Search Function (Class + Roll No se Firestore se fetch)
+  Future<void> _searchStudent() async {
+    final roll = _rollController.text.trim();
+    if (roll.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kripya Roll Number bharein')),
       );
       return;
     }
 
-    setState(() => _isSaving = true);
+    setState(() => _isSearchingStudent = true);
     final docId = '${_directoryClass}_Roll_$roll';
 
-    await FirebaseFirestore.instance.collection('students_directory').doc(docId).set({
-      'name': name,
-      'rollNo': roll,
-      'className': _directoryClass,
-      'parentContact': contact,
-      'registeredAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
 
-    setState(() => _isSaving = false);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFF00A884),
-          content: Text('$name ka record save ho gaya!'),
-        ),
-      );
+    if (doc.exists) {
+      final data = doc.data()!;
+      _nameController.text = data['name'] ?? '';
+      _parentContactController.text = data['parentContact'] ?? '';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF00A884),
+            content: Text('Student mil gaya!'),
+          ),
+        );
+      }
+    } else {
+      _nameController.clear();
+      _parentContactController.clear();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Is Roll No ka koi student nahi mila!'),
+          ),
+        );
+      }
     }
+
+    setState(() => _isSearchingStudent = false);
   }
 
   // 3. Digital ID Card Popup Generator
   void _showIdCardPreview() {
     final name = _nameController.text.trim().isEmpty ? 'Student Name' : _nameController.text.trim();
     final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
-    final contact = _parentContactController.text.trim().isEmpty ? '+91 XXXXXXXXXX' : _parentContactController.text.trim();
+    final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
 
     showDialog(
       context: context,
@@ -1014,21 +1063,97 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     decoration: _inputDecoration('Details / Instructions...'),
                   ),
                   const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                      onPressed: _isSaving ? null : _publishNotice,
-                      icon: const Icon(Icons.broadcast_on_personal, color: Colors.white, size: 18),
-                      label: const Text('Publish Notice', style: TextStyle(color: Colors.white)),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                          onPressed: _isSavingNotice ? null : _saveNotice,
+                          icon: Icon(_editingNoticeId == null ? Icons.campaign : Icons.check, color: Colors.white, size: 18),
+                          label: Text(
+                            _editingNoticeId == null ? 'Publish Notice' : 'Update Notice',
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                      if (_editingNoticeId != null) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: _cancelNoticeEdit,
+                          icon: const Icon(Icons.close, color: Colors.redAccent),
+                          tooltip: 'Cancel Edit',
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(color: Colors.white24, height: 1),
+                  const SizedBox(height: 12),
+
+                  // Real-time Published Notices List with Edit & Delete
+                  StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+                      }
+                      if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                        return const Text('Koi notice published nahi hai.', style: TextStyle(color: Colors.grey, fontSize: 13));
+                      }
+                      return ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: snapshot.data!.docs.length,
+                        itemBuilder: (context, index) {
+                          final doc = snapshot.data!.docs[index];
+                          final data = doc.data() as Map<String, dynamic>;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF121B22),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '[${data['category'] ?? 'General'}] ${data['title'] ?? ''}',
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                      ),
+                                      Text(
+                                        data['description'] ?? '',
+                                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 18),
+                                  onPressed: () => _startEditNotice(doc.id, data),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                                  onPressed: () => _deleteNotice(doc.id),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      );
+                    },
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 24),
 
-            // --- SECTION 2: STUDENT DIRECTORY & ID CARD ---
+            // --- SECTION 2: STUDENT DIRECTORY & ID CARDS (SEARCH & VIEW) ---
             _buildSectionHeader('Student Directory & ID Cards', Icons.badge_outlined),
             _buildCardWrapper(
               child: Column(
@@ -1059,15 +1184,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: _nameController,
+                    readOnly: true,
                     style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Student Full Name'),
+                    decoration: _inputDecoration('Student Full Name (Auto Fetched)'),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: _parentContactController,
+                    readOnly: true,
                     keyboardType: TextInputType.phone,
                     style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Parent Contact No'),
+                    decoration: _inputDecoration('Parent Contact No (Auto Fetched)'),
                   ),
                   const SizedBox(height: 14),
                   Row(
@@ -1075,9 +1202,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       Expanded(
                         child: ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                          onPressed: _isSaving ? null : _saveStudent,
-                          icon: const Icon(Icons.save, color: Colors.white, size: 18),
-                          label: const Text('Save Record', style: TextStyle(color: Colors.white)),
+                          onPressed: _isSearchingStudent ? null : _searchStudent,
+                          icon: const Icon(Icons.search, color: Colors.white, size: 18),
+                          label: Text(_isSearchingStudent ? 'Searching...' : 'Search Record', style: const TextStyle(color: Colors.white)),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -1088,7 +1215,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           ),
                           onPressed: _showIdCardPreview,
                           icon: const Icon(Icons.visibility, color: Color(0xFF00A884), size: 18),
-                          label: const Text('ID Card', style: TextStyle(color: Color(0xFF00A884))),
+                          label: const Text('View ID Card', style: TextStyle(color: Color(0xFF00A884))),
                         ),
                       ),
                     ],
