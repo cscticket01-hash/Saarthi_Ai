@@ -265,6 +265,24 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   ),
                 ),
               ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+                child: TextField(
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'Search chats...',
+                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey, size: 18),
+                    filled: true,
+                    fillColor: const Color(0xFF2A3942),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
               const Divider(color: Colors.white24, height: 1),
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
