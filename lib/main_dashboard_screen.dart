@@ -526,24 +526,6 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
     });
   }
 
-  Future<void> _handleLogin() async {
-    final idText = _usernameController.text.trim();
-    final password = _passwordController.text.trim();
-
-    if (idText.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_isAdminMode
-              ? 'Kripya Username aur Password bharein'
-              : 'Kripya Roll No / Student ID aur Password bharein'),
-        ),
-      );
-      return;
-    }
-
-    setState(() => _isLoggingIn = true);
-
-    try {
 Future<void> _handleLogin() async {
     final idText = _usernameController.text.trim();
     final password = _passwordController.text.trim();
@@ -563,7 +545,7 @@ Future<void> _handleLogin() async {
 
     try {
       if (_isAdminMode) {
-        // Secret & Secure: Firebase Authentication login (Inspect panel me password nahi dikhega)
+        // Firebase Authentication login (Inspect safe)
         try {
           await FirebaseAuth.instance.signInWithEmailAndPassword(
             email: idText,
@@ -598,28 +580,6 @@ Future<void> _handleLogin() async {
             );
           }
         }
-      } else {
-        // Student credentials verification
-        if (idText == 'student' && password == '123456') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              backgroundColor: Color(0xFF00A884),
-              content: Text('Student Login Safal hua!'),
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              backgroundColor: Colors.redAccent,
-              content: Text('Galat Student ID ya Password!'),
-            ),
-          );
-        }
-      }
-    } finally {
-      if (mounted) setState(() => _isLoggingIn = false);
-    }
-  }
       } else {
         // Student credentials verification (Testing ke liye)
         if (idText == 'student' && password == '123456') {
