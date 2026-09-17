@@ -544,27 +544,82 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
     setState(() => _isLoggingIn = true);
 
     try {
+Future<void> _handleLogin() async {
+    final idText = _usernameController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (idText.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_isAdminMode
+              ? 'Kripya Admin Email aur Password bharein'
+              : 'Kripya Roll No / Student ID aur Password bharein'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoggingIn = true);
+
+    try {
       if (_isAdminMode) {
-        // Admin credentials verification
-        if (idText == 'admin' && password == '123456') {
+        // Secret & Secure: Firebase Authentication login (Inspect panel me password nahi dikhega)
+        try {
+          await FirebaseAuth.instance.signInWithEmailAndPassword(
+            email: idText,
+            password: password,
+          );
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                backgroundColor: Color(0xFF00A884),
+                content: Text('Admin Login Safal hua!'),
+              ),
+            );
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
+            );
+          }
+        } on FirebaseAuthException catch (e) {
+          if (mounted) {
+            String errorMsg = 'Galat Admin Email ya Password!';
+            if (e.code == 'user-not-found') {
+              errorMsg = 'Yeh Admin account registered nahi hai.';
+            } else if (e.code == 'wrong-password') {
+              errorMsg = 'Galat password dala hai.';
+            }
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                backgroundColor: Colors.redAccent,
+                content: Text(errorMsg),
+              ),
+            );
+          }
+        }
+      } else {
+        // Student credentials verification
+        if (idText == 'student' && password == '123456') {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               backgroundColor: Color(0xFF00A884),
-              content: Text('Admin Login Safal hua!'),
+              content: Text('Student Login Safal hua!'),
             ),
           );
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
-          );   
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               backgroundColor: Colors.redAccent,
-              content: Text('Galat Admin Username ya Password!'),
+              content: Text('Galat Student ID ya Password!'),
             ),
           );
         }
+      }
+    } finally {
+      if (mounted) setState(() => _isLoggingIn = false);
+    }
+  }
       } else {
         // Student credentials verification (Testing ke liye)
         if (idText == 'student' && password == '123456') {
@@ -725,7 +780,7 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
                 controller: _usernameController,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  hintText: _isAdminMode ? 'Username' : 'Student ID / Roll No',
+                  hintText: _isAdminMode ? 'Admin Email' : 'Student ID / Roll No',
                   hintStyle: const TextStyle(color: Colors.grey),
                   prefixIcon: Icon(
                     _isAdminMode ? Icons.person_outline : Icons.badge_outlined,
