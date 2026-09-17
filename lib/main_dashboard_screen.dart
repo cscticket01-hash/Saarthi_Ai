@@ -1466,7 +1466,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-// Exact School ID Card Format with Download Option
+  // Exact School ID Card Format with Download Option
   void _showIdCardPreview() {
     final name = _nameController.text.trim().isEmpty ? 'Student Name' : _nameController.text.trim();
     final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
@@ -1650,7 +1650,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
     );
   }
-
     showDialog(
       context: context,
       builder: (context) => Dialog(
@@ -2538,6 +2537,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+          const SizedBox(width: 12),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
             onPressed: () async {
