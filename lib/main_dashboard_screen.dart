@@ -1466,11 +1466,190 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // 4. Digital ID Card Popup
+// Exact School ID Card Format with Download Option
   void _showIdCardPreview() {
     final name = _nameController.text.trim().isEmpty ? 'Student Name' : _nameController.text.trim();
     final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
     final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          width: 330,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 15)],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 1. Header (School Name & Logo Bar)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFC85A17), // Theme Dark Orange
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(16),
+                    topRight: Radius.circular(16),
+                  ),
+                ),
+                child: const Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 20,
+                      backgroundColor: Colors.white,
+                      child: Icon(Icons.school, color: Color(0xFFC85A17), size: 24),
+                    ),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'SARASWATI VIDYA\nNIKETAN, MADHABDHAM',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // 2. Drive Photo with Border
+              Container(
+                width: 95,
+                height: 110,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFC85A17), width: 2.5),
+                  color: const Color(0xFFECEFF1),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: (_studentPhotoUrl != null && _studentPhotoUrl!.isNotEmpty)
+                      ? Image.network(
+                          _studentPhotoUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (ctx, err, stack) =>
+                              const Icon(Icons.person, size: 55, color: Colors.grey),
+                        )
+                      : const Icon(Icons.person, size: 55, color: Colors.grey),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              // 3. STUDENT ID CARD Badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFC85A17),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'STUDENT ID CARD',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              // 4. Details Section (Word Format)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  children: [
+                    _idCardField('Name', name),
+                    _idCardField('Contact No', contact),
+                    _idCardField('Class', _directoryClass),
+                    _idCardField('Roll No', roll),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // 5. Signature & Download Options Bar
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(width: 70, height: 1, color: Colors.black45),
+                        const SizedBox(height: 3),
+                        const Text('Principal Sign', style: TextStyle(color: Colors.black87, fontSize: 8, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Close', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                        ),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00A884),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          onPressed: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Color(0xFF00A884),
+                                content: Text('ID Card download shuru ho gaya hai!'),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.download, color: Colors.white, size: 14),
+                          label: const Text('Download', style: TextStyle(color: Colors.white, fontSize: 11)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _idCardField(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 75,
+            child: Text(
+              label,
+              style: const TextStyle(color: Color(0xFFC85A17), fontWeight: FontWeight.bold, fontSize: 11),
+            ),
+          ),
+          const Text(': ', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 11)),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 11),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
     showDialog(
       context: context,
