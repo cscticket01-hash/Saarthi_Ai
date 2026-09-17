@@ -1090,9 +1090,40 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF121B22),
-      appBar: AppBar(
+appBar: AppBar(
         backgroundColor: const Color(0xFF1F2C34),
         title: const Text('Admin Command Center'),
+        actions: [
+          PopupMenuButton<String>(
+            color: const Color(0xFF1F2C34),
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            onSelected: (value) {
+              // Baad mein features connect karne ke liye ready hai
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'profile',
+                child: Row(
+                  children: [
+                    Icon(Icons.person_outline, color: Color(0xFF00A884), size: 20),
+                    SizedBox(width: 12),
+                    Text('Profile', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings_outlined, color: Color(0xFF00A884), size: 20),
+                    SizedBox(width: 12),
+                    Text('Settings', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
