@@ -1045,7 +1045,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
               ),
             ),
-            const Spacer(),
+            const SizedBox(width: 12),
             TextButton(
               onPressed: isSaving ? null : () => Navigator.pop(ctx),
               child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
