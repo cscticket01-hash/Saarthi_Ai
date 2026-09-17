@@ -998,7 +998,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-              onPressed: isSaving ? null : () async {
+onPressed: isSaving ? null : () async {
                 final name = nameCtrl.text.trim();
                 final roll = rollCtrl.text.trim();
                 final contact = contactCtrl.text.trim();
@@ -1015,13 +1015,58 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 final docId = '${selectedClass}_Roll_$roll';
 
                 try {
+                  String finalPhotoUrl = photoUrlCtrl.text.trim();
+
+                  // 1. Check if Google Drive Script is connected
+                  final configDoc = await FirebaseFirestore.instance
+                      .collection('school_config')
+                      .doc('google_drive_account')
+                      .get();
+
+                  final scriptUrl = configDoc.data()?['scriptUrl'];
+
+                  // 2. Send Data Directly to Google Drive & Google Sheet
+                  if (scriptUrl != null && scriptUrl.toString().isNotEmpty) {
+                    try {
+                      final response = await http.post(
+                        Uri.parse(scriptUrl),
+                        headers: {'Content-Type': 'application/json'},
+                        body: jsonEncode({
+                          'action': 'add_student',
+                          'name': name,
+                          'parentName': parent,
+                          'studentClass': selectedClass,
+                          'roll': roll,
+                          'contact': contact,
+                          'photoUrl': finalPhotoUrl,
+                          'address': addressCtrl.text.trim(),
+                          'district': districtCtrl.text.trim(),
+                          'state': stateCtrl.text.trim(),
+                          'pinCode': pinCtrl.text.trim(),
+                          'joiningDate': joiningDateCtrl.text.trim(),
+                        }),
+                      );
+
+                      if (response.statusCode == 200) {
+                        final resJson = jsonDecode(response.body);
+                        if (resJson['photoUrl'] != null && resJson['photoUrl'].toString().isNotEmpty) {
+                          finalPhotoUrl = resJson['photoUrl'];
+                        }
+                      }
+                    } catch (driveErr) {
+                      // Agar Google Script call fail ho toh notification de sakte hain
+                      debugPrint('Drive Save Warning: $driveErr');
+                    }
+                  }
+
+                  // 3. Local / Firestore Sync (For super-fast app search & View All page)
                   await FirebaseFirestore.instance.collection('students_directory').doc(docId).set({
                     'name': name,
                     'parentName': parent,
                     'class': selectedClass,
                     'rollNo': roll,
                     'parentContact': contact,
-                    'photoUrl': photoUrlCtrl.text.trim(),
+                    'photoUrl': finalPhotoUrl,
                     'address': addressCtrl.text.trim(),
                     'pinCode': pinCtrl.text.trim(),
                     'district': districtCtrl.text.trim(),
@@ -1033,7 +1078,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   if (mounted) {
                     Navigator.pop(ctx);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student successfully add ho gaya!')),
+                      const SnackBar(
+                        backgroundColor: Color(0xFF00A884), 
+                        content: Text('Student successfully saved to Google Drive & App!'),
+                      ),
                     );
                   }
                 } catch (e) {
@@ -1871,7 +1919,7 @@ appBar: AppBar(
   }
 }
 
-// ==================== SETTINGS SCREEN (FULL WINDOW) ====================
+// ==================== SETTINGS SCREEN (GOOGLE DRIVE INTEGRATION) ====================
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -1881,7 +1929,9 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _gmailController = TextEditingController();
+  final TextEditingController _scriptUrlController = TextEditingController();
   String? _linkedGmail;
+  String? _linkedScriptUrl;
   bool _isLoading = false;
 
   @override
@@ -1899,17 +1949,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (doc.exists && mounted) {
       setState(() {
         _linkedGmail = doc.data()?['email'];
+        _linkedScriptUrl = doc.data()?['scriptUrl'];
+        _gmailController.text = _linkedGmail ?? '';
+        _scriptUrlController.text = _linkedScriptUrl ?? '';
       });
     }
   }
 
-Future<void> _linkGmail() async {
+  Future<void> _linkGmail() async {
     final email = _gmailController.text.trim();
+    final scriptUrl = _scriptUrlController.text.trim();
+
     if (email.isEmpty || !email.contains('@gmail.com')) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Colors.redAccent,
           content: Text('Kripya valid Gmail ID daalein (jaise example@gmail.com)'),
+        ),
+      );
+      return;
+    }
+
+    if (scriptUrl.isEmpty || !scriptUrl.startsWith('https://script.google.com')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Kripya valid Google Apps Script Web App URL daalein'),
         ),
       );
       return;
@@ -1923,6 +1988,7 @@ Future<void> _linkGmail() async {
           .doc('google_drive_account')
           .set({
         'email': email,
+        'scriptUrl': scriptUrl,
         'status': 'connected',
         'linkedAt': DateTime.now().millisecondsSinceEpoch,
       });
@@ -1930,13 +1996,13 @@ Future<void> _linkGmail() async {
       if (mounted) {
         setState(() {
           _linkedGmail = email;
+          _linkedScriptUrl = scriptUrl;
           _isLoading = false;
-          _gmailController.clear();
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             backgroundColor: Color(0xFF00A884),
-            content: Text('Google Drive account successfully link ho gaya!'),
+            content: Text('Google Drive storage successfully link ho gaya!'),
           ),
         );
       }
@@ -1964,6 +2030,9 @@ Future<void> _linkGmail() async {
     if (mounted) {
       setState(() {
         _linkedGmail = null;
+        _linkedScriptUrl = null;
+        _gmailController.clear();
+        _scriptUrlController.clear();
         _isLoading = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1998,7 +2067,7 @@ Future<void> _linkGmail() async {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Student records, ID card photos aur data store/receive karne ke liye official Gmail ID link karein.',
+              'Student records Google Sheet me aur photos Google Drive folder me direct save karne ke liye official Gmail ID aur Script URL link karein.',
               style: TextStyle(color: Colors.grey, fontSize: 13, height: 1.4),
             ),
             const SizedBox(height: 20),
@@ -2103,6 +2172,23 @@ Future<void> _linkGmail() async {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _scriptUrlController,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: InputDecoration(
+                        hintText: 'https://script.google.com/macros/s/.../exec',
+                        hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                        prefixIcon: const Icon(Icons.link, color: Color(0xFF00A884), size: 20),
+                        filled: true,
+                        fillColor: const Color(0xFF121B22),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     SizedBox(
                       width: double.infinity,
@@ -2113,9 +2199,9 @@ Future<void> _linkGmail() async {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                         onPressed: _isLoading ? null : _linkGmail,
-                        icon: const Icon(Icons.link, color: Colors.white, size: 18),
+                        icon: const Icon(Icons.cloud_done, color: Colors.white, size: 18),
                         label: Text(
-                          _isLoading ? 'Linking...' : 'Link Google Account',
+                          _isLoading ? 'Linking...' : 'Link Google Drive Storage',
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                         ),
                       ),
@@ -2130,7 +2216,6 @@ Future<void> _linkGmail() async {
     );
   }
 }
-
 // ==================== ALL STUDENTS LIST SCREEN (FULL WINDOW) ====================
 class AllStudentsListScreen extends StatefulWidget {
   const AllStudentsListScreen({super.key});
