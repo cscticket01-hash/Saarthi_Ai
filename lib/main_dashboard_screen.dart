@@ -1236,7 +1236,10 @@ appBar: AppBar(
             icon: const Icon(Icons.more_vert, color: Colors.white),
             onSelected: (value) {
               if (value == 'settings') {
-                _openSettingsDialog();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                );
               }
             },
             itemBuilder: (BuildContext context) => [
@@ -1608,6 +1611,254 @@ appBar: AppBar(
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
         borderSide: BorderSide.none,
+      ),
+    );
+  }
+}
+
+// ==================== SETTINGS SCREEN (FULL WINDOW) ====================
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  final TextEditingController _gmailController = TextEditingController();
+  String? _linkedGmail;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchLinkedAccount();
+  }
+
+  Future<void> _fetchLinkedAccount() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+
+    if (doc.exists && mounted) {
+      setState(() {
+        _linkedGmail = doc.data()?['email'];
+      });
+    }
+  }
+
+  Future<void> _linkGmail() async {
+    final email = _gmailController.text.trim();
+    if (email.isEmpty || !email.contains('@gmail.com')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Kripya valid Gmail ID daalein (jaise example@gmail.com)'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .set({
+      'email': email,
+      'status': 'connected',
+      'linkedAt': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    if (mounted) {
+      setState(() {
+        _linkedGmail = email;
+        _isLoading = false;
+        _gmailController.clear();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text('Google Drive account successfully link ho gaya!'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _unlinkGmail() async {
+    setState(() => _isLoading = true);
+
+    await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .delete();
+
+    if (mounted) {
+      setState(() {
+        _linkedGmail = null;
+        _isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Google Drive account unlink kar diya gaya.'),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF121B22),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Settings'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Cloud Storage & Database',
+              style: TextStyle(
+                color: Color(0xFF00A884),
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Student records, ID card photos aur data store/receive karne ke liye official Gmail ID link karein.',
+              style: TextStyle(color: Colors.grey, fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1F2C34),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const CircleAvatar(
+                        radius: 22,
+                        backgroundColor: Color(0xFF121B22),
+                        child: Icon(Icons.add_to_drive, color: Color(0xFF00A884), size: 24),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Google Drive Integration',
+                              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _linkedGmail != null ? 'Active Connection' : 'No Account Linked',
+                              style: TextStyle(
+                                color: _linkedGmail != null ? const Color(0xFF00A884) : Colors.orangeAccent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(color: Colors.white12, height: 28),
+                  if (_linkedGmail != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF121B22),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF00A884).withOpacity(0.4)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.verified_user, color: Color(0xFF00A884), size: 20),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Linked Gmail ID', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                                Text(
+                                  _linkedGmail!,
+                                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Colors.redAccent),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: _isLoading ? null : _unlinkGmail,
+                        icon: const Icon(Icons.link_off, color: Colors.redAccent, size: 18),
+                        label: const Text('Unlink / Change Account', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ] else ...[
+                    TextField(
+                      controller: _gmailController,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: InputDecoration(
+                        hintText: 'school.admin@gmail.com',
+                        hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                        prefixIcon: const Icon(Icons.mail_outline, color: Color(0xFF00A884), size: 20),
+                        filled: true,
+                        fillColor: const Color(0xFF121B22),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF00A884),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: _isLoading ? null : _linkGmail,
+                        icon: const Icon(Icons.link, color: Colors.white, size: 18),
+                        label: Text(
+                          _isLoading ? 'Linking...' : 'Link Google Account',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
