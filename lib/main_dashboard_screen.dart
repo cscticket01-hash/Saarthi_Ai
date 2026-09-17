@@ -1648,7 +1648,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _linkGmail() async {
+Future<void> _linkGmail() async {
     final email = _gmailController.text.trim();
     if (email.isEmpty || !email.contains('@gmail.com')) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1662,27 +1662,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _isLoading = true);
 
-    await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .set({
-      'email': email,
-      'status': 'connected',
-      'linkedAt': DateTime.now().millisecondsSinceEpoch,
-    });
-
-    if (mounted) {
-      setState(() {
-        _linkedGmail = email;
-        _isLoading = false;
-        _gmailController.clear();
+    try {
+      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .set({
+        'email': email,
+        'status': 'connected',
+        'linkedAt': DateTime.now().millisecondsSinceEpoch,
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
-          content: Text('Google Drive account successfully link ho gaya!'),
-        ),
-      );
+
+      if (mounted) {
+        setState(() {
+          _linkedGmail = email;
+          _isLoading = false;
+          _gmailController.clear();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF00A884),
+            content: Text('Google Drive account successfully link ho gaya!'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Error: ${e.toString()}'),
+          ),
+        );
+      }
     }
   }
 
