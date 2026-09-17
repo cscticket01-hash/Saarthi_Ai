@@ -829,7 +829,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _rollController = TextEditingController();
   final TextEditingController _parentContactController = TextEditingController();
-
+  String? _studentPhotoUrl;
+  
   bool _isSavingNotice = false;
   bool _isSearchingStudent = false;
   final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
@@ -840,7 +841,201 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     {'name': 'Priya Sen', 'subject': 'Bengali & English', 'phone': '+91 9876543211'},
     {'name': 'Amit Paul', 'subject': 'Science', 'phone': '+91 9876543212'},
   ];
+  // Add Student Popup Dialog
+  void _openAddStudentDialog() {
+    final nameCtrl = TextEditingController();
+    final parentCtrl = TextEditingController();
+    final rollCtrl = TextEditingController();
+    final contactCtrl = TextEditingController();
+    final addressCtrl = TextEditingController();
+    final pinCtrl = TextEditingController();
+    final stateCtrl = TextEditingController();
+    final districtCtrl = TextEditingController();
+    final joiningDateCtrl = TextEditingController(
+      text: "${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}",
+    );
+    final photoUrlCtrl = TextEditingController(); // Drive Direct Image Link
+    String selectedClass = _directoryClass;
+    bool isSaving = false;
 
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) => AlertDialog(
+          backgroundColor: const Color(0xFF1F2C34),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: const Row(
+            children: [
+              Icon(Icons.person_add_alt_1, color: Color(0xFF00A884), size: 22),
+              SizedBox(width: 10),
+              Text('Add New Student', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          value: selectedClass,
+                          dropdownColor: const Color(0xFF1F2C34),
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Class'),
+                          items: _classList.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                          onChanged: (val) => setDlgState(() => selectedClass = val!),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: rollCtrl,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Roll No *'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: nameCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Student Full Name *'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: parentCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration("Parent's / Guardian Name *"),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: contactCtrl,
+                    keyboardType: TextInputType.phone,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Contact No *'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: photoUrlCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Google Drive Photo URL / Link'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: addressCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Address'),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: districtCtrl,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('District'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: stateCtrl,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('State'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: pinCtrl,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('PIN Code'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: joiningDateCtrl,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Joining Date'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+              onPressed: isSaving ? null : () async {
+                final name = nameCtrl.text.trim();
+                final roll = rollCtrl.text.trim();
+                final contact = contactCtrl.text.trim();
+                final parent = parentCtrl.text.trim();
+
+                if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(backgroundColor: Colors.redAccent, content: Text('Name, Roll No aur Contact bharna zaroori hai!')),
+                  );
+                  return;
+                }
+
+                setDlgState(() => isSaving = true);
+                final docId = '${selectedClass}_Roll_$roll';
+
+                try {
+                  await FirebaseFirestore.instance.collection('students_directory').doc(docId).set({
+                    'name': name,
+                    'parentName': parent,
+                    'class': selectedClass,
+                    'rollNo': roll,
+                    'parentContact': contact,
+                    'photoUrl': photoUrlCtrl.text.trim(),
+                    'address': addressCtrl.text.trim(),
+                    'pinCode': pinCtrl.text.trim(),
+                    'district': districtCtrl.text.trim(),
+                    'state': stateCtrl.text.trim(),
+                    'joiningDate': joiningDateCtrl.text.trim(),
+                    'createdAt': DateTime.now().millisecondsSinceEpoch,
+                  });
+
+                  if (mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student successfully add ho gaya!')),
+                    );
+                  }
+                } catch (e) {
+                  setDlgState(() => isSaving = false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(backgroundColor: Colors.redAccent, content: Text('Error: ${e.toString()}')),
+                  );
+                }
+              },
+              child: Text(isSaving ? 'Saving...' : 'Save Student', style: const TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
   // 1. Notice Publish or Update Function
   Future<void> _saveNotice() async {
     final title = _noticeTitleController.text.trim();
@@ -1102,6 +1297,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       final data = doc.data()!;
       _nameController.text = data['name'] ?? '';
       _parentContactController.text = data['parentContact'] ?? '';
+      _studentPhotoUrl = data['photoUrl']; // Photo link fetch
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1181,10 +1377,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ],
               ),
               const Divider(color: Colors.white24, height: 24),
-              const CircleAvatar(
+              CircleAvatar(
                 radius: 36,
-                backgroundColor: Color(0xFF121B22),
-                child: Icon(Icons.person, size: 45, color: Color(0xFF00A884)),
+                backgroundColor: const Color(0xFF121B22),
+                backgroundImage: (_studentPhotoUrl != null && _studentPhotoUrl!.isNotEmpty)
+                    ? NetworkImage(_studentPhotoUrl!)
+                    : null,
+                child: (_studentPhotoUrl == null || _studentPhotoUrl!.isEmpty)
+                    ? const Icon(Icons.person, size: 45, color: Color(0xFF00A884))
+                    : null,
               ),
               const SizedBox(height: 12),
               Text(
@@ -1339,8 +1540,22 @@ appBar: AppBar(
                   ),
                   const SizedBox(height: 24),
 
-                  // --- STUDENT DIRECTORY ---
-                  _buildSectionHeader('Student Directory & ID Cards', Icons.badge_outlined),
+                  // --- STUDENT DIRECTORY HEADER WITH ADD BUTTON ---
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildSectionHeader('Student Directory & ID Cards', Icons.badge_outlined),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF00A884),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        ),
+                        onPressed: _openAddStudentDialog,
+                        icon: const Icon(Icons.add, color: Colors.white, size: 16),
+                        label: const Text('Add Student', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
                   _buildCardWrapper(
                     child: Column(
                       children: [
