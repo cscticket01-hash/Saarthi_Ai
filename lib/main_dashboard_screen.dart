@@ -1161,66 +1161,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             ],
                           ],
                         ),
-                        const SizedBox(height: 16),
-                        const Divider(color: Colors.white24, height: 1),
-                        const SizedBox(height: 12),
-                        StreamBuilder<QuerySnapshot>(
-                          stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
-                          builder: (context, snapshot) {
-                            if (snapshot.connectionState == ConnectionState.waiting) {
-                              return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
-                            }
-                            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                              return const Text('Koi notice published nahi hai.', style: TextStyle(color: Colors.grey, fontSize: 13));
-                            }
-                            return ListView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: snapshot.data!.docs.length,
-                              itemBuilder: (context, index) {
-                                final doc = snapshot.data!.docs[index];
-                                final data = doc.data() as Map<String, dynamic>;
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF121B22),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              '[${data['category'] ?? 'General'}] ${data['title'] ?? ''}',
-                                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                                            ),
-                                            Text(
-                                              data['description'] ?? '',
-                                              style: const TextStyle(color: Colors.grey, fontSize: 12),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 18),
-                                        onPressed: () => _startEditNotice(doc.id, data),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-                                        onPressed: () => _deleteNotice(doc.id),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        ),
                       ],
                     ),
                   ),
@@ -1441,7 +1381,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                     IconButton(
                                       icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
                                       tooltip: 'Delete Notice',
-                                      onPressed: () => _deleteNotice(doc.id),
+                                    onPressed: () => _deleteNotice(doc.id),
                                     ),
                                   ],
                                 ),
@@ -1452,6 +1392,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                     ),
                   ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSectionHeader(String title, IconData icon) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0),
