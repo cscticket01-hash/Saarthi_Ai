@@ -1621,6 +1621,31 @@ appBar: AppBar(
                             ),
                           ],
                         ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2A3942),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                side: const BorderSide(color: Color(0xFF00A884), width: 1),
+                              ),
+                            ),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const AllStudentsListScreen()),
+                              );
+                            },
+                            icon: const Icon(Icons.people_alt_outlined, color: Color(0xFF00A884), size: 18),
+                            label: const Text(
+                              'View All Students (Class 1-10)',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -2086,6 +2111,261 @@ Future<void> _linkGmail() async {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ==================== ALL STUDENTS LIST SCREEN (FULL WINDOW) ====================
+class AllStudentsListScreen extends StatefulWidget {
+  const AllStudentsListScreen({super.key});
+
+  @override
+  State<AllStudentsListScreen> createState() => _AllStudentsListScreenState();
+}
+
+class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
+  String _selectedClassFilter = 'Class 1';
+  final List<String> _classes = List.generate(10, (index) => 'Class ${index + 1}');
+
+  Future<void> _deleteStudent(String docId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Delete Student', style: TextStyle(color: Colors.white)),
+        content: const Text('Kya aap is student ka record delete karna chahte hain?', style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete', style: TextStyle(color: Colors.redAccent))),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await FirebaseFirestore.instance.collection('students_directory').doc(docId).delete();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(backgroundColor: Colors.redAccent, content: Text('Student record delete ho gaya!')),
+        );
+      }
+    }
+  }
+
+  void _editStudent(String docId, Map<String, dynamic> data) {
+    final nameCtrl = TextEditingController(text: data['name']);
+    final parentCtrl = TextEditingController(text: data['parentName']);
+    final contactCtrl = TextEditingController(text: data['parentContact']);
+    final photoCtrl = TextEditingController(text: data['photoUrl']);
+    final addressCtrl = TextEditingController(text: data['address']);
+    final pinCtrl = TextEditingController(text: data['pinCode']);
+    final districtCtrl = TextEditingController(text: data['district']);
+    final stateCtrl = TextEditingController(text: data['state']);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text('Edit Student (${data['class']} - Roll ${data['rollNo']})', style: const TextStyle(color: Colors.white, fontSize: 16)),
+        content: SizedBox(
+          width: 450,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Full Name')),
+                const SizedBox(height: 8),
+                TextField(controller: parentCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput("Parent's Name")),
+                const SizedBox(height: 8),
+                TextField(controller: contactCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Contact No')),
+                const SizedBox(height: 8),
+                TextField(controller: photoCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Photo URL')),
+                const SizedBox(height: 8),
+                TextField(controller: addressCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Address')),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(child: TextField(controller: districtCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('District'))),
+                    const SizedBox(width: 8),
+                    Expanded(child: TextField(controller: stateCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('State'))),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: pinCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('PIN Code')),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+            onPressed: () async {
+              await FirebaseFirestore.instance.collection('students_directory').doc(docId).update({
+                'name': nameCtrl.text.trim(),
+                'parentName': parentCtrl.text.trim(),
+                'parentContact': contactCtrl.text.trim(),
+                'photoUrl': photoCtrl.text.trim(),
+                'address': addressCtrl.text.trim(),
+                'district': districtCtrl.text.trim(),
+                'state': stateCtrl.text.trim(),
+                'pinCode': pinCtrl.text.trim(),
+              });
+              if (mounted) {
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student update ho gaya!')),
+                );
+              }
+            },
+            child: const Text('Save Changes', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _dialogInput(String hint) {
+    return InputDecoration(
+      labelText: hint,
+      labelStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+      filled: true,
+      fillColor: const Color(0xFF121B22),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF121B22),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Student Directory Records'),
+      ),
+      body: Column(
+        children: [
+          // Class Tabs Selector
+          Container(
+            color: const Color(0xFF1F2C34),
+            height: 50,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              itemCount: _classes.length,
+              itemBuilder: (context, index) {
+                final c = _classes[index];
+                final isSelected = c == _selectedClassFilter;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: ChoiceChip(
+                    label: Text(c, style: TextStyle(color: isSelected ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)),
+                    selected: isSelected,
+                    selectedColor: const Color(0xFF00A884),
+                    backgroundColor: const Color(0xFF121B22),
+                    onSelected: (val) => setState(() => _selectedClassFilter = c),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // Students List Stream
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('students_directory')
+                  .where('class', isEqualTo: _selectedClassFilter)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+                }
+
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return Center(
+                    child: Text('$_selectedClassFilter me koi student registered nahi hai.', style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                  );
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: snapshot.data!.docs.length,
+                  itemBuilder: (context, index) {
+                    final doc = snapshot.data!.docs[index];
+                    final student = doc.data() as Map<String, dynamic>;
+                    final photoUrl = student['photoUrl'] as String?;
+
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1F2C34),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          CircleAvatar(
+                            radius: 28,
+                            backgroundColor: const Color(0xFF121B22),
+                            backgroundImage: (photoUrl != null && photoUrl.isNotEmpty) ? NetworkImage(photoUrl) : null,
+                            child: (photoUrl == null || photoUrl.isEmpty) ? const Icon(Icons.person, size: 30, color: Color(0xFF00A884)) : null,
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      student['name'] ?? '',
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(color: const Color(0xFF00A884).withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
+                                      child: Text('Roll: ${student['rollNo']}', style: const TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text('Parent: ${student['parentName'] ?? 'N/A'}  •  Contact: ${student['parentContact'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                                const SizedBox(height: 2),
+                                Text('Address: ${student['address'] ?? ''}, ${student['district'] ?? ''}, ${student['state'] ?? ''} - ${student['pinCode'] ?? ''}', style: const TextStyle(color: Colors.white60, fontSize: 11)),
+                                const SizedBox(height: 2),
+                                Text('Joining Date: ${student['joiningDate'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                              ],
+                            ),
+                          ),
+                          Column(
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 20),
+                                tooltip: 'Edit Student',
+                                onPressed: () => _editStudent(doc.id, student),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                                tooltip: 'Delete Student',
+                                onPressed: () => _deleteStudent(doc.id),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
