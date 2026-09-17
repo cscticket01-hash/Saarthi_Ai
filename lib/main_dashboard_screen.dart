@@ -819,7 +819,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   String _noticeCategory = 'Holiday';
   final List<String> _noticeCategories = ['Holiday', 'Exam', 'Event', 'General'];
   String? _editingNoticeId; // null = new notice, non-null = editing mode
-
+  
+  // Google Drive state
+  String? _connectedDriveFolder;
+  final TextEditingController _driveFolderController = TextEditingController();
+ 
   // Student Directory controllers
   String _directoryClass = 'Class 1';
   final TextEditingController _nameController = TextEditingController();
@@ -901,6 +905,139 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ),
       );
     }
+  }
+  // Settings Popup (Google Drive Connect / Remove)
+  void _openSettingsDialog() {
+    _driveFolderController.text = _connectedDriveFolder ?? '';
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF1F2C34),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: const Row(
+            children: [
+              Icon(Icons.settings, color: Color(0xFF00A884), size: 22),
+              SizedBox(width: 10),
+              Text('Settings', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Google Drive Integration',
+                  style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Student ID Card aur photos fetch karne ke liye Drive link karein.',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+                const SizedBox(height: 14),
+
+                // Status Badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _connectedDriveFolder != null
+                        ? const Color(0xFF00A884).withOpacity(0.15)
+                        : Colors.orangeAccent.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _connectedDriveFolder != null ? Icons.check_circle : Icons.cloud_off,
+                        color: _connectedDriveFolder != null ? const Color(0xFF00A884) : Colors.orangeAccent,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _connectedDriveFolder != null ? 'Connected' : 'Not Connected',
+                        style: TextStyle(
+                          color: _connectedDriveFolder != null ? const Color(0xFF00A884) : Colors.orangeAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Input Field
+                TextField(
+                  controller: _driveFolderController,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: _inputDecoration('Drive Folder URL / Folder ID'),
+                ),
+                const SizedBox(height: 14),
+
+                // Action Buttons: Connect/Update & Remove
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                        onPressed: () {
+                          final text = _driveFolderController.text.trim();
+                          if (text.isNotEmpty) {
+                            setState(() => _connectedDriveFolder = text);
+                            Navigator.pop(ctx);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Color(0xFF00A884),
+                                content: Text('Google Drive successfully connected!'),
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.add_link, color: Colors.white, size: 16),
+                        label: Text(
+                          _connectedDriveFolder != null ? 'Update Link' : 'Connect Drive',
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                      ),
+                    ),
+                    if (_connectedDriveFolder != null) ...[
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent)),
+                        onPressed: () {
+                          setState(() {
+                            _connectedDriveFolder = null;
+                            _driveFolderController.clear();
+                          });
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              backgroundColor: Colors.redAccent,
+                              content: Text('Google Drive folder removed.'),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.link_off, color: Colors.redAccent, size: 16),
+                        label: const Text('Remove', style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close', style: TextStyle(color: Colors.grey)),
+            ),
+          ],
+        ),
+      ),
+    );
   }
   void _showNoticeDetailDialog(Map<String, dynamic> data) {
     showDialog(
@@ -1098,7 +1235,9 @@ appBar: AppBar(
             color: const Color(0xFF1F2C34),
             icon: const Icon(Icons.more_vert, color: Colors.white),
             onSelected: (value) {
-              // Baad mein features connect karne ke liye ready hai
+              if (value == 'settings') {
+                _openSettingsDialog();
+              }
             },
             itemBuilder: (BuildContext context) => [
               const PopupMenuItem<String>(
