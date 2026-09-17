@@ -850,14 +850,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         'title': title,
         'description': desc,
         'category': _noticeCategory,
-        'timestamp': FieldValue.serverTimestamp(),
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
       });
     } else {
       await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).update({
         'title': title,
         'description': desc,
         'category': _noticeCategory,
-        'lastEdited': FieldValue.serverTimestamp(),
+        'lastEdited': DateTime.now().millisecondsSinceEpoch,
       });
     }
 
