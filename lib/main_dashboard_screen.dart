@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
 
 class MainDashboardScreen extends StatefulWidget {
   const MainDashboardScreen({super.key});
@@ -857,6 +858,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     {'name': 'Amit Paul', 'subject': 'Science', 'phone': '+91 9876543212'},
   ];
   // Add Student Popup Dialog
+// Add Student Popup Dialog (With Device Photo & Hostel Option)
   void _openAddStudentDialog() {
     final nameCtrl = TextEditingController();
     final parentCtrl = TextEditingController();
@@ -866,11 +868,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final pinCtrl = TextEditingController();
     final stateCtrl = TextEditingController();
     final districtCtrl = TextEditingController();
-    final joiningDateCtrl = TextEditingController(
+    final admissionDateCtrl = TextEditingController(
       text: "${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}",
     );
-    final photoUrlCtrl = TextEditingController(); // Drive Direct Image Link
+
     String selectedClass = _directoryClass;
+    String hostelFacility = 'No';
+    List<int>? selectedPhotoBytes;
+    String? selectedPhotoName;
     bool isSaving = false;
 
     showDialog(
@@ -935,12 +940,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     decoration: _inputDecoration('Contact No *'),
                   ),
                   const SizedBox(height: 10),
-                  TextField(
-                    controller: photoUrlCtrl,
+
+                  // 1. Hostel Facility Option (Yes / No)
+                  DropdownButtonFormField<String>(
+                    value: hostelFacility,
+                    dropdownColor: const Color(0xFF1F2C34),
                     style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Google Drive Photo URL / Link'),
+                    decoration: _inputDecoration('Hostel Facility'),
+                    items: const [
+                      DropdownMenuItem(value: 'No', child: Text('Hostel Facility: No')),
+                      DropdownMenuItem(value: 'Yes', child: Text('Hostel Facility: Yes')),
+                    ],
+                    onChanged: (val) => setDlgState(() => hostelFacility = val!),
                   ),
                   const SizedBox(height: 10),
+
                   TextField(
                     controller: addressCtrl,
                     style: const TextStyle(color: Colors.white),
@@ -978,11 +992,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         ),
                       ),
                       const SizedBox(width: 10),
+                      // 2. Admission Date
                       Expanded(
                         child: TextField(
-                          controller: joiningDateCtrl,
+                          controller: admissionDateCtrl,
                           style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Joining Date'),
+                          decoration: _inputDecoration('Admission Date'),
                         ),
                       ),
                     ],
@@ -992,113 +1007,158 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
           ),
           actions: [
+            // 3. Red Circle Area: Device se Photo Add karne ka Option
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(
+                  color: selectedPhotoBytes != null ? const Color(0xFF00A884) : Colors.grey,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              ),
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      final ImagePicker picker = ImagePicker();
+                      final XFile? image = await picker.pickImage(
+                        source: ImageSource.gallery,
+                        imageQuality: 70, // size optimize karne ke liye
+                      );
+
+                      if (image != null) {
+                        final bytes = await image.readAsBytes();
+                        setDlgState(() {
+                          selectedPhotoBytes = bytes;
+                          selectedPhotoName = image.name;
+                        });
+                      }
+                    },
+              icon: Icon(
+                selectedPhotoBytes != null ? Icons.check_circle : Icons.add_a_photo_outlined,
+                color: selectedPhotoBytes != null ? const Color(0xFF00A884) : Colors.white70,
+                size: 18,
+              ),
+              label: Text(
+                selectedPhotoBytes != null ? 'Photo Ready' : 'Upload Photo',
+                style: TextStyle(
+                  color: selectedPhotoBytes != null ? const Color(0xFF00A884) : Colors.white70,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            const Spacer(),
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
               child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-onPressed: isSaving ? null : () async {
-                final name = nameCtrl.text.trim();
-                final roll = rollCtrl.text.trim();
-                final contact = contactCtrl.text.trim();
-                final parent = parentCtrl.text.trim();
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      final name = nameCtrl.text.trim();
+                      final roll = rollCtrl.text.trim();
+                      final contact = contactCtrl.text.trim();
+                      final parent = parentCtrl.text.trim();
 
-                if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(backgroundColor: Colors.redAccent, content: Text('Name, Roll No aur Contact bharna zaroori hai!')),
-                  );
-                  return;
-                }
+                      if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            backgroundColor: Colors.redAccent,
+                            content: Text('Name, Roll No aur Contact bharna zaroori hai!'),
+                          ),
+                        );
+                        return;
+                      }
 
-                setDlgState(() => isSaving = true);
-                final docId = '${selectedClass}_Roll_$roll';
+                      setDlgState(() => isSaving = true);
+                      final docId = '${selectedClass}_Roll_$roll';
 
-                try {
-                  String finalPhotoUrl = photoUrlCtrl.text.trim();
+                      try {
+                        String finalPhotoUrl = '';
+                        String base64Image = selectedPhotoBytes != null ? base64Encode(selectedPhotoBytes!) : '';
 
-                  // 1. Check if Google Drive Script is connected
-                  final configDoc = await FirebaseFirestore.instance
-                      .collection('school_config')
-                      .doc('google_drive_account')
-                      .get();
+                        // 1. Google Drive Script URL check karein
+                        final configDoc = await FirebaseFirestore.instance
+                            .collection('school_config')
+                            .doc('google_drive_account')
+                            .get();
 
-                  final scriptUrl = configDoc.data()?['scriptUrl'];
+                        final scriptUrl = configDoc.data()?['scriptUrl'];
 
-                  // 2. Send Data Directly to Google Drive & Google Sheet
-                  if (scriptUrl != null && scriptUrl.toString().isNotEmpty) {
-                    try {
-                      final response = await http.post(
-                        Uri.parse(scriptUrl),
-                        headers: {'Content-Type': 'application/json'},
-                        body: jsonEncode({
-                          'action': 'add_student',
+                        // 2. Google Drive / Google Sheet par Data & Photo bhejein
+                        if (scriptUrl != null && scriptUrl.toString().isNotEmpty) {
+                          try {
+                            final response = await http.post(
+                              Uri.parse(scriptUrl),
+                              headers: {'Content-Type': 'application/json'},
+                              body: jsonEncode({
+                                'action': 'add_student',
+                                'name': name,
+                                'parentName': parent,
+                                'studentClass': selectedClass,
+                                'roll': roll,
+                                'contact': contact,
+                                'photoBase64': base64Image,
+                                'hostelFacility': hostelFacility,
+                                'address': addressCtrl.text.trim(),
+                                'district': districtCtrl.text.trim(),
+                                'state': stateCtrl.text.trim(),
+                                'pinCode': pinCtrl.text.trim(),
+                                'joiningDate': admissionDateCtrl.text.trim(),
+                              }),
+                            );
+
+                            if (response.statusCode == 200) {
+                              final resJson = jsonDecode(response.body);
+                              if (resJson['photoUrl'] != null) {
+                                finalPhotoUrl = resJson['photoUrl'];
+                              }
+                            }
+                          } catch (driveErr) {
+                            debugPrint('Drive Save Error: $driveErr');
+                          }
+                        }
+
+                        // 3. Firestore Sync (Fast App Listing ke liye)
+                        await FirebaseFirestore.instance.collection('students_directory').doc(docId).set({
                           'name': name,
                           'parentName': parent,
-                          'studentClass': selectedClass,
-                          'roll': roll,
-                          'contact': contact,
+                          'class': selectedClass,
+                          'rollNo': roll,
+                          'parentContact': contact,
                           'photoUrl': finalPhotoUrl,
+                          'hostelFacility': hostelFacility,
                           'address': addressCtrl.text.trim(),
+                          'pinCode': pinCtrl.text.trim(),
                           'district': districtCtrl.text.trim(),
                           'state': stateCtrl.text.trim(),
-                          'pinCode': pinCtrl.text.trim(),
-                          'joiningDate': joiningDateCtrl.text.trim(),
-                        }),
-                      );
+                          'joiningDate': admissionDateCtrl.text.trim(),
+                          'createdAt': DateTime.now().millisecondsSinceEpoch,
+                        });
 
-                      if (response.statusCode == 200) {
-                        final resJson = jsonDecode(response.body);
-                        if (resJson['photoUrl'] != null && resJson['photoUrl'].toString().isNotEmpty) {
-                          finalPhotoUrl = resJson['photoUrl'];
+                        if (mounted) {
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              backgroundColor: Color(0xFF00A884),
+                              content: Text('Student aur Photo Google Drive par successfully save ho gaye!'),
+                            ),
+                          );
                         }
+                      } catch (e) {
+                        setDlgState(() => isSaving = false);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(backgroundColor: Colors.redAccent, content: Text('Error: ${e.toString()}')),
+                        );
                       }
-                    } catch (driveErr) {
-                      // Agar Google Script call fail ho toh notification de sakte hain
-                      debugPrint('Drive Save Warning: $driveErr');
-                    }
-                  }
-
-                  // 3. Local / Firestore Sync (For super-fast app search & View All page)
-                  await FirebaseFirestore.instance.collection('students_directory').doc(docId).set({
-                    'name': name,
-                    'parentName': parent,
-                    'class': selectedClass,
-                    'rollNo': roll,
-                    'parentContact': contact,
-                    'photoUrl': finalPhotoUrl,
-                    'address': addressCtrl.text.trim(),
-                    'pinCode': pinCtrl.text.trim(),
-                    'district': districtCtrl.text.trim(),
-                    'state': stateCtrl.text.trim(),
-                    'joiningDate': joiningDateCtrl.text.trim(),
-                    'createdAt': DateTime.now().millisecondsSinceEpoch,
-                  });
-
-                  if (mounted) {
-                    Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        backgroundColor: Color(0xFF00A884), 
-                        content: Text('Student successfully saved to Google Drive & App!'),
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  setDlgState(() => isSaving = false);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(backgroundColor: Colors.redAccent, content: Text('Error: ${e.toString()}')),
-                  );
-                }
-              },
-              child: Text(isSaving ? 'Saving...' : 'Save Student', style: const TextStyle(color: Colors.white)),
+                    },
+              child: Text(isSaving ? 'Saving to Drive...' : 'Save Student', style: const TextStyle(color: Colors.white)),
             ),
           ],
         ),
       ),
     );
   }
-  
   // 1. Notice Publish or Update Function
   Future<void> _saveNotice() async {
     final title = _noticeTitleController.text.trim();
