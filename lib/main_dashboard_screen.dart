@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'dart:html' as html
+import 'dart:html' as html;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
@@ -1630,6 +1630,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
                           onPressed: () {
+                          Navigator.pop(context);
                           _downloadIdCard();
                           icon: const Icon(Icons.download, color: Colors.white, size: 12),
                           label: const Text('Download', style: TextStyle(color: Colors.white, fontSize: 10)),
