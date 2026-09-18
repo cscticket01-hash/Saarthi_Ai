@@ -2694,8 +2694,12 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                     const SizedBox(width: 8),
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(color: const Color(0xFF00A884).withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
-                                      child: Text('Roll: ${student['rollNo']}', style: const TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.bold)),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF00A884).withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
+                                      child: Text(
+                                        'Roll: ${student['rollNo'] ?? 'N/A'}',
+                                        style: const TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.bold),
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -2708,15 +2712,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 const SizedBox(height: 2),
                                 Text('Addmission Date: ${student['AddmissionDate'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
                                 const SizedBox(height: 2),
-                                Text('Date of Birth: ${student['DateOfBirth'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11),
-                                const SizedBox(height: 2),
-                                Text('Contact: ${student['parentContact'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.w500),
-                                const SizedBox(height: 2),
-                                Text('Roll No: ${student['rollNo'] ?? 'N/A'}  •  Contact: ${student['parentContact'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 12),),
-                                const SizedBox(height: 2),
-                                Text('District: ${student['district'] ?? 'N/A'}  •  State: ${student['state'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 12),
-                                ),
-                              ],
+                                Text('Date of Birth: ${student['dateOfBirth'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
                             ),
                           ),
                           Column(
