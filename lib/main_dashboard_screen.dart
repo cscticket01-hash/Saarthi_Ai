@@ -1480,6 +1480,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     String state = '';
     String pinCode = '';
 
+    String? fetchedPhotoUrl = _studentPhotoUrl;
+
     try {
       final docId = '${_directoryClass}_Roll_$roll';
       final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
