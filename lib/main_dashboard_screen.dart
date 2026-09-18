@@ -1490,7 +1490,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         district = data['district'] ?? '';
         state = data['state'] ?? '';
         pinCode = data['pinCode'] ?? '';
-      }
+        if (data['photoUrl'] != null && data['photoUrl'].toString().isNotEmpty) {
+          fetchedPhotoUrl = data['photoUrl'];
+        }
+    }
     } catch (e) {
       debugPrint('Error fetching extra details: $e');
     }
@@ -1557,9 +1560,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: (_studentPhotoUrl != null && _studentPhotoUrl!.isNotEmpty)
+                  child: (fetchedPhotoUrl != null && fetchedPhotoUrl!.isNotEmpty)
                       ? Image.network(
-                          _studentPhotoUrl!,
+                          fetchedPhotoUrl!,
                           fit: BoxFit.cover,
                           errorBuilder: (ctx, err, stack) =>
                               const Icon(Icons.person, size: 45, color: Colors.grey),
