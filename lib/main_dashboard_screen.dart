@@ -2695,7 +2695,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFF00A884).withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
+                                        color: const Color(0xFF00A884).withOpacity(0.2), borderRadius: BorderRadius.circular(4),
+                                        ),
                                       child: Text(
                                         'Roll: ${student['rollNo'] ?? 'N/A'}',
                                         style: const TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.bold),
@@ -2713,7 +2714,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 Text('Addmission Date: ${student['AddmissionDate'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
                                 const SizedBox(height: 2),
                                 Text('Date of Birth: ${student['dateOfBirth'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
-                            ),
+                            ],
                           ),
                           Column(
                             children: [
