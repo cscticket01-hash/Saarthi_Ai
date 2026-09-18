@@ -1506,7 +1506,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'SARASWATI VIDYA\nNIKETAN, MADHABDHAM',
+                        'SARASWATI VIDYA\NIKETAN, MADHABDHAM',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 12,
