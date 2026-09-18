@@ -2695,8 +2695,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFF00A884).withOpacity(0.2), borderRadius: BorderRadius.circular(4),
-                                        ),
+                                        color: const Color(0xFF00A884).withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
                                       child: Text(
                                         'Roll: ${student['rollNo'] ?? 'N/A'}',
                                         style: const TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.bold),
