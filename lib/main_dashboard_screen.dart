@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'dart:html' as html
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
@@ -1466,18 +1467,42 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // Exact School ID Card Format with Download Option
-  void _showIdCardPreview() {
+// Exact School ID Card Format with Complete Details & Working Download
+  void _showIdCardPreview() async {
     final name = _nameController.text.trim().isEmpty ? 'Student Name' : _nameController.text.trim();
     final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
     final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
+
+    // Firestore se baki fields (Father Name, Address, etc.) fetch karne ke liye
+    String parentName = 'N/A';
+    String address = 'N/A';
+    String district = '';
+    String state = '';
+    String pinCode = '';
+
+    try {
+      final docId = '${_directoryClass}_Roll_$roll';
+      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+      if (doc.exists) {
+        final data = doc.data()!;
+        parentName = data['parentName'] ?? 'N/A';
+        address = data['address'] ?? 'N/A';
+        district = data['district'] ?? '';
+        state = data['state'] ?? '';
+        pinCode = data['pinCode'] ?? '';
+      }
+    } catch (e) {
+      debugPrint('Error fetching extra details: $e');
+    }
+
+    if (!mounted) return;
 
     showDialog(
       context: context,
       builder: (context) => Dialog(
         backgroundColor: Colors.transparent,
         child: Container(
-          width: 330,
+          width: 340,
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
@@ -1488,7 +1513,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             children: [
               // 1. Header (School Name & Logo Bar)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: const BoxDecoration(
                   color: Color(0xFFC85A17), // Theme Dark Orange
                   borderRadius: BorderRadius.only(
@@ -1499,17 +1524,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 child: const Row(
                   children: [
                     CircleAvatar(
-                      radius: 20,
+                      radius: 18,
                       backgroundColor: Colors.white,
-                      child: Icon(Icons.school, color: Color(0xFFC85A17), size: 24),
+                      child: Icon(Icons.school, color: Color(0xFFC85A17), size: 20),
                     ),
-                    SizedBox(width: 10),
+                    SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'SARASWATI VIDYA\NIKETAN, MADHABDHAM',
+                        'SARASWATI VIDYA NIKETAN,MADHABDHAM',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: FontWeight.bold,
                           letterSpacing: 0.5,
                         ),
@@ -1519,73 +1544,75 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
 
               // 2. Drive Photo with Border
               Container(
-                width: 95,
-                height: 110,
+                width: 85,
+                height: 100,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFC85A17), width: 2.5),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFC85A17), width: 2),
                   color: const Color(0xFFECEFF1),
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(9),
+                  borderRadius: BorderRadius.circular(8),
                   child: (_studentPhotoUrl != null && _studentPhotoUrl!.isNotEmpty)
                       ? Image.network(
                           _studentPhotoUrl!,
                           fit: BoxFit.cover,
                           errorBuilder: (ctx, err, stack) =>
-                              const Icon(Icons.person, size: 55, color: Colors.grey),
+                              const Icon(Icons.person, size: 45, color: Colors.grey),
                         )
-                      : const Icon(Icons.person, size: 55, color: Colors.grey),
+                      : const Icon(Icons.person, size: 45, color: Colors.grey),
                 ),
               ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
 
               // 3. STUDENT ID CARD Badge
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
                 decoration: BoxDecoration(
                   color: const Color(0xFFC85A17),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: const Text(
                   'STUDENT ID CARD',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
                 ),
               ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
 
-              // 4. Details Section (Word Format)
+              // 4. Details Section (All requested fields included)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   children: [
                     _idCardField('Name', name),
-                    _idCardField('Contact No', contact),
+                    _idCardField('Father Name', parentName),
                     _idCardField('Class', _directoryClass),
                     _idCardField('Roll No', roll),
+                    _idCardField('Contact No', contact),
+                    _idCardField('Address', '$address, $district, $state - $pinCode'),
                   ],
                 ),
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
 
               // 5. Signature & Download Options Bar
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(width: 70, height: 1, color: Colors.black45),
-                        const SizedBox(height: 3),
+                        Container(width: 65, height: 1, color: Colors.black45),
+                        const SizedBox(height: 2),
                         const Text('Principal Sign', style: TextStyle(color: Colors.black87, fontSize: 8, fontWeight: FontWeight.w600)),
                       ],
                     ),
@@ -1598,27 +1625,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF00A884),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             minimumSize: Size.zero,
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
                           onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                backgroundColor: Color(0xFF00A884),
-                                content: Text('ID Card download shuru ho gaya hai!'),
-                              ),
-                            );
-                          },
-                          icon: const Icon(Icons.download, color: Colors.white, size: 14),
-                          label: const Text('Download', style: TextStyle(color: Colors.white, fontSize: 11)),
+                          _downloadIdCard();
+                          icon: const Icon(Icons.download, color: Colors.white, size: 12),
+                          label: const Text('Download', style: TextStyle(color: Colors.white, fontSize: 10)),
                         ),
                       ],
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
             ],
           ),
         ),
@@ -1626,6 +1647,78 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  // 1. Web par Complete ID Card data download karne ka updated function
+  void _downloadIdCard() async {
+    final name = _nameController.text.trim().isEmpty ? 'Student' : _nameController.text.trim();
+    final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
+    final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
+
+    // Firestore se baki fields fetch karna
+    String parentName = 'N/A';
+    String address = 'N/A';
+    String district = 'N/A';
+    String state = 'N/A';
+    String pinCode = 'N/A';
+    String photoInfo = _studentPhotoUrl != null && _studentPhotoUrl!.isNotEmpty ? _studentPhotoUrl! : 'No Photo Uploaded';
+
+    try {
+      final docId = '${_directoryClass}_Roll_$roll';
+      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+      if (doc.exists) {
+        final data = doc.data()!;
+        parentName = data['parentName'] ?? 'N/A';
+        address = data['address'] ?? 'N/A';
+        district = data['district'] ?? 'N/A';
+        state = data['state'] ?? 'N/A';
+        pinCode = data['pinCode'] ?? 'N/A';
+        if (data['photoUrl'] != null && data['photoUrl'].toString().isNotEmpty) {
+          photoInfo = data['photoUrl'];
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching details for download: $e');
+    }
+
+    // ID Card ka poora detailed text content
+    final idCardContent = '''
+========================================
+ SARASWATI VIDYANIKETAN, MADHABDHAM
+========================================
+            STUDENT ID CARD
+----------------------------------------
+Student Name   : $name
+Father Name    : $parentName
+Class          : $_directoryClass
+Roll No        : $roll
+Contact No     : $contact
+Address        : $address
+District       : $district
+State          : $state
+PIN Code       : $pinCode
+----------------------------------------
+Photo Link     : $photoInfo
+========================================
+           Principal Signature
+''';
+
+    // Web browser ke zariye file download trigger karna
+    final bytes = utf8.encode(idCardContent);
+    final blob = html.Blob([bytes]);
+    final url = html.Url.createObjectUrlFromBlob(blob);
+    final anchor = html.AnchorElement(href: url)
+      ..setAttribute("download", "ID_Card_${name}_Roll_$roll.txt")
+      ..click();
+    html.Url.revokeObjectUrl(url);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text('ID Card successfully download ho gaya hai!'),
+        ),
+      );
+    }
+  }
   Widget _idCardField(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
