@@ -2715,7 +2715,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 Text('Addmission Date: ${student['AddmissionDate'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
                                 const SizedBox(height: 2),
                                 Text('Date of Birth: ${student['dateOfBirth'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
-                            ],
+                              ],
+                            ),
                           ),
                           Column(
                             children: [
