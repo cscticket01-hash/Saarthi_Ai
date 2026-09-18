@@ -1630,8 +1630,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
                           onPressed: () {
-                          Navigator.pop(context);
-                          _downloadIdCard();
+                            Navigator.pop(context);
+                            _downloadIdCard();
+                          },
                           icon: const Icon(Icons.download, color: Colors.white, size: 12),
                           label: const Text('Download', style: TextStyle(color: Colors.white, fontSize: 10)),
                         ),
