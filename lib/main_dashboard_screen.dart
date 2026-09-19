@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:html' as html;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -89,15 +88,12 @@ class ChatSession {
 
   static int _readInt(dynamic value) {
     if (value is int) return value;
-
     if (value is Timestamp) {
       return value.millisecondsSinceEpoch;
     }
-
     if (value is num) {
       return value.toInt();
     }
-
     return 0;
   }
 }
@@ -114,22 +110,14 @@ class AiChatScreen extends StatefulWidget {
 }
 
 class _AiChatScreenState extends State<AiChatScreen> {
-  final TextEditingController _messageController =
-      TextEditingController();
-
+  final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-
-  final TextEditingController _searchController =
-      TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
 
   bool _isLoading = false;
   bool _isSessionsLoading = true;
-
   String _currentSessionId = '';
-
-  static const String _groqApiKey =
-      String.fromEnvironment('GROQ_API_KEY');
-
+  static const String _groqApiKey = String.fromEnvironment('GROQ_API_KEY');
   List<ChatSession> chatSessions = [];
 
   @override
@@ -146,35 +134,16 @@ class _AiChatScreenState extends State<AiChatScreen> {
     super.dispose();
   }
 
-  // ----------------------------------------------------------
-  // SESSION PATH
-  // ----------------------------------------------------------
-
-  CollectionReference<Map<String, dynamic>> _sessionsRef(
-    String uid,
-  ) {
-    return FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .collection('sessions');
+  CollectionReference<Map<String, dynamic>> _sessionsRef(String uid) {
+    return FirebaseFirestore.instance.collection('users').doc(uid).collection('sessions');
   }
 
-  CollectionReference<Map<String, dynamic>> _messagesRef(
-    String uid,
-    String sessionId,
-  ) {
-    return _sessionsRef(uid)
-        .doc(sessionId)
-        .collection('messages');
+  CollectionReference<Map<String, dynamic>> _messagesRef(String uid, String sessionId) {
+    return _sessionsRef(uid).doc(sessionId).collection('messages');
   }
-
-  // ----------------------------------------------------------
-  // LOAD SESSIONS
-  // ----------------------------------------------------------
 
   Future<void> _loadSessions() async {
     final user = FirebaseAuth.instance.currentUser;
-
     if (user == null) {
       if (mounted) {
         setState(() {
@@ -185,16 +154,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
 
     try {
-      final snapshot = await _sessionsRef(user.uid)
-          .orderBy('updatedAt', descending: true)
-          .get();
-
+      final snapshot = await _sessionsRef(user.uid).orderBy('updatedAt', descending: true).get();
       if (snapshot.docs.isEmpty) {
         await _createInitialSession(user.uid);
       } else {
-        final sessions =
-            snapshot.docs.map(ChatSession.fromDoc).toList();
-
+        final sessions = snapshot.docs.map(ChatSession.fromDoc).toList();
         if (mounted) {
           setState(() {
             chatSessions = sessions;
@@ -205,27 +169,19 @@ class _AiChatScreenState extends State<AiChatScreen> {
       }
     } catch (e) {
       debugPrint('Load sessions error: $e');
-
       if (mounted) {
         setState(() {
           _isSessionsLoading = false;
         });
-
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text(
-              'Chat history load nahi ho payi: $e',
-            ),
+            content: Text('Chat history load nahi ho payi: $e'),
           ),
         );
       }
     }
   }
-
-  // ----------------------------------------------------------
-  // CREATE FIRST SESSION
-  // ----------------------------------------------------------
 
   Future<void> _createInitialSession(String uid) async {
     final ref = _sessionsRef(uid).doc();
@@ -253,13 +209,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
   }
 
-  // ----------------------------------------------------------
-  // NEW CHAT
-  // ----------------------------------------------------------
-
   Future<void> _startNewChat() async {
     final user = FirebaseAuth.instance.currentUser;
-
     if (user == null) return;
 
     final ref = _sessionsRef(user.uid).doc();
@@ -284,39 +235,25 @@ class _AiChatScreenState extends State<AiChatScreen> {
       chatSessions.insert(0, newSession);
       _currentSessionId = ref.id;
     });
-
     Navigator.pop(context);
   }
 
-  // ----------------------------------------------------------
-  // DELETE CHAT
-  // ----------------------------------------------------------
-
   Future<void> _deleteChat(int index) async {
     final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null || index < 0 || index >= chatSessions.length) {
-      return;
-    }
+    if (user == null || index < 0 || index >= chatSessions.length) return;
 
     final session = chatSessions[index];
 
     try {
-      final messageSnapshot =
-          await _messagesRef(user.uid, session.id).get();
-
+      final messageSnapshot = await _messagesRef(user.uid, session.id).get();
       final docs = messageSnapshot.docs;
 
       for (int i = 0; i < docs.length; i += 400) {
         final batch = FirebaseFirestore.instance.batch();
-
-        final end =
-            (i + 400 < docs.length) ? i + 400 : docs.length;
-
+        final end = (i + 400 < docs.length) ? i + 400 : docs.length;
         for (int j = i; j < end; j++) {
           batch.delete(docs[j].reference);
         }
-
         await batch.commit();
       }
 
@@ -325,7 +262,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
       if (mounted) {
         setState(() {
           chatSessions.removeAt(index);
-
           if (chatSessions.isEmpty) {
             _currentSessionId = '';
           } else if (_currentSessionId == session.id) {
@@ -342,42 +278,26 @@ class _AiChatScreenState extends State<AiChatScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text(
-              'Chat delete nahi ho payi: $e',
-            ),
+            content: Text('Chat delete nahi ho payi: $e'),
           ),
         );
       }
     }
   }
 
-  // ----------------------------------------------------------
-  // UPDATE SESSION TITLE
-  // ----------------------------------------------------------
-
   Future<void> _updateSessionTitle(String title) async {
     final user = FirebaseAuth.instance.currentUser;
-
     if (user == null || _currentSessionId.isEmpty) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
-
-    await _sessionsRef(user.uid)
-        .doc(_currentSessionId)
-        .set(
-      {
-        'title': title,
-        'updatedAt': now,
-      },
+    await _sessionsRef(user.uid).doc(_currentSessionId).set(
+      {'title': title, 'updatedAt': now},
       SetOptions(merge: true),
     );
 
     if (!mounted) return;
 
-    final index = chatSessions.indexWhere(
-      (s) => s.id == _currentSessionId,
-    );
-
+    final index = chatSessions.indexWhere((s) => s.id == _currentSessionId);
     if (index >= 0) {
       setState(() {
         chatSessions[index].title = title;
@@ -386,39 +306,22 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
   }
 
-  // ----------------------------------------------------------
-  // UPDATE SESSION TIME
-  // ----------------------------------------------------------
-
   Future<void> _touchCurrentSession() async {
     final user = FirebaseAuth.instance.currentUser;
-
     if (user == null || _currentSessionId.isEmpty) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
-
-    await _sessionsRef(user.uid)
-        .doc(_currentSessionId)
-        .set(
-      {
-        'updatedAt': now,
-      },
+    await _sessionsRef(user.uid).doc(_currentSessionId).set(
+      {'updatedAt': now},
       SetOptions(merge: true),
     );
   }
-
-  // ----------------------------------------------------------
-  // SEND MESSAGE
-  // ----------------------------------------------------------
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     final user = FirebaseAuth.instance.currentUser;
 
-    if (text.isEmpty ||
-        _isLoading ||
-        user == null ||
-        _currentSessionId.isEmpty) {
+    if (text.isEmpty || _isLoading || user == null || _currentSessionId.isEmpty) {
       return;
     }
 
@@ -433,11 +336,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
     );
 
     String? newTitle;
-
-    if (currentSession.title == 'First Conversation' ||
-        currentSession.title == 'New Chat') {
-      newTitle =
-          text.length > 30 ? '${text.substring(0, 30)}...' : text;
+    if (currentSession.title == 'First Conversation' || currentSession.title == 'New Chat') {
+      newTitle = text.length > 30 ? '${text.substring(0, 30)}...' : text;
     }
 
     setState(() {
@@ -450,7 +350,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
         await _updateSessionTitle(newTitle);
       }
 
-      // Save user message first.
       await _messagesRef(user.uid, _currentSessionId).add({
         'sender': 'user',
         'text': text,
@@ -459,81 +358,50 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
       await _touchCurrentSession();
 
-      // --------------------------------------------------------
-      // LOAD PREVIOUS MESSAGES FOR AI CONTEXT
-      // --------------------------------------------------------
-
       List<Map<String, String>> history = [];
-
       try {
-        final historySnapshot =
-            await _messagesRef(user.uid, _currentSessionId)
-                .orderBy('timestamp', descending: true)
-                .limit(30)
-                .get();
+        final historySnapshot = await _messagesRef(user.uid, _currentSessionId)
+            .orderBy('timestamp', descending: true)
+            .limit(30)
+            .get();
 
-        final historyDocs =
-            historySnapshot.docs.reversed.toList();
+        final historyDocs = historySnapshot.docs.reversed.toList();
 
         for (final doc in historyDocs) {
           final data = doc.data();
-
           final sender = data['sender']?.toString();
           final messageText = data['text']?.toString();
 
-          if (messageText == null || messageText.isEmpty) {
-            continue;
-          }
+          if (messageText == null || messageText.isEmpty) continue;
 
           if (sender == 'user') {
-            history.add({
-              'role': 'user',
-              'content': messageText,
-            });
+            history.add({'role': 'user', 'content': messageText});
           } else if (sender == 'ai') {
-            history.add({
-              'role': 'assistant',
-              'content': messageText,
-            });
+            history.add({'role': 'assistant', 'content': messageText});
           }
         }
       } catch (e) {
         debugPrint('History load for AI failed: $e');
       }
 
-      // --------------------------------------------------------
-      // GROQ API
-      // --------------------------------------------------------
-
       String reply;
-
       if (_groqApiKey.isEmpty) {
-        reply =
-            'Groq API key set nahi hai. Flutter run/build me GROQ_API_KEY define karein.';
+        reply = 'Groq API key set nahi hai. Flutter run/build me GROQ_API_KEY define karein.';
       } else {
         final messages = <Map<String, dynamic>>[
           {
             'role': 'system',
-            'content':
-                'Aap Saarthi AI hain. User se natural Hindi/Hinglish me '
-                'seedhi aur useful baat karein. Formal faltu dialogue '
-                'jaise "Aapka message mila" ya "Main process kar raha hoon" '
-                'mat bolna. User ke sawal ka direct jawab dena. '
-                'Jahan zaroori ho wahan steps me explain karna.',
+            'content': 'Aap Saarthi AI hain. User se natural Hindi/Hinglish me seedhi aur useful baat karein. Formal faltu dialogue jaise "Aapka message mila" ya "Main process kar raha hoon" mat bolna. User ke sawal ka direct jawab dena. Jahan zaroori ho wahan steps me explain karna.',
           },
           ...history,
         ];
 
         try {
           final response = await http.post(
-            Uri.parse(
-              'https://api.groq.com/openai/v1/chat/completions',
-            ),
+            Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
             headers: {
-              'Content-Type':
-                  'application/json; charset=UTF-8',
-              'Authorization':
-                  'Bearer $_groqApiKey',
+              'Content-Type': 'application/json; charset=UTF-8',
+              'Authorization': 'Bearer $_groqApiKey',
             },
             body: jsonEncode({
               'model': 'openai/gpt-oss-120b',
@@ -543,62 +411,37 @@ class _AiChatScreenState extends State<AiChatScreen> {
           );
 
           if (response.statusCode == 200) {
-            final data = jsonDecode(
-              utf8.decode(response.bodyBytes),
-            );
-
-            reply = data['choices']?[0]?['message']?['content']
-                    ?.toString()
-                    .trim() ??
-                'AI se valid reply nahi mila.';
+            final data = jsonDecode(utf8.decode(response.bodyBytes));
+            reply = data['choices']?[0]?['message']?['content']?.toString().trim() ?? 'AI se valid reply nahi mila.';
           } else {
-            String errorText =
-                'Groq API error: ${response.statusCode}';
-
+            String errorText = 'Groq API error: ${response.statusCode}';
             try {
-              final errorJson =
-                  jsonDecode(response.body);
-
-              final apiMessage =
-                  errorJson['error']?['message'];
-
+              final errorJson = jsonDecode(response.body);
+              final apiMessage = errorJson['error']?['message'];
               if (apiMessage != null) {
-                errorText =
-                    'Groq API error: ${apiMessage.toString()}';
+                errorText = 'Groq API error: ${apiMessage.toString()}';
               }
             } catch (_) {}
-
             reply = errorText;
           }
         } catch (e) {
           debugPrint('Groq error: $e');
-          reply =
-              'Network/API error. Internet aur Groq configuration check karein.';
+          reply = 'Network/API error. Internet aur Groq configuration check karein.';
         }
       }
-
-      // --------------------------------------------------------
-      // SAVE AI REPLY
-      // --------------------------------------------------------
 
       await _messagesRef(user.uid, _currentSessionId).add({
         'sender': 'ai',
         'text': reply,
         'timestamp': FieldValue.serverTimestamp(),
       });
-
       await _touchCurrentSession();
     } catch (e) {
       debugPrint('Send message error: $e');
-
       try {
-        await _messagesRef(
-          user.uid,
-          _currentSessionId,
-        ).add({
+        await _messagesRef(user.uid, _currentSessionId).add({
           'sender': 'ai',
-          'text':
-              'Message process karte waqt error aaya. Dobara try karein.',
+          'text': 'Message process karte waqt error aaya. Dobara try karein.',
           'timestamp': FieldValue.serverTimestamp(),
         });
       } catch (_) {}
@@ -611,64 +454,33 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
   }
 
-  // ----------------------------------------------------------
-  // FILTER SESSIONS
-  // ----------------------------------------------------------
-
   List<ChatSession> get _filteredSessions {
     final query = _searchController.text.trim().toLowerCase();
-
     if (query.isEmpty) {
       return chatSessions;
     }
-
-    return chatSessions
-        .where(
-          (session) =>
-              session.title.toLowerCase().contains(query),
-        )
-        .toList();
+    return chatSessions.where((session) => session.title.toLowerCase().contains(query)).toList();
   }
-
-  // ----------------------------------------------------------
-  // PROFILE DIALOG
-  // ----------------------------------------------------------
 
   void _showProfileDialog() {
     final user = FirebaseAuth.instance.currentUser;
-
     showDialog(
       context: context,
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF1F2C34),
-          title: const Text(
-            'Profile',
-            style: TextStyle(color: Colors.white),
-          ),
-          content: Text(
-            user?.email ?? 'User',
-            style: const TextStyle(color: Colors.white70),
-          ),
+          title: const Text('Profile', style: TextStyle(color: Colors.white)),
+          content: Text(user?.email ?? 'User', style: const TextStyle(color: Colors.white70)),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text(
-                'Close',
-                style: TextStyle(
-                  color: Color(0xFF00A884),
-                ),
-              ),
+              child: const Text('Close', style: TextStyle(color: Color(0xFF00A884))),
             ),
           ],
         );
       },
     );
   }
-
-  // ----------------------------------------------------------
-  // CHAT DRAWER
-  // ----------------------------------------------------------
 
   Widget _buildDrawer() {
     return Drawer(
@@ -679,101 +491,54 @@ class _AiChatScreenState extends State<AiChatScreen> {
           children: [
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 14,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: const BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color: Colors.white12,
-                  ),
-                ),
+                border: Border(bottom: BorderSide(color: Colors.white12)),
               ),
               child: Row(
                 children: [
                   const CircleAvatar(
                     radius: 16,
                     backgroundColor: Color(0xFF00A884),
-                    child: Icon(
-                      Icons.person,
-                      color: Colors.white,
-                      size: 20,
-                    ),
+                    child: Icon(Icons.person, color: Colors.white, size: 20),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      FirebaseAuth.instance.currentUser?.email ??
-                          'user@gmail.com',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                      ),
+                      FirebaseAuth.instance.currentUser?.email ?? 'user@gmail.com',
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
               ),
             ),
-
             Padding(
               padding: const EdgeInsets.all(12),
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF00A884),
-                  minimumSize:
-                      const Size(double.infinity, 45),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+                  minimumSize: const Size(double.infinity, 45),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-                onPressed:
-                    _isSessionsLoading ? null : _startNewChat,
-                icon: const Icon(
-                  Icons.add,
-                  color: Colors.white,
-                ),
-                label: const Text(
-                  'New Chat',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                  ),
-                ),
+                onPressed: _isSessionsLoading ? null : _startNewChat,
+                icon: const Icon(Icons.add, color: Colors.white),
+                label: const Text('New Chat', style: TextStyle(color: Colors.white, fontSize: 16)),
               ),
             ),
-
             Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 4,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: TextField(
                 controller: _searchController,
                 onChanged: (_) => setState(() {}),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 14),
                 decoration: InputDecoration(
                   hintText: 'Search chats...',
-                  hintStyle: const TextStyle(
-                    color: Colors.grey,
-                    fontSize: 13,
-                  ),
-                  prefixIcon: const Icon(
-                    Icons.search,
-                    color: Colors.grey,
-                    size: 18,
-                  ),
+                  hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                  prefixIcon: const Icon(Icons.search, color: Colors.grey, size: 18),
                   suffixIcon: _searchController.text.isNotEmpty
                       ? IconButton(
-                          icon: const Icon(
-                            Icons.clear,
-                            color: Colors.grey,
-                            size: 18,
-                          ),
+                          icon: const Icon(Icons.clear, color: Colors.grey, size: 18),
                           onPressed: () {
                             _searchController.clear();
                             setState(() {});
@@ -789,117 +554,57 @@ class _AiChatScreenState extends State<AiChatScreen> {
                 ),
               ),
             ),
-
-            const Divider(
-              color: Colors.white24,
-              height: 1,
-            ),
-
+            const Divider(color: Colors.white24, height: 1),
             const Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                14,
-                16,
-                6,
-              ),
+              padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
               child: Text(
                 'Recents',
-                style: TextStyle(
-                  color: Colors.grey,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold),
               ),
             ),
-
             Expanded(
               child: _isSessionsLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF00A884),
-                      ),
-                    )
+                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)))
                   : ListView.builder(
                       itemCount: _filteredSessions.length,
                       itemBuilder: (context, index) {
-                        final session =
-                            _filteredSessions[index];
-
-                        final realIndex = chatSessions.indexWhere(
-                          (s) => s.id == session.id,
-                        );
-
-                        final isSelected =
-                            session.id == _currentSessionId;
-
+                        final session = _filteredSessions[index];
+                        final realIndex = chatSessions.indexWhere((s) => s.id == session.id);
+                        final isSelected = session.id == _currentSessionId;
                         return ListTile(
                           selected: isSelected,
-                          selectedTileColor:
-                              Colors.white.withOpacity(0.08),
-                          leading: const Icon(
-                            Icons.chat_bubble_outline,
-                            color: Colors.white70,
-                            size: 18,
-                          ),
+                          selectedTileColor: Colors.white.withOpacity(0.08),
+                          leading: const Icon(Icons.chat_bubble_outline, color: Colors.white70, size: 18),
                           title: Text(
                             session.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                            ),
+                            style: const TextStyle(color: Colors.white, fontSize: 14),
                           ),
                           trailing: IconButton(
-                            icon: const Icon(
-                              Icons.delete_outline,
-                              color: Colors.redAccent,
-                              size: 18,
-                            ),
-                            onPressed: realIndex >= 0
-                                ? () =>
-                                    _deleteChat(realIndex)
-                                : null,
+                            icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                            onPressed: realIndex >= 0 ? () => _deleteChat(realIndex) : null,
                           ),
                           onTap: () {
                             setState(() {
-                              _currentSessionId =
-                                  session.id;
+                              _currentSessionId = session.id;
                             });
-
                             Navigator.pop(context);
                           },
                         );
                       },
                     ),
             ),
-
-            const Divider(
-              color: Colors.white24,
-              height: 1,
-            ),
-
+            const Divider(color: Colors.white24, height: 1),
             Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
                 children: [
                   ListTile(
-                    shape: RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(10),
-                    ),
-                    tileColor:
-                        Colors.white.withOpacity(0.04),
-                    leading: const Icon(
-                      Icons.person_outline,
-                      color: Colors.white70,
-                    ),
-                    title: const Text(
-                      'Profile',
-                      style: TextStyle(
-                        color: Colors.white,
-                      ),
-                    ),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    tileColor: Colors.white.withOpacity(0.04),
+                    leading: const Icon(Icons.person_outline, color: Colors.white70),
+                    title: const Text('Profile', style: TextStyle(color: Colors.white)),
                     onTap: () {
                       Navigator.pop(context);
                       _showProfileDialog();
@@ -907,29 +612,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   ),
                   const SizedBox(height: 4),
                   ListTile(
-                    shape: RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(10),
-                    ),
-                    tileColor:
-                        Colors.redAccent.withOpacity(0.1),
-                    leading: const Icon(
-                      Icons.logout,
-                      color: Colors.redAccent,
-                    ),
-                    title: const Text(
-                      'Logout',
-                      style: TextStyle(
-                        color: Colors.redAccent,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    tileColor: Colors.redAccent.withOpacity(0.1),
+                    leading: const Icon(Icons.logout, color: Colors.redAccent),
+                    title: const Text('Logout', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
                     onTap: () async {
                       await FirebaseAuth.instance.signOut();
-
-                      if (mounted) {
-                        Navigator.pop(context);
-                      }
+                      if (mounted) Navigator.pop(context);
                     },
                   ),
                 ],
@@ -941,10 +630,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
     );
   }
 
-  // ----------------------------------------------------------
-  // BUILD
-  // ----------------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -952,17 +637,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
         backgroundColor: const Color(0xFF1F2C34),
         title: const Row(
           children: [
-            Icon(
-              Icons.smart_toy_rounded,
-              color: Color(0xFF00E676),
-            ),
+            Icon(Icons.smart_toy_rounded, color: Color(0xFF00E676)),
             SizedBox(width: 10),
-            Text(
-              'Saarthi AI',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            Text('Saarthi AI', style: TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -971,174 +648,86 @@ class _AiChatScreenState extends State<AiChatScreen> {
         children: [
           Expanded(
             child: StreamBuilder<User?>(
-              stream:
-                  FirebaseAuth.instance.authStateChanges(),
+              stream: FirebaseAuth.instance.authStateChanges(),
               builder: (context, authSnapshot) {
                 final user = authSnapshot.data;
-
                 if (user == null) {
                   return const Center(
-                    child: Text(
-                      'Kripya Login karein',
-                      style: TextStyle(
-                        color: Colors.grey,
-                      ),
-                    ),
+                    child: Text('Kripya Login karein', style: TextStyle(color: Colors.grey)),
                   );
                 }
-
                 if (_currentSessionId.isEmpty) {
                   return const Center(
-                    child: Text(
-                      'Nayi chat shuru karein!',
-                      style: TextStyle(
-                        color: Colors.grey,
-                      ),
-                    ),
+                    child: Text('Nayi chat shuru karein!', style: TextStyle(color: Colors.grey)),
                   );
                 }
-
                 return StreamBuilder<QuerySnapshot>(
-                  stream: _messagesRef(
-                    user.uid,
-                    _currentSessionId,
-                  ).snapshots(),
+                  stream: _messagesRef(user.uid, _currentSessionId).snapshots(),
                   builder: (context, chatSnapshot) {
-                    if (chatSnapshot.connectionState ==
-                        ConnectionState.waiting) {
+                    if (chatSnapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+                    }
+                    if (!chatSnapshot.hasData || chatSnapshot.data!.docs.isEmpty) {
                       return const Center(
-                        child: CircularProgressIndicator(
-                          color: Color(0xFF00A884),
-                        ),
+                        child: Text('Nayi chat shuru karein!', style: TextStyle(color: Colors.grey)),
                       );
                     }
-
-                    if (!chatSnapshot.hasData ||
-                        chatSnapshot.data!.docs.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'Nayi chat shuru karein!',
-                          style: TextStyle(
-                            color: Colors.grey,
-                          ),
-                        ),
-                      );
-                    }
-
-                    final docs =
-                        chatSnapshot.data!.docs.toList();
-
+                    final docs = chatSnapshot.data!.docs.toList();
                     docs.sort((a, b) {
-                      final aData =
-                          a.data() as Map<String, dynamic>;
-                      final bData =
-                          b.data() as Map<String, dynamic>;
-
+                      final aData = a.data() as Map<String, dynamic>;
+                      final bData = b.data() as Map<String, dynamic>;
                       final aTime = aData['timestamp'];
                       final bTime = bData['timestamp'];
-
-                      if (aTime is Timestamp &&
-                          bTime is Timestamp) {
-                        return aTime.compareTo(bTime);
-                      }
-
+                      if (aTime is Timestamp && bTime is Timestamp) return aTime.compareTo(bTime);
                       if (aTime is Timestamp) return -1;
                       if (bTime is Timestamp) return 1;
-
                       return 0;
                     });
-
-                    WidgetsBinding.instance
-                        .addPostFrameCallback((_) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (_scrollController.hasClients) {
                         _scrollController.animateTo(
                           _scrollController.position.maxScrollExtent,
-                          duration:
-                              const Duration(milliseconds: 250),
+                          duration: const Duration(milliseconds: 250),
                           curve: Curves.easeOut,
                         );
                       }
                     });
-
                     return ListView.builder(
                       controller: _scrollController,
                       padding: const EdgeInsets.all(12),
-                      itemCount:
-                          docs.length + (_isLoading ? 1 : 0),
+                      itemCount: docs.length + (_isLoading ? 1 : 0),
                       itemBuilder: (context, index) {
-                        if (_isLoading &&
-                            index == docs.length) {
+                        if (_isLoading && index == docs.length) {
                           return Align(
                             alignment: Alignment.centerLeft,
                             child: Container(
-                              margin:
-                                  const EdgeInsets.symmetric(
-                                vertical: 4,
-                              ),
-                              padding:
-                                  const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                               decoration: BoxDecoration(
-                                color:
-                                    const Color(0xFF202C33),
-                                borderRadius:
-                                    BorderRadius.circular(10),
+                                color: const Color(0xFF202C33),
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                              child: const Text(
-                                'AI typing...',
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                ),
-                              ),
+                              child: const Text('AI typing...', style: TextStyle(color: Colors.white70)),
                             ),
                           );
                         }
-
-                        final message =
-                            docs[index].data()
-                                as Map<String, dynamic>;
-
-                        final isUser =
-                            message['sender'] == 'user';
-
+                        final message = docs[index].data() as Map<String, dynamic>;
+                        final isUser = message['sender'] == 'user';
                         return Align(
-                          alignment: isUser
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
+                          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                           child: Container(
-                            margin:
-                                const EdgeInsets.symmetric(
-                              vertical: 4,
-                            ),
-                            padding:
-                                const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
+                            margin: const EdgeInsets.symmetric(vertical: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             decoration: BoxDecoration(
-                              color: isUser
-                                  ? const Color(0xFF005C4B)
-                                  : const Color(0xFF202C33),
-                              borderRadius:
-                                  BorderRadius.circular(10),
+                              color: isUser ? const Color(0xFF005C4B) : const Color(0xFF202C33),
+                              borderRadius: BorderRadius.circular(10),
                             ),
                             constraints: BoxConstraints(
-                              maxWidth:
-                                  MediaQuery.of(context)
-                                          .size
-                                          .width *
-                                      0.8,
+                              maxWidth: MediaQuery.of(context).size.width * 0.8,
                             ),
                             child: SelectableText(
-                              message['text']?.toString() ??
-                                  '',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 15,
-                                height: 1.4,
-                              ),
+                              message['text']?.toString() ?? '',
+                              style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.4),
                             ),
                           ),
                         );
@@ -1149,69 +738,44 @@ class _AiChatScreenState extends State<AiChatScreen> {
               },
             ),
           ),
-
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 8,
-              vertical: 8,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             color: const Color(0xFF1F2C34),
             child: Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: _messageController,
-                    style: const TextStyle(
-                      color: Colors.white,
-                    ),
+                    style: const TextStyle(color: Colors.white),
                     minLines: 1,
                     maxLines: 5,
                     onSubmitted: (_) {
-                      if (!_isLoading) {
-                        _sendMessage();
-                      }
+                      if (!_isLoading) _sendMessage();
                     },
                     decoration: InputDecoration(
                       hintText: 'Message...',
-                      hintStyle: const TextStyle(
-                        color: Colors.grey,
-                      ),
+                      hintStyle: const TextStyle(color: Colors.grey),
                       filled: true,
-                      fillColor:
-                          const Color(0xFF2A3942),
+                      fillColor: const Color(0xFF2A3942),
                       border: OutlineInputBorder(
-                        borderRadius:
-                            BorderRadius.circular(24),
+                        borderRadius: BorderRadius.circular(24),
                         borderSide: BorderSide.none,
                       ),
-                      contentPadding:
-                          const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 CircleAvatar(
-                  backgroundColor:
-                      const Color(0xFF00A884),
+                  backgroundColor: const Color(0xFF00A884),
                   child: _isLoading
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child:
-                              CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
                       : IconButton(
-                          icon: const Icon(
-                            Icons.send,
-                            color: Colors.white,
-                            size: 20,
-                          ),
+                          icon: const Icon(Icons.send, color: Colors.white, size: 20),
                           onPressed: _sendMessage,
                         ),
                 ),
@@ -1232,27 +796,18 @@ class SchoolAdminLoginScreen extends StatefulWidget {
   const SchoolAdminLoginScreen({super.key});
 
   @override
-  State<SchoolAdminLoginScreen> createState() =>
-      _SchoolAdminLoginScreenState();
+  State<SchoolAdminLoginScreen> createState() => _SchoolAdminLoginScreenState();
 }
 
-class _SchoolAdminLoginScreenState
-    extends State<SchoolAdminLoginScreen> {
+class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
   bool _isAdminMode = true;
-
-  final TextEditingController _usernameController =
-      TextEditingController();
-
-  final TextEditingController _passwordController =
-      TextEditingController();
-
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoggingIn = false;
-
   String _selectedClass = 'Class 1';
 
-  final List<String> _classList =
-      List.generate(10, (index) => 'Class ${index + 1}');
+  final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
 
   @override
   void dispose() {
@@ -1270,11 +825,8 @@ class _SchoolAdminLoginScreenState
   }
 
   Future<void> _handleLogin() async {
-    final idText =
-        _usernameController.text.trim();
-
-    final password =
-        _passwordController.text.trim();
+    final idText = _usernameController.text.trim();
+    final password = _passwordController.text.trim();
 
     if (idText.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1295,46 +847,29 @@ class _SchoolAdminLoginScreenState
 
     try {
       if (_isAdminMode) {
-        await FirebaseAuth.instance
-            .signInWithEmailAndPassword(
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
           email: idText,
           password: password,
         );
 
         if (!mounted) return;
-
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            backgroundColor:
-                Color(0xFF00A884),
-            content:
-                Text('Admin Login Safal hua!'),
+            backgroundColor: Color(0xFF00A884),
+            content: Text('Admin Login Safal hua!'),
           ),
         );
-
         Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (context) =>
-                const AdminDashboardScreen(),
-          ),
+          MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
         );
       } else {
-        // ------------------------------------------------------
-        // DEMO STUDENT LOGIN
-        // Production me ise Firebase Authentication se replace
-        // karna chahiye.
-        // ------------------------------------------------------
-
-        if (idText == 'student' &&
-            password == '123456') {
+        if (idText == 'student' && password == '123456') {
           if (!mounted) return;
-
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) =>
-                  StudentPortalScreen( 
+              builder: (context) => StudentPortalScreen(
                 studentId: idText,
                 studentClass: _selectedClass,
               ),
@@ -1342,64 +877,39 @@ class _SchoolAdminLoginScreenState
           );
         } else {
           if (!mounted) return;
-
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               backgroundColor: Colors.redAccent,
-              content: Text(
-                'Galat Student ID ya Password!',
-              ),
+              content: Text('Galat Student ID ya Password!'),
             ),
           );
         }
       }
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
-
-      String errorMessage =
-          'Galat Admin Email ya Password!';
-
+      String errorMessage = 'Galat Admin Email ya Password!';
       switch (e.code) {
         case 'user-not-found':
-          errorMessage =
-              'Yeh Admin account registered nahi hai.';
+          errorMessage = 'Yeh Admin account registered nahi hai.';
           break;
-
         case 'wrong-password':
         case 'invalid-credential':
-          errorMessage =
-              'Galat password ya login details.';
+          errorMessage = 'Galat password ya login details.';
           break;
-
         case 'invalid-email':
-          errorMessage =
-              'Invalid Admin Email.';
+          errorMessage = 'Invalid Admin Email.';
           break;
-
         case 'user-disabled':
-          errorMessage =
-              'Admin account disabled hai.';
+          errorMessage = 'Admin account disabled hai.';
           break;
       }
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content: Text(errorMessage),
-        ),
+        SnackBar(backgroundColor: Colors.redAccent, content: Text(errorMessage)),
       );
     } catch (e) {
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content: Text(
-            'Login error: $e',
-          ),
-        ),
+        SnackBar(backgroundColor: Colors.redAccent, content: Text('Login error: $e')),
       );
     } finally {
       if (mounted) {
@@ -1413,108 +923,58 @@ class _SchoolAdminLoginScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF121B22),
+      backgroundColor: const Color(0xFF121B22),
       appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title:
-            const Text('School Portal'),
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('School Portal'),
       ),
       body: Center(
         child: SingleChildScrollView(
-          padding:
-              const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(24),
           child: ConstrainedBox(
-            constraints:
-                const BoxConstraints(
-              maxWidth: 500,
-            ),
+            constraints: const BoxConstraints(maxWidth: 500),
             child: Column(
               children: [
                 Icon(
-                  _isAdminMode
-                      ? Icons.admin_panel_settings_rounded
-                      : Icons.school_rounded,
+                  _isAdminMode ? Icons.admin_panel_settings_rounded : Icons.school_rounded,
                   size: 65,
-                  color:
-                      const Color(0xFF00A884),
+                  color: const Color(0xFF00A884),
                 ),
-
                 const SizedBox(height: 12),
-
                 Text(
-                  _isAdminMode
-                      ? 'ADMIN LOGIN'
-                      : 'STUDENT LOGIN',
+                  _isAdminMode ? 'ADMIN LOGIN' : 'STUDENT LOGIN',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 22,
-                    fontWeight:
-                        FontWeight.bold,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-
                 const SizedBox(height: 24),
-
                 Container(
-                  padding:
-                      const EdgeInsets.all(4),
-                  decoration:
-                      BoxDecoration(
-                    color:
-                        const Color(0xFF1F2C34),
-                    borderRadius:
-                        BorderRadius.circular(
-                      12,
-                    ),
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F2C34),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
                     children: [
                       Expanded(
                         child: GestureDetector(
-                          onTap: () =>
-                              _switchRole(true),
+                          onTap: () => _switchRole(true),
                           child: Container(
-                            padding:
-                                const EdgeInsets.symmetric(
-                              vertical: 10,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: _isAdminMode ? const Color(0xFF00A884) : Colors.transparent,
+                              borderRadius: BorderRadius.circular(10),
                             ),
-                            decoration:
-                                BoxDecoration(
-                              color: _isAdminMode
-                                  ? const Color(
-                                      0xFF00A884)
-                                  : Colors
-                                      .transparent,
-                              borderRadius:
-                                  BorderRadius.circular(
-                                10,
-                              ),
-                            ),
-                            child:
-                                const Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment
-                                      .center,
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(
-                                  Icons.security,
-                                  size: 16,
-                                  color:
-                                      Colors.white,
-                                ),
+                                Icon(Icons.security, size: 16, color: Colors.white),
                                 SizedBox(width: 6),
                                 Text(
                                   'Admin',
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.white,
-                                    fontWeight:
-                                        FontWeight
-                                            .bold,
-                                  ),
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                                 ),
                               ],
                             ),
@@ -1523,48 +983,21 @@ class _SchoolAdminLoginScreenState
                       ),
                       Expanded(
                         child: GestureDetector(
-                          onTap: () =>
-                              _switchRole(false),
+                          onTap: () => _switchRole(false),
                           child: Container(
-                            padding:
-                                const EdgeInsets.symmetric(
-                              vertical: 10,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: !_isAdminMode ? const Color(0xFF00A884) : Colors.transparent,
+                              borderRadius: BorderRadius.circular(10),
                             ),
-                            decoration:
-                                BoxDecoration(
-                              color: !_isAdminMode
-                                  ? const Color(
-                                      0xFF00A884)
-                                  : Colors
-                                      .transparent,
-                              borderRadius:
-                                  BorderRadius.circular(
-                                10,
-                              ),
-                            ),
-                            child:
-                                const Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment
-                                      .center,
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(
-                                  Icons.person,
-                                  size: 16,
-                                  color:
-                                      Colors.white,
-                                ),
+                                Icon(Icons.person, size: 16, color: Colors.white),
                                 SizedBox(width: 6),
                                 Text(
                                   'Student',
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.white,
-                                    fontWeight:
-                                        FontWeight
-                                            .bold,
-                                  ),
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                                 ),
                               ],
                             ),
@@ -1574,146 +1007,79 @@ class _SchoolAdminLoginScreenState
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 24),
-
                 if (!_isAdminMode) ...[
                   DropdownButtonFormField<String>(
-                    value:
-                        _selectedClass,
-                    dropdownColor:
-                        const Color(
-                            0xFF1F2C34),
-                    style: const TextStyle(
-                      color: Colors.white,
-                    ),
-                    decoration:
-                        _inputDecoration(
-                      'Class',
-                    ),
-                    items: _classList.map(
-                      (value) {
-                        return DropdownMenuItem<
-                            String>(
-                          value: value,
-                          child: Text(value),
-                        );
-                      },
-                    ).toList(),
-                    onChanged:
-                        (value) {
+                    value: _selectedClass,
+                    dropdownColor: const Color(0xFF1F2C34),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Class'),
+                    items: _classList.map((value) {
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
                       if (value != null) {
                         setState(() {
-                          _selectedClass =
-                              value;
+                          _selectedClass = value;
                         });
                       }
                     },
                   ),
                   const SizedBox(height: 16),
                 ],
-
                 TextField(
-                  controller:
-                      _usernameController,
-                  style:
-                      const TextStyle(
-                    color: Colors.white,
-                  ),
-                  decoration:
-                      _inputDecoration(
-                    _isAdminMode
-                        ? 'Admin Email'
-                        : 'Student ID / Roll No',
-                    icon: _isAdminMode
-                        ? Icons
-                            .person_outline
-                        : Icons
-                            .badge_outlined,
+                  controller: _usernameController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration(
+                    _isAdminMode ? 'Admin Email' : 'Student ID / Roll No',
+                    icon: _isAdminMode ? Icons.person_outline : Icons.badge_outlined,
                   ),
                 ),
-
                 const SizedBox(height: 16),
-
                 TextField(
-                  controller:
-                      _passwordController,
-                  obscureText:
-                      _obscurePassword,
-                  style:
-                      const TextStyle(
-                    color: Colors.white,
-                  ),
-                  decoration:
-                      _inputDecoration(
+                  controller: _passwordController,
+                  obscureText: _obscurePassword,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration(
                     'Password',
                     icon: Icons.lock_outline,
-                    suffixIcon:
-                        IconButton(
+                    suffixIcon: IconButton(
                       icon: Icon(
-                        _obscurePassword
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                        color:
-                            Colors.grey,
+                        _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                        color: Colors.grey,
                       ),
                       onPressed: () {
                         setState(() {
-                          _obscurePassword =
-                              !_obscurePassword;
+                          _obscurePassword = !_obscurePassword;
                         });
                       },
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 24),
-
                 SizedBox(
-                  width:
-                      double.infinity,
+                  width: double.infinity,
                   height: 48,
-                  child:
-                      ElevatedButton(
-                    style:
-                        ElevatedButton.styleFrom(
-                      backgroundColor:
-                          const Color(
-                        0xFF00A884,
-                      ),
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(
-                          12,
-                        ),
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF00A884),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    onPressed:
-                        _isLoggingIn
-                            ? null
-                            : _handleLogin,
+                    onPressed: _isLoggingIn ? null : _handleLogin,
                     child: _isLoggingIn
                         ? const SizedBox(
                             width: 20,
                             height: 20,
-                            child:
-                                CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                           )
                         : Text(
-                            _isAdminMode
-                                ? 'LOGIN AS ADMIN'
-                                : 'LOGIN AS STUDENT',
-                            style:
-                                const TextStyle(
-                              color:
-                                  Colors.white,
-                              fontWeight:
-                                  FontWeight.bold,
-                            ),
+                            _isAdminMode ? 'LOGIN AS ADMIN' : 'LOGIN AS STUDENT',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                           ),
                   ),
                 ),
@@ -1725,36 +1091,17 @@ class _SchoolAdminLoginScreenState
     );
   }
 
-  InputDecoration _inputDecoration(
-    String hint, {
-    IconData? icon,
-    Widget? suffixIcon,
-  }) {
+  InputDecoration _inputDecoration(String hint, {IconData? icon, Widget? suffixIcon}) {
     return InputDecoration(
       hintText: hint,
-      hintStyle:
-          const TextStyle(
-        color: Colors.grey,
-      ),
-      prefixIcon: icon == null
-          ? null
-          : Icon(
-              icon,
-              color:
-                  const Color(0xFF00A884),
-            ),
+      hintStyle: const TextStyle(color: Colors.grey),
+      prefixIcon: icon == null ? null : Icon(icon, color: const Color(0xFF00A884)),
       suffixIcon: suffixIcon,
       filled: true,
-      fillColor:
-          const Color(0xFF1F2C34),
-      border:
-          OutlineInputBorder(
-        borderRadius:
-            BorderRadius.circular(
-          12,
-        ),
-        borderSide:
-            BorderSide.none,
+      fillColor: const Color(0xFF1F2C34),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
       ),
     );
   }
@@ -1782,29 +1129,21 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
   
   Color _categoryColor(String category) {
     switch (category.toLowerCase()) {
-      case 'holiday':
-        return Colors.orangeAccent;
-      case 'exam':
-        return Colors.redAccent;
-      case 'event':
-        return Colors.blueAccent;
+      case 'holiday': return Colors.orangeAccent;
+      case 'exam': return Colors.redAccent;
+      case 'event': return Colors.blueAccent;
       case 'general':
-      default:
-        return const Color(0xFF00A884);
+      default: return const Color(0xFF00A884);
     }
   }
 
   IconData _categoryIcon(String category) {
     switch (category.toLowerCase()) {
-      case 'holiday':
-        return Icons.beach_access_rounded;
-      case 'exam':
-        return Icons.menu_book_rounded;
-      case 'event':
-        return Icons.event_rounded;
+      case 'holiday': return Icons.beach_access_rounded;
+      case 'exam': return Icons.menu_book_rounded;
+      case 'event': return Icons.event_rounded;
       case 'general':
-      default:
-        return Icons.campaign_rounded;
+      default: return Icons.campaign_rounded;
     }
   }
 
@@ -1821,33 +1160,17 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
 
   String _studentInitial(String value) {
     final clean = value.trim();
-    if (clean.isEmpty) {
-      return 'S';
-    }
+    if (clean.isEmpty) return 'S';
     return clean.substring(0, 1).toUpperCase();
   }
 
-  // ----------------------------------------------------------
-  // MOBILE NUMBER UPDATE
-  // ----------------------------------------------------------
-
   Future<void> _updateMobileNumber(String newMobile) async {
     final mobile = newMobile.trim();
-
-    if (mobile.isEmpty) {
-      throw Exception('Mobile number bharna zaroori hai.');
-    }
-
-    if (!RegExp(r'^[0-9]{10}$').hasMatch(mobile)) {
-      throw Exception('10 digit mobile number daalein.');
-    }
+    if (mobile.isEmpty) throw Exception('Mobile number bharna zaroori hai.');
+    if (!RegExp(r'^[0-9]{10}$').hasMatch(mobile)) throw Exception('10 digit mobile number daalein.');
 
     final docId = '${widget.studentClass}_Roll_${widget.studentId}';
-
-    await FirebaseFirestore.instance
-        .collection('students_directory')
-        .doc(docId)
-        .update({
+    await FirebaseFirestore.instance.collection('students_directory').doc(docId).update({
       'parentContact': mobile,
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -1860,29 +1183,16 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
       context: context,
       builder: (ctx) {
         bool isSaving = false;
-
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
               backgroundColor: const Color(0xFF1F2C34),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               title: const Row(
                 children: [
-                  Icon(
-                    Icons.phone_android_rounded,
-                    color: Color(0xFF00A884),
-                  ),
+                  Icon(Icons.phone_android_rounded, color: Color(0xFF00A884)),
                   SizedBox(width: 10),
-                  Text(
-                    'Update Mobile Number',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  Text('Update Mobile Number', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
                 ],
               ),
               content: TextField(
@@ -1893,17 +1203,11 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                 decoration: InputDecoration(
                   hintText: 'Enter 10 digit mobile number',
                   hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(
-                    Icons.phone_outlined,
-                    color: Color(0xFF00A884),
-                  ),
+                  prefixIcon: const Icon(Icons.phone_outlined, color: Color(0xFF00A884)),
                   filled: true,
                   fillColor: const Color(0xFF121B22),
                   counterStyle: const TextStyle(color: Colors.grey),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
                 ),
               ),
               actions: [
@@ -1912,59 +1216,32 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                   child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
                 ),
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                  ),
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
                   onPressed: isSaving
                       ? null
                       : () async {
-                          setDialogState(() {
-                            isSaving = true;
-                          });
-
+                          setDialogState(() { isSaving = true; });
                           try {
                             await _updateMobileNumber(mobileController.text);
-
                             if (!mounted) return;
-
                             Navigator.pop(ctx);
-
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 backgroundColor: Color(0xFF00A884),
-                                content: Text(
-                                  'Mobile number successfully update ho gaya!',
-                                ),
+                                content: Text('Mobile number successfully update ho gaya!'),
                               ),
                             );
                           } catch (e) {
-                            setDialogState(() {
-                              isSaving = false;
-                            });
-
+                            setDialogState(() { isSaving = false; });
                             if (!mounted) return;
-
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                backgroundColor: Colors.redAccent,
-                                content: Text('Update error: $e'),
-                              ),
+                              SnackBar(backgroundColor: Colors.redAccent, content: Text('Update error: $e')),
                             );
                           }
                         },
                   child: isSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text(
-                          'Save',
-                          style: TextStyle(color: Colors.white),
-                        ),
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Save', style: TextStyle(color: Colors.white)),
                 ),
               ],
             );
@@ -1990,26 +1267,15 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
               decoration: BoxDecoration(
                 color: const Color(0xFF00A884).withOpacity(0.15),
                 borderRadius: BorderRadius.circular(11),
-                border: Border.all(
-                  color: const Color(0xFF00A884).withOpacity(0.35),
-                ),
+                border: Border.all(color: const Color(0xFF00A884).withOpacity(0.35)),
               ),
-              child: const Icon(
-                Icons.school_rounded,
-                color: Color(0xFF00A884),
-                size: 21,
-              ),
+              child: const Icon(Icons.school_rounded, color: Color(0xFF00A884), size: 21),
             ),
             const SizedBox(width: 11),
             const Expanded(
               child: Text(
                 'Student Portal',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.2,
-                ),
+                style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: 0.2),
               ),
             ),
           ],
@@ -2024,11 +1290,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                 color: Colors.redAccent.withOpacity(0.10),
                 borderRadius: BorderRadius.circular(11),
               ),
-              child: const Icon(
-                Icons.logout_rounded,
-                color: Colors.redAccent,
-                size: 19,
-              ),
+              child: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 19),
             ),
             onPressed: () => Navigator.pop(context),
           ),
@@ -2038,7 +1300,6 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isMobile = constraints.maxWidth < 800;
-
           if (isMobile) {
             return SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
@@ -2051,7 +1312,6 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
               ),
             );
           }
-
           return Padding(
             padding: const EdgeInsets.all(18),
             child: Row(
@@ -2059,17 +1319,10 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
               children: [
                 SizedBox(
                   width: 330,
-                  child: SingleChildScrollView(
-                    child: _buildDesktopProfileCard(),
-                  ),
+                  child: SingleChildScrollView(child: _buildDesktopProfileCard()),
                 ),
                 const SizedBox(width: 18),
-                Expanded(
-                  child: _buildNoticeBoard(
-                    context,
-                    height: constraints.maxHeight - 36,
-                  ),
-                ),
+                Expanded(child: _buildNoticeBoard(context, height: constraints.maxHeight - 36)),
               ],
             ),
           );
@@ -2078,10 +1331,6 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
     );
   }
 
-  // ==========================================================
-  // DESKTOP PROFILE
-  // ==========================================================
-
   Widget _buildDesktopProfileCard() {
     return Container(
       decoration: BoxDecoration(
@@ -2089,11 +1338,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.white.withOpacity(0.07)),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.20),
-            blurRadius: 25,
-            offset: const Offset(0, 10),
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.20), blurRadius: 25, offset: const Offset(0, 10)),
         ],
       ),
       child: Column(
@@ -2108,10 +1353,6 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
     );
   }
 
-  // ==========================================================
-  // MOBILE PROFILE
-  // ==========================================================
-
   Widget _buildMobileProfileCard() {
     return Container(
       width: double.infinity,
@@ -2120,11 +1361,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.white.withOpacity(0.07)),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.18),
-            blurRadius: 22,
-            offset: const Offset(0, 9),
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 22, offset: const Offset(0, 9)),
         ],
       ),
       child: Column(
@@ -2139,10 +1376,6 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
     );
   }
 
-  // ==========================================================
-  // PROFILE TOP HEADER
-  // ==========================================================
-
   Widget _buildProfileTop() {
     return Container(
       width: double.infinity,
@@ -2153,10 +1386,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(20),
-          topRight: Radius.circular(20),
-        ),
+        borderRadius: BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20)),
       ),
       child: Column(
         children: [
@@ -2171,22 +1401,14 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                   shape: BoxShape.circle,
                   border: Border.all(color: const Color(0xFF00A884), width: 2),
                   boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF00A884).withOpacity(0.18),
-                      blurRadius: 18,
-                      spreadRadius: 2,
-                    ),
+                    BoxShadow(color: const Color(0xFF00A884).withOpacity(0.18), blurRadius: 18, spreadRadius: 2),
                   ],
                 ),
                 child: CircleAvatar(
                   backgroundColor: const Color(0xFF0F171D),
                   child: Text(
                     _studentInitial(widget.studentId),
-                    style: const TextStyle(
-                      color: Color(0xFF00A884),
-                      fontSize: 34,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: const TextStyle(color: Color(0xFF00A884), fontSize: 34, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
@@ -2198,30 +1420,19 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                   shape: BoxShape.circle,
                   border: Border.all(color: const Color(0xFF172229), width: 3),
                 ),
-                child: const Icon(
-                  Icons.check_rounded,
-                  size: 14,
-                  color: Colors.white,
-                ),
+                child: const Icon(Icons.check_rounded, size: 14, color: Colors.white),
               ),
             ],
           ),
           const SizedBox(height: 13),
           const Text(
             'Student Profile',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 19,
-              fontWeight: FontWeight.w700,
-            ),
+            style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 5),
           Text(
             'Saraswati Vidya Niketan',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.60),
-              fontSize: 12,
-            ),
+            style: TextStyle(color: Colors.white.withOpacity(0.60), fontSize: 12),
           ),
           const SizedBox(height: 13),
           Container(
@@ -2229,9 +1440,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
             decoration: BoxDecoration(
               color: const Color(0xFF00A884).withOpacity(0.12),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: const Color(0xFF00A884).withOpacity(0.25),
-              ),
+              border: Border.all(color: const Color(0xFF00A884).withOpacity(0.25)),
             ),
             child: const Row(
               mainAxisSize: MainAxisSize.min,
@@ -2240,11 +1449,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                 SizedBox(width: 6),
                 Text(
                   'Active / Enrolled',
-                  style: TextStyle(
-                    color: Color(0xFF00A884),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.w700),
                 ),
               ],
             ),
@@ -2254,31 +1459,14 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
     );
   }
 
-  // ==========================================================
-  // PROFILE DETAILS
-  // ==========================================================
-
   Widget _buildProfileDetails() {
     return Column(
       children: [
-        _profileInfoTile(
-          icon: Icons.badge_outlined,
-          label: 'Student ID / Roll',
-          value: widget.studentId,
-        ),
+        _profileInfoTile(icon: Icons.badge_outlined, label: 'Student ID / Roll', value: widget.studentId),
         const SizedBox(height: 10),
-        _profileInfoTile(
-          icon: Icons.school_outlined,
-          label: 'Assigned Class',
-          value: widget.studentClass,
-        ),
+        _profileInfoTile(icon: Icons.school_outlined, label: 'Assigned Class', value: widget.studentClass),
         const SizedBox(height: 10),
-        _profileInfoTile(
-          icon: Icons.verified_user_outlined,
-          label: 'Status',
-          value: 'Active',
-          valueColor: const Color(0xFF00A884),
-        ),
+        _profileInfoTile(icon: Icons.verified_user_outlined, label: 'Status', value: 'Active', valueColor: const Color(0xFF00A884)),
         const SizedBox(height: 14),
         SizedBox(
           width: double.infinity,
@@ -2288,15 +1476,10 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
               side: const BorderSide(color: Color(0xFF00A884)),
               foregroundColor: const Color(0xFF00A884),
               padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             icon: const Icon(Icons.phone_android_rounded, size: 18),
-            label: const Text(
-              'Update Mobile Number',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
+            label: const Text('Update Mobile Number', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ),
         const SizedBox(height: 14),
@@ -2316,11 +1499,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
               Expanded(
                 child: Text(
                   'Yahan school ke latest notices, important instructions aur announcements milenge.',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11.5,
-                    height: 1.45,
-                  ),
+                  style: TextStyle(color: Colors.white54, fontSize: 11.5, height: 1.45),
                 ),
               ),
             ],
@@ -2381,10 +1560,6 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
     );
   }
 
-  // ==========================================================
-  // NOTICE BOARD
-  // ==========================================================
-
   Widget _buildNoticeBoard(BuildContext context, {double? height}) {
     return Container(
       width: double.infinity,
@@ -2394,11 +1569,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.white.withOpacity(0.07)),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.18),
-            blurRadius: 25,
-            offset: const Offset(0, 10),
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 25, offset: const Offset(0, 10)),
         ],
       ),
       child: Padding(
@@ -2407,13 +1578,9 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('school_notices')
-                  .snapshots(),
+              stream: FirebaseFirestore.instance.collection('school_notices').snapshots(),
               builder: (context, snapshot) {
-                final count =
-                    snapshot.hasData ? snapshot.data!.docs.length : 0;
-
+                final count = snapshot.hasData ? snapshot.data!.docs.length : 0;
                 return Row(
                   children: [
                     Container(
@@ -2423,65 +1590,32 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                         color: const Color(0xFF00A884).withOpacity(0.13),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Icon(
-                        Icons.campaign_rounded,
-                        color: Color(0xFF00A884),
-                        size: 21,
-                      ),
+                      child: const Icon(Icons.campaign_rounded, color: Color(0xFF00A884), size: 21),
                     ),
                     const SizedBox(width: 11),
                     const Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'School Notice Board',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
+                          Text('School Notice Board', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                           SizedBox(height: 2),
-                          Text(
-                            'Latest announcements & updates',
-                            style: TextStyle(
-                              color: Colors.white38,
-                              fontSize: 11,
-                            ),
-                          ),
+                          Text('Latest announcements & updates', style: TextStyle(color: Colors.white38, fontSize: 11)),
                         ],
                       ),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
                       decoration: BoxDecoration(
                         color: const Color(0xFF0F171D),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.05),
-                        ),
+                        border: Border.all(color: Colors.white.withOpacity(0.05)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(
-                            Icons.notifications_none_rounded,
-                            color: Colors.white54,
-                            size: 15,
-                          ),
+                          const Icon(Icons.notifications_none_rounded, color: Colors.white54, size: 15),
                           const SizedBox(width: 5),
-                          Text(
-                            '$count',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          Text('$count', style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
@@ -2494,21 +1628,11 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
             const SizedBox(height: 14),
             Expanded(
               child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('school_notices')
-                    .orderBy('timestamp', descending: true)
-                    .snapshots(),
+                stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState ==
-                      ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF00A884),
-                        strokeWidth: 2.5,
-                      ),
-                    );
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884), strokeWidth: 2.5));
                   }
-
                   if (snapshot.hasError) {
                     return Center(
                       child: _emptyNoticeState(
@@ -2518,9 +1642,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                       ),
                     );
                   }
-
-                  if (!snapshot.hasData ||
-                      snapshot.data!.docs.isEmpty) {
+                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                     return Center(
                       child: _emptyNoticeState(
                         icon: Icons.notifications_none_rounded,
@@ -2529,31 +1651,18 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                       ),
                     );
                   }
-
                   final docs = snapshot.data!.docs;
-
                   return ListView.builder(
                     padding: const EdgeInsets.only(bottom: 8),
                     itemCount: docs.length,
                     itemBuilder: (context, index) {
-                      final notice =
-                          docs[index].data() as Map<String, dynamic>;
+                      final notice = docs[index].data() as Map<String, dynamic>;
+                      final title = notice['title']?.toString() ?? 'Notice';
+                      final description = notice['description']?.toString() ?? '';
+                      final category = notice['category']?.toString() ?? 'General';
+                      final date = _formatTimestamp(notice['timestamp']);
 
-                      final title =
-                          notice['title']?.toString() ?? 'Notice';
-                      final description =
-                          notice['description']?.toString() ?? '';
-                      final category =
-                          notice['category']?.toString() ?? 'General';
-                      final date =
-                          _formatTimestamp(notice['timestamp']);
-
-                      return _buildNoticeCard(
-                        title: title,
-                        description: description,
-                        category: category,
-                        date: date,
-                      );
+                      return _buildNoticeCard(title: title, description: description, category: category, date: date);
                     },
                   );
                 },
@@ -2605,40 +1714,20 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: accent.withOpacity(0.11),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: Text(
-                        category,
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
+                      child: Text(category, style: TextStyle(color: accent, fontSize: 9.5, fontWeight: FontWeight.w800)),
                     ),
                     if (date.isNotEmpty)
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(
-                            Icons.calendar_today_rounded,
-                            size: 11,
-                            color: Colors.white30,
-                          ),
+                          const Icon(Icons.calendar_today_rounded, size: 11, color: Colors.white30),
                           const SizedBox(width: 4),
-                          Text(
-                            date,
-                            style: const TextStyle(
-                              color: Colors.white30,
-                              fontSize: 9.5,
-                            ),
-                          ),
+                          Text(date, style: const TextStyle(color: Colors.white30, fontSize: 9.5)),
                         ],
                       ),
                   ],
@@ -2648,12 +1737,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                   title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    height: 1.25,
-                  ),
+                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700, height: 1.25),
                 ),
                 if (description.isNotEmpty) ...[
                   const SizedBox(height: 6),
@@ -2661,11 +1745,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
                     description,
                     maxLines: 4,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 11.5,
-                      height: 1.45,
-                    ),
+                    style: const TextStyle(color: Colors.white60, fontSize: 11.5, height: 1.45),
                   ),
                 ],
               ],
@@ -2676,11 +1756,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
     );
   }
 
-  Widget _emptyNoticeState({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
+  Widget _emptyNoticeState({required IconData icon, required String title, required String subtitle}) {
     return Container(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -2699,867 +1775,13 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
           Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 6),
           Text(
             subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white30,
-              fontSize: 11,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-  Widget _profileInfoTile({
-    required IconData icon,
-    required String label,
-    required String value,
-    Color valueColor = Colors.white,
-  }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1D2A31),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0F171D),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: const Color(0xFF00A884), size: 18),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(color: Colors.white38, fontSize: 10),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  value,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: valueColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ==========================================================
-  // NOTICE BOARD
-  // ==========================================================
-
-  Widget _buildNoticeBoard(BuildContext context, {double? height}) {
-    return Container(
-      width: double.infinity,
-      height: height,
-      decoration: BoxDecoration(
-        color: const Color(0xFF172229),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.07)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.18),
-            blurRadius: 25,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('school_notices')
-                  .snapshots(),
-              builder: (context, snapshot) {
-                final count =
-                    snapshot.hasData ? snapshot.data!.docs.length : 0;
-
-                return Row(
-                  children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF00A884).withOpacity(0.13),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.campaign_rounded,
-                        color: Color(0xFF00A884),
-                        size: 21,
-                      ),
-                    ),
-                    const SizedBox(width: 11),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'School Notice Board',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Latest announcements & updates',
-                            style: TextStyle(
-                              color: Colors.white38,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0F171D),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.05),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.notifications_none_rounded,
-                            color: Colors.white54,
-                            size: 15,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            '$count',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 15),
-            Container(height: 1, color: Colors.white.withOpacity(0.06)),
-            const SizedBox(height: 14),
-            Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('school_notices')
-                    .orderBy('timestamp', descending: true)
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState ==
-                      ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF00A884),
-                        strokeWidth: 2.5,
-                      ),
-                    );
-                  }
-
-                  if (snapshot.hasError) {
-                    return Center(
-                      child: _emptyNoticeState(
-                        icon: Icons.error_outline_rounded,
-                        title: 'Notice load nahi ho paya',
-                        subtitle: 'Internet ya Firebase connection check karein.',
-                      ),
-                    );
-                  }
-
-                  if (!snapshot.hasData ||
-                      snapshot.data!.docs.isEmpty) {
-                    return Center(
-                      child: _emptyNoticeState(
-                        icon: Icons.notifications_none_rounded,
-                        title: 'Abhi koi notice nahi hai',
-                        subtitle: 'School jab notice publish karega, yahan dikhega.',
-                      ),
-                    );
-                  }
-
-                  final docs = snapshot.data!.docs;
-
-                  return ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    itemCount: docs.length,
-                    itemBuilder: (context, index) {
-                      final notice =
-                          docs[index].data() as Map<String, dynamic>;
-
-                      final title =
-                          notice['title']?.toString() ?? 'Notice';
-                      final description =
-                          notice['description']?.toString() ?? '';
-                      final category =
-                          notice['category']?.toString() ?? 'General';
-                      final date =
-                          _formatTimestamp(notice['timestamp']);
-
-                      return _buildNoticeCard(
-                        title: title,
-                        description: description,
-                        category: category,
-                        date: date,
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNoticeCard({
-    required String title,
-    required String description,
-    required String category,
-    required String date,
-  }) {
-    final accent = _categoryColor(category);
-    final categoryIcon = _categoryIcon(category);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 11),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF10181E),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.white.withOpacity(0.055)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: accent.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(categoryIcon, color: accent, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 7,
-                  runSpacing: 5,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: accent.withOpacity(0.11),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        category,
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    if (date.isNotEmpty)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.calendar_today_rounded,
-                            size: 11,
-                            color: Colors.white30,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            date,
-                            style: const TextStyle(
-                              color: Colors.white30,
-                              fontSize: 9.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    height: 1.25,
-                  ),
-                ),
-                if (description.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    description,
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 11.5,
-                      height: 1.45,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _emptyNoticeState({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 68,
-            height: 68,
-            decoration: BoxDecoration(
-              color: const Color(0xFF00A884).withOpacity(0.08),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.notifications_none_rounded,
-              color: Color(0xFF00A884),
-              size: 30,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white30,
-              fontSize: 11,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-  Widget _profileInfoTile({
-    required IconData icon,
-    required String label,
-    required String value,
-    Color valueColor = Colors.white,
-  }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 12,
-      ),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1D2A31),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0F171D),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              icon,
-              color: const Color(0xFF00A884),
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 10,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  value,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: valueColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ==========================================================
-  // NOTICE BOARD
-  // ==========================================================
-
-  Widget _buildNoticeBoard(
-    BuildContext context, {
-    double? height,
-  }) {
-    final content = Container(
-      width: double.infinity,
-      height: height,
-      decoration: BoxDecoration(
-        color: const Color(0xFF172229),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.07),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.18),
-            blurRadius: 25,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('school_notices')
-                  .snapshots(),
-              builder: (context, snapshot) {
-                final count =
-                    snapshot.hasData ? snapshot.data!.docs.length : 0;
-
-                return Row(
-                  children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF00A884).withOpacity(0.13),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.campaign_rounded,
-                        color: Color(0xFF00A884),
-                        size: 21,
-                      ),
-                    ),
-                    const SizedBox(width: 11),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'School Notice Board',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Latest announcements & updates',
-                            style: TextStyle(
-                              color: Colors.white38,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0F171D),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.05),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.notifications_none_rounded,
-                            color: Colors.white54,
-                            size: 15,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            '$count',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-
-            const SizedBox(height: 15),
-
-            Container(
-              height: 1,
-              color: Colors.white.withOpacity(0.06),
-            ),
-
-            const SizedBox(height: 14),
-
-            Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('school_notices')
-                    .orderBy(
-                      'timestamp',
-                      descending: true,
-                    )
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState ==
-                      ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF00A884),
-                        strokeWidth: 2.5,
-                      ),
-                    );
-                  }
-
-                  if (snapshot.hasError) {
-                    return Center(
-                      child: _emptyNoticeState(
-                        icon: Icons.error_outline_rounded,
-                        title: 'Notice load nahi ho paya',
-                        subtitle: 'Internet ya Firebase connection check karein.',
-                      ),
-                    );
-                  }
-
-                  if (!snapshot.hasData ||
-                      snapshot.data!.docs.isEmpty) {
-                    return Center(
-                      child: _emptyNoticeState(
-                        icon: Icons.notifications_none_rounded,
-                        title: 'Abhi koi notice nahi hai',
-                        subtitle: 'School jab notice publish karega, yahan dikhega.',
-                      ),
-                    );
-                  }
-
-                  final docs = snapshot.data!.docs;
-
-                  return ListView.builder(
-                    padding: const EdgeInsets.only(
-                      bottom: 8,
-                    ),
-                    itemCount: docs.length,
-                    itemBuilder: (context, index) {
-                      final notice =
-                          docs[index].data()
-                              as Map<String, dynamic>;
-
-                      final title =
-                          notice['title']?.toString() ?? 'Notice';
-
-                      final description =
-                          notice['description']?.toString() ?? '';
-
-                      final category =
-                          notice['category']?.toString() ?? 'General';
-
-                      final date =
-                          _formatTimestamp(notice['timestamp']);
-
-                      return _buildNoticeCard(
-                        title: title,
-                        description: description,
-                        category: category,
-                        date: date,
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (height == null) {
-      return content;
-    }
-
-    return content;
-  }
-
-  // ==========================================================
-  // NOTICE CARD
-  // ==========================================================
-
-  Widget _buildNoticeCard({
-    required String title,
-    required String description,
-    required String category,
-    required String date,
-  }) {
-    final accent = _categoryColor(category);
-    final categoryIcon = _categoryIcon(category);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 11),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF10181E),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.055),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: accent.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              categoryIcon,
-              color: accent,
-              size: 20,
-            ),
-          ),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 7,
-                  runSpacing: 5,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: accent.withOpacity(0.11),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        category,
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    if (date.isNotEmpty)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.calendar_today_rounded,
-                            size: 11,
-                            color: Colors.white30,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            date,
-                            style: const TextStyle(
-                              color: Colors.white30,
-                              fontSize: 9.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                  ],
-                ),
-
-                const SizedBox(height: 7),
-
-                Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    height: 1.25,
-                  ),
-                ),
-
-                if (description.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    description,
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 11.5,
-                      height: 1.45,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ==========================================================
-  // EMPTY STATE
-  // ==========================================================
-
-  Widget _emptyNoticeState({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 68,
-            height: 68,
-            decoration: BoxDecoration(
-              color: const Color(0xFF00A884).withOpacity(0.08),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              icon,
-              color: const Color(0xFF00A884),
-              size: 30,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white30,
-              fontSize: 11,
-              height: 1.4,
-            ),
+            style: const TextStyle(color: Colors.white30, fontSize: 11, height: 1.4),
           ),
         ],
       ),
@@ -3575,87 +1797,30 @@ class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
 
   @override
-  State<AdminDashboardScreen> createState() =>
-      _AdminDashboardScreenState();
+  State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
 }
 
-class _AdminDashboardScreenState
-    extends State<AdminDashboardScreen> {
-  // ----------------------------------------------------------
-  // NOTICE
-  // ----------------------------------------------------------
-
-  final TextEditingController
-      _noticeTitleController =
-      TextEditingController();
-
-  final TextEditingController
-      _noticeDescController =
-      TextEditingController();
-
-  String _noticeCategory =
-      'Holiday';
-
-  final List<String>
-      _noticeCategories = [
-    'Holiday',
-    'Exam',
-    'Event',
-    'General',
-  ];
-
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  final TextEditingController _noticeTitleController = TextEditingController();
+  final TextEditingController _noticeDescController = TextEditingController();
+  String _noticeCategory = 'Holiday';
+  final List<String> _noticeCategories = ['Holiday', 'Exam', 'Event', 'General'];
   String? _editingNoticeId;
   bool _isSavingNotice = false;
 
-  // ----------------------------------------------------------
-  // STUDENT DIRECTORY
-  // ----------------------------------------------------------
-
   String _directoryClass = 'Class 1';
-
-  final TextEditingController
-      _nameController =
-      TextEditingController();
-
-  final TextEditingController
-      _rollController =
-      TextEditingController();
-
-  final TextEditingController
-      _parentContactController =
-      TextEditingController();
-
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _rollController = TextEditingController();
+  final TextEditingController _parentContactController = TextEditingController();
   String? _studentPhotoUrl;
-
   bool _isSearchingStudent = false;
 
-  final List<String> _classList =
-      List.generate(
-    10,
-    (index) => 'Class ${index + 1}',
-  );
+  final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
 
-  // ----------------------------------------------------------
-  // TEACHERS
-  // ----------------------------------------------------------
-
-  final List<Map<String, String>>
-      _teachersList = [
-    {
-      'name': 'Ramesh Sharma',
-      'subject': 'Mathematics',
-      'phone': '+91 9876543210',
-    },
-    {
-      'name': 'Priya Sen',
-      'subject': 'Bengali & English',
-      'phone': '+91 9876543211',
-    },
-    {
-      'name': 'Amit Paul',
-      'subject': 'Science',
-      'phone': '+91 9876543212',
-    },
+  final List<Map<String, String>> _teachersList = [
+    {'name': 'Ramesh Sharma', 'subject': 'Mathematics', 'phone': '+91 9876543210'},
+    {'name': 'Priya Sen', 'subject': 'Bengali & English', 'phone': '+91 9876543211'},
+    {'name': 'Amit Paul', 'subject': 'Science', 'phone': '+91 9876543212'},
   ];
 
   @override
@@ -3668,50 +1833,21 @@ class _AdminDashboardScreenState
     super.dispose();
   }
 
-  // ----------------------------------------------------------
-  // ADD STUDENT
-  // ----------------------------------------------------------
-
   void _openAddStudentDialog() {
-    final nameCtrl =
-        TextEditingController();
-
-    final parentCtrl =
-        TextEditingController();
-
-    final rollCtrl =
-        TextEditingController();
-
-    final contactCtrl =
-        TextEditingController();
-
-    final addressCtrl =
-        TextEditingController();
-
-    final pinCtrl =
-        TextEditingController();
-
-    final stateCtrl =
-        TextEditingController();
-
-    final districtCtrl =
-        TextEditingController();
-
-    final admissionDateCtrl =
-        TextEditingController(
-      text:
-          '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
+    final nameCtrl = TextEditingController();
+    final parentCtrl = TextEditingController();
+    final rollCtrl = TextEditingController();
+    final contactCtrl = TextEditingController();
+    final addressCtrl = TextEditingController();
+    final pinCtrl = TextEditingController();
+    final stateCtrl = TextEditingController();
+    final districtCtrl = TextEditingController();
+    final admissionDateCtrl = TextEditingController(
+      text: '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
     );
-
-    final dobCtrl =
-        TextEditingController();
-
-    String selectedClass =
-        _directoryClass;
-
-    String hostelFacility =
-        'No';
-
+    final dobCtrl = TextEditingController();
+    String selectedClass = _directoryClass;
+    String hostelFacility = 'No';
     List<int>? selectedPhotoBytes;
     bool isSaving = false;
 
@@ -3720,356 +1856,133 @@ class _AdminDashboardScreenState
       barrierDismissible: !isSaving,
       builder: (dialogContext) {
         return StatefulBuilder(
-          builder: (
-            context,
-            setDlgState,
-          ) {
+          builder: (context, setDlgState) {
             return AlertDialog(
-              backgroundColor:
-                  const Color(0xFF1F2C34),
-              shape:
-                  RoundedRectangleBorder(
-                borderRadius:
-                    BorderRadius.circular(
-                  14,
-                ),
-              ),
+              backgroundColor: const Color(0xFF1F2C34),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               title: const Row(
                 children: [
-                  Icon(
-                    Icons
-                        .person_add_alt_1,
-                    color:
-                        Color(0xFF00A884),
-                    size: 22,
-                  ),
+                  Icon(Icons.person_add_alt_1, color: Color(0xFF00A884), size: 22),
                   SizedBox(width: 10),
-                  Text(
-                    'Add New Student',
-                    style:
-                        TextStyle(
-                      color:
-                          Colors.white,
-                      fontSize: 17,
-                      fontWeight:
-                          FontWeight.bold,
-                    ),
-                  ),
+                  Text('Add New Student', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
                 ],
               ),
               content: SizedBox(
                 width: 520,
-                child:
-                    SingleChildScrollView(
-                  child:
-                      Column(
-                    mainAxisSize:
-                        MainAxisSize.min,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(
                         children: [
                           Expanded(
-                            child:
-                                DropdownButtonFormField<
-                                    String>(
-                              value:
-                                  selectedClass,
-                              dropdownColor:
-                                  const Color(
-                                0xFF1F2C34,
-                              ),
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white,
-                              ),
-                              decoration:
-                                  _inputDecoration(
-                                'Class',
-                              ),
-                              items: _classList
-                                  .map(
-                                    (
-                                      value,
-                                    ) =>
-                                        DropdownMenuItem<
-                                            String>(
-                                      value:
-                                          value,
-                                      child:
-                                          Text(value),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged:
-                                  (value) {
-                                if (value !=
-                                    null) {
-                                  setDlgState(
-                                    () =>
-                                        selectedClass =
-                                            value,
-                                  );
-                                }
+                            child: DropdownButtonFormField<String>(
+                              value: selectedClass,
+                              dropdownColor: const Color(0xFF1F2C34),
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('Class'),
+                              items: _classList.map((value) => DropdownMenuItem<String>(value: value, child: Text(value))).toList(),
+                              onChanged: (value) {
+                                if (value != null) setDlgState(() => selectedClass = value);
                               },
                             ),
                           ),
-                          const SizedBox(
-                            width: 10,
-                          ),
+                          const SizedBox(width: 10),
                           Expanded(
-                            child:
-                                TextField(
-                              controller:
-                                  rollCtrl,
-                              keyboardType:
-                                  TextInputType
-                                      .number,
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white,
-                              ),
-                              decoration:
-                                  _inputDecoration(
-                                'Roll No *',
-                              ),
+                            child: TextField(
+                              controller: rollCtrl,
+                              keyboardType: TextInputType.number,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('Roll No *'),
                             ),
                           ),
                         ],
                       ),
-
-                      const SizedBox(
-                        height: 10,
-                      ),
-
+                      const SizedBox(height: 10),
                       TextField(
-                        controller:
-                            nameCtrl,
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Student Full Name *',
-                        ),
+                        controller: nameCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _inputDecoration('Student Full Name *'),
                       ),
-
-                      const SizedBox(
-                        height: 10,
-                      ),
-
+                      const SizedBox(height: 10),
                       TextField(
-                        controller:
-                            parentCtrl,
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          "Parent's / Guardian Name *",
-                        ),
+                        controller: parentCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _inputDecoration("Parent's / Guardian Name *"),
                       ),
-
-                      const SizedBox(
-                        height: 10,
-                      ),
-
+                      const SizedBox(height: 10),
                       TextField(
-                        controller:
-                            contactCtrl,
-                        keyboardType:
-                            TextInputType.phone,
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Contact No *',
-                        ),
+                        controller: contactCtrl,
+                        keyboardType: TextInputType.phone,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _inputDecoration('Contact No *'),
                       ),
-
-                      const SizedBox(
-                        height: 10,
-                      ),
-
-                      DropdownButtonFormField<
-                          String>(
-                        value:
-                            hostelFacility,
-                        dropdownColor:
-                            const Color(
-                          0xFF1F2C34,
-                        ),
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Hostel Facility',
-                        ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: hostelFacility,
+                        dropdownColor: const Color(0xFF1F2C34),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _inputDecoration('Hostel Facility'),
                         items: const [
-                          DropdownMenuItem(
-                            value:
-                                'No',
-                            child: Text(
-                              'Hostel Facility: No',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value:
-                                'Yes',
-                            child: Text(
-                              'Hostel Facility: Yes',
-                            ),
-                          ),
+                          DropdownMenuItem(value: 'No', child: Text('Hostel Facility: No')),
+                          DropdownMenuItem(value: 'Yes', child: Text('Hostel Facility: Yes')),
                         ],
-                        onChanged:
-                            (value) {
-                          if (value !=
-                              null) {
-                            setDlgState(
-                              () =>
-                                  hostelFacility =
-                                      value,
-                            );
-                          }
+                        onChanged: (value) {
+                          if (value != null) setDlgState(() => hostelFacility = value);
                         },
                       ),
-
-                      const SizedBox(
-                        height: 10,
-                      ),
-
+                      const SizedBox(height: 10),
                       TextField(
-                        controller:
-                            addressCtrl,
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Address',
-                        ),
+                        controller: addressCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _inputDecoration('Address'),
                       ),
-
-                      const SizedBox(
-                        height: 10,
-                      ),
-
+                      const SizedBox(height: 10),
                       Row(
                         children: [
                           Expanded(
-                            child:
-                                TextField(
-                              controller:
-                                  districtCtrl,
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white,
-                              ),
-                              decoration:
-                                  _inputDecoration(
-                                'District',
-                              ),
+                            child: TextField(
+                              controller: districtCtrl,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('District'),
                             ),
                           ),
-                          const SizedBox(
-                            width: 10,
-                          ),
+                          const SizedBox(width: 10),
                           Expanded(
-                            child:
-                                TextField(
-                              controller:
-                                  stateCtrl,
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white,
-                              ),
-                              decoration:
-                                  _inputDecoration(
-                                'State',
-                              ),
+                            child: TextField(
+                              controller: stateCtrl,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('State'),
                             ),
                           ),
                         ],
                       ),
-
-                      const SizedBox(
-                        height: 10,
-                      ),
-
+                      const SizedBox(height: 10),
                       Row(
                         children: [
                           Expanded(
-                            child:
-                                TextField(
-                              controller:
-                                  pinCtrl,
-                              keyboardType:
-                                  TextInputType
-                                      .number,
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white,
-                              ),
-                              decoration:
-                                  _inputDecoration(
-                                'PIN Code',
-                              ),
+                            child: TextField(
+                              controller: pinCtrl,
+                              keyboardType: TextInputType.number,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('PIN Code'),
                             ),
                           ),
-                          const SizedBox(
-                            width: 10,
-                          ),
+                          const SizedBox(width: 10),
                           Expanded(
-                            child:
-                                TextField(
-                              controller:
-                                  admissionDateCtrl,
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white,
-                              ),
-                              decoration:
-                                  _inputDecoration(
-                                'Admission Date',
-                              ),
+                            child: TextField(
+                              controller: admissionDateCtrl,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('Admission Date'),
                             ),
                           ),
                         ],
                       ),
-
-                      const SizedBox(
-                        height: 10,
-                      ),
-
+                      const SizedBox(height: 10),
                       TextField(
-                        controller:
-                            dobCtrl,
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Date of Birth',
-                        ),
+                        controller: dobCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _inputDecoration('Date of Birth'),
                       ),
                     ],
                   ),
@@ -4077,380 +1990,125 @@ class _AdminDashboardScreenState
               ),
               actions: [
                 OutlinedButton.icon(
-                  style:
-                      OutlinedButton.styleFrom(
-                    side: BorderSide(
-                      color:
-                          selectedPhotoBytes !=
-                                  null
-                              ? const Color(
-                                  0xFF00A884)
-                              : Colors.grey,
-                    ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: selectedPhotoBytes != null ? const Color(0xFF00A884) : Colors.grey),
                   ),
-                  onPressed: isSaving
-                      ? null
-                      : () async {
-                          final picker =
-                              ImagePicker();
-
-                          final image =
-                              await picker
-                                  .pickImage(
-                            source:
-                                ImageSource.gallery,
-                            imageQuality:
-                                70,
-                          );
-
-                          if (image ==
-                              null) {
-                            return;
-                          }
-
-                          final bytes =
-                              await image
-                                  .readAsBytes();
-
-                          setDlgState(
-                            () {
-                              selectedPhotoBytes =
-                                  bytes;
-                            },
-                          );
-                        },
+                  onPressed: isSaving ? null : () async {
+                    final picker = ImagePicker();
+                    final image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+                    if (image == null) return;
+                    final bytes = await image.readAsBytes();
+                    setDlgState(() { selectedPhotoBytes = bytes; });
+                  },
                   icon: Icon(
-                    selectedPhotoBytes !=
-                            null
-                        ? Icons
-                            .check_circle
-                        : Icons
-                            .add_a_photo_outlined,
-                    color:
-                        selectedPhotoBytes !=
-                                null
-                            ? const Color(
-                                0xFF00A884)
-                            : Colors.white70,
+                    selectedPhotoBytes != null ? Icons.check_circle : Icons.add_a_photo_outlined,
+                    color: selectedPhotoBytes != null ? const Color(0xFF00A884) : Colors.white70,
                   ),
                   label: Text(
-                    selectedPhotoBytes !=
-                            null
-                        ? 'Photo Ready'
-                        : 'Upload Photo',
-                    style:
-                        TextStyle(
-                      color:
-                          selectedPhotoBytes !=
-                                  null
-                              ? const Color(
-                                  0xFF00A884)
-                              : Colors.white70,
-                    ),
+                    selectedPhotoBytes != null ? 'Photo Ready' : 'Upload Photo',
+                    style: TextStyle(color: selectedPhotoBytes != null ? const Color(0xFF00A884) : Colors.white70),
                   ),
                 ),
-
                 TextButton(
-                  onPressed: isSaving
-                      ? null
-                      : () =>
-                          Navigator.pop(
-                        dialogContext,
-                      ),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(
-                      color: Colors.grey,
-                    ),
-                  ),
+                  onPressed: isSaving ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
                 ),
-
                 ElevatedButton(
-                  style:
-                      ElevatedButton.styleFrom(
-                    backgroundColor:
-                        const Color(
-                      0xFF00A884,
-                    ),
-                  ),
-                  onPressed: isSaving
-                      ? null
-                      : () async {
-                          final name =
-                              nameCtrl.text.trim();
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                  onPressed: isSaving ? null : () async {
+                    final name = nameCtrl.text.trim();
+                    final parent = parentCtrl.text.trim();
+                    final roll = rollCtrl.text.trim();
+                    final contact = contactCtrl.text.trim();
+                    if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(backgroundColor: Colors.redAccent, content: Text('Name, Roll No aur Contact bharna zaroori hai!')),
+                      );
+                      return;
+                    }
 
-                          final parent =
-                              parentCtrl.text.trim();
+                    setDlgState(() { isSaving = true; });
+                    final docId = '${selectedClass}_Roll_$roll';
+                    String finalPhotoUrl = '';
+                    bool driveSaved = false;
 
-                          final roll =
-                              rollCtrl.text.trim();
+                    try {
+                      final configDoc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
+                      final scriptUrl = configDoc.data()?['scriptUrl']?.toString().trim();
 
-                          final contact =
-                              contactCtrl.text.trim();
-
-                          if (name.isEmpty ||
-                              roll.isEmpty ||
-                              contact.isEmpty) {
-                            ScaffoldMessenger
-                                .of(context)
-                                .showSnackBar(
-                              const SnackBar(
-                                backgroundColor:
-                                    Colors
-                                        .redAccent,
-                                content:
-                                    Text(
-                                  'Name, Roll No aur Contact bharna zaroori hai!',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-
-                          setDlgState(() {
-                            isSaving = true;
-                          });
-
-                          final docId =
-                              '${selectedClass}_Roll_$roll';
-
-                          String finalPhotoUrl =
-                              '';
-
-                          bool driveSaved =
-                              false;
-
-                          try {
-                            // ------------------------------------------------
-                            // GET SCRIPT URL FROM SETTINGS
-                            // ------------------------------------------------
-
-                            final configDoc =
-                                await FirebaseFirestore
-                                    .instance
-                                    .collection(
-                                      'school_config',
-                                    )
-                                    .doc(
-                                      'google_drive_account',
-                                    )
-                                    .get();
-
-                            final scriptUrl =
-                                configDoc.data()?[
-                                        'scriptUrl']
-                                    ?.toString()
-                                    .trim();
-
-                            // ------------------------------------------------
-                            // GOOGLE DRIVE / GOOGLE SHEET
-                            // ------------------------------------------------
-
-                            if (scriptUrl != null &&
-                                scriptUrl.isNotEmpty) {
-                              try {
-                                final base64Image =
-                                    selectedPhotoBytes !=
-                                            null
-                                        ? base64Encode(
-                                            selectedPhotoBytes!,
-                                          )
-                                        : '';
-
-                                final response =
-    await http.post(
-  Uri.parse(scriptUrl),
-  headers: {
-    'Content-Type':
-        'text/plain;charset=utf-8',
-  },
-  body: jsonEncode({
-    'action':
-        'add_student',
-    'name':
-        name,
-    'parentName':
-        parent,
-    'studentClass':
-        selectedClass,
-    'roll':
-        roll,
-    'contact':
-        contact,
-    'photoBase64':
-        base64Image,
-    'hostelFacility':
-        hostelFacility,
-    'address':
-        addressCtrl.text.trim(),
-    'district':
-        districtCtrl.text.trim(),
-    'state':
-        stateCtrl.text.trim(),
-    'pinCode':
-        pinCtrl.text.trim(),
-    'joiningDate':
-        admissionDateCtrl.text.trim(),
-    'dateOfBirth':
-        dobCtrl.text.trim(),
-  }),
-);
-
-debugPrint(
-  'Google Status: ${response.statusCode}',
-);
-
-debugPrint(
-  'Google Body: ${response.body}',
-);
-                                if (response.statusCode ==
-                                    200) {
-                                  final responseJson =
-                                      jsonDecode(
-                                    response.body,
-                                  );
-
-                                  final success =
-                                      responseJson[
-                                              'success'] !=
-                                          false;
-
-                                  if (responseJson[
-                                          'photoUrl'] !=
-                                      null) {
-                                    finalPhotoUrl =
-                                        responseJson[
-                                                'photoUrl']
-                                            .toString();
-                                  }
-
-                                  driveSaved =
-                                      success;
-                                } else {
-                                  debugPrint(
-                                    'Apps Script status: ${response.statusCode}',
-                                  );
-                                }
-                              } catch (e) {
-                                debugPrint(
-                                  'Drive error: $e',
-                                );
-                              }
-                            } else {
-                              debugPrint(
-                                'Apps Script URL not configured',
-                              );
-                            }
-
-                            // ------------------------------------------------
-                            // FIRESTORE
-                            // ------------------------------------------------
-
-                            await FirebaseFirestore
-                                .instance
-                                .collection(
-                                  'students_directory',
-                                )
-                                .doc(docId)
-                                .set({
+                      if (scriptUrl != null && scriptUrl.isNotEmpty) {
+                        try {
+                          final base64Image = selectedPhotoBytes != null ? base64Encode(selectedPhotoBytes!) : '';
+                          final response = await http.post(
+                            Uri.parse(scriptUrl),
+                            headers: {'Content-Type': 'text/plain;charset=utf-8'},
+                            body: jsonEncode({
+                              'action': 'add_student',
                               'name': name,
-                              'parentName':
-                                  parent,
-                              'class':
-                                  selectedClass,
-                              'rollNo':
-                                  roll,
-                              'parentContact':
-                                  contact,
-                              'photoUrl':
-                                  finalPhotoUrl,
-                              'hostelFacility':
-                                  hostelFacility,
-                              'address':
-                                  addressCtrl
-                                      .text
-                                      .trim(),
-                              'pinCode':
-                                  pinCtrl
-                                      .text
-                                      .trim(),
-                              'district':
-                                  districtCtrl
-                                      .text
-                                      .trim(),
-                              'state':
-                                  stateCtrl
-                                      .text
-                                      .trim(),
-                              'joiningDate':
-                                  admissionDateCtrl
-                                      .text
-                                      .trim(),
-                              'dateOfBirth':
-                                  dobCtrl
-                                      .text
-                                      .trim(),
-                              'createdAt':
-                                  FieldValue
-                                      .serverTimestamp(),
-                              'updatedAt':
-                                  FieldValue
-                                      .serverTimestamp(),
-                            });
+                              'parentName': parent,
+                              'studentClass': selectedClass,
+                              'roll': roll,
+                              'contact': contact,
+                              'photoBase64': base64Image,
+                              'hostelFacility': hostelFacility,
+                              'address': addressCtrl.text.trim(),
+                              'district': districtCtrl.text.trim(),
+                              'state': stateCtrl.text.trim(),
+                              'pinCode': pinCtrl.text.trim(),
+                              'joiningDate': admissionDateCtrl.text.trim(),
+                              'dateOfBirth': dobCtrl.text.trim(),
+                            }),
+                          );
 
-                            if (!mounted) return;
-
-                            Navigator.pop(
-                              dialogContext,
-                            );
-
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(
-                              SnackBar(
-                                backgroundColor:
-                                    driveSaved
-                                        ? const Color(
-                                            0xFF00A884)
-                                        : Colors
-                                            .orangeAccent,
-                                content: Text(
-                                  driveSaved
-                                      ? 'Student aur Photo Google Drive par save ho gaye.'
-                                      : 'Student Firestore me save hua, lekin Google Drive save nahi hua.',
-                                ),
-                              ),
-                            );
-                          } catch (e) {
-                            setDlgState(() {
-                              isSaving = false;
-                            });
-
-                            if (!mounted) return;
-
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(
-                              SnackBar(
-                                backgroundColor:
-                                    Colors.redAccent,
-                                content: Text(
-                                  'Student save error: $e',
-                                ),
-                              ),
-                            );
+                          if (response.statusCode == 200) {
+                            final responseJson = jsonDecode(response.body);
+                            final success = responseJson['success'] != false;
+                            if (responseJson['photoUrl'] != null) {
+                              finalPhotoUrl = responseJson['photoUrl'].toString();
+                            }
+                            driveSaved = success;
                           }
-                        },
-                  child: Text(
-                    isSaving
-                        ? 'Saving...'
-                        : 'Save Student',
-                    style:
-                        const TextStyle(
-                      color:
-                          Colors.white,
-                    ),
-                  ),
+                        } catch (e) {
+                          debugPrint('Drive error: $e');
+                        }
+                      }
+
+                      await FirebaseFirestore.instance.collection('students_directory').doc(docId).set({
+                        'name': name,
+                        'parentName': parent,
+                        'class': selectedClass,
+                        'rollNo': roll,
+                        'parentContact': contact,
+                        'photoUrl': finalPhotoUrl,
+                        'hostelFacility': hostelFacility,
+                        'address': addressCtrl.text.trim(),
+                        'pinCode': pinCtrl.text.trim(),
+                        'district': districtCtrl.text.trim(),
+                        'state': stateCtrl.text.trim(),
+                        'joiningDate': admissionDateCtrl.text.trim(),
+                        'dateOfBirth': dobCtrl.text.trim(),
+                        'createdAt': FieldValue.serverTimestamp(),
+                        'updatedAt': FieldValue.serverTimestamp(),
+                      });
+
+                      if (!mounted) return;
+                      Navigator.pop(dialogContext);
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          backgroundColor: driveSaved ? const Color(0xFF00A884) : Colors.orangeAccent,
+                          content: Text(driveSaved ? 'Student aur Photo Google Drive par save ho gaye.' : 'Student Firestore me save hua, lekin Google Drive save nahi hua.'),
+                        ),
+                      );
+                    } catch (e) {
+                      setDlgState(() { isSaving = false; });
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(backgroundColor: Colors.redAccent, content: Text('Student save error: $e')),
+                      );
+                    }
+                  },
+                  child: Text(isSaving ? 'Saving...' : 'Save Student', style: const TextStyle(color: Colors.white)),
                 ),
               ],
             );
@@ -4460,44 +2118,22 @@ debugPrint(
     );
   }
 
-  // ----------------------------------------------------------
-  // NOTICE SAVE
-  // ----------------------------------------------------------
-
   Future<void> _saveNotice() async {
-    final title =
-        _noticeTitleController.text.trim();
-
-    final description =
-        _noticeDescController.text.trim();
-
-    if (title.isEmpty ||
-        description.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content:
-              Text('Title aur details bharna zaroori hai.'),
-        ),
+    final title = _noticeTitleController.text.trim();
+    final description = _noticeDescController.text.trim();
+    if (title.isEmpty || description.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(backgroundColor: Colors.redAccent, content: Text('Title aur details bharna zaroori hai.')),
       );
       return;
     }
 
-    setState(() {
-      _isSavingNotice = true;
-    });
+    setState(() { _isSavingNotice = true; });
 
     try {
       if (_editingNoticeId == null) {
-        final now =
-            DateTime.now().millisecondsSinceEpoch;
-
-        await FirebaseFirestore
-            .instance
-            .collection('school_notices')
-            .add({
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await FirebaseFirestore.instance.collection('school_notices').add({
           'title': title,
           'description': description,
           'category': _noticeCategory,
@@ -4505,78 +2141,35 @@ debugPrint(
           'lastEdited': now,
         });
       } else {
-        await FirebaseFirestore
-            .instance
-            .collection('school_notices')
-            .doc(_editingNoticeId)
-            .update({
+        await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).update({
           'title': title,
           'description': description,
           'category': _noticeCategory,
-          'lastEdited':
-              DateTime.now()
-                  .millisecondsSinceEpoch,
+          'lastEdited': DateTime.now().millisecondsSinceEpoch,
         });
       }
-
       if (!mounted) return;
-
       _cancelNoticeEdit();
-
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Color(0xFF00A884),
-          content:
-              Text('Notice successfully saved!'),
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Notice successfully saved!')),
       );
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _isSavingNotice = false;
-        });
-
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            backgroundColor:
-                Colors.redAccent,
-            content: Text(
-              'Notice save error: $e',
-            ),
-          ),
+        setState(() { _isSavingNotice = false; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.redAccent, content: Text('Notice save error: $e')),
         );
       }
     }
   }
 
-  // ----------------------------------------------------------
-  // EDIT NOTICE
-  // ----------------------------------------------------------
-
-  void _startEditNotice(
-    String id,
-    Map<String, dynamic> data,
-  ) {
+  void _startEditNotice(String id, Map<String, dynamic> data) {
     setState(() {
       _editingNoticeId = id;
-
-      _noticeTitleController.text =
-          data['title']?.toString() ?? '';
-
-      _noticeDescController.text =
-          data['description']?.toString() ??
-              '';
-
-      final category =
-          data['category']?.toString();
-
-      _noticeCategory =
-          _noticeCategories.contains(category)
-              ? category!
-              : 'General';
+      _noticeTitleController.text = data['title']?.toString() ?? '';
+      _noticeDescController.text = data['description']?.toString() ?? '';
+      final category = data['category']?.toString();
+      _noticeCategory = _noticeCategories.contains(category) ? category! : 'General';
     });
   }
 
@@ -4590,247 +2183,109 @@ debugPrint(
     });
   }
 
-  // ----------------------------------------------------------
-  // DELETE NOTICE
-  // ----------------------------------------------------------
-
-  Future<void> _deleteNotice(
-    String id,
-  ) async {
+  Future<void> _deleteNotice(String id) async {
     try {
-      await FirebaseFirestore.instance
-          .collection('school_notices')
-          .doc(id)
-          .delete();
-
+      await FirebaseFirestore.instance.collection('school_notices').doc(id).delete();
       if (!mounted) return;
-
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content:
-              Text('Notice delete ho gaya!'),
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(backgroundColor: Colors.redAccent, content: Text('Notice delete ho gaya!')),
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            backgroundColor:
-                Colors.redAccent,
-            content:
-                Text('Delete error: $e'),
-          ),
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.redAccent, content: Text('Delete error: $e')),
         );
       }
     }
   }
 
-  // ----------------------------------------------------------
-  // SEARCH STUDENT
-  // ----------------------------------------------------------
-
   Future<void> _searchStudent() async {
-    final roll =
-        _rollController.text.trim();
-
+    final roll = _rollController.text.trim();
     if (roll.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          content:
-              Text('Kripya Roll Number bharein'),
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kripya Roll Number bharein')),
       );
       return;
     }
 
-    setState(() {
-      _isSearchingStudent = true;
-    });
+    setState(() { _isSearchingStudent = true; });
 
     try {
-      final docId =
-          '${_directoryClass}_Roll_$roll';
-
-      final doc = await FirebaseFirestore
-          .instance
-          .collection('students_directory')
-          .doc(docId)
-          .get();
-
+      final docId = '${_directoryClass}_Roll_$roll';
+      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+      
       if (doc.exists) {
-        final data =
-            doc.data()!;
-
-        _nameController.text =
-            data['name']?.toString() ?? '';
-
-        _parentContactController.text =
-            data['parentContact']?.toString() ??
-                '';
-
-        _studentPhotoUrl =
-            data['photoUrl']?.toString();
-
+        final data = doc.data()!;
+        _nameController.text = data['name']?.toString() ?? '';
+        _parentContactController.text = data['parentContact']?.toString() ?? '';
+        _studentPhotoUrl = data['photoUrl']?.toString();
         if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(
-            const SnackBar(
-              backgroundColor:
-                  Color(0xFF00A884),
-              content:
-                  Text('Student mil gaya!'),
-            ),
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student mil gaya!')),
           );
         }
       } else {
         _nameController.clear();
         _parentContactController.clear();
         _studentPhotoUrl = null;
-
         if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(
-            const SnackBar(
-              backgroundColor:
-                  Colors.redAccent,
-              content: Text(
-                'Is Roll No ka koi student nahi mila!',
-              ),
-            ),
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(backgroundColor: Colors.redAccent, content: Text('Is Roll No ka koi student nahi mila!')),
           );
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            backgroundColor:
-                Colors.redAccent,
-            content:
-                Text('Search error: $e'),
-          ),
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.redAccent, content: Text('Search error: $e')),
         );
       }
     } finally {
       if (mounted) {
-        setState(() {
-          _isSearchingStudent = false;
-        });
+        setState(() { _isSearchingStudent = false; });
       }
     }
   }
 
-  // ----------------------------------------------------------
-  // TEACHER DIALOG
-  // ----------------------------------------------------------
-
   void _openAddTeacherDialog() {
     showDialog(
       context: context,
-      builder: (ctx) =>
-          AlertDialog(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title: const Text(
-          'Add Teacher',
-          style: TextStyle(
-            color: Colors.white,
-          ),
-        ),
-        content: const Text(
-          'Teacher database fields baad mein connect kiye ja sakte hain. Yeh button abhi ready hai.',
-          style: TextStyle(
-            color: Colors.grey,
-          ),
-        ),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Add Teacher', style: TextStyle(color: Colors.white)),
+        content: const Text('Teacher database fields baad mein connect kiye ja sakte hain. Yeh button abhi ready hai.', style: TextStyle(color: Colors.grey)),
         actions: [
           TextButton(
-            onPressed: () =>
-                Navigator.pop(ctx),
-            child: const Text(
-              'Close',
-              style: TextStyle(
-                color:
-                    Color(0xFF00A884),
-              ),
-            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close', style: TextStyle(color: Color(0xFF00A884))),
           ),
         ],
       ),
     );
   }
-
-  // ----------------------------------------------------------
-  // PROFILE
-  // ----------------------------------------------------------
 
   void _showProfileDialog() {
-    final user =
-        FirebaseAuth.instance.currentUser;
-
+    final user = FirebaseAuth.instance.currentUser;
     showDialog(
       context: context,
-      builder: (ctx) =>
-          AlertDialog(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title: const Text(
-          'Admin Profile',
-          style: TextStyle(
-            color: Colors.white,
-          ),
-        ),
-        content: Text(
-          user?.email ?? 'Admin',
-          style: const TextStyle(
-            color: Colors.white70,
-          ),
-        ),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Admin Profile', style: TextStyle(color: Colors.white)),
+        content: Text(user?.email ?? 'Admin', style: const TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
-            onPressed: () =>
-                Navigator.pop(ctx),
-            child: const Text(
-              'Close',
-              style: TextStyle(
-                color:
-                    Color(0xFF00A884),
-              ),
-            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close', style: TextStyle(color: Color(0xFF00A884))),
           ),
         ],
       ),
     );
   }
 
-  // ----------------------------------------------------------
-  // ID CARD PREVIEW
-  // ----------------------------------------------------------
-
   Future<void> _showIdCardPreview() async {
-    final name =
-        _nameController.text.trim().isEmpty
-            ? 'Student Name'
-            : _nameController.text.trim();
-
-    final roll =
-        _rollController.text.trim().isEmpty
-            ? '01'
-            : _rollController.text.trim();
-
-    final contact =
-        _parentContactController.text
-                .trim()
-                .isEmpty
-            ? 'Not Available'
-            : _parentContactController.text
-                .trim();
+    final name = _nameController.text.trim().isEmpty ? 'Student Name' : _nameController.text.trim();
+    final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
+    final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
 
     String parentName = 'N/A';
     String address = 'N/A';
@@ -4839,376 +2294,136 @@ debugPrint(
     String pinCode = '';
     String admissionDate = 'N/A';
     String dob = 'N/A';
-
-    String? fetchedPhotoUrl =
-        _studentPhotoUrl;
+    String? fetchedPhotoUrl = _studentPhotoUrl;
 
     try {
-      final docId =
-          '${_directoryClass}_Roll_$roll';
-
-      final doc = await FirebaseFirestore
-          .instance
-          .collection(
-              'students_directory')
-          .doc(docId)
-          .get();
-
+      final docId = '${_directoryClass}_Roll_$roll';
+      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
       if (doc.exists) {
-        final data =
-            doc.data()!;
-
-        parentName =
-            data['parentName']
-                    ?.toString() ??
-                'N/A';
-
-        address =
-            data['address']
-                    ?.toString() ??
-                'N/A';
-
-        district =
-            data['district']
-                    ?.toString() ??
-                '';
-
-        state =
-            data['state']
-                    ?.toString() ??
-                '';
-
-        pinCode =
-            data['pinCode']
-                    ?.toString() ??
-                '';
-
-        admissionDate =
-            data['joiningDate']
-                    ?.toString() ??
-                'N/A';
-
-        dob =
-            data['dateOfBirth']
-                    ?.toString() ??
-                'N/A';
-
-        final dbPhoto =
-            data['photoUrl']
-                ?.toString();
-
-        if (dbPhoto != null &&
-            dbPhoto.isNotEmpty) {
-          fetchedPhotoUrl =
-              dbPhoto;
+        final data = doc.data()!;
+        parentName = data['parentName']?.toString() ?? 'N/A';
+        address = data['address']?.toString() ?? 'N/A';
+        district = data['district']?.toString() ?? '';
+        state = data['state']?.toString() ?? '';
+        pinCode = data['pinCode']?.toString() ?? '';
+        admissionDate = data['joiningDate']?.toString() ?? 'N/A';
+        dob = data['dateOfBirth']?.toString() ?? 'N/A';
+        final dbPhoto = data['photoUrl']?.toString();
+        if (dbPhoto != null && dbPhoto.isNotEmpty) {
+          fetchedPhotoUrl = dbPhoto;
         }
       }
     } catch (e) {
-      debugPrint(
-        'ID card fetch error: $e',
-      );
+      debugPrint('ID card fetch error: $e');
     }
 
     if (!mounted) return;
 
     showDialog(
       context: context,
-      builder: (ctx) =>
-          Dialog(
-        backgroundColor:
-            Colors.transparent,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
         child: Container(
           width: 370,
-          decoration:
-              BoxDecoration(
-            color: Colors.white,
-            borderRadius:
-                BorderRadius.circular(
-              16,
-            ),
-          ),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
           child: Column(
-            mainAxisSize:
-                MainAxisSize.min,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration:
-                    const BoxDecoration(
-                  color: Color(
-                    0xFFC85A17,
-                  ),
-                  borderRadius:
-                      BorderRadius.only(
-                    topLeft:
-                        Radius.circular(
-                      16,
-                    ),
-                    topRight:
-                        Radius.circular(
-                      16,
-                    ),
-                  ),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFC85A17),
+                  borderRadius: BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)),
                 ),
                 child: const Row(
                   children: [
                     CircleAvatar(
                       radius: 18,
-                      backgroundColor:
-                          Colors.white,
-                      child: Icon(
-                        Icons.school,
-                        color: Color(
-                          0xFFC85A17,
-                        ),
-                        size: 20,
-                      ),
+                      backgroundColor: Colors.white,
+                      child: Icon(Icons.school, color: Color(0xFFC85A17), size: 20),
                     ),
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'SARASWATI VIDYA NIKETAN, MADHABDHAM',
-                        style:
-                            TextStyle(
-                          color:
-                              Colors.white,
-                          fontSize: 11,
-                          fontWeight:
-                              FontWeight.bold,
-                        ),
+                        style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],
                 ),
               ),
-
-              const SizedBox(
-                height: 12,
-              ),
-
+              const SizedBox(height: 12),
               Container(
                 width: 85,
                 height: 100,
-                decoration:
-                    BoxDecoration(
-                  borderRadius:
-                      BorderRadius.circular(
-                    10,
-                  ),
-                  border:
-                      Border.all(
-                    color: const Color(
-                      0xFFC85A17,
-                    ),
-                    width: 2,
-                  ),
-                  color:
-                      const Color(
-                    0xFFECEFF1,
-                  ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFC85A17), width: 2),
+                  color: const Color(0xFFECEFF1),
                 ),
                 child: ClipRRect(
-                  borderRadius:
-                      BorderRadius.circular(
-                    8,
-                  ),
-                  child: fetchedPhotoUrl !=
-                              null &&
-                          fetchedPhotoUrl!
-                              .isNotEmpty
+                  borderRadius: BorderRadius.circular(8),
+                  child: fetchedPhotoUrl != null && fetchedPhotoUrl!.isNotEmpty
                       ? Image.network(
                           fetchedPhotoUrl!,
                           fit: BoxFit.cover,
                           webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-                          errorBuilder:(context, error, stackTrace,) {
-                            return const Icon(
-                              Icons.person,
-                              size: 45,
-                              color: Colors.grey,
-                            );
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Icon(Icons.person, size: 45, color: Colors.grey);
                           },
                         )
-                      : const Icon(
-                          Icons.person,
-                          size: 45,
-                          color:
-                              Colors.grey,
-                        ),
+                      : const Icon(Icons.person, size: 45, color: Colors.grey),
                 ),
               ),
-
-              const SizedBox(
-                height: 8,
-              ),
-
+              const SizedBox(height: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 3,
-                ),
-                decoration:
-                    BoxDecoration(
-                  color:
-                      const Color(
-                    0xFFC85A17,
-                  ),
-                  borderRadius:
-                      BorderRadius.circular(
-                    6,
-                  ),
-                ),
-                child: const Text(
-                  'STUDENT ID CARD',
-                  style:
-                      TextStyle(
-                    color:
-                        Colors.white,
-                    fontWeight:
-                        FontWeight.bold,
-                    fontSize: 10,
-                  ),
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+                decoration: BoxDecoration(color: const Color(0xFFC85A17), borderRadius: BorderRadius.circular(6)),
+                child: const Text('STUDENT ID CARD', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
               ),
-
-              const SizedBox(
-                height: 10,
-              ),
-
+              const SizedBox(height: 10),
               Padding(
-                padding:
-                    const EdgeInsets.symmetric(
-                  horizontal: 16,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   children: [
-                    _idCardField(
-                      'Name',
-                      name,
-                    ),
-                    _idCardField(
-                      'Father Name',
-                      parentName,
-                    ),
-                    _idCardField(
-                      'Class',
-                      _directoryClass,
-                    ),
-                    _idCardField(
-                      'Roll No',
-                      roll,
-                    ),
-                    _idCardField(
-                      'Contact',
-                      contact,
-                    ),
-                    _idCardField(
-                      'DOB',
-                      dob,
-                    ),
-                    _idCardField(
-                      'Admission',
-                      admissionDate,
-                    ),
-                    _idCardField(
-                      'Address',
-                      '$address, $district, $state - $pinCode',
-                    ),
+                    _idCardField('Name', name),
+                    _idCardField('Father Name', parentName),
+                    _idCardField('Class', _directoryClass),
+                    _idCardField('Roll No', roll),
+                    _idCardField('Contact', contact),
+                    _idCardField('DOB', dob),
+                    _idCardField('Admission', admissionDate),
+                    _idCardField('Address', '$address, $district, $state - $pinCode'),
                   ],
                 ),
               ),
-
-              const SizedBox(
-                height: 10,
-              ),
-
+              const SizedBox(height: 10),
               Padding(
-                padding:
-                    const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 6,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Row(
-                  mainAxisAlignment:
-                      MainAxisAlignment
-                          .spaceBetween,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Column(
-                      crossAxisAlignment:
-                          CrossAxisAlignment
-                              .start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          width: 70,
-                          child: Divider(
-                            color:
-                                Colors.black45,
-                          ),
-                        ),
-                        Text(
-                          'Principal Sign',
-                          style:
-                              TextStyle(
-                            fontSize: 8,
-                            color:
-                                Colors.black87,
-                          ),
-                        ),
+                        SizedBox(width: 70, child: Divider(color: Colors.black45)),
+                        Text('Principal Sign', style: TextStyle(fontSize: 8, color: Colors.black87)),
                       ],
                     ),
                     Row(
                       children: [
                         TextButton(
-                          onPressed: () =>
-                              Navigator.pop(
-                            ctx,
-                          ),
-                          child:
-                              const Text(
-                            'Close',
-                            style:
-                                TextStyle(
-                              color:
-                                  Colors.grey,
-                            ),
-                          ),
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('Close', style: TextStyle(color: Colors.grey)),
                         ),
                         ElevatedButton.icon(
-                          style:
-                              ElevatedButton
-                                  .styleFrom(
-                            backgroundColor:
-                                const Color(
-                              0xFF00A884,
-                            ),
-                          ),
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
                           onPressed: () {
-                            Navigator.pop(
-                              ctx,
-                            );
+                            Navigator.pop(ctx);
                             _downloadIdCard();
                           },
-                          icon:
-                              const Icon(
-                            Icons.download,
-                            color:
-                                Colors.white,
-                            size: 14,
-                          ),
-                          label:
-                              const Text(
-                            'Download',
-                            style:
-                                TextStyle(
-                              color:
-                                  Colors.white,
-                              fontSize: 11,
-                            ),
-                          ),
+                          icon: const Icon(Icons.download, color: Colors.white, size: 14),
+                          label: const Text('Download', style: TextStyle(color: Colors.white, fontSize: 11)),
                         ),
                       ],
                     ),
@@ -5222,555 +2437,254 @@ debugPrint(
     );
   }
 
-  // ----------------------------------------------------------
-  // DOWNLOAD ID CARD DETAILS
-  // ----------------------------------------------------------
+  Future<void> _downloadIdCard() async {
+    final name = _nameController.text.trim().isEmpty ? 'Student' : _nameController.text.trim();
+    final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
+    final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
 
-Future<void> _downloadIdCard() async {
-  final name = _nameController.text.trim().isEmpty
-      ? 'Student'
-      : _nameController.text.trim();
+    String parentName = 'N/A';
+    String address = 'N/A';
+    String district = 'N/A';
+    String state = 'N/A';
+    String pinCode = 'N/A';
+    String admissionDate = 'N/A';
+    String dob = 'N/A';
+    String? photoUrl = _studentPhotoUrl;
 
-  final roll = _rollController.text.trim().isEmpty
-      ? '01'
-      : _rollController.text.trim();
-
-  final contact = _parentContactController.text.trim().isEmpty
-      ? 'Not Available'
-      : _parentContactController.text.trim();
-
-  String parentName = 'N/A';
-  String address = 'N/A';
-  String district = 'N/A';
-  String state = 'N/A';
-  String pinCode = 'N/A';
-  String admissionDate = 'N/A';
-  String dob = 'N/A';
-
-  String? photoUrl = _studentPhotoUrl;
-
-  try {
-    final docId = '${_directoryClass}_Roll_$roll';
-
-    final doc = await FirebaseFirestore.instance
-        .collection('students_directory')
-        .doc(docId)
-        .get();
-
-    if (doc.exists) {
-      final data = doc.data()!;
-
-      parentName = data['parentName']?.toString() ?? 'N/A';
-      address = data['address']?.toString() ?? 'N/A';
-      district = data['district']?.toString() ?? 'N/A';
-      state = data['state']?.toString() ?? 'N/A';
-      pinCode = data['pinCode']?.toString() ?? 'N/A';
-      admissionDate = data['joiningDate']?.toString() ?? 'N/A';
-      dob = data['dateOfBirth']?.toString() ?? 'N/A';
-
-      final dbPhoto = data['photoUrl']?.toString();
-
-      if (dbPhoto != null && dbPhoto.isNotEmpty) {
-        photoUrl = dbPhoto;
-      }
-    }
-  } catch (e) {
-    debugPrint('ID Card data fetch error: $e');
-  }
-
-  // ============================================================
-  // PHOTO LOAD (WITH CORS BYPASS)
-  // ============================================================
-
-  pw.MemoryImage? studentPhoto;
-
-  if (photoUrl != null && photoUrl!.isNotEmpty) {
     try {
-     // Google Drive Security (CORS) Bypass karne ke liye Proxy
-      final corsUrl = 'https://corsproxy.io/?${Uri.encodeComponent(photoUrl)}';
-     
-      final imageResponse = await http.get(
-        Uri.parse(photoUrl!),
-      );
-
-      if (imageResponse.statusCode == 200 &&
-          imageResponse.bodyBytes.isNotEmpty) {
-        studentPhoto =
-            pw.MemoryImage(imageResponse.bodyBytes);
+      final docId = '${_directoryClass}_Roll_$roll';
+      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+      if (doc.exists) {
+        final data = doc.data()!;
+        parentName = data['parentName']?.toString() ?? 'N/A';
+        address = data['address']?.toString() ?? 'N/A';
+        district = data['district']?.toString() ?? 'N/A';
+        state = data['state']?.toString() ?? 'N/A';
+        pinCode = data['pinCode']?.toString() ?? 'N/A';
+        admissionDate = data['joiningDate']?.toString() ?? 'N/A';
+        dob = data['dateOfBirth']?.toString() ?? 'N/A';
+        final dbPhoto = data['photoUrl']?.toString();
+        if (dbPhoto != null && dbPhoto.isNotEmpty) {
+          photoUrl = dbPhoto;
+        }
       }
     } catch (e) {
-      debugPrint('ID Card photo load error: $e');
+      debugPrint('ID Card data fetch error: $e');
     }
-  }
 
-  // ============================================================
-  // CREATE PDF
-  // ============================================================
+    pw.MemoryImage? studentPhoto;
+    if (photoUrl != null && photoUrl!.isNotEmpty) {
+      try {
+        final corsUrl = 'https://corsproxy.io/?${Uri.encodeComponent(photoUrl!)}';
+        final imageResponse = await http.get(Uri.parse(photoUrl!));
+        if (imageResponse.statusCode == 200 && imageResponse.bodyBytes.isNotEmpty) {
+          studentPhoto = pw.MemoryImage(imageResponse.bodyBytes);
+        }
+      } catch (e) {
+        debugPrint('ID Card photo load error: $e');
+      }
+    }
 
-  final pdf = pw.Document();
-
-  pdf.addPage(
-    pw.Page(
-      pageFormat: const PdfPageFormat(
-        243,
-        153,
-        marginAll: 0,
-      ),
-      build: (pw.Context context) {
-        return pw.Container(
-          width: 243,
-          height: 153,
-          decoration: pw.BoxDecoration(
-            color: PdfColors.white,
-            border: pw.Border.all(
-              color: PdfColors.orange800,
-              width: 1.5,
+    final pdf = pw.Document();
+    pdf.addPage(
+      pw.Page(
+        pageFormat: const PdfPageFormat(243, 153, marginAll: 0),
+        build: (pw.Context context) {
+          return pw.Container(
+            width: 243,
+            height: 153,
+            decoration: pw.BoxDecoration(
+              color: PdfColors.white,
+              border: pw.Border.all(color: PdfColors.orange800, width: 1.5),
+              borderRadius: pw.BorderRadius.circular(8),
             ),
-            borderRadius: pw.BorderRadius.circular(8),
-          ),
-          child: pw.Column(
-            children: [
-
-              // ==================================================
-              // HEADER
-              // ==================================================
-
-              pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 5,
-                ),
-                decoration: pw.BoxDecoration(
-                  color: PdfColors.orange800,
-                  borderRadius: const pw.BorderRadius.only(
-                    topLeft: pw.Radius.circular(6),
-                    topRight: pw.Radius.circular(6),
-                  ),
-                ),
-                child: pw.Row(
-                  children: [
-                    pw.Container(
-                      width: 25,
-                      height: 25,
-                      decoration: const pw.BoxDecoration(
-                        color: PdfColors.white,
-                        shape: pw.BoxShape.circle,
-                      ),
-                      child: pw.Center(
-                        child: pw.Text(
-                          'S',
-                          style: pw.TextStyle(
-                            color: PdfColors.orange800,
-                            fontSize: 15,
-                            fontWeight: pw.FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                    pw.SizedBox(width: 6),
-                    pw.Expanded(
-                      child: pw.Text(
-                        'SARASWATI VIDYA NIKETAN, MADHABDHAM',
-                        style: pw.TextStyle(
-                          color: PdfColors.white,
-                          fontSize: 8,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              pw.SizedBox(height: 4),
-
-              // ==================================================
-              // ID CARD BADGE
-              // ==================================================
-
-              pw.Container(
-                padding: const pw.EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 2,
-                ),
-                decoration: pw.BoxDecoration(
-                  color: PdfColors.orange800,
-                  borderRadius: pw.BorderRadius.circular(4),
-                ),
-                child: pw.Text(
-                  'STUDENT ID CARD',
-                  style: pw.TextStyle(
-                    color: PdfColors.white,
-                    fontSize: 7,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
-              ),
-
-              pw.SizedBox(height: 5),
-
-              // ==================================================
-              // MAIN CONTENT
-              // ==================================================
-
-              pw.Expanded(
-                child: pw.Padding(
-                  padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 8,
+            child: pw.Column(
+              children: [
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.orange800,
+                    borderRadius: const pw.BorderRadius.only(topLeft: pw.Radius.circular(6), topRight: pw.Radius.circular(6)),
                   ),
                   child: pw.Row(
-                    crossAxisAlignment:
-                        pw.CrossAxisAlignment.start,
                     children: [
-
-                      // PHOTO
                       pw.Container(
-                        width: 50,
-                        height: 62,
-                        decoration: pw.BoxDecoration(
-                          border: pw.Border.all(
-                            color: PdfColors.orange800,
-                            width: 1,
-                          ),
+                        width: 25,
+                        height: 25,
+                        decoration: const pw.BoxDecoration(color: PdfColors.white, shape: pw.BoxShape.circle),
+                        child: pw.Center(
+                          child: pw.Text('S', style: pw.TextStyle(color: PdfColors.orange800, fontSize: 15, fontWeight: pw.FontWeight.bold)),
                         ),
-                        child: studentPhoto != null
-                            ? pw.Image(
-                                studentPhoto,
-                                fit: pw.BoxFit.cover,
-                              )
-                            : pw.Center(
-                                child: pw.Text(
-                                  'PHOTO',
-                                  style: const pw.TextStyle(
-                                    fontSize: 7,
-                                    color: PdfColors.grey700,
-                                  ),
-                                ),
-                              ),
                       ),
-
-                      pw.SizedBox(width: 7),
-
-                      // DETAILS
+                      pw.SizedBox(width: 6),
                       pw.Expanded(
-                        child: pw.Column(
-                          crossAxisAlignment:
-                              pw.CrossAxisAlignment.start,
-                          children: [
-                            _pdfField(
-                              'Name',
-                              name,
-                            ),
-                            _pdfField(
-                              'Father',
-                              parentName,
-                            ),
-                            _pdfField(
-                              'Class',
-                              _directoryClass,
-                            ),
-                            _pdfField(
-                              'Roll',
-                              roll,
-                            ),
-                            _pdfField(
-                              'Contact',
-                              contact,
-                            ),
-                            _pdfField(
-                              'DOB',
-                              dob,
-                            ),
-                            _pdfField(
-                              'Admission',
-                              admissionDate,
-                            ),
-                          ],
+                        child: pw.Text(
+                          'SARASWATI VIDYA NIKETAN, MADHABDHAM',
+                          style: pw.TextStyle(color: PdfColors.white, fontSize: 8, fontWeight: pw.FontWeight.bold),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
-
-              // ==================================================
-              // FOOTER
-              // ==================================================
-
-              pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 3,
+                pw.SizedBox(height: 4),
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                  decoration: pw.BoxDecoration(color: PdfColors.orange800, borderRadius: pw.BorderRadius.circular(4)),
+                  child: pw.Text('STUDENT ID CARD', style: pw.TextStyle(color: PdfColors.white, fontSize: 7, fontWeight: pw.FontWeight.bold)),
                 ),
-                decoration: const pw.BoxDecoration(
-                  color: PdfColors.grey100,
-                ),
-                child: pw.Row(
-                  mainAxisAlignment:
-                      pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      '$district, $state - $pinCode',
-                      style: const pw.TextStyle(
-                        fontSize: 6,
-                        color: PdfColors.grey700,
-                      ),
+                pw.SizedBox(height: 5),
+                pw.Expanded(
+                  child: pw.Padding(
+                    padding: const pw.EdgeInsets.symmetric(horizontal: 8),
+                    child: pw.Row(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Container(
+                          width: 50,
+                          height: 62,
+                          decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.orange800, width: 1)),
+                          child: studentPhoto != null
+                              ? pw.Image(studentPhoto, fit: pw.BoxFit.cover)
+                              : pw.Center(
+                                  child: pw.Text('PHOTO', style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey700)),
+                                ),
+                        ),
+                        pw.SizedBox(width: 7),
+                        pw.Expanded(
+                          child: pw.Column(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            children: [
+                              _pdfField('Name', name),
+                              _pdfField('Father', parentName),
+                              _pdfField('Class', _directoryClass),
+                              _pdfField('Roll', roll),
+                              _pdfField('Contact', contact),
+                              _pdfField('DOB', dob),
+                              _pdfField('Admission', admissionDate),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    pw.Text(
-                      'Principal Sign',
-                      style: pw.TextStyle(
-                        fontSize: 6,
-                        fontWeight: pw.FontWeight.bold,
-                        color: PdfColors.black,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
-    ),
-  );
-
-  // ============================================================
-  // SAVE PDF
-  // ============================================================
-
-  try {
-    final pdfBytes = await pdf.save();
-
-    final blob = html.Blob(
-      [pdfBytes],
-      'application/pdf',
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: const pw.BoxDecoration(color: PdfColors.grey100),
+                  child: pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text('$district, $state - $pinCode', style: const pw.TextStyle(fontSize: 6, color: PdfColors.grey700)),
+                      pw.Text('Principal Sign', style: pw.TextStyle(fontSize: 6, fontWeight: pw.FontWeight.bold, color: PdfColors.black)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
 
-    final url = html.Url.createObjectUrlFromBlob(blob);
+    try {
+      final pdfBytes = await pdf.save();
+      final blob = html.Blob([pdfBytes], 'application/pdf');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      final safeName = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').replaceAll(RegExp(r'\s+'), '_');
+      
+      final anchor = html.AnchorElement(href: url)
+        ..setAttribute('download', 'Student_ID_Card_${safeName}_Roll_$roll.pdf')
+        ..style.display = 'none';
 
-    final safeName = name
-        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
-        .replaceAll(RegExp(r'\s+'), '_');
+      html.document.body?.children.add(anchor);
+      anchor.click();
+      anchor.remove();
+      html.Url.revokeObjectUrl(url);
 
-    final anchor = html.AnchorElement(
-      href: url,
-    )
-      ..setAttribute(
-        'download',
-        'Student_ID_Card_${safeName}_Roll_$roll.pdf',
-      )
-      ..style.display = 'none';
-
-    html.document.body?.children.add(anchor);
-
-    anchor.click();
-
-    anchor.remove();
-
-    html.Url.revokeObjectUrl(url);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
-          content: Text(
-            'Actual Student ID Card PDF download ho gaya.',
-          ),
-        ),
-      );
-    }
-  } catch (e) {
-    debugPrint('PDF generation error: $e');
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text(
-            'ID Card PDF banane mein error: $e',
-          ),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Actual Student ID Card PDF download ho gaya.')),
+        );
+      }
+    } catch (e) {
+      debugPrint('PDF generation error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.redAccent, content: Text('ID Card PDF banane mein error: $e')),
+        );
+      }
     }
   }
-}
 
-  // ----------------------------------------------------------
-  // ID CARD FIELD
-  // ----------------------------------------------------------
-
-pw.Widget _pdfField(
-  String label,
-  String value,
-) {
-  return pw.Padding(
-    padding: const pw.EdgeInsets.only(
-      bottom: 2,
-    ),
-    child: pw.Row(
-      crossAxisAlignment:
-          pw.CrossAxisAlignment.start,
-      children: [
-        pw.SizedBox(
-          width: 42,
-          child: pw.Text(
-            label,
-            style: pw.TextStyle(
-              fontSize: 6.5,
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColors.orange800,
-            ),
-          ),
-        ),
-        pw.Text(
-          ': ',
-          style: const pw.TextStyle(
-            fontSize: 6.5,
-          ),
-        ),
-        pw.Expanded(
-          child: pw.Text(
-            value,
-            maxLines: 2,
-            style: const pw.TextStyle(
-              fontSize: 6.5,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-  Widget _idCardField(
-    String label,
-    String value,
-  ) {
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        vertical: 2,
-      ),
-      child: Row(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+  pw.Widget _pdfField(String label, String value) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.only(bottom: 2),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              label,
-              style:
-                  const TextStyle(
-                color:
-                    Color(0xFFC85A17),
-                fontWeight:
-                    FontWeight.bold,
-                fontSize: 10,
-              ),
-            ),
+          pw.SizedBox(
+            width: 42,
+            child: pw.Text(label, style: pw.TextStyle(fontSize: 6.5, fontWeight: pw.FontWeight.bold, color: PdfColors.orange800)),
           ),
-          const Text(
-            ': ',
-            style:
-                TextStyle(
-              color:
-                  Colors.black87,
-              fontWeight:
-                  FontWeight.bold,
-              fontSize: 10,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style:
-                  const TextStyle(
-                color:
-                    Colors.black87,
-                fontWeight:
-                    FontWeight.w600,
-                fontSize: 10,
-              ),
-            ),
+          pw.Text(': ', style: const pw.TextStyle(fontSize: 6.5)),
+          pw.Expanded(
+            child: pw.Text(value, maxLines: 2, style: const pw.TextStyle(fontSize: 6.5)),
           ),
         ],
       ),
     );
   }
 
-  // ----------------------------------------------------------
-  // ADMIN BUILD
-  // ----------------------------------------------------------
+  Widget _idCardField(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(label, style: const TextStyle(color: Color(0xFFC85A17), fontWeight: FontWeight.bold, fontSize: 10)),
+          ),
+          const Text(': ', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 10)),
+          Expanded(
+            child: Text(value, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 10)),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF121B22),
+      backgroundColor: const Color(0xFF121B22),
       appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title: const Text(
-          'Admin Command Center',
-        ),
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Admin Command Center'),
         actions: [
           PopupMenuButton<String>(
-            color:
-                const Color(0xFF1F2C34),
-            icon: const Icon(
-              Icons.more_vert,
-              color: Colors.white,
-            ),
+            color: const Color(0xFF1F2C34),
+            icon: const Icon(Icons.more_vert, color: Colors.white),
             onSelected: (value) {
-              if (value ==
-                  'profile') {
+              if (value == 'profile') {
                 _showProfileDialog();
-              } else if (value ==
-                  'settings') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder:
-                        (context) =>
-                            const SettingsScreen(),
-                  ),
-                );
-              } else if (value ==
-                  'logout') {
-                FirebaseAuth.instance
-                    .signOut();
-
-                Navigator.popUntil(
-                  context,
-                  (route) =>
-                      route.isFirst,
-                );
+              } else if (value == 'settings') {
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
+              } else if (value == 'logout') {
+                FirebaseAuth.instance.signOut();
+                Navigator.popUntil(context, (route) => route.isFirst);
               }
             },
-            itemBuilder:
-                (BuildContext context) =>
-                    const [
+            itemBuilder: (BuildContext context) => const [
               PopupMenuItem<String>(
                 value: 'profile',
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.person_outline,
-                      color:
-                          Color(0xFF00A884),
-                      size: 20,
-                    ),
+                    Icon(Icons.person_outline, color: Color(0xFF00A884), size: 20),
                     SizedBox(width: 12),
-                    Text(
-                      'Profile',
-                      style:
-                          TextStyle(
-                        color:
-                            Colors.white,
-                      ),
-                    ),
+                    Text('Profile', style: TextStyle(color: Colors.white)),
                   ],
                 ),
               ),
@@ -5778,21 +2692,9 @@ pw.Widget _pdfField(
                 value: 'settings',
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.settings_outlined,
-                      color:
-                          Color(0xFF00A884),
-                      size: 20,
-                    ),
+                    Icon(Icons.settings_outlined, color: Color(0xFF00A884), size: 20),
                     SizedBox(width: 12),
-                    Text(
-                      'Settings',
-                      style:
-                          TextStyle(
-                        color:
-                            Colors.white,
-                      ),
-                    ),
+                    Text('Settings', style: TextStyle(color: Colors.white)),
                   ],
                 ),
               ),
@@ -5800,21 +2702,9 @@ pw.Widget _pdfField(
                 value: 'logout',
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.logout,
-                      color:
-                          Colors.redAccent,
-                      size: 20,
-                    ),
+                    Icon(Icons.logout, color: Colors.redAccent, size: 20),
                     SizedBox(width: 12),
-                    Text(
-                      'Logout',
-                      style:
-                          TextStyle(
-                        color:
-                            Colors.redAccent,
-                      ),
-                    ),
+                    Text('Logout', style: TextStyle(color: Colors.redAccent)),
                   ],
                 ),
               ),
@@ -5822,51 +2712,29 @@ pw.Widget _pdfField(
           ),
         ],
       ),
-
-      body:
-          LayoutBuilder(
-        builder:
-            (context, constraints) {
-          final isWide =
-              constraints.maxWidth >=
-                  900;
-
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 900;
           if (!isWide) {
             return SingleChildScrollView(
-              padding:
-                  const EdgeInsets.all(
-                16,
-              ),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
                   _buildLeftColumn(),
-                  const SizedBox(
-                    height: 24,
-                  ),
+                  const SizedBox(height: 24),
                   _buildRightColumn(),
                 ],
               ),
             );
           }
-
           return SingleChildScrollView(
-            padding:
-                const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
             child: Row(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child:
-                      _buildLeftColumn(),
-                ),
-                const SizedBox(
-                  width: 20,
-                ),
-                Expanded(
-                  child:
-                      _buildRightColumn(),
-                ),
+                Expanded(child: _buildLeftColumn()),
+                const SizedBox(width: 20),
+                Expanded(child: _buildRightColumn()),
               ],
             ),
           );
@@ -5875,464 +2743,158 @@ pw.Widget _pdfField(
     );
   }
 
-  // ----------------------------------------------------------
-  // LEFT COLUMN
-  // ----------------------------------------------------------
-
   Widget _buildLeftColumn() {
     return Column(
-      crossAxisAlignment:
-          CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionHeader(
-          'Digital Notice Board',
-          Icons.campaign,
-        ),
-
+        _buildSectionHeader('Digital Notice Board', Icons.campaign),
         _buildCardWrapper(
           child: Column(
             children: [
-              DropdownButtonFormField<
-                  String>(
-                value:
-                    _noticeCategory,
-                dropdownColor:
-                    const Color(
-                  0xFF1F2C34,
-                ),
-                style:
-                    const TextStyle(
-                  color:
-                      Colors.white,
-                ),
-                decoration:
-                    _inputDecoration(
-                  'Notice Type',
-                ),
-                items:
-                    _noticeCategories
-                        .map(
-                          (
-                            category,
-                          ) =>
-                              DropdownMenuItem<
-                                  String>(
-                            value:
-                                category,
-                            child: Text(
-                              category,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                onChanged:
-                    (value) {
-                  if (value !=
-                      null) {
-                    setState(
-                      () =>
-                          _noticeCategory =
-                              value,
-                    );
-                  }
+              DropdownButtonFormField<String>(
+                value: _noticeCategory,
+                dropdownColor: const Color(0xFF1F2C34),
+                style: const TextStyle(color: Colors.white),
+                decoration: _inputDecoration('Notice Type'),
+                items: _noticeCategories.map((category) => DropdownMenuItem<String>(value: category, child: Text(category))).toList(),
+                onChanged: (value) {
+                  if (value != null) setState(() => _noticeCategory = value);
                 },
               ),
-
-              const SizedBox(
-                height: 10,
-              ),
-
+              const SizedBox(height: 10),
               TextField(
-                controller:
-                    _noticeTitleController,
-                style:
-                    const TextStyle(
-                  color:
-                      Colors.white,
-                ),
-                decoration:
-                    _inputDecoration(
-                  'Title',
-                ),
+                controller: _noticeTitleController,
+                style: const TextStyle(color: Colors.white),
+                decoration: _inputDecoration('Title'),
               ),
-
-              const SizedBox(
-                height: 10,
-              ),
-
+              const SizedBox(height: 10),
               TextField(
-                controller:
-                    _noticeDescController,
+                controller: _noticeDescController,
                 maxLines: 3,
-                style:
-                    const TextStyle(
-                  color:
-                      Colors.white,
-                ),
-                decoration:
-                    _inputDecoration(
-                  'Details / Instructions',
-                ),
+                style: const TextStyle(color: Colors.white),
+                decoration: _inputDecoration('Details / Instructions'),
               ),
-
-              const SizedBox(
-                height: 12,
-              ),
-
+              const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
-                    child:
-                        ElevatedButton.icon(
-                      style:
-                          ElevatedButton
-                              .styleFrom(
-                        backgroundColor:
-                            const Color(
-                          0xFF00A884,
-                        ),
-                      ),
-                      onPressed:
-                          _isSavingNotice
-                              ? null
-                              : _saveNotice,
-                      icon:
-                          Icon(
-                        _editingNoticeId ==
-                                null
-                            ? Icons.campaign
-                            : Icons.check,
-                        color:
-                            Colors.white,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                      onPressed: _isSavingNotice ? null : _saveNotice,
+                      icon: Icon(
+                        _editingNoticeId == null ? Icons.campaign : Icons.check,
+                        color: Colors.white,
                         size: 18,
                       ),
-                      label:
-                          Text(
-                        _editingNoticeId ==
-                                null
-                            ? 'Publish Notice'
-                            : 'Update Notice',
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
+                      label: Text(
+                        _editingNoticeId == null ? 'Publish Notice' : 'Update Notice',
+                        style: const TextStyle(color: Colors.white),
                       ),
                     ),
                   ),
-                  if (_editingNoticeId !=
-                      null)
+                  if (_editingNoticeId != null)
                     IconButton(
-                      onPressed:
-                          _cancelNoticeEdit,
-                      icon:
-                          const Icon(
-                        Icons.close,
-                        color:
-                            Colors.redAccent,
-                      ),
+                      onPressed: _cancelNoticeEdit,
+                      icon: const Icon(Icons.close, color: Colors.redAccent),
                     ),
                 ],
               ),
             ],
           ),
         ),
-
-        const SizedBox(
-          height: 24,
-        ),
-
+        const SizedBox(height: 24),
         Row(
-          mainAxisAlignment:
-              MainAxisAlignment
-                  .spaceBetween,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Expanded(
-              child:
-                  _buildSectionHeader(
-                'Student Directory & ID Cards',
-                Icons.badge_outlined,
-              ),
-            ),
+            Expanded(child: _buildSectionHeader('Student Directory & ID Cards', Icons.badge_outlined)),
             ElevatedButton.icon(
-              style:
-                  ElevatedButton
-                      .styleFrom(
-                backgroundColor:
-                    const Color(
-                  0xFF00A884,
-                ),
-              ),
-              onPressed:
-                  _openAddStudentDialog,
-              icon:
-                  const Icon(
-                Icons.add,
-                color:
-                    Colors.white,
-                size: 16,
-              ),
-              label:
-                  const Text(
-                'Add Student',
-                style:
-                    TextStyle(
-                  color:
-                      Colors.white,
-                  fontSize: 12,
-                ),
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+              onPressed: _openAddStudentDialog,
+              icon: const Icon(Icons.add, color: Colors.white, size: 16),
+              label: const Text('Add Student', style: TextStyle(color: Colors.white, fontSize: 12)),
             ),
           ],
         ),
-
         _buildCardWrapper(
           child: Column(
             children: [
               Row(
                 children: [
                   Expanded(
-                    child:
-                        DropdownButtonFormField<
-                            String>(
-                      value:
-                          _directoryClass,
-                      dropdownColor:
-                          const Color(
-                        0xFF1F2C34,
-                      ),
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.white,
-                      ),
-                      decoration:
-                          _inputDecoration(
-                        'Class',
-                      ),
-                      items:
-                          _classList.map(
-                        (value) {
-                          return DropdownMenuItem<
-                              String>(
-                            value:
-                                value,
-                            child:
-                                Text(value),
-                          );
-                        },
-                      ).toList(),
-                      onChanged:
-                          (value) {
-                        if (value !=
-                            null) {
-                          setState(
-                            () =>
-                                _directoryClass =
-                                    value,
-                          );
-                        }
+                    child: DropdownButtonFormField<String>(
+                      value: _directoryClass,
+                      dropdownColor: const Color(0xFF1F2C34),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _inputDecoration('Class'),
+                      items: _classList.map((value) => DropdownMenuItem<String>(value: value, child: Text(value))).toList(),
+                      onChanged: (value) {
+                        if (value != null) setState(() => _directoryClass = value);
                       },
                     ),
                   ),
-                  const SizedBox(
-                    width: 10,
-                  ),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child:
-                        TextField(
-                      controller:
-                          _rollController,
-                      keyboardType:
-                          TextInputType
-                              .number,
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.white,
-                      ),
-                      decoration:
-                          _inputDecoration(
-                        'Roll No',
-                      ),
+                    child: TextField(
+                      controller: _rollController,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _inputDecoration('Roll No'),
                     ),
                   ),
                 ],
               ),
-
-              const SizedBox(
-                height: 10,
-              ),
-
+              const SizedBox(height: 10),
               TextField(
-                controller:
-                    _nameController,
+                controller: _nameController,
                 readOnly: true,
-                style:
-                    const TextStyle(
-                  color:
-                      Colors.white,
-                ),
-                decoration:
-                    _inputDecoration(
-                  'Student Full Name',
-                ),
+                style: const TextStyle(color: Colors.white),
+                decoration: _inputDecoration('Student Full Name'),
               ),
-
-              const SizedBox(
-                height: 10,
-              ),
-
+              const SizedBox(height: 10),
               TextField(
-                controller:
-                    _parentContactController,
+                controller: _parentContactController,
                 readOnly: true,
-                style:
-                    const TextStyle(
-                  color:
-                      Colors.white,
-                ),
-                decoration:
-                    _inputDecoration(
-                  'Parent Contact No',
-                ),
+                style: const TextStyle(color: Colors.white),
+                decoration: _inputDecoration('Parent Contact No'),
               ),
-
-              const SizedBox(
-                height: 14,
-              ),
-
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Expanded(
-                    child:
-                        ElevatedButton.icon(
-                      style:
-                          ElevatedButton
-                              .styleFrom(
-                        backgroundColor:
-                            const Color(
-                          0xFF00A884,
-                        ),
-                      ),
-                      onPressed:
-                          _isSearchingStudent
-                              ? null
-                              : _searchStudent,
-                      icon:
-                          const Icon(
-                        Icons.search,
-                        color:
-                            Colors.white,
-                        size: 18,
-                      ),
-                      label:
-                          Text(
-                        _isSearchingStudent
-                            ? 'Searching...'
-                            : 'Search Record',
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
-                      ),
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                      onPressed: _isSearchingStudent ? null : _searchStudent,
+                      icon: const Icon(Icons.search, color: Colors.white, size: 18),
+                      label: Text(_isSearchingStudent ? 'Searching...' : 'Search Record', style: const TextStyle(color: Colors.white)),
                     ),
                   ),
-                  const SizedBox(
-                    width: 10,
-                  ),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child:
-                        OutlinedButton.icon(
-                      style:
-                          OutlinedButton
-                              .styleFrom(
-                        side:
-                            const BorderSide(
-                          color:
-                              Color(
-                            0xFF00A884,
-                          ),
-                        ),
-                      ),
-                      onPressed:
-                          _showIdCardPreview,
-                      icon:
-                          const Icon(
-                        Icons.visibility,
-                        color:
-                            Color(
-                          0xFF00A884,
-                        ),
-                        size: 18,
-                      ),
-                      label:
-                          const Text(
-                        'View ID Card',
-                        style:
-                            TextStyle(
-                          color:
-                              Color(
-                            0xFF00A884,
-                          ),
-                        ),
-                      ),
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF00A884))),
+                      onPressed: _showIdCardPreview,
+                      icon: const Icon(Icons.visibility, color: Color(0xFF00A884), size: 18),
+                      label: const Text('View ID Card', style: TextStyle(color: Color(0xFF00A884))),
                     ),
                   ),
                 ],
               ),
-
-              const SizedBox(
-                height: 12,
-              ),
-
+              const SizedBox(height: 12),
               SizedBox(
-                width:
-                    double.infinity,
-                child:
-                    ElevatedButton.icon(
-                  style:
-                      ElevatedButton
-                          .styleFrom(
-                    backgroundColor:
-                        const Color(
-                      0xFF2A3942,
-                    ),
-                    padding:
-                        const EdgeInsets
-                            .symmetric(
-                      vertical: 12,
-                    ),
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2A3942),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(
-                        builder:
-                            (context) =>
-                                const AllStudentsListScreen(),
-                      ),
+                      MaterialPageRoute(builder: (context) => const AllStudentsListScreen()),
                     );
                   },
-                  icon:
-                      const Icon(
-                    Icons
-                        .people_alt_outlined,
-                    color:
-                        Color(0xFF00A884),
-                  ),
-                  label:
-                      const Text(
-                    'View All Students (Class 1-10)',
-                    style:
-                        TextStyle(
-                      color:
-                          Colors.white,
-                      fontWeight:
-                          FontWeight.bold,
-                    ),
-                  ),
+                  icon: const Icon(Icons.people_alt_outlined, color: Color(0xFF00A884)),
+                  label: const Text('View All Students (Class 1-10)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -6342,398 +2904,122 @@ pw.Widget _pdfField(
     );
   }
 
-  // ----------------------------------------------------------
-  // RIGHT COLUMN
-  // ----------------------------------------------------------
-
   Widget _buildRightColumn() {
     return Column(
-      crossAxisAlignment:
-          CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Expanded(
-              child:
-                  _buildSectionHeader(
-                'Teachers Directory',
-                Icons
-                    .person_add_alt_1,
-              ),
-            ),
+            Expanded(child: _buildSectionHeader('Teachers Directory', Icons.person_add_alt_1)),
             ElevatedButton.icon(
-              style:
-                  ElevatedButton
-                      .styleFrom(
-                backgroundColor:
-                    const Color(
-                  0xFF00A884,
-                ),
-              ),
-              onPressed:
-                  _openAddTeacherDialog,
-              icon:
-                  const Icon(
-                Icons.add,
-                color:
-                    Colors.white,
-                size: 16,
-              ),
-              label:
-                  const Text(
-                'Add Teacher',
-                style:
-                    TextStyle(
-                  color:
-                      Colors.white,
-                  fontSize: 12,
-                ),
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+              onPressed: _openAddTeacherDialog,
+              icon: const Icon(Icons.add, color: Colors.white, size: 16),
+              label: const Text('Add Teacher', style: TextStyle(color: Colors.white, fontSize: 12)),
             ),
           ],
         ),
-
         _buildCardWrapper(
           child: ListView.separated(
             shrinkWrap: true,
-            physics:
-                const NeverScrollableScrollPhysics(),
-            itemCount:
-                _teachersList.length,
-            separatorBuilder:
-                (_, __) =>
-                    const Divider(
-              color:
-                  Colors.white12,
-            ),
-            itemBuilder:
-                (context, index) {
-              final teacher =
-                  _teachersList[
-                      index];
-
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _teachersList.length,
+            separatorBuilder: (_, __) => const Divider(color: Colors.white12),
+            itemBuilder: (context, index) {
+              final teacher = _teachersList[index];
               return ListTile(
-                contentPadding:
-                    EdgeInsets.zero,
-                leading:
-                    const CircleAvatar(
-                  backgroundColor:
-                      Color(
-                    0xFF121B22,
-                  ),
-                  child:
-                      Icon(
-                    Icons.school,
-                    color:
-                        Color(
-                      0xFF00A884,
-                    ),
-                  ),
+                contentPadding: EdgeInsets.zero,
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFF121B22),
+                  child: Icon(Icons.school, color: Color(0xFF00A884)),
                 ),
-                title:
-                    Text(
-                  teacher['name'] ??
-                      '',
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                    fontWeight:
-                        FontWeight.bold,
-                  ),
+                title: Text(
+                  teacher['name'] ?? '',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                 ),
-                subtitle:
-                    Text(
+                subtitle: Text(
                   '${teacher['subject']} • ${teacher['phone']}',
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.grey,
-                    fontSize: 11,
-                  ),
+                  style: const TextStyle(color: Colors.grey, fontSize: 11),
                 ),
               );
             },
           ),
         ),
-
-        const SizedBox(
-          height: 24,
-        ),
-
-        _buildSectionHeader(
-          'Published Notices',
-          Icons
-              .article_outlined,
-        ),
-
+        const SizedBox(height: 24),
+        _buildSectionHeader('Published Notices', Icons.article_outlined),
         _buildCardWrapper(
           child: SizedBox(
             height: 320,
-            child:
-                StreamBuilder<
-                    QuerySnapshot>(
-              stream:
-                  FirebaseFirestore.instance
-                      .collection(
-                        'school_notices',
-                      )
-                      .orderBy(
-                        'timestamp',
-                        descending:
-                            true,
-                      )
-                      .snapshots(),
-              builder: (
-                context,
-                snapshot,
-              ) {
-                if (snapshot
-                        .connectionState ==
-                    ConnectionState
-                        .waiting) {
-                  return const Center(
-                    child:
-                        CircularProgressIndicator(
-                      color:
-                          Color(
-                        0xFF00A884,
-                      ),
-                    ),
-                  );
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
                 }
-
-                if (!snapshot
-                        .hasData ||
-                    snapshot.data!
-                        .docs
-                        .isEmpty) {
-                  return const Center(
-                    child:
-                        Text(
-                      'Koi notice published nahi hai.',
-                      style:
-                          TextStyle(
-                        color:
-                            Colors.grey,
-                      ),
-                    ),
-                  );
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(child: Text('Koi notice published nahi hai.', style: TextStyle(color: Colors.grey)));
                 }
-
                 return ListView.builder(
-                  itemCount:
-                      snapshot.data!
-                          .docs.length,
-                  itemBuilder:
-                      (context,
-                          index) {
-                    final doc =
-                        snapshot.data!
-                            .docs[index];
-
-                    final data =
-                        doc.data()
-                            as Map<
-                                String,
-                                dynamic>;
-
+                  itemCount: snapshot.data!.docs.length,
+                  itemBuilder: (context, index) {
+                    final doc = snapshot.data!.docs[index];
+                    final data = doc.data() as Map<String, dynamic>;
                     return Container(
-                      margin:
-                          const EdgeInsets
-                              .only(
-                        bottom: 8,
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF121B22),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      padding:
-                          const EdgeInsets
-                              .all(
-                        10,
-                      ),
-                      decoration:
-                          BoxDecoration(
-                        color:
-                            const Color(
-                          0xFF121B22,
-                        ),
-                        borderRadius:
-                            BorderRadius
-                                .circular(
-                          8,
-                        ),
-                      ),
-                      child:
-                          ListTile(
-                        contentPadding:
-                            EdgeInsets
-                                .zero,
-                        title:
-                            Row(
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Row(
                           children: [
                             Container(
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                horizontal:
-                                    6,
-                                vertical:
-                                    2,
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00A884).withOpacity(0.18),
+                                borderRadius: BorderRadius.circular(4),
                               ),
-                              decoration:
-                                  BoxDecoration(
-                                color: const Color(
-                                  0xFF00A884,
-                                ).withOpacity(
-                                  0.18,
-                                ),
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(
-                                  4,
-                                ),
-                              ),
-                              child:
-                                  Text(
-                                data[
-                                            'category']
-                                        ?.toString() ??
-                                    'General',
-                                style:
-                                    const TextStyle(
-                                  color: Color(
-                                    0xFF00A884,
-                                  ),
-                                  fontSize:
-                                      10,
-                                  fontWeight:
-                                      FontWeight
-                                          .bold,
-                                ),
+                              child: Text(
+                                data['category']?.toString() ?? 'General',
+                                style: const TextStyle(color: Color(0xFF00A884), fontSize: 10, fontWeight: FontWeight.bold),
                               ),
                             ),
-                            const SizedBox(
-                              width:
-                                  8,
-                            ),
+                            const SizedBox(width: 8),
                             Expanded(
-                              child:
-                                  Text(
-                                data[
-                                            'title']
-                                        ?.toString() ??
-                                    '',
-                                overflow:
-                                    TextOverflow
-                                        .ellipsis,
-                                style:
-                                    const TextStyle(
-                                  color:
-                                      Colors.white,
-                                  fontWeight:
-                                      FontWeight
-                                          .bold,
-                                  fontSize:
-                                      13,
-                                ),
+                              child: Text(
+                                data['title']?.toString() ?? '',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                               ),
                             ),
                           ],
                         ),
-                        subtitle:
-                            Padding(
-                          padding:
-                              const EdgeInsets
-                                  .only(
-                            top:
-                                4,
-                          ),
-                          child:
-                              Text(
-                            data[
-                                        'description']
-                                    ?.toString() ??
-                                '',
-                            maxLines:
-                                2,
-                            overflow:
-                                TextOverflow
-                                    .ellipsis,
-                            style:
-                                const TextStyle(
-                              color:
-                                  Colors.grey,
-                              fontSize:
-                                  11,
-                            ),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            data['description']?.toString() ?? '',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.grey, fontSize: 11),
                           ),
                         ),
-                        trailing:
-                            PopupMenuButton<
-                                String>(
-                          color:
-                              const Color(
-                            0xFF1F2C34,
-                          ),
-                          onSelected:
-                              (value) {
-                            if (value ==
-                                'preview') {
-                              _showNoticeDetailDialog(
-                                data,
-                              );
-                            } else if (value ==
-                                'edit') {
-                              _startEditNotice(
-                                doc.id,
-                                data,
-                              );
-                            } else if (value ==
-                                'delete') {
-                              _deleteNotice(
-                                doc.id,
-                              );
+                        trailing: PopupMenuButton<String>(
+                          color: const Color(0xFF1F2C34),
+                          onSelected: (value) {
+                            if (value == 'preview') {
+                              _showNoticeDetailDialog(data);
+                            } else if (value == 'edit') {
+                              _startEditNotice(doc.id, data);
+                            } else if (value == 'delete') {
+                              _deleteNotice(doc.id);
                             }
                           },
-                          itemBuilder:
-                              (_) => const [
-                            PopupMenuItem(
-                              value:
-                                  'preview',
-                              child:
-                                  Text(
-                                'Preview',
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.white,
-                                ),
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value:
-                                  'edit',
-                              child:
-                                  Text(
-                                'Edit',
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.white,
-                                ),
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value:
-                                  'delete',
-                              child:
-                                  Text(
-                                'Delete',
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.redAccent,
-                                ),
-                              ),
-                            ),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(value: 'preview', child: Text('Preview', style: TextStyle(color: Colors.white))),
+                            PopupMenuItem(value: 'edit', child: Text('Edit', style: TextStyle(color: Colors.white))),
+                            PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: Colors.redAccent))),
                           ],
                         ),
                       ),
@@ -6748,150 +3034,57 @@ pw.Widget _pdfField(
     );
   }
 
-  // ----------------------------------------------------------
-  // NOTICE PREVIEW
-  // ----------------------------------------------------------
-
-  void _showNoticeDetailDialog(
-    Map<String, dynamic> data,
-  ) {
+  void _showNoticeDetailDialog(Map<String, dynamic> data) {
     showDialog(
       context: context,
-      builder: (ctx) =>
-          AlertDialog(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title: Text(
-          data['title']
-                  ?.toString() ??
-              '',
-          style:
-              const TextStyle(
-            color:
-                Colors.white,
-          ),
-        ),
-        content: Text(
-          data['description']
-                  ?.toString() ??
-              '',
-          style:
-              const TextStyle(
-            color:
-                Colors.white70,
-            height: 1.5,
-          ),
-        ),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: Text(data['title']?.toString() ?? '', style: const TextStyle(color: Colors.white)),
+        content: Text(data['description']?.toString() ?? '', style: const TextStyle(color: Colors.white70, height: 1.5)),
         actions: [
           TextButton(
-            onPressed: () =>
-                Navigator.pop(
-              ctx,
-            ),
-            child:
-                const Text(
-              'Close',
-              style:
-                  TextStyle(
-                color:
-                    Color(
-                  0xFF00A884,
-                ),
-              ),
-            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close', style: TextStyle(color: Color(0xFF00A884))),
           ),
         ],
       ),
     );
   }
 
-  // ----------------------------------------------------------
-  // HELPERS
-  // ----------------------------------------------------------
-
-  Widget _buildSectionHeader(
-    String title,
-    IconData icon,
-  ) {
+  Widget _buildSectionHeader(String title, IconData icon) {
     return Padding(
-      padding:
-          const EdgeInsets.only(
-        bottom: 8,
-      ),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          Icon(
-            icon,
-            color:
-                const Color(
-              0xFF00A884,
-            ),
-            size: 20,
-          ),
-          const SizedBox(
-            width: 8,
-          ),
-          Text(
-            title,
-            style:
-                const TextStyle(
-              color:
-                  Colors.white,
-              fontSize: 16,
-              fontWeight:
-                  FontWeight.bold,
-            ),
-          ),
+          Icon(icon, color: const Color(0xFF00A884), size: 20),
+          const SizedBox(width: 8),
+          Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
 
-  Widget _buildCardWrapper({
-    required Widget child,
-  }) {
+  Widget _buildCardWrapper({required Widget child}) {
     return Container(
-      padding:
-          const EdgeInsets.all(16),
-      decoration:
-          BoxDecoration(
-        color:
-            const Color(0xFF1F2C34),
-        borderRadius:
-            BorderRadius.circular(
-          12,
-        ),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F2C34),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: child,
     );
   }
 
-  InputDecoration _inputDecoration(
-    String hint,
-  ) {
+  InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
-      hintStyle:
-          const TextStyle(
-        color: Colors.grey,
-        fontSize: 13,
-      ),
+      hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
       filled: true,
-      fillColor:
-          const Color(0xFF121B22),
-      contentPadding:
-          const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 10,
-      ),
-      border:
-          OutlineInputBorder(
-        borderRadius:
-            BorderRadius.circular(
-          8,
-        ),
-        borderSide:
-            BorderSide.none,
+      fillColor: const Color(0xFF121B22),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide.none,
       ),
     );
   }
@@ -6905,23 +3098,15 @@ class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() =>
-      _SettingsScreenState();
+  State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState
-    extends State<SettingsScreen> {
-  final TextEditingController
-      _gmailController =
-      TextEditingController();
-
-  final TextEditingController
-      _scriptUrlController =
-      TextEditingController();
+class _SettingsScreenState extends State<SettingsScreen> {
+  final TextEditingController _gmailController = TextEditingController();
+  final TextEditingController _scriptUrlController = TextEditingController();
 
   String? _linkedGmail;
   String? _linkedScriptUrl;
-
   bool _isLoading = false;
 
   @override
@@ -6937,166 +3122,76 @@ class _SettingsScreenState
     super.dispose();
   }
 
-  Future<void>
-      _fetchLinkedAccount() async {
+  Future<void> _fetchLinkedAccount() async {
     try {
-      final doc =
-          await FirebaseFirestore.instance
-              .collection(
-                'school_config',
-              )
-              .doc(
-                'google_drive_account',
-              )
-              .get();
-
+      final doc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
       if (!mounted) return;
 
       if (doc.exists) {
-        final data =
-            doc.data() ??
-                {};
-
+        final data = doc.data() ?? {};
         setState(() {
-          _linkedGmail =
-              data['email']
-                  ?.toString();
-
-          _linkedScriptUrl =
-              data['scriptUrl']
-                  ?.toString();
-
-          _gmailController.text =
-              _linkedGmail ?? '';
-
-          _scriptUrlController.text =
-              _linkedScriptUrl ?? '';
+          _linkedGmail = data['email']?.toString();
+          _linkedScriptUrl = data['scriptUrl']?.toString();
+          _gmailController.text = _linkedGmail ?? '';
+          _scriptUrlController.text = _linkedScriptUrl ?? '';
         });
       }
     } catch (e) {
-      debugPrint(
-        'Settings load error: $e',
-      );
+      debugPrint('Settings load error: $e');
     }
   }
 
   Future<void> _linkGmail() async {
-    final email =
-        _gmailController.text
-            .trim();
+    final email = _gmailController.text.trim();
+    final scriptUrl = _scriptUrlController.text.trim();
 
-    final scriptUrl =
-        _scriptUrlController.text
-            .trim();
-
-    if (email.isEmpty ||
-        !email.contains('@gmail.com')) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content: Text(
-            'Kripya valid Gmail ID daalein.',
-          ),
-        ),
+    if (email.isEmpty || !email.contains('@gmail.com')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(backgroundColor: Colors.redAccent, content: Text('Kripya valid Gmail ID daalein.')),
       );
       return;
     }
 
-    if (scriptUrl.isEmpty ||
-        !scriptUrl.startsWith(
-          'https://script.google.com/',
-        )) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content: Text(
-            'Kripya valid Google Apps Script Web App URL daalein.',
-          ),
-        ),
+    if (scriptUrl.isEmpty || !scriptUrl.startsWith('https://script.google.com/')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(backgroundColor: Colors.redAccent, content: Text('Kripya valid Google Apps Script Web App URL daalein.')),
       );
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() { _isLoading = true; });
 
     try {
-      await FirebaseFirestore
-          .instance
-          .collection(
-            'school_config',
-          )
-          .doc(
-            'google_drive_account',
-          )
-          .set({
+      await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').set({
         'email': email,
         'scriptUrl': scriptUrl,
         'status': 'connected',
-        'linkedAt':
-            DateTime.now()
-                .millisecondsSinceEpoch,
+        'linkedAt': DateTime.now().millisecondsSinceEpoch,
       });
 
       if (!mounted) return;
 
       setState(() {
         _linkedGmail = email;
-        _linkedScriptUrl =
-            scriptUrl;
+        _linkedScriptUrl = scriptUrl;
         _isLoading = false;
       });
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Color(0xFF00A884),
-          content: Text(
-            'Google Drive configuration save ho gayi!',
-          ),
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Google Drive configuration save ho gayi!')),
       );
     } catch (e) {
       if (!mounted) return;
-
-      setState(() {
-        _isLoading = false;
-      });
-
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content:
-              Text('Error: $e'),
-        ),
-      );
+      setState(() { _isLoading = false; });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Error: $e')));
     }
   }
 
   Future<void> _unlinkGmail() async {
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() { _isLoading = true; });
 
     try {
-      await FirebaseFirestore
-          .instance
-          .collection(
-            'school_config',
-          )
-          .doc(
-            'google_drive_account',
-          )
-          .delete();
-
+      await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').delete();
       if (!mounted) return;
 
       setState(() {
@@ -7107,31 +3202,13 @@ class _SettingsScreenState
         _isLoading = false;
       });
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content: Text(
-            'Google Drive configuration unlink kar di gayi.',
-          ),
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(backgroundColor: Colors.redAccent, content: Text('Google Drive configuration unlink kar di gayi.')),
       );
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            backgroundColor:
-                Colors.redAccent,
-            content:
-                Text('Error: $e'),
-          ),
-        );
+        setState(() { _isLoading = false; });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Error: $e')));
       }
     }
   }
@@ -7139,139 +3216,60 @@ class _SettingsScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF121B22),
+      backgroundColor: const Color(0xFF121B22),
       appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title:
-            const Text('Settings'),
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Settings'),
       ),
-      body:
-          SingleChildScrollView(
-        padding:
-            const EdgeInsets.all(20),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
         child: Center(
           child: ConstrainedBox(
-            constraints:
-                const BoxConstraints(
-              maxWidth: 650,
-            ),
+            constraints: const BoxConstraints(maxWidth: 650),
             child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment
-                      .start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
                   'Cloud Storage & Database',
-                  style:
-                      TextStyle(
-                    color:
-                        Color(0xFF00A884),
-                    fontSize: 17,
-                    fontWeight:
-                        FontWeight.bold,
-                  ),
+                  style: TextStyle(color: Color(0xFF00A884), fontSize: 17, fontWeight: FontWeight.bold),
                 ),
-
-                const SizedBox(
-                  height: 8,
-                ),
-
+                const SizedBox(height: 8),
                 const Text(
                   'Student records Google Sheet me aur photos Google Drive par bhejne ke liye Google Apps Script Web App URL save karein.',
-                  style:
-                      TextStyle(
-                    color:
-                        Colors.grey,
-                    fontSize: 13,
-                    height: 1.4,
-                  ),
+                  style: TextStyle(color: Colors.grey, fontSize: 13, height: 1.4),
                 ),
-
-                const SizedBox(
-                  height: 20,
-                ),
-
+                const SizedBox(height: 20),
                 Container(
-                  width:
-                      double.infinity,
-                  padding:
-                      const EdgeInsets
-                          .all(20),
-                  decoration:
-                      BoxDecoration(
-                    color:
-                        const Color(
-                      0xFF1F2C34,
-                    ),
-                    borderRadius:
-                        BorderRadius
-                            .circular(
-                      16,
-                    ),
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F2C34),
+                    borderRadius: BorderRadius.circular(16),
                   ),
                   child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment
-                            .start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
                           const CircleAvatar(
-                            radius:
-                                22,
-                            backgroundColor:
-                                Color(
-                              0xFF121B22,
-                            ),
-                            child:
-                                Icon(
-                              Icons
-                                  .add_to_drive,
-                              color:
-                                  Color(
-                                0xFF00A884,
-                              ),
-                            ),
+                            radius: 22,
+                            backgroundColor: Color(0xFF121B22),
+                            child: Icon(Icons.add_to_drive, color: Color(0xFF00A884)),
                           ),
-                          const SizedBox(
-                            width: 14,
-                          ),
+                          const SizedBox(width: 14),
                           Expanded(
-                            child:
-                                Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment
-                                      .start,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const Text(
                                   'Google Drive Integration',
-                                  style:
-                                      TextStyle(
-                                    color:
-                                        Colors.white,
-                                    fontWeight:
-                                        FontWeight.bold,
-                                    fontSize:
-                                        16,
-                                  ),
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                                 ),
                                 Text(
-                                  _linkedGmail !=
-                                          null
-                                      ? 'Configuration Saved'
-                                      : 'No configuration',
-                                  style:
-                                      TextStyle(
-                                    color: _linkedGmail !=
-                                            null
-                                        ? const Color(
-                                            0xFF00A884)
-                                        : Colors
-                                            .orangeAccent,
-                                    fontSize:
-                                        12,
+                                  _linkedGmail != null ? 'Configuration Saved' : 'No configuration',
+                                  style: TextStyle(
+                                    color: _linkedGmail != null ? const Color(0xFF00A884) : Colors.orangeAccent,
+                                    fontSize: 12,
                                   ),
                                 ),
                               ],
@@ -7279,211 +3277,64 @@ class _SettingsScreenState
                           ),
                         ],
                       ),
-
-                      const Divider(
-                        color:
-                            Colors.white12,
-                        height: 28,
-                      ),
-
-                      if (_linkedGmail !=
-                          null) ...[
+                      const Divider(color: Colors.white12, height: 28),
+                      if (_linkedGmail != null) ...[
                         Container(
-                          padding:
-                              const EdgeInsets
-                                  .all(14),
-                          decoration:
-                              BoxDecoration(
-                            color:
-                                const Color(
-                              0xFF121B22,
-                            ),
-                            borderRadius:
-                                BorderRadius
-                                    .circular(
-                              10,
-                            ),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF121B22),
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          child:
-                              Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment
-                                    .start,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'Linked Gmail ID',
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.grey,
-                                  fontSize:
-                                      11,
-                                ),
-                              ),
-                              const SizedBox(
-                                height: 4,
-                              ),
-                              Text(
-                                _linkedGmail!,
-                                style:
-                                    const TextStyle(
-                                  color:
-                                      Colors.white,
-                                  fontWeight:
-                                      FontWeight
-                                          .bold,
-                                ),
-                              ),
-                              const SizedBox(
-                                height: 12,
-                              ),
-                              const Text(
-                                'Apps Script URL',
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.grey,
-                                  fontSize:
-                                      11,
-                                ),
-                              ),
-                              const SizedBox(
-                                height: 4,
-                              ),
-                              SelectableText(
-                                _linkedScriptUrl ??
-                                    '',
-                                style:
-                                    const TextStyle(
-                                  color:
-                                      Colors.white70,
-                                  fontSize:
-                                      12,
-                                ),
-                              ),
+                              const Text('Linked Gmail ID', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                              const SizedBox(height: 4),
+                              Text(_linkedGmail!, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 12),
+                              const Text('Apps Script URL', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                              const SizedBox(height: 4),
+                              SelectableText(_linkedScriptUrl ?? '', style: const TextStyle(color: Colors.white70, fontSize: 12)),
                             ],
                           ),
                         ),
-
-                        const SizedBox(
-                          height: 18,
-                        ),
-
+                        const SizedBox(height: 18),
                         SizedBox(
-                          width:
-                              double.infinity,
-                          child:
-                              OutlinedButton.icon(
-                            style:
-                                OutlinedButton
-                                    .styleFrom(
-                              side:
-                                  const BorderSide(
-                                color:
-                                    Colors.redAccent,
-                              ),
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.redAccent),
                             ),
-                            onPressed:
-                                _isLoading
-                                    ? null
-                                    : _unlinkGmail,
-                            icon:
-                                const Icon(
-                              Icons
-                                  .link_off,
-                              color:
-                                  Colors.redAccent,
-                            ),
-                            label:
-                                const Text(
-                              'Unlink / Change Configuration',
-                              style:
-                                  TextStyle(
-                                color:
-                                    Colors.redAccent,
-                              ),
-                            ),
+                            onPressed: _isLoading ? null : _unlinkGmail,
+                            icon: const Icon(Icons.link_off, color: Colors.redAccent),
+                            label: const Text('Unlink / Change Configuration', style: TextStyle(color: Colors.redAccent)),
                           ),
                         ),
                       ] else ...[
                         TextField(
-                          controller:
-                              _gmailController,
-                          style:
-                              const TextStyle(
-                            color:
-                                Colors.white,
-                          ),
-                          decoration:
-                              _inputDecoration(
-                            'School Gmail ID',
-                          ),
+                          controller: _gmailController,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('School Gmail ID'),
                         ),
-
-                        const SizedBox(
-                          height: 12,
-                        ),
-
+                        const SizedBox(height: 12),
                         TextField(
-                          controller:
-                              _scriptUrlController,
-                          style:
-                              const TextStyle(
-                            color:
-                                Colors.white,
-                          ),
-                          decoration:
-                              _inputDecoration(
-                            'Google Apps Script /exec URL',
-                          ),
+                          controller: _scriptUrlController,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _inputDecoration('Google Apps Script /exec URL'),
                         ),
-
-                        const SizedBox(
-                          height: 16,
-                        ),
-
+                        const SizedBox(height: 16),
                         SizedBox(
-                          width:
-                              double.infinity,
-                          child:
-                              ElevatedButton.icon(
-                            style:
-                                ElevatedButton
-                                    .styleFrom(
-                              backgroundColor:
-                                  const Color(
-                                0xFF00A884,
-                              ),
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                vertical:
-                                    12,
-                              ),
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF00A884),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
-                            onPressed:
-                                _isLoading
-                                    ? null
-                                    : _linkGmail,
-                            icon:
-                                const Icon(
-                              Icons
-                                  .cloud_done,
-                              color:
-                                  Colors.white,
-                            ),
-                            label:
-                                Text(
-                              _isLoading
-                                  ? 'Saving...'
-                                  : 'Save Google Drive Configuration',
-                              style:
-                                  const TextStyle(
-                                color:
-                                    Colors.white,
-                                fontWeight:
-                                    FontWeight.bold,
-                              ),
+                            onPressed: _isLoading ? null : _linkGmail,
+                            icon: const Icon(Icons.cloud_done, color: Colors.white),
+                            label: Text(
+                              _isLoading ? 'Saving...' : 'Save Google Drive Configuration',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                             ),
                           ),
                         ),
@@ -7499,27 +3350,13 @@ class _SettingsScreenState
     );
   }
 
-  InputDecoration _inputDecoration(
-    String hint,
-  ) {
+  InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
-      hintStyle:
-          const TextStyle(
-        color: Colors.grey,
-      ),
+      hintStyle: const TextStyle(color: Colors.grey),
       filled: true,
-      fillColor:
-          const Color(0xFF121B22),
-      border:
-          OutlineInputBorder(
-        borderRadius:
-            BorderRadius.circular(
-          10,
-        ),
-        borderSide:
-            BorderSide.none,
-      ),
+      fillColor: const Color(0xFF121B22),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
     );
   }
 }
@@ -7528,251 +3365,122 @@ class _SettingsScreenState
 // ALL STUDENTS LIST
 // ============================================================
 
-class AllStudentsListScreen
-    extends StatefulWidget {
-  const AllStudentsListScreen({
-    super.key,
-  });
+class AllStudentsListScreen extends StatefulWidget {
+  const AllStudentsListScreen({super.key});
 
   @override
-  State<AllStudentsListScreen>
-      createState() =>
-          _AllStudentsListScreenState();
+  State<AllStudentsListScreen> createState() => _AllStudentsListScreenState();
 }
 
-class _AllStudentsListScreenState
-    extends State<
-        AllStudentsListScreen> {
-  String _selectedClassFilter =
-      'Class 1';
+class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
+  String _selectedClassFilter = 'Class 1';
 
-  final List<String> _classes =
-      List.generate(
-    10,
-    (index) => 'Class ${index + 1}',
-  );
+  final List<String> _classes = List.generate(10, (index) => 'Class ${index + 1}');
 
-  // ----------------------------------------------------------
-  // DELETE
-  // ----------------------------------------------------------
-
-Future<void> _deleteStudent(String docId) async {
-  final confirm = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      backgroundColor: const Color(0xFF1F2C34),
-      title: const Text(
-        'Delete Student',
-        style: TextStyle(color: Colors.white),
+  Future<void> _deleteStudent(String docId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Delete Student', style: TextStyle(color: Colors.white)),
+        content: const Text('Kya aap is student ka record delete karna chahte hain?', style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
       ),
-      content: const Text(
-        'Kya aap is student ka record delete karna chahte hain?',
-        style: TextStyle(color: Colors.white70),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text(
-            'Cancel',
-            style: TextStyle(color: Colors.grey),
-          ),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          child: const Text(
-            'Delete',
-            style: TextStyle(color: Colors.redAccent),
-          ),
-        ),
-      ],
-    ),
-  );
-
-  if (confirm != true) return;
-
-  try {
-    // Firestore se student data pehle lo
-    final studentDoc = await FirebaseFirestore.instance
-        .collection('students_directory')
-        .doc(docId)
-        .get();
-
-    if (!studentDoc.exists) {
-      throw Exception('Student Firestore me nahi mila.');
-    }
-
-    final data = studentDoc.data()!;
-
-    final studentClass =
-        data['class']?.toString() ?? '';
-
-    final rollNo =
-        data['rollNo']?.toString() ?? '';
-
-    // Google Script URL lo
-    final configDoc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
-
-    final scriptUrl =
-        configDoc.data()?['scriptUrl']?.toString();
-
-    if (scriptUrl == null || scriptUrl.isEmpty) {
-      throw Exception(
-        'Google Apps Script URL Settings me saved nahi hai.',
-      );
-    }
-
-    // Google Sheet + Drive delete
-    final response = await http.post(
-      Uri.parse(scriptUrl),
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: jsonEncode({
-        'action': 'delete_student',
-        'studentClass': studentClass,
-        'roll': rollNo,
-      }),
     );
 
-    debugPrint(
-      'Google Delete Status: ${response.statusCode}',
-    );
-    debugPrint(
-      'Google Delete Body: ${response.body}',
-    );
+    if (confirm != true) return;
 
-    if (response.statusCode != 200) {
-      throw Exception(
-        'Google delete failed: ${response.statusCode}',
+    try {
+      final studentDoc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+
+      if (!studentDoc.exists) {
+        throw Exception('Student Firestore me nahi mila.');
+      }
+
+      final data = studentDoc.data()!;
+      final studentClass = data['class']?.toString() ?? '';
+      final rollNo = data['rollNo']?.toString() ?? '';
+
+      final configDoc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
+      final scriptUrl = configDoc.data()?['scriptUrl']?.toString();
+
+      if (scriptUrl == null || scriptUrl.isEmpty) {
+        throw Exception('Google Apps Script URL Settings me saved nahi hai.');
+      }
+
+      final response = await http.post(
+        Uri.parse(scriptUrl),
+        headers: {'Content-Type': 'text/plain;charset=utf-8'},
+        body: jsonEncode({
+          'action': 'delete_student',
+          'studentClass': studentClass,
+          'roll': rollNo,
+        }),
       );
-    }
 
-    final result = jsonDecode(response.body);
+      if (response.statusCode != 200) {
+        throw Exception('Google delete failed: ${response.statusCode}');
+      }
 
-    if (result['success'] != true) {
-      throw Exception(
-        result['message'] ?? 'Google delete failed',
-      );
-    }
+      final result = jsonDecode(response.body);
+      if (result['success'] != true) {
+        throw Exception(result['message'] ?? 'Google delete failed');
+      }
 
-    // Google successful hone ke baad Firestore delete
-    await FirebaseFirestore.instance
-        .collection('students_directory')
-        .doc(docId)
-        .delete();
+      await FirebaseFirestore.instance.collection('students_directory').doc(docId).delete();
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text(
-            'Student Firestore, Google Sheet aur Drive se delete ho gaya!',
-          ),
-        ),
-      );
-    }
-  } catch (e) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text(
-            'Delete error: $e',
-          ),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(backgroundColor: Colors.redAccent, content: Text('Student Firestore, Google Sheet aur Drive se delete ho gaya!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: Colors.redAccent, content: Text('Delete error: $e')),
+        );
+      }
     }
   }
-}
 
-  // ----------------------------------------------------------
-  // EDIT STUDENT
-  // ----------------------------------------------------------
-
-  void _editStudent(
-    String docId,
-    Map<String, dynamic> data,
-  ) {
-    final nameCtrl = TextEditingController(
-      text: data['name']?.toString() ?? '',
-    );
-
-    final parentCtrl = TextEditingController(
-      text: data['parentName']?.toString() ?? '',
-    );
-
-    final contactCtrl = TextEditingController(
-      text: data['parentContact']?.toString() ?? '',
-    );
-
-    final photoCtrl = TextEditingController(
-      text: data['photoUrl']?.toString() ?? '',
-    );
-
-    final addressCtrl = TextEditingController(
-      text: data['address']?.toString() ?? '',
-    );
-
-    final pinCtrl = TextEditingController(
-      text: data['pinCode']?.toString() ?? '',
-    );
-
-    final districtCtrl = TextEditingController(
-      text: data['district']?.toString() ?? '',
-    );
-
-    final stateCtrl = TextEditingController(
-      text: data['state']?.toString() ?? '',
-    );
-
-    final admissionCtrl = TextEditingController(
-      text: data['joiningDate']?.toString() ?? '',
-    );
-
-    final dobCtrl = TextEditingController(
-      text: data['dateOfBirth']?.toString() ?? '',
-    );
-
-    String hostelFacility =
-        data['hostelFacility']?.toString() ?? 'No';
+  void _editStudent(String docId, Map<String, dynamic> data) {
+    final nameCtrl = TextEditingController(text: data['name']?.toString() ?? '');
+    final parentCtrl = TextEditingController(text: data['parentName']?.toString() ?? '');
+    final contactCtrl = TextEditingController(text: data['parentContact']?.toString() ?? '');
+    final photoCtrl = TextEditingController(text: data['photoUrl']?.toString() ?? '');
+    final addressCtrl = TextEditingController(text: data['address']?.toString() ?? '');
+    final pinCtrl = TextEditingController(text: data['pinCode']?.toString() ?? '');
+    final districtCtrl = TextEditingController(text: data['district']?.toString() ?? '');
+    final stateCtrl = TextEditingController(text: data['state']?.toString() ?? '');
+    final admissionCtrl = TextEditingController(text: data['joiningDate']?.toString() ?? '');
+    final dobCtrl = TextEditingController(text: data['dateOfBirth']?.toString() ?? '');
+    String hostelFacility = data['hostelFacility']?.toString() ?? 'No';
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1F2C34),
-        title: Text(
-          'Edit Student (${data['class'] ?? ''} - Roll ${data['rollNo'] ?? ''})',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-          ),
-        ),
+        title: Text('Edit Student (${data['class'] ?? ''} - Roll ${data['rollNo'] ?? ''})', style: const TextStyle(color: Colors.white, fontSize: 16)),
         content: SizedBox(
           width: 500,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
-                  controller: nameCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _dialogInput('Full Name'),
-                ),
+                TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Full Name')),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: parentCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _dialogInput("Parent's Name"),
-                ),
+                TextField(controller: parentCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput("Parent's Name")),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: contactCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _dialogInput('Contact No'),
-                ),
+                TextField(controller: contactCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Contact No')),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                   value: hostelFacility,
@@ -7780,71 +3488,31 @@ Future<void> _deleteStudent(String docId) async {
                   style: const TextStyle(color: Colors.white),
                   decoration: _dialogInput('Hostel Facility'),
                   items: const [
-                    DropdownMenuItem(
-                      value: 'No',
-                      child: Text('Hostel Facility: No'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'Yes',
-                      child: Text('Hostel Facility: Yes'),
-                    ),
+                    DropdownMenuItem(value: 'No', child: Text('Hostel Facility: No')),
+                    DropdownMenuItem(value: 'Yes', child: Text('Hostel Facility: Yes')),
                   ],
                   onChanged: (value) {
-                    if (value != null) {
-                      hostelFacility = value;
-                    }
+                    if (value != null) hostelFacility = value;
                   },
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: photoCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _dialogInput('Photo URL'),
-                ),
+                TextField(controller: photoCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Photo URL')),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: addressCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _dialogInput('Address'),
-                ),
+                TextField(controller: addressCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Address')),
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    Expanded(
-                      child: TextField(
-                        controller: districtCtrl,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _dialogInput('District'),
-                      ),
-                    ),
+                    Expanded(child: TextField(controller: districtCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('District'))),
                     const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: stateCtrl,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _dialogInput('State'),
-                      ),
-                    ),
+                    Expanded(child: TextField(controller: stateCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('State'))),
                   ],
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: pinCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _dialogInput('PIN Code'),
-                ),
+                TextField(controller: pinCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('PIN Code')),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: admissionCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _dialogInput('Admission Date'),
-                ),
+                TextField(controller: admissionCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Admission Date')),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: dobCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _dialogInput('Date of Birth'),
-                ),
+                TextField(controller: dobCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Date of Birth')),
               ],
             ),
           ),
@@ -7852,41 +3520,25 @@ Future<void> _deleteStudent(String docId) async {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: Colors.grey),
-            ),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00A884),
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
             onPressed: () async {
               try {
-                // Google Script URL
-                final configDoc = await FirebaseFirestore.instance
-                    .collection('school_config')
-                    .doc('google_drive_account')
-                    .get();
-
-                final scriptUrl =
-                    configDoc.data()?['scriptUrl']?.toString();
+                final configDoc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
+                final scriptUrl = configDoc.data()?['scriptUrl']?.toString();
 
                 if (scriptUrl == null || scriptUrl.isEmpty) {
-                  throw Exception(
-                    'Google Apps Script URL Settings me saved nahi hai.',
-                  );
+                  throw Exception('Google Apps Script URL Settings me saved nahi hai.');
                 }
 
                 final studentClass = data['class']?.toString() ?? '';
                 final rollNo = data['rollNo']?.toString() ?? '';
 
-                // Google Sheet update
                 final response = await http.post(
                   Uri.parse(scriptUrl),
-                  headers: {
-                    'Content-Type': 'text/plain;charset=utf-8',
-                  },
+                  headers: {'Content-Type': 'text/plain;charset=utf-8'},
                   body: jsonEncode({
                     'action': 'edit_student',
                     'name': nameCtrl.text.trim(),
@@ -7906,24 +3558,15 @@ Future<void> _deleteStudent(String docId) async {
                 );
 
                 if (response.statusCode != 200) {
-                  throw Exception(
-                    'Google update failed: ${response.statusCode}',
-                  );
+                  throw Exception('Google update failed: ${response.statusCode}');
                 }
 
                 final result = jsonDecode(response.body);
-
                 if (result['success'] != true) {
-                  throw Exception(
-                    result['message'] ?? 'Google update failed',
-                  );
+                  throw Exception(result['message'] ?? 'Google update failed');
                 }
 
-                // Google successful hone ke baad Firestore update
-                await FirebaseFirestore.instance
-                    .collection('students_directory')
-                    .doc(docId)
-                    .update({
+                await FirebaseFirestore.instance.collection('students_directory').doc(docId).update({
                   'name': nameCtrl.text.trim(),
                   'parentName': parentCtrl.text.trim(),
                   'parentContact': contactCtrl.text.trim(),
@@ -7940,466 +3583,189 @@ Future<void> _deleteStudent(String docId) async {
 
                 if (mounted) {
                   Navigator.pop(ctx);
-
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      backgroundColor: Color(0xFF00A884),
-                      content: Text(
-                        'Student Firestore aur Google Sheet dono me update ho gaya!',
-                      ),
-                    ),
+                    const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student Firestore aur Google Sheet dono me update ho gaya!')),
                   );
                 }
               } catch (e) {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      backgroundColor: Colors.redAccent,
-                      content: Text(
-                        'Update error: $e',
-                      ),
-                    ),
+                    SnackBar(backgroundColor: Colors.redAccent, content: Text('Update error: $e')),
                   );
                 }
               }
             },
-            child: const Text(
-              'Save Changes',
-              style: TextStyle(color: Colors.white),
-            ),
+            child: const Text('Save Changes', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
   }
 
-  // ----------------------------------------------------------
-  // BUILD
-  // ----------------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF121B22),
+      backgroundColor: const Color(0xFF121B22),
       appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title: const Text(
-          'Student Directory Records',
-        ),
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Student Directory Records'),
       ),
       body: Column(
         children: [
           Container(
-            color:
-                const Color(0xFF1F2C34),
+            color: const Color(0xFF1F2C34),
             height: 52,
             child: ListView.builder(
-              scrollDirection:
-                  Axis.horizontal,
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 8,
-              ),
-              itemCount:
-                  _classes.length,
-              itemBuilder:
-                  (context, index) {
-                final currentClass =
-                    _classes[index];
-
-                final selected =
-                    currentClass ==
-                        _selectedClassFilter;
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              itemCount: _classes.length,
+              itemBuilder: (context, index) {
+                final currentClass = _classes[index];
+                final selected = currentClass == _selectedClassFilter;
 
                 return Padding(
-                  padding:
-                      const EdgeInsets
-                          .symmetric(
-                    horizontal: 4,
-                  ),
-                  child:
-                      ChoiceChip(
-                    label:
-                        Text(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: ChoiceChip(
+                    label: Text(
                       currentClass,
-                      style:
-                          TextStyle(
-                        color:
-                            selected
-                                ? Colors
-                                    .white
-                                : Colors
-                                    .grey,
-                        fontWeight:
-                            FontWeight
-                                .bold,
-                        fontSize:
-                            12,
+                      style: TextStyle(
+                        color: selected ? Colors.white : Colors.grey,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
                       ),
                     ),
-                    selected:
-                        selected,
-                    selectedColor:
-                        const Color(
-                      0xFF00A884,
-                    ),
-                    backgroundColor:
-                        const Color(
-                      0xFF121B22,
-                    ),
-                    onSelected:
-                        (_) {
-                      setState(
-                        () {
-                          _selectedClassFilter =
-                              currentClass;
-                        },
-                      );
+                    selected: selected,
+                    selectedColor: const Color(0xFF00A884),
+                    backgroundColor: const Color(0xFF121B22),
+                    onSelected: (_) {
+                      setState(() {
+                        _selectedClassFilter = currentClass;
+                      });
                     },
                   ),
                 );
               },
             ),
           ),
-
           Expanded(
-            child:
-                StreamBuilder<
-                    QuerySnapshot>(
-              stream:
-                  FirebaseFirestore
-                      .instance
-                      .collection(
-                        'students_directory',
-                      )
-                      .where(
-                        'class',
-                        isEqualTo:
-                            _selectedClassFilter,
-                      )
-                      .snapshots(),
-              builder:
-                  (context, snapshot) {
-                if (snapshot
-                        .connectionState ==
-                    ConnectionState
-                        .waiting) {
-                  return const Center(
-                    child:
-                        CircularProgressIndicator(
-                      color:
-                          Color(
-                        0xFF00A884,
-                      ),
-                    ),
-                  );
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('students_directory')
+                  .where('class', isEqualTo: _selectedClassFilter)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
                 }
 
-                if (!snapshot
-                        .hasData ||
-                    snapshot.data!
-                        .docs
-                        .isEmpty) {
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                   return Center(
-                    child:
-                        Text(
-                      '$_selectedClassFilter me koi student registered nahi hai.',
-                      style:
-                          const TextStyle(
-                        color:
-                            Colors.grey,
-                      ),
-                    ),
+                    child: Text('$_selectedClassFilter me koi student registered nahi hai.', style: const TextStyle(color: Colors.grey)),
                   );
                 }
 
-                final docs =
-                    snapshot.data!
-                        .docs
-                        .toList();
-
-                docs.sort(
-                  (a, b) {
-                    final aData =
-                        a.data()
-                            as Map<
-                                String,
-                                dynamic>;
-
-                    final bData =
-                        b.data()
-                            as Map<
-                                String,
-                                dynamic>;
-
-                    final aRoll =
-                        int.tryParse(
-                              aData[
-                                      'rollNo']
-                                  ?.toString() ??
-                                  '',
-                            ) ??
-                            999999;
-
-                    final bRoll =
-                        int.tryParse(
-                              bData[
-                                      'rollNo']
-                                  ?.toString() ??
-                                  '',
-                            ) ??
-                            999999;
-
-                    return aRoll
-                        .compareTo(
-                      bRoll,
-                    );
-                  },
-                );
+                final docs = snapshot.data!.docs.toList();
+                docs.sort((a, b) {
+                  final aData = a.data() as Map<String, dynamic>;
+                  final bData = b.data() as Map<String, dynamic>;
+                  final aRoll = int.tryParse(aData['rollNo']?.toString() ?? '') ?? 999999;
+                  final bRoll = int.tryParse(bData['rollNo']?.toString() ?? '') ?? 999999;
+                  return aRoll.compareTo(bRoll);
+                });
 
                 return ListView.builder(
-                  padding:
-                      const EdgeInsets.all(
-                    12,
-                  ),
-                  itemCount:
-                      docs.length,
-                  itemBuilder:
-                      (context, index) {
-                    final doc =
-                        docs[index];
-
-                    final student =
-                        doc.data()
-                            as Map<
-                                String,
-                                dynamic>;
-
-                    final photoUrl =
-                        student[
-                                'photoUrl']
-                            ?.toString();
+                  padding: const EdgeInsets.all(12),
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) {
+                    final doc = docs[index];
+                    final student = doc.data() as Map<String, dynamic>;
+                    final photoUrl = student['photoUrl']?.toString();
 
                     return Container(
-                      margin:
-                          const EdgeInsets
-                              .only(
-                        bottom: 10,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1F2C34),
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      padding:
-                          const EdgeInsets
-                              .all(
-                        12,
-                      ),
-                      decoration:
-                          BoxDecoration(
-                        color:
-                            const Color(
-                          0xFF1F2C34,
-                        ),
-                        borderRadius:
-                            BorderRadius
-                                .circular(
-                          12,
-                        ),
-                      ),
-                      child:
-                          Row(
-                        crossAxisAlignment:
-                            CrossAxisAlignment
-                                .start,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-SizedBox(
-  width: 56,
-  height: 56,
-  child: ClipOval(
-    child: (photoUrl != null && photoUrl.isNotEmpty)
-        ? Image.network(
-            photoUrl,
-            fit: BoxFit.cover,
-            webHtmlElementStrategy:
-                WebHtmlElementStrategy.prefer,
-            errorBuilder: (context, error, stackTrace) {
-              return const ColoredBox(
-                color: Color(0xFF121B22),
-                child: Icon(
-                  Icons.person,
-                  size: 30,
-                  color: Color(0xFF00A884),
-                ),
-              );
-            },
-          )
-        : const ColoredBox(
-            color: Color(0xFF121B22),
-            child: Icon(
-              Icons.person,
-              size: 30,
-              color: Color(0xFF00A884),
-            ),
-          ),
-  ),
-),
-
-                          const SizedBox(
-                              width: 14),
-
+                          SizedBox(
+                            width: 56,
+                            height: 56,
+                            child: ClipOval(
+                              child: (photoUrl != null && photoUrl.isNotEmpty)
+                                  ? Image.network(
+                                      photoUrl,
+                                      fit: BoxFit.cover,
+                                      webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return const ColoredBox(
+                                          color: Color(0xFF121B22),
+                                          child: Icon(Icons.person, size: 30, color: Color(0xFF00A884)),
+                                        );
+                                      },
+                                    )
+                                  : const ColoredBox(
+                                      color: Color(0xFF121B22),
+                                      child: Icon(Icons.person, size: 30, color: Color(0xFF00A884)),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(width: 14),
                           Expanded(
-                            child:
-                                Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment
-                                      .start,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(
                                   children: [
                                     Expanded(
-                                      child:
-                                          Text(
-                                        student[
-                                                    'name']
-                                                ?.toString() ??
-                                            '',
-                                        style:
-                                            const TextStyle(
-                                          color:
-                                              Colors
-                                                  .white,
-                                          fontWeight:
-                                              FontWeight
-                                                  .bold,
-                                          fontSize:
-                                              15,
-                                        ),
+                                      child: Text(
+                                        student['name']?.toString() ?? '',
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
                                       ),
                                     ),
                                     Container(
-                                      padding:
-                                          const EdgeInsets
-                                              .symmetric(
-                                        horizontal:
-                                            6,
-                                        vertical:
-                                            2,
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF00A884).withOpacity(0.18),
+                                        borderRadius: BorderRadius.circular(4),
                                       ),
-                                      decoration:
-                                          BoxDecoration(
-                                        color:
-                                            const Color(
-                                          0xFF00A884,
-                                        ).withOpacity(
-                                          0.18,
-                                        ),
-                                        borderRadius:
-                                            BorderRadius
-                                                .circular(
-                                          4,
-                                        ),
-                                      ),
-                                      child:
-                                          Text(
+                                      child: Text(
                                         'Roll: ${student['rollNo'] ?? 'N/A'}',
-                                        style:
-                                            const TextStyle(
-                                          color:
-                                              Color(
-                                            0xFF00A884,
-                                          ),
-                                          fontSize:
-                                              11,
-                                          fontWeight:
-                                              FontWeight
-                                                  .bold,
-                                        ),
+                                        style: const TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.bold),
                                       ),
                                     ),
                                   ],
                                 ),
-
-                                const SizedBox(
-                                    height: 5),
-
+                                const SizedBox(height: 5),
                                 Text(
                                   'Parent: ${student['parentName'] ?? 'N/A'} • Contact: ${student['parentContact'] ?? 'N/A'}',
-                                  style:
-                                      const TextStyle(
-                                    color:
-                                        Colors
-                                            .grey,
-                                    fontSize:
-                                        12,
-                                  ),
+                                  style: const TextStyle(color: Colors.grey, fontSize: 12),
                                 ),
-
-                                const SizedBox(
-                                    height: 3),
-
+                                const SizedBox(height: 3),
                                 Text(
                                   'Address: ${student['address'] ?? ''}, ${student['district'] ?? ''}, ${student['state'] ?? ''} - ${student['pinCode'] ?? ''}',
-                                  style:
-                                      const TextStyle(
-                                    color:
-                                        Colors
-                                            .white60,
-                                    fontSize:
-                                        11,
-                                  ),
+                                  style: const TextStyle(color: Colors.white60, fontSize: 11),
                                 ),
-
-                                const SizedBox(
-                                    height: 3),
-
+                                const SizedBox(height: 3),
                                 Text(
                                   'Hostel: ${student['hostelFacility'] ?? 'No'} • Admission: ${student['joiningDate'] ?? 'N/A'} • DOB: ${student['dateOfBirth'] ?? 'N/A'}',
-                                  style:
-                                      const TextStyle(
-                                    color:
-                                        Colors
-                                            .grey,
-                                    fontSize:
-                                        11,
-                                  ),
+                                  style: const TextStyle(color: Colors.grey, fontSize: 11),
                                 ),
                               ],
                             ),
                           ),
-
                           Column(
                             children: [
                               IconButton(
-                                icon:
-                                    const Icon(
-                                  Icons.edit,
-                                  color:
-                                      Colors
-                                          .blueAccent,
-                                  size:
-                                      20,
-                                ),
-                                onPressed: () =>
-                                    _editStudent(
-                                  doc.id,
-                                  student,
-                                ),
+                                icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 20),
+                                onPressed: () => _editStudent(doc.id, student),
                               ),
                               IconButton(
-                                icon:
-                                    const Icon(
-                                  Icons
-                                      .delete_outline,
-                                  color:
-                                      Colors
-                                          .redAccent,
-                                  size:
-                                      20,
-                                ),
-                                onPressed: () =>
-                                    _deleteStudent(
-                                  doc.id,
-                                ),
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                                onPressed: () => _deleteStudent(doc.id),
                               ),
                             ],
                           ),
@@ -8416,32 +3782,16 @@ SizedBox(
     );
   }
 
-  InputDecoration _dialogInput(
-    String hint,
-  ) {
+  InputDecoration _dialogInput(String hint) {
     return InputDecoration(
       labelText: hint,
-      labelStyle:
-          const TextStyle(
-        color: Colors.grey,
-        fontSize: 13,
-      ),
+      labelStyle: const TextStyle(color: Colors.grey, fontSize: 13),
       filled: true,
-      fillColor:
-          const Color(0xFF121B22),
-      contentPadding:
-          const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 8,
-      ),
-      border:
-          OutlineInputBorder(
-        borderRadius:
-            BorderRadius.circular(
-          8,
-        ),
-        borderSide:
-            BorderSide.none,
+      fillColor: const Color(0xFF121B22),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide.none,
       ),
     );
   }
