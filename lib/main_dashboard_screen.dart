@@ -5962,311 +5962,154 @@ Future<void> _deleteStudent(String docId) async {
     String docId,
     Map<String, dynamic> data,
   ) {
-    final nameCtrl =
-        TextEditingController(
-      text:
-          data['name']?.toString() ??
-              '',
+    final nameCtrl = TextEditingController(
+      text: data['name']?.toString() ?? '',
     );
 
-    final parentCtrl =
-        TextEditingController(
-      text:
-          data['parentName']
-                  ?.toString() ??
-              '',
+    final parentCtrl = TextEditingController(
+      text: data['parentName']?.toString() ?? '',
     );
 
-    final contactCtrl =
-        TextEditingController(
-      text:
-          data['parentContact']
-                  ?.toString() ??
-              '',
+    final contactCtrl = TextEditingController(
+      text: data['parentContact']?.toString() ?? '',
     );
 
-    final photoCtrl =
-        TextEditingController(
-      text:
-          data['photoUrl']
-                  ?.toString() ??
-              '',
+    final photoCtrl = TextEditingController(
+      text: data['photoUrl']?.toString() ?? '',
     );
 
-    final addressCtrl =
-        TextEditingController(
-      text:
-          data['address']
-                  ?.toString() ??
-              '',
+    final addressCtrl = TextEditingController(
+      text: data['address']?.toString() ?? '',
     );
 
-    final pinCtrl =
-        TextEditingController(
-      text:
-          data['pinCode']
-                  ?.toString() ??
-              '',
+    final pinCtrl = TextEditingController(
+      text: data['pinCode']?.toString() ?? '',
     );
 
-    final districtCtrl =
-        TextEditingController(
-      text:
-          data['district']
-                  ?.toString() ??
-              '',
+    final districtCtrl = TextEditingController(
+      text: data['district']?.toString() ?? '',
     );
 
-    final stateCtrl =
-        TextEditingController(
-      text:
-          data['state']
-                  ?.toString() ??
-              '',
+    final stateCtrl = TextEditingController(
+      text: data['state']?.toString() ?? '',
     );
 
-    final admissionCtrl =
-        TextEditingController(
-      text:
-          data['joiningDate']
-                  ?.toString() ??
-              '',
+    final admissionCtrl = TextEditingController(
+      text: data['joiningDate']?.toString() ?? '',
     );
 
-    final dobCtrl =
-        TextEditingController(
-      text:
-          data['dateOfBirth']
-                  ?.toString() ??
-              '',
+    final dobCtrl = TextEditingController(
+      text: data['dateOfBirth']?.toString() ?? '',
     );
 
     String hostelFacility =
-        data['hostelFacility']
-                ?.toString() ??
-            'No';
+        data['hostelFacility']?.toString() ?? 'No';
 
     showDialog(
       context: context,
-      builder: (ctx) =>
-          AlertDialog(
-        backgroundColor:
-            const Color(0xFF1F2C34),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
         title: Text(
           'Edit Student (${data['class'] ?? ''} - Roll ${data['rollNo'] ?? ''})',
-          style:
-              const TextStyle(
-            color:
-                Colors.white,
+          style: const TextStyle(
+            color: Colors.white,
             fontSize: 16,
           ),
         ),
         content: SizedBox(
           width: 500,
-          child:
-              SingleChildScrollView(
+          child: SingleChildScrollView(
             child: Column(
-              mainAxisSize:
-                  MainAxisSize.min,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
-                  controller:
-                      nameCtrl,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                  ),
-                  decoration:
-                      _dialogInput(
-                    'Full Name',
-                  ),
+                  controller: nameCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dialogInput('Full Name'),
                 ),
-                const SizedBox(
-                    height: 8),
+                const SizedBox(height: 8),
                 TextField(
-                  controller:
-                      parentCtrl,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                  ),
-                  decoration:
-                      _dialogInput(
-                    "Parent's Name",
-                  ),
+                  controller: parentCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dialogInput("Parent's Name"),
                 ),
-                const SizedBox(
-                    height: 8),
+                const SizedBox(height: 8),
                 TextField(
-                  controller:
-                      contactCtrl,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                  ),
-                  decoration:
-                      _dialogInput(
-                    'Contact No',
-                  ),
+                  controller: contactCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dialogInput('Contact No'),
                 ),
-                const SizedBox(
-                    height: 8),
-                DropdownButtonFormField<
-                    String>(
-                  value:
-                      hostelFacility,
-                  dropdownColor:
-                      const Color(
-                    0xFF1F2C34,
-                  ),
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                  ),
-                  decoration:
-                      _dialogInput(
-                    'Hostel Facility',
-                  ),
-                  items:
-                      const [
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: hostelFacility,
+                  dropdownColor: const Color(0xFF1F2C34),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dialogInput('Hostel Facility'),
+                  items: const [
                     DropdownMenuItem(
                       value: 'No',
-                      child: Text(
-                          'Hostel Facility: No'),
+                      child: Text('Hostel Facility: No'),
                     ),
                     DropdownMenuItem(
                       value: 'Yes',
-                      child: Text(
-                          'Hostel Facility: Yes'),
+                      child: Text('Hostel Facility: Yes'),
                     ),
                   ],
-                  onChanged:
-                      (value) {
-                    if (value !=
-                        null) {
-                      hostelFacility =
-                          value;
+                  onChanged: (value) {
+                    if (value != null) {
+                      hostelFacility = value;
                     }
                   },
                 ),
-                const SizedBox(
-                    height: 8),
+                const SizedBox(height: 8),
                 TextField(
-                  controller:
-                      photoCtrl,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                  ),
-                  decoration:
-                      _dialogInput(
-                    'Photo URL',
-                  ),
+                  controller: photoCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dialogInput('Photo URL'),
                 ),
-                const SizedBox(
-                    height: 8),
+                const SizedBox(height: 8),
                 TextField(
-                  controller:
-                      addressCtrl,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                  ),
-                  decoration:
-                      _dialogInput(
-                    'Address',
-                  ),
+                  controller: addressCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dialogInput('Address'),
                 ),
-                const SizedBox(
-                    height: 8),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     Expanded(
-                      child:
-                          TextField(
-                        controller:
-                            districtCtrl,
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
-                        decoration:
-                            _dialogInput(
-                          'District',
-                        ),
+                      child: TextField(
+                        controller: districtCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput('District'),
                       ),
                     ),
-                    const SizedBox(
-                        width: 8),
+                    const SizedBox(width: 8),
                     Expanded(
-                      child:
-                          TextField(
-                        controller:
-                            stateCtrl,
-                        style:
-                            const TextStyle(
-                          color:
-                              Colors.white,
-                        ),
-                        decoration:
-                            _dialogInput(
-                          'State',
-                        ),
+                      child: TextField(
+                        controller: stateCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput('State'),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(
-                    height: 8),
+                const SizedBox(height: 8),
                 TextField(
-                  controller:
-                      pinCtrl,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                  ),
-                  decoration:
-                      _dialogInput(
-                    'PIN Code',
-                  ),
+                  controller: pinCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dialogInput('PIN Code'),
                 ),
-                const SizedBox(
-                    height: 8),
+                const SizedBox(height: 8),
                 TextField(
-                  controller:
-                      admissionCtrl,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                  ),
-                  decoration:
-                      _dialogInput(
-                    'Admission Date',
-                  ),
+                  controller: admissionCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dialogInput('Admission Date'),
                 ),
-                const SizedBox(
-                    height: 8),
+                const SizedBox(height: 8),
                 TextField(
-                  controller:
-                      dobCtrl,
-                  style:
-                      const TextStyle(
-                    color:
-                        Colors.white,
-                  ),
-                  decoration:
-                      _dialogInput(
-                    'Date of Birth',
-                  ),
+                  controller: dobCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _dialogInput('Date of Birth'),
                 ),
               ],
             ),
@@ -6274,137 +6117,127 @@ Future<void> _deleteStudent(String docId) async {
         ),
         actions: [
           TextButton(
-            onPressed: () =>
-                Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(ctx),
             child: const Text(
               'Cancel',
-              style:
-                  TextStyle(
-                color:
-                    Colors.grey,
-              ),
+              style: TextStyle(color: Colors.grey),
             ),
           ),
           ElevatedButton(
-            style:
-                ElevatedButton.styleFrom(
-              backgroundColor:
-                  const Color(
-                0xFF00A884,
-              ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00A884),
             ),
             onPressed: () async {
-  try {
-    // Google Script URL
-    final configDoc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
+              try {
+                // Google Script URL
+                final configDoc = await FirebaseFirestore.instance
+                    .collection('school_config')
+                    .doc('google_drive_account')
+                    .get();
 
-    final scriptUrl =
-        configDoc.data()?['scriptUrl']?.toString();
+                final scriptUrl =
+                    configDoc.data()?['scriptUrl']?.toString();
 
-    if (scriptUrl == null || scriptUrl.isEmpty) {
-      throw Exception(
-        'Google Apps Script URL Settings me saved nahi hai.',
-      );
-    }
+                if (scriptUrl == null || scriptUrl.isEmpty) {
+                  throw Exception(
+                    'Google Apps Script URL Settings me saved nahi hai.',
+                  );
+                }
 
-    final studentClass =
-        data['class']?.toString() ?? '';
+                final studentClass = data['class']?.toString() ?? '';
+                final rollNo = data['rollNo']?.toString() ?? '';
 
-    final rollNo =
-        data['rollNo']?.toString() ?? '';
+                // Google Sheet update
+                final response = await http.post(
+                  Uri.parse(scriptUrl),
+                  headers: {
+                    'Content-Type': 'text/plain;charset=utf-8',
+                  },
+                  body: jsonEncode({
+                    'action': 'edit_student',
+                    'name': nameCtrl.text.trim(),
+                    'parentName': parentCtrl.text.trim(),
+                    'studentClass': studentClass,
+                    'roll': rollNo,
+                    'contact': contactCtrl.text.trim(),
+                    'photoUrl': photoCtrl.text.trim(),
+                    'hostelFacility': hostelFacility,
+                    'address': addressCtrl.text.trim(),
+                    'district': districtCtrl.text.trim(),
+                    'state': stateCtrl.text.trim(),
+                    'pinCode': pinCtrl.text.trim(),
+                    'joiningDate': admissionCtrl.text.trim(),
+                    'dateOfBirth': dobCtrl.text.trim(),
+                  }),
+                );
 
-    // Google Sheet update
-    final response = await http.post(
-      Uri.parse(scriptUrl),
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: jsonEncode({
-        'action': 'edit_student',
-        'name': nameCtrl.text.trim(),
-        'parentName': parentCtrl.text.trim(),
-        'studentClass': studentClass,
-        'roll': rollNo,
-        'contact': contactCtrl.text.trim(),
-        'photoUrl': photoCtrl.text.trim(),
-        'hostelFacility': hostelFacility,
-        'address': addressCtrl.text.trim(),
-        'district': districtCtrl.text.trim(),
-        'state': stateCtrl.text.trim(),
-        'pinCode': pinCtrl.text.trim(),
-        'joiningDate': admissionCtrl.text.trim(),
-        'dateOfBirth': dobCtrl.text.trim(),
-      }),
-    );
+                if (response.statusCode != 200) {
+                  throw Exception(
+                    'Google update failed: ${response.statusCode}',
+                  );
+                }
 
-    debugPrint(
-      'Google Edit Status: ${response.statusCode}',
-    );
-    debugPrint(
-      'Google Edit Body: ${response.body}',
-    );
+                final result = jsonDecode(response.body);
 
-    if (response.statusCode != 200) {
-      throw Exception(
-        'Google update failed: ${response.statusCode}',
-      );
-    }
+                if (result['success'] != true) {
+                  throw Exception(
+                    result['message'] ?? 'Google update failed',
+                  );
+                }
 
-    final result = jsonDecode(response.body);
+                // Google successful hone ke baad Firestore update
+                await FirebaseFirestore.instance
+                    .collection('students_directory')
+                    .doc(docId)
+                    .update({
+                  'name': nameCtrl.text.trim(),
+                  'parentName': parentCtrl.text.trim(),
+                  'parentContact': contactCtrl.text.trim(),
+                  'photoUrl': photoCtrl.text.trim(),
+                  'hostelFacility': hostelFacility,
+                  'address': addressCtrl.text.trim(),
+                  'district': districtCtrl.text.trim(),
+                  'state': stateCtrl.text.trim(),
+                  'pinCode': pinCtrl.text.trim(),
+                  'joiningDate': admissionCtrl.text.trim(),
+                  'dateOfBirth': dobCtrl.text.trim(),
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
 
-    if (result['success'] != true) {
-      throw Exception(
-        result['message'] ?? 'Google update failed',
-      );
-    }
+                if (mounted) {
+                  Navigator.pop(ctx);
 
-    // Google successful hone ke baad Firestore update
-    await FirebaseFirestore.instance
-        .collection('students_directory')
-        .doc(docId)
-        .update({
-      'name': nameCtrl.text.trim(),
-      'parentName': parentCtrl.text.trim(),
-      'parentContact': contactCtrl.text.trim(),
-      'photoUrl': photoCtrl.text.trim(),
-      'hostelFacility': hostelFacility,
-      'address': addressCtrl.text.trim(),
-      'district': districtCtrl.text.trim(),
-      'state': stateCtrl.text.trim(),
-      'pinCode': pinCtrl.text.trim(),
-      'joiningDate': admissionCtrl.text.trim(),
-      'dateOfBirth': dobCtrl.text.trim(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-
-    if (mounted) {
-      Navigator.pop(ctx);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
-          content: Text(
-            'Student Firestore aur Google Sheet dono me update ho gaya!',
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      backgroundColor: Color(0xFF00A884),
+                      content: Text(
+                        'Student Firestore aur Google Sheet dono me update ho gaya!',
+                      ),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      backgroundColor: Colors.redAccent,
+                      content: Text(
+                        'Update error: $e',
+                      ),
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text(
+              'Save Changes',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
-        ),
-      );
-    }
-  } catch (e) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text(
-            'Update error: $e',
-          ),
-        ),
-      );
-    }
+        ],
+      ),
+    );
   }
-},
               try {
                 await FirebaseFirestore
                     .instance
