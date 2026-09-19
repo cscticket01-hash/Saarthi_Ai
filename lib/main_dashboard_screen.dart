@@ -3287,19 +3287,13 @@ debugPrint(
                           fetchedPhotoUrl!
                               .isNotEmpty
                       ? Image.network(
-                          fetchedPhotoUrl!,
+                          'https://corsproxy.io/?${Uri.encodeComponent(fetchedPhotoUrl!)}',
                           fit: BoxFit.cover,
-                          errorBuilder:
-                              (
-                            context,
-                            error,
-                            stackTrace,
-                          ) {
+                          errorBuilder:(context, error, stackTrace,) {
                             return const Icon(
                               Icons.person,
                               size: 45,
-                              color:
-                                  Colors.grey,
+                              color: Colors.grey,
                             );
                           },
                         )
@@ -3550,13 +3544,16 @@ Future<void> _downloadIdCard() async {
   }
 
   // ============================================================
-  // PHOTO LOAD
+  // PHOTO LOAD (WITH CORS BYPASS)
   // ============================================================
 
   pw.MemoryImage? studentPhoto;
 
   if (photoUrl != null && photoUrl!.isNotEmpty) {
     try {
+     // Google Drive Security (CORS) Bypass karne ke liye Proxy
+      final corsUrl = 'https://corsproxy.io/?${Uri.encodeComponent(photoUrl)}';
+     
       final imageResponse = await http.get(
         Uri.parse(photoUrl!),
       );
@@ -6583,8 +6580,7 @@ class _AllStudentsListScreenState
                                             null &&
                                         photoUrl
                                             .isNotEmpty
-                                    ? NetworkImage(
-                                        photoUrl)
+                                    ? NetworkImage('https://corsproxy.io/?${Uri.encodeComponent(photoUrl)}')
                                     : null,
                             child: photoUrl ==
                                         null ||
