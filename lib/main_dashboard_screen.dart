@@ -1090,7 +1090,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         if (scriptUrl != null && scriptUrl.toString().isNotEmpty) {
                           try {
                             final response = await http.post(
-                              Uri.parse(scriptUrl),
+                              Uri.parse('https://script.google.com/macros/s/AKfycbwctS8ISLxevVfD7nsDf47HgbrMUfB7Fxl75VtVar9RvSz6zsFz-XrLDiRu6ELreyoZrw/exec'),
                               headers: {'Content-Type': 'application/json'},
                               body: jsonEncode({
                                 'action': 'add_student',
