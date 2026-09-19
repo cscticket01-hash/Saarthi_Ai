@@ -1,10 +1,15 @@
-import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'dart:html' as html;
-import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+
+// ============================================================
+// MAIN DASHBOARD
+// ============================================================
 
 class MainDashboardScreen extends StatefulWidget {
   const MainDashboardScreen({super.key});
@@ -16,9 +21,9 @@ class MainDashboardScreen extends StatefulWidget {
 class _MainDashboardScreenState extends State<MainDashboardScreen> {
   int _selectedTabIndex = 0;
 
-  final List<Widget> _pages = [
-    const AiChatScreen(),
-    const SchoolAdminLoginScreen(),
+  final List<Widget> _pages = const [
+    AiChatScreen(),
+    SchoolAdminLoginScreen(),
   ];
 
   @override
@@ -27,7 +32,11 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
       body: _pages[_selectedTabIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedTabIndex,
-        onTap: (index) => setState(() => _selectedTabIndex = index),
+        onTap: (index) {
+          setState(() {
+            _selectedTabIndex = index;
+          });
+        },
         backgroundColor: const Color(0xFF1F2C34),
         selectedItemColor: const Color(0xFF00A884),
         unselectedItemColor: Colors.grey,
@@ -48,13 +57,52 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
   }
 }
 
-// ----------------- AI CHAT SCREEN (WITH MENU & HISTORY) -----------------
-class ChatSession {
-  String id;
-  String title;
+// ============================================================
+// CHAT SESSION MODEL
+// ============================================================
 
-  ChatSession({required this.id, required this.title});
+class ChatSession {
+  final String id;
+  String title;
+  final int createdAt;
+  int updatedAt;
+
+  ChatSession({
+    required this.id,
+    required this.title,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory ChatSession.fromDoc(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+
+    return ChatSession(
+      id: doc.id,
+      title: (data['title'] ?? 'New Chat').toString(),
+      createdAt: _readInt(data['createdAt']),
+      updatedAt: _readInt(data['updatedAt']),
+    );
+  }
+
+  static int _readInt(dynamic value) {
+    if (value is int) return value;
+
+    if (value is Timestamp) {
+      return value.millisecondsSinceEpoch;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return 0;
+  }
 }
+
+// ============================================================
+// AI CHAT SCREEN
+// ============================================================
 
 class AiChatScreen extends StatefulWidget {
   const AiChatScreen({super.key});
@@ -64,389 +112,1031 @@ class AiChatScreen extends StatefulWidget {
 }
 
 class _AiChatScreenState extends State<AiChatScreen> {
-  final TextEditingController _messageController = TextEditingController();
+  final TextEditingController _messageController =
+      TextEditingController();
+
   final ScrollController _scrollController = ScrollController();
+
+  final TextEditingController _searchController =
+      TextEditingController();
+
   bool _isLoading = false;
-  String _currentSessionId = DateTime.now().millisecondsSinceEpoch.toString();
-  static const String _groqApiKey = String.fromEnvironment('GEMINI_API_KEY');
+  bool _isSessionsLoading = true;
 
-  List<ChatSession> chatSessions = [
-    ChatSession(
-      id: 'default_chat',
-      title: 'First Conversation',
-    ),
-  ];
+  String _currentSessionId = '';
 
-  int currentSessionIndex = 0;
+  static const String _groqApiKey =
+      String.fromEnvironment('GROQ_API_KEY');
+
+  List<ChatSession> chatSessions = [];
 
   @override
   void initState() {
     super.initState();
-    _currentSessionId = chatSessions[0].id;
+    _loadSessions();
   }
 
-  void _startNewChat() {
-    final newId = DateTime.now().millisecondsSinceEpoch.toString();
-    setState(() {
-      final newChat = ChatSession(
-        id: newId,
-        title: 'New Chat',
-      );
-      chatSessions.insert(0, newChat);
-      currentSessionIndex = 0;
-      _currentSessionId = newId;
-    });
-    Navigator.pop(context);
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _scrollController.dispose();
+    _searchController.dispose();
+    super.dispose();
   }
 
-  void _deleteChat(int index) {
-    setState(() {
-      chatSessions.removeAt(index);
-      if (chatSessions.isEmpty) {
-        _startNewChat();
-      } else {
-        currentSessionIndex = 0;
-        _currentSessionId = chatSessions[0].id;
-      }
-    });
-  }
+  // ----------------------------------------------------------
+  // SESSION PATH
+  // ----------------------------------------------------------
 
-  Future<void> _sendMessage() async {
-    final text = _messageController.text.trim();
-    final currentUser = FirebaseAuth.instance.currentUser;
-    if (text.isEmpty || _isLoading || currentUser == null) return;
-
-    setState(() {
-      if (chatSessions[currentSessionIndex].title == 'First Conversation' ||
-          chatSessions[currentSessionIndex].title == 'New Chat') {
-        String cleanTitle = text;
-        if (cleanTitle.length > 20) {
-          cleanTitle = '${cleanTitle.substring(0, 20)}...';
-        }
-        chatSessions[currentSessionIndex].title = cleanTitle;
-      }
-      _messageController.clear();
-      _isLoading = true;
-    });
-
-    // 1. Save User message under current session
-    await FirebaseFirestore.instance
+  CollectionReference<Map<String, dynamic>> _sessionsRef(
+    String uid,
+  ) {
+    return FirebaseFirestore.instance
         .collection('users')
-        .doc(currentUser.uid)
-        .collection('sessions')
-        .doc(_currentSessionId)
-        .collection('messages')
-        .add({
-      'sender': 'user',
-      'text': text,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+        .doc(uid)
+        .collection('sessions');
+  }
 
-    String reply = '';
+  CollectionReference<Map<String, dynamic>> _messagesRef(
+    String uid,
+    String sessionId,
+  ) {
+    return _sessionsRef(uid)
+        .doc(sessionId)
+        .collection('messages');
+  }
+
+  // ----------------------------------------------------------
+  // LOAD SESSIONS
+  // ----------------------------------------------------------
+
+  Future<void> _loadSessions() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      if (mounted) {
+        setState(() {
+          _isSessionsLoading = false;
+        });
+      }
+      return;
+    }
 
     try {
-      final response = await http.post(
-        Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
-        headers: {
-          'Content-Type': 'application/json; charset=UTF-8',
-          'Authorization': 'Bearer $_groqApiKey',
-        },
-        body: jsonEncode({
-          'model': 'openai/gpt-oss-120b',
-          'messages': [
-            {
-              'role': 'system',
-              'content':
-                  'Aap Saarthi AI hain. User se bilkul natural Hinglish ya Hindi me seedhi aur to-the-point baatcheet karein jaise ek dost karta hai. Formal faltu dialogues jaise "Aapka message mila" ya "Main process kar raha hoon" bilkul nahi bolna. Seedha sawal ka direct jawab dena.'
-            },
-            {
-              'role': 'user',
-              'content': text,
-            }
-          ],
-          'temperature': 0.7,
-        }),
-      );
+      final snapshot = await _sessionsRef(user.uid)
+          .orderBy('updatedAt', descending: true)
+          .get();
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        reply = data['choices'][0]['message']['content'].toString().trim();
+      if (snapshot.docs.isEmpty) {
+        await _createInitialSession(user.uid);
       } else {
-        reply = 'Status ${response.statusCode}: ${response.body}';
+        final sessions =
+            snapshot.docs.map(ChatSession.fromDoc).toList();
+
+        if (mounted) {
+          setState(() {
+            chatSessions = sessions;
+            _currentSessionId = sessions.first.id;
+            _isSessionsLoading = false;
+          });
+        }
       }
     } catch (e) {
-      reply = 'Network error: Internet check karein.';
+      debugPrint('Load sessions error: $e');
+
+      if (mounted) {
+        setState(() {
+          _isSessionsLoading = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(
+              'Chat history load nahi ho payi: $e',
+            ),
+          ),
+        );
+      }
     }
+  }
+
+  // ----------------------------------------------------------
+  // CREATE FIRST SESSION
+  // ----------------------------------------------------------
+
+  Future<void> _createInitialSession(String uid) async {
+    final ref = _sessionsRef(uid).doc();
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await ref.set({
+      'title': 'First Conversation',
+      'createdAt': now,
+      'updatedAt': now,
+    });
+
+    final newSession = ChatSession(
+      id: ref.id,
+      title: 'First Conversation',
+      createdAt: now,
+      updatedAt: now,
+    );
 
     if (mounted) {
       setState(() {
-        _isLoading = false;
+        chatSessions = [newSession];
+        _currentSessionId = ref.id;
+        _isSessionsLoading = false;
+      });
+    }
+  }
+
+  // ----------------------------------------------------------
+  // NEW CHAT
+  // ----------------------------------------------------------
+
+  Future<void> _startNewChat() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) return;
+
+    final ref = _sessionsRef(user.uid).doc();
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await ref.set({
+      'title': 'New Chat',
+      'createdAt': now,
+      'updatedAt': now,
+    });
+
+    final newSession = ChatSession(
+      id: ref.id,
+      title: 'New Chat',
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      chatSessions.insert(0, newSession);
+      _currentSessionId = ref.id;
+    });
+
+    Navigator.pop(context);
+  }
+
+  // ----------------------------------------------------------
+  // DELETE CHAT
+  // ----------------------------------------------------------
+
+  Future<void> _deleteChat(int index) async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null || index < 0 || index >= chatSessions.length) {
+      return;
+    }
+
+    final session = chatSessions[index];
+
+    try {
+      final messageSnapshot =
+          await _messagesRef(user.uid, session.id).get();
+
+      final docs = messageSnapshot.docs;
+
+      for (int i = 0; i < docs.length; i += 400) {
+        final batch = FirebaseFirestore.instance.batch();
+
+        final end =
+            (i + 400 < docs.length) ? i + 400 : docs.length;
+
+        for (int j = i; j < end; j++) {
+          batch.delete(docs[j].reference);
+        }
+
+        await batch.commit();
+      }
+
+      await _sessionsRef(user.uid).doc(session.id).delete();
+
+      if (mounted) {
+        setState(() {
+          chatSessions.removeAt(index);
+
+          if (chatSessions.isEmpty) {
+            _currentSessionId = '';
+          } else if (_currentSessionId == session.id) {
+            _currentSessionId = chatSessions.first.id;
+          }
+        });
+      }
+
+      if (chatSessions.isEmpty) {
+        await _createInitialSession(user.uid);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(
+              'Chat delete nahi ho payi: $e',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  // ----------------------------------------------------------
+  // UPDATE SESSION TITLE
+  // ----------------------------------------------------------
+
+  Future<void> _updateSessionTitle(String title) async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null || _currentSessionId.isEmpty) return;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await _sessionsRef(user.uid)
+        .doc(_currentSessionId)
+        .set(
+      {
+        'title': title,
+        'updatedAt': now,
+      },
+      SetOptions(merge: true),
+    );
+
+    if (!mounted) return;
+
+    final index = chatSessions.indexWhere(
+      (s) => s.id == _currentSessionId,
+    );
+
+    if (index >= 0) {
+      setState(() {
+        chatSessions[index].title = title;
+        chatSessions[index].updatedAt = now;
+      });
+    }
+  }
+
+  // ----------------------------------------------------------
+  // UPDATE SESSION TIME
+  // ----------------------------------------------------------
+
+  Future<void> _touchCurrentSession() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null || _currentSessionId.isEmpty) return;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await _sessionsRef(user.uid)
+        .doc(_currentSessionId)
+        .set(
+      {
+        'updatedAt': now,
+      },
+      SetOptions(merge: true),
+    );
+  }
+
+  // ----------------------------------------------------------
+  // SEND MESSAGE
+  // ----------------------------------------------------------
+
+  Future<void> _sendMessage() async {
+    final text = _messageController.text.trim();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (text.isEmpty ||
+        _isLoading ||
+        user == null ||
+        _currentSessionId.isEmpty) {
+      return;
+    }
+
+    ChatSession currentSession = chatSessions.firstWhere(
+      (session) => session.id == _currentSessionId,
+      orElse: () => ChatSession(
+        id: _currentSessionId,
+        title: 'New Chat',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+
+    String? newTitle;
+
+    if (currentSession.title == 'First Conversation' ||
+        currentSession.title == 'New Chat') {
+      newTitle =
+          text.length > 30 ? '${text.substring(0, 30)}...' : text;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _messageController.clear();
+    });
+
+    try {
+      if (newTitle != null) {
+        await _updateSessionTitle(newTitle);
+      }
+
+      // Save user message first.
+      await _messagesRef(user.uid, _currentSessionId).add({
+        'sender': 'user',
+        'text': text,
+        'timestamp': FieldValue.serverTimestamp(),
       });
 
-      // 2. Save AI reply under current session
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(currentUser.uid)
-          .collection('sessions')
-          .doc(_currentSessionId)
-          .collection('messages')
-          .add({
+      await _touchCurrentSession();
+
+      // --------------------------------------------------------
+      // LOAD PREVIOUS MESSAGES FOR AI CONTEXT
+      // --------------------------------------------------------
+
+      List<Map<String, String>> history = [];
+
+      try {
+        final historySnapshot =
+            await _messagesRef(user.uid, _currentSessionId)
+                .orderBy('timestamp', descending: true)
+                .limit(30)
+                .get();
+
+        final historyDocs =
+            historySnapshot.docs.reversed.toList();
+
+        for (final doc in historyDocs) {
+          final data = doc.data();
+
+          final sender = data['sender']?.toString();
+          final messageText = data['text']?.toString();
+
+          if (messageText == null || messageText.isEmpty) {
+            continue;
+          }
+
+          if (sender == 'user') {
+            history.add({
+              'role': 'user',
+              'content': messageText,
+            });
+          } else if (sender == 'ai') {
+            history.add({
+              'role': 'assistant',
+              'content': messageText,
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint('History load for AI failed: $e');
+      }
+
+      // --------------------------------------------------------
+      // GROQ API
+      // --------------------------------------------------------
+
+      String reply;
+
+      if (_groqApiKey.isEmpty) {
+        reply =
+            'Groq API key set nahi hai. Flutter run/build me GROQ_API_KEY define karein.';
+      } else {
+        final messages = <Map<String, dynamic>>[
+          {
+            'role': 'system',
+            'content':
+                'Aap Saarthi AI hain. User se natural Hindi/Hinglish me '
+                'seedhi aur useful baat karein. Formal faltu dialogue '
+                'jaise "Aapka message mila" ya "Main process kar raha hoon" '
+                'mat bolna. User ke sawal ka direct jawab dena. '
+                'Jahan zaroori ho wahan steps me explain karna.',
+          },
+          ...history,
+        ];
+
+        try {
+          final response = await http.post(
+            Uri.parse(
+              'https://api.groq.com/openai/v1/chat/completions',
+            ),
+            headers: {
+              'Content-Type':
+                  'application/json; charset=UTF-8',
+              'Authorization':
+                  'Bearer $_groqApiKey',
+            },
+            body: jsonEncode({
+              'model': 'openai/gpt-oss-120b',
+              'messages': messages,
+              'temperature': 0.7,
+            }),
+          );
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(
+              utf8.decode(response.bodyBytes),
+            );
+
+            reply = data['choices']?[0]?['message']?['content']
+                    ?.toString()
+                    .trim() ??
+                'AI se valid reply nahi mila.';
+          } else {
+            String errorText =
+                'Groq API error: ${response.statusCode}';
+
+            try {
+              final errorJson =
+                  jsonDecode(response.body);
+
+              final apiMessage =
+                  errorJson['error']?['message'];
+
+              if (apiMessage != null) {
+                errorText =
+                    'Groq API error: ${apiMessage.toString()}';
+              }
+            } catch (_) {}
+
+            reply = errorText;
+          }
+        } catch (e) {
+          debugPrint('Groq error: $e');
+          reply =
+              'Network/API error. Internet aur Groq configuration check karein.';
+        }
+      }
+
+      // --------------------------------------------------------
+      // SAVE AI REPLY
+      // --------------------------------------------------------
+
+      await _messagesRef(user.uid, _currentSessionId).add({
         'sender': 'ai',
         'text': reply,
         'timestamp': FieldValue.serverTimestamp(),
       });
+
+      await _touchCurrentSession();
+    } catch (e) {
+      debugPrint('Send message error: $e');
+
+      try {
+        await _messagesRef(
+          user.uid,
+          _currentSessionId,
+        ).add({
+          'sender': 'ai',
+          'text':
+              'Message process karte waqt error aaya. Dobara try karein.',
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
+
+  // ----------------------------------------------------------
+  // FILTER SESSIONS
+  // ----------------------------------------------------------
+
+  List<ChatSession> get _filteredSessions {
+    final query = _searchController.text.trim().toLowerCase();
+
+    if (query.isEmpty) {
+      return chatSessions;
+    }
+
+    return chatSessions
+        .where(
+          (session) =>
+              session.title.toLowerCase().contains(query),
+        )
+        .toList();
+  }
+
+  // ----------------------------------------------------------
+  // PROFILE DIALOG
+  // ----------------------------------------------------------
+
+  void _showProfileDialog() {
+    final user = FirebaseAuth.instance.currentUser;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1F2C34),
+          title: const Text(
+            'Profile',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: Text(
+            user?.email ?? 'User',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'Close',
+                style: TextStyle(
+                  color: Color(0xFF00A884),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ----------------------------------------------------------
+  // CHAT DRAWER
+  // ----------------------------------------------------------
+
+  Widget _buildDrawer() {
+    return Drawer(
+      backgroundColor: const Color(0xFF1F2C34),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 14,
+              ),
+              decoration: const BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: Colors.white12,
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Color(0xFF00A884),
+                    child: Icon(
+                      Icons.person,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      FirebaseAuth.instance.currentUser?.email ??
+                          'user@gmail.com',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00A884),
+                  minimumSize:
+                      const Size(double.infinity, 45),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                onPressed:
+                    _isSessionsLoading ? null : _startNewChat,
+                icon: const Icon(
+                  Icons.add,
+                  color: Colors.white,
+                ),
+                label: const Text(
+                  'New Chat',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 4,
+              ),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (_) => setState(() {}),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Search chats...',
+                  hintStyle: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 13,
+                  ),
+                  prefixIcon: const Icon(
+                    Icons.search,
+                    color: Colors.grey,
+                    size: 18,
+                  ),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(
+                            Icons.clear,
+                            color: Colors.grey,
+                            size: 18,
+                          ),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {});
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: const Color(0xFF2A3942),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+
+            const Divider(
+              color: Colors.white24,
+              height: 1,
+            ),
+
+            const Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                14,
+                16,
+                6,
+              ),
+              child: Text(
+                'Recents',
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+
+            Expanded(
+              child: _isSessionsLoading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF00A884),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _filteredSessions.length,
+                      itemBuilder: (context, index) {
+                        final session =
+                            _filteredSessions[index];
+
+                        final realIndex = chatSessions.indexWhere(
+                          (s) => s.id == session.id,
+                        );
+
+                        final isSelected =
+                            session.id == _currentSessionId;
+
+                        return ListTile(
+                          selected: isSelected,
+                          selectedTileColor:
+                              Colors.white.withOpacity(0.08),
+                          leading: const Icon(
+                            Icons.chat_bubble_outline,
+                            color: Colors.white70,
+                            size: 18,
+                          ),
+                          title: Text(
+                            session.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                            ),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              color: Colors.redAccent,
+                              size: 18,
+                            ),
+                            onPressed: realIndex >= 0
+                                ? () =>
+                                    _deleteChat(realIndex)
+                                : null,
+                          ),
+                          onTap: () {
+                            setState(() {
+                              _currentSessionId =
+                                  session.id;
+                            });
+
+                            Navigator.pop(context);
+                          },
+                        );
+                      },
+                    ),
+            ),
+
+            const Divider(
+              color: Colors.white24,
+              height: 1,
+            ),
+
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(10),
+                    ),
+                    tileColor:
+                        Colors.white.withOpacity(0.04),
+                    leading: const Icon(
+                      Icons.person_outline,
+                      color: Colors.white70,
+                    ),
+                    title: const Text(
+                      'Profile',
+                      style: TextStyle(
+                        color: Colors.white,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showProfileDialog();
+                    },
+                  ),
+                  const SizedBox(height: 4),
+                  ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(10),
+                    ),
+                    tileColor:
+                        Colors.redAccent.withOpacity(0.1),
+                    leading: const Icon(
+                      Icons.logout,
+                      color: Colors.redAccent,
+                    ),
+                    title: const Text(
+                      'Logout',
+                      style: TextStyle(
+                        color: Colors.redAccent,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    onTap: () async {
+                      await FirebaseAuth.instance.signOut();
+
+                      if (mounted) {
+                        Navigator.pop(context);
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ----------------------------------------------------------
+  // BUILD
+  // ----------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: const Color(0xFF1F2C34),
         title: const Row(
           children: [
-            Icon(Icons.smart_toy_rounded, color: Color(0xFF00E676)),
+            Icon(
+              Icons.smart_toy_rounded,
+              color: Color(0xFF00E676),
+            ),
             SizedBox(width: 10),
             Text(
               'Saarthi AI',
-              style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ),
       ),
-      drawer: Drawer(
-        backgroundColor: const Color(0xFF1F2C34),
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
-                decoration: const BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: Colors.white12, width: 1.0),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const CircleAvatar(
-                      radius: 16,
-                      backgroundColor: Color(0xFF00A884),
-                      child: Icon(Icons.person, color: Colors.white, size: 20),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        FirebaseAuth.instance.currentUser?.email ?? 'user@gmail.com',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    minimumSize: const Size(double.infinity, 45),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  onPressed: _startNewChat,
-                  icon: const Icon(Icons.add, color: Colors.white),
-                  label: const Text(
-                    ' New Chat',
-                    style: TextStyle(color: Colors.white, fontSize: 16),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
-                child: TextField(
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                  decoration: InputDecoration(
-                    hintText: 'Search chats...',
-                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
-                    prefixIcon: const Icon(Icons.search, color: Colors.grey, size: 18),
-                    filled: true,
-                    fillColor: const Color(0xFF2A3942),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-              ),
-              const Divider(color: Colors.white24, height: 1),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
-                child: Text(
-                  'Recents',
-                  style: TextStyle(
-                    color: Colors.grey,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: chatSessions.length,
-                  itemBuilder: (context, index) {
-                    final session = chatSessions[index];
-                    final isSelected = index == currentSessionIndex;
-
-                    return ListTile(
-                      selected: isSelected,
-                      selectedTileColor: Colors.white.withOpacity(0.08),
-                      leading: const Icon(Icons.chat_bubble_outline, color: Colors.white70, size: 18),
-                      title: Text(
-                        session.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      trailing: chatSessions.length > 1
-                          ? IconButton(
-                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-                              onPressed: () => _deleteChat(index),
-                            )
-                          : null,
-                      onTap: () {
-                        setState(() {
-                          currentSessionIndex = index;
-                          _currentSessionId = session.id;
-                        });
-                        Navigator.pop(context);
-                      },
-                    );
-                  },
-                ),
-              ),
-              const Divider(color: Colors.white24, height: 1),
-              Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: ListTile(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  tileColor: Colors.redAccent.withOpacity(0.1),
-                  leading: const Icon(Icons.logout, color: Colors.redAccent),
-                  title: const Text(
-                    'Logout',
-                    style: TextStyle(
-                      color: Colors.redAccent,
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  onTap: () {
-                    FirebaseAuth.instance.signOut();
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      drawer: _buildDrawer(),
       body: Column(
         children: [
           Expanded(
             child: StreamBuilder<User?>(
-              stream: FirebaseAuth.instance.authStateChanges(),
-              builder: (context, authSnap) {
-                final user = authSnap.data;
+              stream:
+                  FirebaseAuth.instance.authStateChanges(),
+              builder: (context, authSnapshot) {
+                final user = authSnapshot.data;
+
                 if (user == null) {
                   return const Center(
-                    child: Text('Kripya Login karein', style: TextStyle(color: Colors.grey)),
+                    child: Text(
+                      'Kripya Login karein',
+                      style: TextStyle(
+                        color: Colors.grey,
+                      ),
+                    ),
+                  );
+                }
+
+                if (_currentSessionId.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'Nayi chat shuru karein!',
+                      style: TextStyle(
+                        color: Colors.grey,
+                      ),
+                    ),
                   );
                 }
 
                 return StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('users')
-                      .doc(user.uid)
-                      .collection('sessions')
-                      .doc(_currentSessionId)
-                      .collection('messages')
-                      .snapshots(),
-                  builder: (context, chatSnap) {
-                    if (chatSnap.connectionState == ConnectionState.waiting) {
+                  stream: _messagesRef(
+                    user.uid,
+                    _currentSessionId,
+                  ).snapshots(),
+                  builder: (context, chatSnapshot) {
+                    if (chatSnapshot.connectionState ==
+                        ConnectionState.waiting) {
                       return const Center(
-                        child: CircularProgressIndicator(color: Color(0xFF00A884)),
-                      );
-                    }
-                    if (!chatSnap.hasData || chatSnap.data!.docs.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'Nayi chat shuru karein!',
-                          style: TextStyle(color: Colors.grey),
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF00A884),
                         ),
                       );
                     }
 
-                    // Client side sort taaki index ki jarurat na pade
-                    final docs = chatSnap.data!.docs.toList();
+                    if (!chatSnapshot.hasData ||
+                        chatSnapshot.data!.docs.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'Nayi chat shuru karein!',
+                          style: TextStyle(
+                            color: Colors.grey,
+                          ),
+                        ),
+                      );
+                    }
+
+                    final docs =
+                        chatSnapshot.data!.docs.toList();
+
                     docs.sort((a, b) {
-                      final tA = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-                      final tB = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-                      if (tA == null) return 1;
-                      if (tB == null) return -1;
-                      return tB.compareTo(tA);
+                      final aData =
+                          a.data() as Map<String, dynamic>;
+                      final bData =
+                          b.data() as Map<String, dynamic>;
+
+                      final aTime = aData['timestamp'];
+                      final bTime = bData['timestamp'];
+
+                      if (aTime is Timestamp &&
+                          bTime is Timestamp) {
+                        return aTime.compareTo(bTime);
+                      }
+
+                      if (aTime is Timestamp) return -1;
+                      if (bTime is Timestamp) return 1;
+
+                      return 0;
+                    });
+
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) {
+                      if (_scrollController.hasClients) {
+                        _scrollController.animateTo(
+                          _scrollController.position.maxScrollExtent,
+                          duration:
+                              const Duration(milliseconds: 250),
+                          curve: Curves.easeOut,
+                        );
+                      }
                     });
 
                     return ListView.builder(
                       controller: _scrollController,
                       padding: const EdgeInsets.all(12),
-                      reverse: true,
-                      itemCount: docs.length + (_isLoading ? 1 : 0),
+                      itemCount:
+                          docs.length + (_isLoading ? 1 : 0),
                       itemBuilder: (context, index) {
-                        if (_isLoading && index == docs.length) {
+                        if (_isLoading &&
+                            index == docs.length) {
                           return Align(
                             alignment: Alignment.centerLeft,
                             child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 4),
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF202C33),
-                                borderRadius: BorderRadius.circular(10),
+                              margin:
+                                  const EdgeInsets.symmetric(
+                                vertical: 4,
                               ),
-                              child: const Text('AI typing...', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                              padding:
+                                  const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color:
+                                    const Color(0xFF202C33),
+                                borderRadius:
+                                    BorderRadius.circular(10),
+                              ),
+                              child: const Text(
+                                'AI typing...',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                ),
+                              ),
                             ),
                           );
                         }
 
-                        final m = docs[index].data() as Map<String, dynamic>;
-                        final isUser = m['sender'] == 'user';
+                        final message =
+                            docs[index].data()
+                                as Map<String, dynamic>;
+
+                        final isUser =
+                            message['sender'] == 'user';
 
                         return Align(
-                          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                          alignment: isUser
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
                           child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 4),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            margin:
+                                const EdgeInsets.symmetric(
+                              vertical: 4,
+                            ),
+                            padding:
+                                const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
                             decoration: BoxDecoration(
-                              color: isUser ? const Color(0xFF005C4B) : const Color(0xFF202C33),
-                              borderRadius: BorderRadius.circular(10),
+                              color: isUser
+                                  ? const Color(0xFF005C4B)
+                                  : const Color(0xFF202C33),
+                              borderRadius:
+                                  BorderRadius.circular(10),
                             ),
                             constraints: BoxConstraints(
-                              maxWidth: MediaQuery.of(context).size.width * 0.8,
+                              maxWidth:
+                                  MediaQuery.of(context)
+                                          .size
+                                          .width *
+                                      0.8,
                             ),
-                            child: Text(
-                              m['text'] ?? '',
-                              style: const TextStyle(color: Colors.white, fontSize: 15),
+                            child: SelectableText(
+                              message['text']?.toString() ??
+                                  '',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                height: 1.4,
+                              ),
                             ),
                           ),
                         );
@@ -457,39 +1147,69 @@ class _AiChatScreenState extends State<AiChatScreen> {
               },
             ),
           ),
+
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 8,
+            ),
             color: const Color(0xFF1F2C34),
             child: Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: _messageController,
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(
+                      color: Colors.white,
+                    ),
+                    minLines: 1,
+                    maxLines: 5,
+                    onSubmitted: (_) {
+                      if (!_isLoading) {
+                        _sendMessage();
+                      }
+                    },
                     decoration: InputDecoration(
                       hintText: 'Message...',
-                      hintStyle: const TextStyle(color: Colors.grey),
+                      hintStyle: const TextStyle(
+                        color: Colors.grey,
+                      ),
                       filled: true,
-                      fillColor: const Color(0xFF2A3942),
+                      fillColor:
+                          const Color(0xFF2A3942),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
+                        borderRadius:
+                            BorderRadius.circular(24),
                         borderSide: BorderSide.none,
                       ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                      contentPadding:
+                          const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 CircleAvatar(
-                  backgroundColor: const Color(0xFF00A884),
+                  backgroundColor:
+                      const Color(0xFF00A884),
                   child: _isLoading
                       ? const SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          child:
+                              CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
                         )
                       : IconButton(
-                          icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                          icon: const Icon(
+                            Icons.send,
+                            color: Colors.white,
+                            size: 20,
+                          ),
                           onPressed: _sendMessage,
                         ),
                 ),
@@ -502,23 +1222,42 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
 }
 
-// ----------------- SCHOOL PORTAL (ADMIN & STUDENT LOGIN) -----------------
+// ============================================================
+// SCHOOL ADMIN LOGIN
+// ============================================================
+
 class SchoolAdminLoginScreen extends StatefulWidget {
   const SchoolAdminLoginScreen({super.key});
 
   @override
-  State<SchoolAdminLoginScreen> createState() => _SchoolAdminLoginScreenState();
+  State<SchoolAdminLoginScreen> createState() =>
+      _SchoolAdminLoginScreenState();
 }
 
-class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
-  bool _isAdminMode = true; // true = Admin, false = Student
-  final TextEditingController _usernameController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
+class _SchoolAdminLoginScreenState
+    extends State<SchoolAdminLoginScreen> {
+  bool _isAdminMode = true;
+
+  final TextEditingController _usernameController =
+      TextEditingController();
+
+  final TextEditingController _passwordController =
+      TextEditingController();
+
   bool _obscurePassword = true;
   bool _isLoggingIn = false;
-  String _selectedClass = 'Class 1'; // Default class
 
-  final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
+  String _selectedClass = 'Class 1';
+
+  final List<String> _classList =
+      List.generate(10, (index) => 'Class ${index + 1}');
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   void _switchRole(bool isAdmin) {
     setState(() {
@@ -528,670 +1267,1587 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
     });
   }
 
-Future<void> _handleLogin() async {
-    final idText = _usernameController.text.trim();
-    final password = _passwordController.text.trim();
+  Future<void> _handleLogin() async {
+    final idText =
+        _usernameController.text.trim();
+
+    final password =
+        _passwordController.text.trim();
 
     if (idText.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_isAdminMode
-              ? 'Kripya Admin Email aur Password bharein'
-              : 'Kripya Roll No / Student ID aur Password bharein'),
+          content: Text(
+            _isAdminMode
+                ? 'Kripya Admin Email aur Password bharein'
+                : 'Kripya Student ID / Roll No aur Password bharein',
+          ),
         ),
       );
       return;
     }
 
-    setState(() => _isLoggingIn = true);
+    setState(() {
+      _isLoggingIn = true;
+    });
 
     try {
       if (_isAdminMode) {
-        // Firebase Authentication login (Inspect safe)
-        try {
-          await FirebaseAuth.instance.signInWithEmailAndPassword(
-            email: idText,
-            password: password,
-          );
+        await FirebaseAuth.instance
+            .signInWithEmailAndPassword(
+          email: idText,
+          password: password,
+        );
 
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                backgroundColor: Color(0xFF00A884),
-                content: Text('Admin Login Safal hua!'),
-              ),
-            );
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
-            );
-          }
-        } on FirebaseAuthException catch (e) {
-          if (mounted) {
-            String errorMsg = 'Galat Admin Email ya Password!';
-            if (e.code == 'user-not-found') {
-              errorMsg = 'Yeh Admin account registered nahi hai.';
-            } else if (e.code == 'wrong-password') {
-              errorMsg = 'Galat password dala hai.';
-            }
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                backgroundColor: Colors.redAccent,
-                content: Text(errorMsg),
-              ),
-            );
-          }
-        }
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor:
+                Color(0xFF00A884),
+            content:
+                Text('Admin Login Safal hua!'),
+          ),
+        );
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                const AdminDashboardScreen(),
+          ),
+        );
       } else {
-        // Student credentials verification (Testing ke liye)
-        if (idText == 'student' && password == '123456') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              backgroundColor: Color(0xFF00A884),
-              content: Text('Student Login Safal hua!'),
+        // ------------------------------------------------------
+        // DEMO STUDENT LOGIN
+        // Production me ise Firebase Authentication se replace
+        // karna chahiye.
+        // ------------------------------------------------------
+
+        if (idText == 'student' &&
+            password == '123456') {
+          if (!mounted) return;
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) =>
+                  StudentDashboardScreen(
+                studentId: idText,
+                studentClass: _selectedClass,
+              ),
             ),
           );
         } else {
+          if (!mounted) return;
+
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               backgroundColor: Colors.redAccent,
-              content: Text('Galat Student ID ya Password!'),
+              content: Text(
+                'Galat Student ID ya Password!',
+              ),
             ),
           );
         }
       }
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      String errorMessage =
+          'Galat Admin Email ya Password!';
+
+      switch (e.code) {
+        case 'user-not-found':
+          errorMessage =
+              'Yeh Admin account registered nahi hai.';
+          break;
+
+        case 'wrong-password':
+        case 'invalid-credential':
+          errorMessage =
+              'Galat password ya login details.';
+          break;
+
+        case 'invalid-email':
+          errorMessage =
+              'Invalid Admin Email.';
+          break;
+
+        case 'user-disabled':
+          errorMessage =
+              'Admin account disabled hai.';
+          break;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(errorMessage),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Login error: $e',
+          ),
+        ),
+      );
     } finally {
-      if (mounted) setState(() => _isLoggingIn = false);
+      if (mounted) {
+        setState(() {
+          _isLoggingIn = false;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121B22),
+      backgroundColor:
+          const Color(0xFF121B22),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('School Portal'),
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title:
+            const Text('School Portal'),
       ),
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                _isAdminMode ? Icons.admin_panel_settings_rounded : Icons.school_rounded,
-                size: 65,
-                color: const Color(0xFF00A884),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                _isAdminMode ? 'ADMIN LOGIN' : 'STUDENT LOGIN',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
+          padding:
+              const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints:
+                const BoxConstraints(
+              maxWidth: 500,
+            ),
+            child: Column(
+              children: [
+                Icon(
+                  _isAdminMode
+                      ? Icons.admin_panel_settings_rounded
+                      : Icons.school_rounded,
+                  size: 65,
+                  color:
+                      const Color(0xFF00A884),
                 ),
-              ),
-              const SizedBox(height: 24),
 
-              // Role Selector Tabs (Admin vs Student)
-              Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1F2C34),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.all(4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => _switchRole(true),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          decoration: BoxDecoration(
-                            color: _isAdminMode ? const Color(0xFF00A884) : Colors.transparent,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.security, size: 16, color: Colors.white),
-                              SizedBox(width: 6),
-                              Text(
-                                'Admin',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => _switchRole(false),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          decoration: BoxDecoration(
-                            color: !_isAdminMode ? const Color(0xFF00A884) : Colors.transparent,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.person, size: 16, color: Colors.white),
-                              SizedBox(width: 6),
-                              Text(
-                                'Student',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
+                const SizedBox(height: 12),
 
-              if (!_isAdminMode) ...[
+                Text(
+                  _isAdminMode
+                      ? 'ADMIN LOGIN'
+                      : 'STUDENT LOGIN',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight:
+                        FontWeight.bold,
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1F2C34),
-                    borderRadius: BorderRadius.circular(12),
+                  padding:
+                      const EdgeInsets.all(4),
+                  decoration:
+                      BoxDecoration(
+                    color:
+                        const Color(0xFF1F2C34),
+                    borderRadius:
+                        BorderRadius.circular(
+                      12,
+                    ),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.class_outlined, color: Color(0xFF00A884)),
-                      const SizedBox(width: 12),
                       Expanded(
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _selectedClass,
-                            dropdownColor: const Color(0xFF1F2C34),
-                            icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
-                            style: const TextStyle(color: Colors.white, fontSize: 16),
-                            isExpanded: true,
-                            items: _classList.map((String value) {
-                              return DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(value),
-                              );
-                            }).toList(),
-                            onChanged: (newValue) {
-                              if (newValue != null) {
-                                setState(() {
-                                  _selectedClass = newValue;
-                                });
-                              }
-                            },
+                        child: GestureDetector(
+                          onTap: () =>
+                              _switchRole(true),
+                          child: Container(
+                            padding:
+                                const EdgeInsets.symmetric(
+                              vertical: 10,
+                            ),
+                            decoration:
+                                BoxDecoration(
+                              color: _isAdminMode
+                                  ? const Color(
+                                      0xFF00A884)
+                                  : Colors
+                                      .transparent,
+                              borderRadius:
+                                  BorderRadius.circular(
+                                10,
+                              ),
+                            ),
+                            child:
+                                const Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment
+                                      .center,
+                              children: [
+                                Icon(
+                                  Icons.security,
+                                  size: 16,
+                                  color:
+                                      Colors.white,
+                                ),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Admin',
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.white,
+                                    fontWeight:
+                                        FontWeight
+                                            .bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () =>
+                              _switchRole(false),
+                          child: Container(
+                            padding:
+                                const EdgeInsets.symmetric(
+                              vertical: 10,
+                            ),
+                            decoration:
+                                BoxDecoration(
+                              color: !_isAdminMode
+                                  ? const Color(
+                                      0xFF00A884)
+                                  : Colors
+                                      .transparent,
+                              borderRadius:
+                                  BorderRadius.circular(
+                                10,
+                              ),
+                            ),
+                            child:
+                                const Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment
+                                      .center,
+                              children: [
+                                Icon(
+                                  Icons.person,
+                                  size: 16,
+                                  color:
+                                      Colors.white,
+                                ),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Student',
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.white,
+                                    fontWeight:
+                                        FontWeight
+                                            .bold,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
-              ],
-              
-              // Username / Roll No Field
-              TextField(
-                controller: _usernameController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: _isAdminMode ? 'Admin Email' : 'Student ID / Roll No',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: Icon(
-                    _isAdminMode ? Icons.person_outline : Icons.badge_outlined,
-                    color: const Color(0xFF00A884),
-                  ),
-                  filled: true,
-                  fillColor: const Color(0xFF1F2C34),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
 
-              // Password Field
-              TextField(
-                controller: _passwordController,
-                obscureText: _obscurePassword,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: 'Password',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF00A884)),
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                      color: Colors.grey,
+                const SizedBox(height: 24),
+
+                if (!_isAdminMode) ...[
+                  DropdownButtonFormField<String>(
+                    value:
+                        _selectedClass,
+                    dropdownColor:
+                        const Color(
+                            0xFF1F2C34),
+                    style: const TextStyle(
+                      color: Colors.white,
                     ),
-                    onPressed: () {
-                      setState(() => _obscurePassword = !_obscurePassword);
+                    decoration:
+                        _inputDecoration(
+                      'Class',
+                    ),
+                    items: _classList.map(
+                      (value) {
+                        return DropdownMenuItem<
+                            String>(
+                          value: value,
+                          child: Text(value),
+                        );
+                      },
+                    ).toList(),
+                    onChanged:
+                        (value) {
+                      if (value != null) {
+                        setState(() {
+                          _selectedClass =
+                              value;
+                        });
+                      }
                     },
                   ),
-                  filled: true,
-                  fillColor: const Color(0xFF1F2C34),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
+                  const SizedBox(height: 16),
+                ],
+
+                TextField(
+                  controller:
+                      _usernameController,
+                  style:
+                      const TextStyle(
+                    color: Colors.white,
+                  ),
+                  decoration:
+                      _inputDecoration(
+                    _isAdminMode
+                        ? 'Admin Email'
+                        : 'Student ID / Roll No',
+                    icon: _isAdminMode
+                        ? Icons
+                            .person_outline
+                        : Icons
+                            .badge_outlined,
                   ),
                 ),
-              ),
-              const SizedBox(height: 24),
 
-              // Login Button
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                const SizedBox(height: 16),
+
+                TextField(
+                  controller:
+                      _passwordController,
+                  obscureText:
+                      _obscurePassword,
+                  style:
+                      const TextStyle(
+                    color: Colors.white,
+                  ),
+                  decoration:
+                      _inputDecoration(
+                    'Password',
+                    icon: Icons.lock_outline,
+                    suffixIcon:
+                        IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                        color:
+                            Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword =
+                              !_obscurePassword;
+                        });
+                      },
                     ),
                   ),
-                  onPressed: _isLoggingIn ? null : _handleLogin,
-                  child: _isLoggingIn
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                        )
-                      : Text(
-                          _isAdminMode ? 'LOGIN AS ADMIN' : 'LOGIN AS STUDENT',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
                 ),
-              ),
-            ],
+
+                const SizedBox(height: 24),
+
+                SizedBox(
+                  width:
+                      double.infinity,
+                  height: 48,
+                  child:
+                      ElevatedButton(
+                    style:
+                        ElevatedButton.styleFrom(
+                      backgroundColor:
+                          const Color(
+                        0xFF00A884,
+                      ),
+                      shape:
+                          RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(
+                          12,
+                        ),
+                      ),
+                    ),
+                    onPressed:
+                        _isLoggingIn
+                            ? null
+                            : _handleLogin,
+                    child: _isLoggingIn
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child:
+                                CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : Text(
+                            _isAdminMode
+                                ? 'LOGIN AS ADMIN'
+                                : 'LOGIN AS STUDENT',
+                            style:
+                                const TextStyle(
+                              color:
+                                  Colors.white,
+                              fontWeight:
+                                  FontWeight.bold,
+                            ),
+                          ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  InputDecoration _inputDecoration(
+    String hint, {
+    IconData? icon,
+    Widget? suffixIcon,
+  }) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle:
+          const TextStyle(
+        color: Colors.grey,
+      ),
+      prefixIcon: icon == null
+          ? null
+          : Icon(
+              icon,
+              color:
+                  const Color(0xFF00A884),
+            ),
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor:
+          const Color(0xFF1F2C34),
+      border:
+          OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(
+          12,
+        ),
+        borderSide:
+            BorderSide.none,
+      ),
+    );
+  }
 }
-// ==================== ADMIN DASHBOARD SCREEN ====================
-class AdminDashboardScreen extends StatefulWidget {
-  const AdminDashboardScreen({super.key});
+
+// ============================================================
+// SIMPLE STUDENT DASHBOARD
+// ============================================================
+
+class StudentDashboardScreen extends StatelessWidget {
+  final String studentId;
+  final String studentClass;
+
+  const StudentDashboardScreen({
+    super.key,
+    required this.studentId,
+    required this.studentClass,
+  });
 
   @override
-  State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
-}
-
-class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
-  // Notice controllers & state
-  final TextEditingController _noticeTitleController = TextEditingController();
-  final TextEditingController _noticeDescController = TextEditingController();
-  String _noticeCategory = 'Holiday';
-  final List<String> _noticeCategories = ['Holiday', 'Exam', 'Event', 'General'];
-  String? _editingNoticeId; // null = new notice, non-null = editing mode
-  
-  // Google Drive state
-  String? _connectedDriveFolder;
-  final TextEditingController _driveFolderController = TextEditingController();
- 
-  // Student Directory controllers
-  String _directoryClass = 'Class 1';
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _rollController = TextEditingController();
-  final TextEditingController _parentContactController = TextEditingController();
-  String? _studentPhotoUrl;
-  
-  bool _isSavingNotice = false;
-  bool _isSearchingStudent = false;
-  final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
-
-  // Teacher List Data (Placeholder)
-  final List<Map<String, String>> _teachersList = [
-    {'name': 'Ramesh Sharma', 'subject': 'Mathematics', 'phone': '+91 9876543210'},
-    {'name': 'Priya Sen', 'subject': 'Bengali & English', 'phone': '+91 9876543211'},
-    {'name': 'Amit Paul', 'subject': 'Science', 'phone': '+91 9876543212'},
-  ];
-  // Add Student Popup Dialog
-// Add Student Popup Dialog (With Device Photo & Hostel Option)
-  void _openAddStudentDialog() {
-    final nameCtrl = TextEditingController();
-    final parentCtrl = TextEditingController();
-    final rollCtrl = TextEditingController();
-    final contactCtrl = TextEditingController();
-    final addressCtrl = TextEditingController();
-    final pinCtrl = TextEditingController();
-    final stateCtrl = TextEditingController();
-    final districtCtrl = TextEditingController();
-    final admissionDateCtrl = TextEditingController(
-      text: "${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}",
-    );
-
-    String selectedClass = _directoryClass;
-    String hostelFacility = 'No';
-    List<int>? selectedPhotoBytes;
-    String? selectedPhotoName;
-    bool isSaving = false;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDlgState) => AlertDialog(
-          backgroundColor: const Color(0xFF1F2C34),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: const Row(
-            children: [
-              Icon(Icons.person_add_alt_1, color: Color(0xFF00A884), size: 22),
-              SizedBox(width: 10),
-              Text('Add New Student', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
-            ],
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor:
+          const Color(0xFF121B22),
+      appBar: AppBar(
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title:
+            const Text('Student Dashboard'),
+        actions: [
+          IconButton(
+            icon:
+                const Icon(Icons.logout),
+            onPressed: () =>
+                Navigator.pop(context),
           ),
-          content: SizedBox(
-            width: 480,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          value: selectedClass,
-                          dropdownColor: const Color(0xFF1F2C34),
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Class'),
-                          items: _classList.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                          onChanged: (val) => setDlgState(() => selectedClass = val!),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: rollCtrl,
-                          keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Roll No *'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: nameCtrl,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Student Full Name *'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: parentCtrl,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration("Parent's / Guardian Name *"),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: contactCtrl,
-                    keyboardType: TextInputType.phone,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Contact No *'),
-                  ),
-                  const SizedBox(height: 10),
-
-                  // 1. Hostel Facility Option (Yes / No)
-                  DropdownButtonFormField<String>(
-                    value: hostelFacility,
-                    dropdownColor: const Color(0xFF1F2C34),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Hostel Facility'),
-                    items: const [
-                      DropdownMenuItem(value: 'No', child: Text('Hostel Facility: No')),
-                      DropdownMenuItem(value: 'Yes', child: Text('Hostel Facility: Yes')),
-                    ],
-                    onChanged: (val) => setDlgState(() => hostelFacility = val!),
-                  ),
-                  const SizedBox(height: 10),
-
-                  TextField(
-                    controller: addressCtrl,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Address'),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: districtCtrl,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('District'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: stateCtrl,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('State'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: pinCtrl,
-                          keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('PIN Code'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      // 2. Admission Date
-                      Expanded(
-                        child: TextField(
-                          controller: admissionDateCtrl,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Admission Date'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+        ],
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment:
+              MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.school,
+              size: 70,
+              color: Color(0xFF00A884),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Student Login Successful',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight:
+                    FontWeight.bold,
               ),
             ),
-          ),
-          actions: [
-            // 3. Red Circle Area: Device se Photo Add karne ka Option
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(
-                  color: selectedPhotoBytes != null ? const Color(0xFF00A884) : Colors.grey,
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              ),
-              onPressed: isSaving
-                  ? null
-                  : () async {
-                      final ImagePicker picker = ImagePicker();
-                      final XFile? image = await picker.pickImage(
-                        source: ImageSource.gallery,
-                        imageQuality: 70, // size optimize karne ke liye
-                      );
-
-                      if (image != null) {
-                        final bytes = await image.readAsBytes();
-                        setDlgState(() {
-                          selectedPhotoBytes = bytes;
-                          selectedPhotoName = image.name;
-                        });
-                      }
-                    },
-              icon: Icon(
-                selectedPhotoBytes != null ? Icons.check_circle : Icons.add_a_photo_outlined,
-                color: selectedPhotoBytes != null ? const Color(0xFF00A884) : Colors.white70,
-                size: 18,
-              ),
-              label: Text(
-                selectedPhotoBytes != null ? 'Photo Ready' : 'Upload Photo',
-                style: TextStyle(
-                  color: selectedPhotoBytes != null ? const Color(0xFF00A884) : Colors.white70,
-                  fontSize: 12,
-                ),
+            const SizedBox(height: 12),
+            Text(
+              'Student ID: $studentId',
+              style: const TextStyle(
+                color: Colors.white70,
               ),
             ),
-            const SizedBox(width: 12),
-            TextButton(
-              onPressed: isSaving ? null : () => Navigator.pop(ctx),
-              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-              onPressed: isSaving
-                  ? null
-                  : () async {
-                      final name = nameCtrl.text.trim();
-                      final roll = rollCtrl.text.trim();
-                      final contact = contactCtrl.text.trim();
-                      final parent = parentCtrl.text.trim();
-
-                      if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            backgroundColor: Colors.redAccent,
-                            content: Text('Name, Roll No aur Contact bharna zaroori hai!'),
-                          ),
-                        );
-                        return;
-                      }
-
-                      setDlgState(() => isSaving = true);
-                      final docId = '${selectedClass}_Roll_$roll';
-
-                      try {
-                        String finalPhotoUrl = '';
-                        String base64Image = selectedPhotoBytes != null ? base64Encode(selectedPhotoBytes!) : '';
-
-                          try {
-                            final response = await http.post(
-                              Uri.parse('https://script.google.com/macros/s/AKfycbwctS8ISLxevVfD7nsDf47HgbrMUfB7Fxl75VtVar9RvSz6zsFz-XrLDiRu6ELreyoZrw/exec'),
-                              headers: {'Content-Type': 'application/json'},
-                              body: jsonEncode({
-                                'action': 'add_student',
-                                'name': name,
-                                'parentName': parent,
-                                'studentClass': selectedClass,
-                                'roll': roll,
-                                'contact': contact,
-                                'photoBase64': base64Image,
-                                'hostelFacility': hostelFacility,
-                                'address': addressCtrl.text.trim(),
-                                'district': districtCtrl.text.trim(),
-                                'state': stateCtrl.text.trim(),
-                                'pinCode': pinCtrl.text.trim(),
-                                'joiningDate': admissionDateCtrl.text.trim(),
-                              }),
-                            );
-
-                            if (response.statusCode == 200) {
-                              final resJson = jsonDecode(response.body);
-                              if (resJson['photoUrl'] != null) {
-                                finalPhotoUrl = resJson['photoUrl'];
-                              }
-                            }
-                          } catch (driveErr) {
-                            debugPrint('Drive Save Error: $driveErr');
-                          }
-                        }
-
-                        // 3. Firestore Sync (Fast App Listing ke liye)
-                        await FirebaseFirestore.instance.collection('students_directory').doc(docId).set({
-                          'name': name,
-                          'parentName': parent,
-                          'class': selectedClass,
-                          'rollNo': roll,
-                          'parentContact': contact,
-                          'photoUrl': finalPhotoUrl,
-                          'hostelFacility': hostelFacility,
-                          'address': addressCtrl.text.trim(),
-                          'pinCode': pinCtrl.text.trim(),
-                          'district': districtCtrl.text.trim(),
-                          'state': stateCtrl.text.trim(),
-                          'joiningDate': admissionDateCtrl.text.trim(),
-                          'createdAt': DateTime.now().millisecondsSinceEpoch,
-                        });
-
-                        if (mounted) {
-                          Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              backgroundColor: Color(0xFF00A884),
-                              content: Text('Student aur Photo Google Drive par successfully save ho gaye!'),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        setDlgState(() => isSaving = false);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(backgroundColor: Colors.redAccent, content: Text('Error: ${e.toString()}')),
-                        );
-                      }
-                    },
-              child: Text(isSaving ? 'Saving to Drive...' : 'Save Student', style: const TextStyle(color: Colors.white)),
+            Text(
+              'Class: $studentClass',
+              style: const TextStyle(
+                color: Colors.white70,
+              ),
             ),
           ],
         ),
       ),
     );
   }
-  // 1. Notice Publish or Update Function
+}
+
+// ============================================================
+// ADMIN DASHBOARD
+// ============================================================
+
+class AdminDashboardScreen extends StatefulWidget {
+  const AdminDashboardScreen({super.key});
+
+  @override
+  State<AdminDashboardScreen> createState() =>
+      _AdminDashboardScreenState();
+}
+
+class _AdminDashboardScreenState
+    extends State<AdminDashboardScreen> {
+  // ----------------------------------------------------------
+  // NOTICE
+  // ----------------------------------------------------------
+
+  final TextEditingController
+      _noticeTitleController =
+      TextEditingController();
+
+  final TextEditingController
+      _noticeDescController =
+      TextEditingController();
+
+  String _noticeCategory =
+      'Holiday';
+
+  final List<String>
+      _noticeCategories = [
+    'Holiday',
+    'Exam',
+    'Event',
+    'General',
+  ];
+
+  String? _editingNoticeId;
+  bool _isSavingNotice = false;
+
+  // ----------------------------------------------------------
+  // STUDENT DIRECTORY
+  // ----------------------------------------------------------
+
+  String _directoryClass = 'Class 1';
+
+  final TextEditingController
+      _nameController =
+      TextEditingController();
+
+  final TextEditingController
+      _rollController =
+      TextEditingController();
+
+  final TextEditingController
+      _parentContactController =
+      TextEditingController();
+
+  String? _studentPhotoUrl;
+
+  bool _isSearchingStudent = false;
+
+  final List<String> _classList =
+      List.generate(
+    10,
+    (index) => 'Class ${index + 1}',
+  );
+
+  // ----------------------------------------------------------
+  // TEACHERS
+  // ----------------------------------------------------------
+
+  final List<Map<String, String>>
+      _teachersList = [
+    {
+      'name': 'Ramesh Sharma',
+      'subject': 'Mathematics',
+      'phone': '+91 9876543210',
+    },
+    {
+      'name': 'Priya Sen',
+      'subject': 'Bengali & English',
+      'phone': '+91 9876543211',
+    },
+    {
+      'name': 'Amit Paul',
+      'subject': 'Science',
+      'phone': '+91 9876543212',
+    },
+  ];
+
+  @override
+  void dispose() {
+    _noticeTitleController.dispose();
+    _noticeDescController.dispose();
+    _nameController.dispose();
+    _rollController.dispose();
+    _parentContactController.dispose();
+    super.dispose();
+  }
+
+  // ----------------------------------------------------------
+  // ADD STUDENT
+  // ----------------------------------------------------------
+
+  void _openAddStudentDialog() {
+    final nameCtrl =
+        TextEditingController();
+
+    final parentCtrl =
+        TextEditingController();
+
+    final rollCtrl =
+        TextEditingController();
+
+    final contactCtrl =
+        TextEditingController();
+
+    final addressCtrl =
+        TextEditingController();
+
+    final pinCtrl =
+        TextEditingController();
+
+    final stateCtrl =
+        TextEditingController();
+
+    final districtCtrl =
+        TextEditingController();
+
+    final admissionDateCtrl =
+        TextEditingController(
+      text:
+          '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
+    );
+
+    final dobCtrl =
+        TextEditingController();
+
+    String selectedClass =
+        _directoryClass;
+
+    String hostelFacility =
+        'No';
+
+    List<int>? selectedPhotoBytes;
+    bool isSaving = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: !isSaving,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (
+            context,
+            setDlgState,
+          ) {
+            return AlertDialog(
+              backgroundColor:
+                  const Color(0xFF1F2C34),
+              shape:
+                  RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.circular(
+                  14,
+                ),
+              ),
+              title: const Row(
+                children: [
+                  Icon(
+                    Icons
+                        .person_add_alt_1,
+                    color:
+                        Color(0xFF00A884),
+                    size: 22,
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Add New Student',
+                    style:
+                        TextStyle(
+                      color:
+                          Colors.white,
+                      fontSize: 17,
+                      fontWeight:
+                          FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 520,
+                child:
+                    SingleChildScrollView(
+                  child:
+                      Column(
+                    mainAxisSize:
+                        MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child:
+                                DropdownButtonFormField<
+                                    String>(
+                              value:
+                                  selectedClass,
+                              dropdownColor:
+                                  const Color(
+                                0xFF1F2C34,
+                              ),
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration:
+                                  _inputDecoration(
+                                'Class',
+                              ),
+                              items: _classList
+                                  .map(
+                                    (
+                                      value,
+                                    ) =>
+                                        DropdownMenuItem<
+                                            String>(
+                                      value:
+                                          value,
+                                      child:
+                                          Text(value),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged:
+                                  (value) {
+                                if (value !=
+                                    null) {
+                                  setDlgState(
+                                    () =>
+                                        selectedClass =
+                                            value,
+                                  );
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(
+                            width: 10,
+                          ),
+                          Expanded(
+                            child:
+                                TextField(
+                              controller:
+                                  rollCtrl,
+                              keyboardType:
+                                  TextInputType
+                                      .number,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration:
+                                  _inputDecoration(
+                                'Roll No *',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(
+                        height: 10,
+                      ),
+
+                      TextField(
+                        controller:
+                            nameCtrl,
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Student Full Name *',
+                        ),
+                      ),
+
+                      const SizedBox(
+                        height: 10,
+                      ),
+
+                      TextField(
+                        controller:
+                            parentCtrl,
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          "Parent's / Guardian Name *",
+                        ),
+                      ),
+
+                      const SizedBox(
+                        height: 10,
+                      ),
+
+                      TextField(
+                        controller:
+                            contactCtrl,
+                        keyboardType:
+                            TextInputType.phone,
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Contact No *',
+                        ),
+                      ),
+
+                      const SizedBox(
+                        height: 10,
+                      ),
+
+                      DropdownButtonFormField<
+                          String>(
+                        value:
+                            hostelFacility,
+                        dropdownColor:
+                            const Color(
+                          0xFF1F2C34,
+                        ),
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Hostel Facility',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value:
+                                'No',
+                            child: Text(
+                              'Hostel Facility: No',
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value:
+                                'Yes',
+                            child: Text(
+                              'Hostel Facility: Yes',
+                            ),
+                          ),
+                        ],
+                        onChanged:
+                            (value) {
+                          if (value !=
+                              null) {
+                            setDlgState(
+                              () =>
+                                  hostelFacility =
+                                      value,
+                            );
+                          }
+                        },
+                      ),
+
+                      const SizedBox(
+                        height: 10,
+                      ),
+
+                      TextField(
+                        controller:
+                            addressCtrl,
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Address',
+                        ),
+                      ),
+
+                      const SizedBox(
+                        height: 10,
+                      ),
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child:
+                                TextField(
+                              controller:
+                                  districtCtrl,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration:
+                                  _inputDecoration(
+                                'District',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(
+                            width: 10,
+                          ),
+                          Expanded(
+                            child:
+                                TextField(
+                              controller:
+                                  stateCtrl,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration:
+                                  _inputDecoration(
+                                'State',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(
+                        height: 10,
+                      ),
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child:
+                                TextField(
+                              controller:
+                                  pinCtrl,
+                              keyboardType:
+                                  TextInputType
+                                      .number,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration:
+                                  _inputDecoration(
+                                'PIN Code',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(
+                            width: 10,
+                          ),
+                          Expanded(
+                            child:
+                                TextField(
+                              controller:
+                                  admissionDateCtrl,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration:
+                                  _inputDecoration(
+                                'Admission Date',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(
+                        height: 10,
+                      ),
+
+                      TextField(
+                        controller:
+                            dobCtrl,
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Date of Birth',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                OutlinedButton.icon(
+                  style:
+                      OutlinedButton.styleFrom(
+                    side: BorderSide(
+                      color:
+                          selectedPhotoBytes !=
+                                  null
+                              ? const Color(
+                                  0xFF00A884)
+                              : Colors.grey,
+                    ),
+                  ),
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final picker =
+                              ImagePicker();
+
+                          final image =
+                              await picker
+                                  .pickImage(
+                            source:
+                                ImageSource.gallery,
+                            imageQuality:
+                                70,
+                          );
+
+                          if (image ==
+                              null) {
+                            return;
+                          }
+
+                          final bytes =
+                              await image
+                                  .readAsBytes();
+
+                          setDlgState(
+                            () {
+                              selectedPhotoBytes =
+                                  bytes;
+                            },
+                          );
+                        },
+                  icon: Icon(
+                    selectedPhotoBytes !=
+                            null
+                        ? Icons
+                            .check_circle
+                        : Icons
+                            .add_a_photo_outlined,
+                    color:
+                        selectedPhotoBytes !=
+                                null
+                            ? const Color(
+                                0xFF00A884)
+                            : Colors.white70,
+                  ),
+                  label: Text(
+                    selectedPhotoBytes !=
+                            null
+                        ? 'Photo Ready'
+                        : 'Upload Photo',
+                    style:
+                        TextStyle(
+                      color:
+                          selectedPhotoBytes !=
+                                  null
+                              ? const Color(
+                                  0xFF00A884)
+                              : Colors.white70,
+                    ),
+                  ),
+                ),
+
+                TextButton(
+                  onPressed: isSaving
+                      ? null
+                      : () =>
+                          Navigator.pop(
+                        dialogContext,
+                      ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+
+                ElevatedButton(
+                  style:
+                      ElevatedButton.styleFrom(
+                    backgroundColor:
+                        const Color(
+                      0xFF00A884,
+                    ),
+                  ),
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final name =
+                              nameCtrl.text.trim();
+
+                          final parent =
+                              parentCtrl.text.trim();
+
+                          final roll =
+                              rollCtrl.text.trim();
+
+                          final contact =
+                              contactCtrl.text.trim();
+
+                          if (name.isEmpty ||
+                              roll.isEmpty ||
+                              contact.isEmpty) {
+                            ScaffoldMessenger
+                                .of(context)
+                                .showSnackBar(
+                              const SnackBar(
+                                backgroundColor:
+                                    Colors
+                                        .redAccent,
+                                content:
+                                    Text(
+                                  'Name, Roll No aur Contact bharna zaroori hai!',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          setDlgState(() {
+                            isSaving = true;
+                          });
+
+                          final docId =
+                              '${selectedClass}_Roll_$roll';
+
+                          String finalPhotoUrl =
+                              '';
+
+                          bool driveSaved =
+                              false;
+
+                          try {
+                            // ------------------------------------------------
+                            // GET SCRIPT URL FROM SETTINGS
+                            // ------------------------------------------------
+
+                            final configDoc =
+                                await FirebaseFirestore
+                                    .instance
+                                    .collection(
+                                      'school_config',
+                                    )
+                                    .doc(
+                                      'google_drive_account',
+                                    )
+                                    .get();
+
+                            final scriptUrl =
+                                configDoc.data()?[
+                                        'scriptUrl']
+                                    ?.toString()
+                                    .trim();
+
+                            // ------------------------------------------------
+                            // GOOGLE DRIVE / GOOGLE SHEET
+                            // ------------------------------------------------
+
+                            if (scriptUrl != null &&
+                                scriptUrl.isNotEmpty) {
+                              try {
+                                final base64Image =
+                                    selectedPhotoBytes !=
+                                            null
+                                        ? base64Encode(
+                                            selectedPhotoBytes!,
+                                          )
+                                        : '';
+
+                                final response =
+                                    await http.post(
+                                  Uri.parse(
+                                      scriptUrl),
+                                  headers: {
+                                    'Content-Type':
+                                        'application/json',
+                                  },
+                                  body:
+                                      jsonEncode({
+                                    'action':
+                                        'add_student',
+                                    'name':
+                                        name,
+                                    'parentName':
+                                        parent,
+                                    'studentClass':
+                                        selectedClass,
+                                    'roll':
+                                        roll,
+                                    'contact':
+                                        contact,
+                                    'photoBase64':
+                                        base64Image,
+                                    'hostelFacility':
+                                        hostelFacility,
+                                    'address':
+                                        addressCtrl
+                                            .text
+                                            .trim(),
+                                    'district':
+                                        districtCtrl
+                                            .text
+                                            .trim(),
+                                    'state':
+                                        stateCtrl
+                                            .text
+                                            .trim(),
+                                    'pinCode':
+                                        pinCtrl
+                                            .text
+                                            .trim(),
+                                    'joiningDate':
+                                        admissionDateCtrl
+                                            .text
+                                            .trim(),
+                                    'dateOfBirth':
+                                        dobCtrl
+                                            .text
+                                            .trim(),
+                                  }),
+                                );
+
+                                if (response.statusCode ==
+                                    200) {
+                                  final responseJson =
+                                      jsonDecode(
+                                    response.body,
+                                  );
+
+                                  final success =
+                                      responseJson[
+                                              'success'] !=
+                                          false;
+
+                                  if (responseJson[
+                                          'photoUrl'] !=
+                                      null) {
+                                    finalPhotoUrl =
+                                        responseJson[
+                                                'photoUrl']
+                                            .toString();
+                                  }
+
+                                  driveSaved =
+                                      success;
+                                } else {
+                                  debugPrint(
+                                    'Apps Script status: ${response.statusCode}',
+                                  );
+                                }
+                              } catch (e) {
+                                debugPrint(
+                                  'Drive error: $e',
+                                );
+                              }
+                            } else {
+                              debugPrint(
+                                'Apps Script URL not configured',
+                              );
+                            }
+
+                            // ------------------------------------------------
+                            // FIRESTORE
+                            // ------------------------------------------------
+
+                            await FirebaseFirestore
+                                .instance
+                                .collection(
+                                  'students_directory',
+                                )
+                                .doc(docId)
+                                .set({
+                              'name': name,
+                              'parentName':
+                                  parent,
+                              'class':
+                                  selectedClass,
+                              'rollNo':
+                                  roll,
+                              'parentContact':
+                                  contact,
+                              'photoUrl':
+                                  finalPhotoUrl,
+                              'hostelFacility':
+                                  hostelFacility,
+                              'address':
+                                  addressCtrl
+                                      .text
+                                      .trim(),
+                              'pinCode':
+                                  pinCtrl
+                                      .text
+                                      .trim(),
+                              'district':
+                                  districtCtrl
+                                      .text
+                                      .trim(),
+                              'state':
+                                  stateCtrl
+                                      .text
+                                      .trim(),
+                              'joiningDate':
+                                  admissionDateCtrl
+                                      .text
+                                      .trim(),
+                              'dateOfBirth':
+                                  dobCtrl
+                                      .text
+                                      .trim(),
+                              'createdAt':
+                                  FieldValue
+                                      .serverTimestamp(),
+                              'updatedAt':
+                                  FieldValue
+                                      .serverTimestamp(),
+                            });
+
+                            if (!mounted) return;
+
+                            Navigator.pop(
+                              dialogContext,
+                            );
+
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
+                              SnackBar(
+                                backgroundColor:
+                                    driveSaved
+                                        ? const Color(
+                                            0xFF00A884)
+                                        : Colors
+                                            .orangeAccent,
+                                content: Text(
+                                  driveSaved
+                                      ? 'Student aur Photo Google Drive par save ho gaye.'
+                                      : 'Student Firestore me save hua, lekin Google Drive save nahi hua.',
+                                ),
+                              ),
+                            );
+                          } catch (e) {
+                            setDlgState(() {
+                              isSaving = false;
+                            });
+
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
+                              SnackBar(
+                                backgroundColor:
+                                    Colors.redAccent,
+                                content: Text(
+                                  'Student save error: $e',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                  child: Text(
+                    isSaving
+                        ? 'Saving...'
+                        : 'Save Student',
+                    style:
+                        const TextStyle(
+                      color:
+                          Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ----------------------------------------------------------
+  // NOTICE SAVE
+  // ----------------------------------------------------------
+
   Future<void> _saveNotice() async {
-    final title = _noticeTitleController.text.trim();
-    final desc = _noticeDescController.text.trim();
-    if (title.isEmpty || desc.isEmpty) return;
+    final title =
+        _noticeTitleController.text.trim();
 
-    setState(() => _isSavingNotice = true);
+    final description =
+        _noticeDescController.text.trim();
 
-    if (_editingNoticeId == null) {
-      await FirebaseFirestore.instance.collection('school_notices').add({
-        'title': title,
-        'description': desc,
-        'category': _noticeCategory,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-      });
-    } else {
-      await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).update({
-        'title': title,
-        'description': desc,
-        'category': _noticeCategory,
-        'lastEdited': DateTime.now().millisecondsSinceEpoch,
-      });
-    }
-
-    _cancelNoticeEdit();
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    if (title.isEmpty ||
+        description.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
-          backgroundColor: Color(0xFF00A884),
-          content: Text('Notice successfully updated!'),
+          backgroundColor:
+              Colors.redAccent,
+          content:
+              Text('Title aur details bharna zaroori hai.'),
         ),
       );
+      return;
+    }
+
+    setState(() {
+      _isSavingNotice = true;
+    });
+
+    try {
+      if (_editingNoticeId == null) {
+        final now =
+            DateTime.now().millisecondsSinceEpoch;
+
+        await FirebaseFirestore
+            .instance
+            .collection('school_notices')
+            .add({
+          'title': title,
+          'description': description,
+          'category': _noticeCategory,
+          'timestamp': now,
+          'lastEdited': now,
+        });
+      } else {
+        await FirebaseFirestore
+            .instance
+            .collection('school_notices')
+            .doc(_editingNoticeId)
+            .update({
+          'title': title,
+          'description': description,
+          'category': _noticeCategory,
+          'lastEdited':
+              DateTime.now()
+                  .millisecondsSinceEpoch,
+        });
+      }
+
+      if (!mounted) return;
+
+      _cancelNoticeEdit();
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor:
+              Color(0xFF00A884),
+          content:
+              Text('Notice successfully saved!'),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSavingNotice = false;
+        });
+
+        ScaffoldMessenger.of(context)
+            .showSnackBar(
+          SnackBar(
+            backgroundColor:
+                Colors.redAccent,
+            content: Text(
+              'Notice save error: $e',
+            ),
+          ),
+        );
+      }
     }
   }
 
-  void _startEditNotice(String id, Map<String, dynamic> data) {
+  // ----------------------------------------------------------
+  // EDIT NOTICE
+  // ----------------------------------------------------------
+
+  void _startEditNotice(
+    String id,
+    Map<String, dynamic> data,
+  ) {
     setState(() {
       _editingNoticeId = id;
-      _noticeTitleController.text = data['title'] ?? '';
-      _noticeDescController.text = data['description'] ?? '';
-      _noticeCategory = _noticeCategories.contains(data['category']) ? data['category'] : 'General';
+
+      _noticeTitleController.text =
+          data['title']?.toString() ?? '';
+
+      _noticeDescController.text =
+          data['description']?.toString() ??
+              '';
+
+      final category =
+          data['category']?.toString();
+
+      _noticeCategory =
+          _noticeCategories.contains(category)
+              ? category!
+              : 'General';
     });
   }
 
@@ -1200,338 +2856,400 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       _editingNoticeId = null;
       _noticeTitleController.clear();
       _noticeDescController.clear();
+      _noticeCategory = 'Holiday';
       _isSavingNotice = false;
     });
   }
 
-  Future<void> _deleteNotice(String id) async {
-    await FirebaseFirestore.instance.collection('school_notices').doc(id).delete();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+  // ----------------------------------------------------------
+  // DELETE NOTICE
+  // ----------------------------------------------------------
+
+  Future<void> _deleteNotice(
+    String id,
+  ) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('school_notices')
+          .doc(id)
+          .delete();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Notice delete ho gaya!'),
+          backgroundColor:
+              Colors.redAccent,
+          content:
+              Text('Notice delete ho gaya!'),
         ),
       );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(
+          SnackBar(
+            backgroundColor:
+                Colors.redAccent,
+            content:
+                Text('Delete error: $e'),
+          ),
+        );
+      }
     }
   }
-  // Settings Popup (Google Drive Connect / Remove)
-  void _openSettingsDialog() {
-    _driveFolderController.text = _connectedDriveFolder ?? '';
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF1F2C34),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: const Row(
-            children: [
-              Icon(Icons.settings, color: Color(0xFF00A884), size: 22),
-              SizedBox(width: 10),
-              Text('Settings', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Google Drive Integration',
-                  style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Student ID Card aur photos fetch karne ke liye Drive link karein.',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-                const SizedBox(height: 14),
 
-                // Status Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: _connectedDriveFolder != null
-                        ? const Color(0xFF00A884).withOpacity(0.15)
-                        : Colors.orangeAccent.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _connectedDriveFolder != null ? Icons.check_circle : Icons.cloud_off,
-                        color: _connectedDriveFolder != null ? const Color(0xFF00A884) : Colors.orangeAccent,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _connectedDriveFolder != null ? 'Connected' : 'Not Connected',
-                        style: TextStyle(
-                          color: _connectedDriveFolder != null ? const Color(0xFF00A884) : Colors.orangeAccent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 14),
+  // ----------------------------------------------------------
+  // SEARCH STUDENT
+  // ----------------------------------------------------------
 
-                // Input Field
-                TextField(
-                  controller: _driveFolderController,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: _inputDecoration('Drive Folder URL / Folder ID'),
-                ),
-                const SizedBox(height: 14),
-
-                // Action Buttons: Connect/Update & Remove
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                        onPressed: () {
-                          final text = _driveFolderController.text.trim();
-                          if (text.isNotEmpty) {
-                            setState(() => _connectedDriveFolder = text);
-                            Navigator.pop(ctx);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                backgroundColor: Color(0xFF00A884),
-                                content: Text('Google Drive successfully connected!'),
-                              ),
-                            );
-                          }
-                        },
-                        icon: const Icon(Icons.add_link, color: Colors.white, size: 16),
-                        label: Text(
-                          _connectedDriveFolder != null ? 'Update Link' : 'Connect Drive',
-                          style: const TextStyle(color: Colors.white, fontSize: 12),
-                        ),
-                      ),
-                    ),
-                    if (_connectedDriveFolder != null) ...[
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent)),
-                        onPressed: () {
-                          setState(() {
-                            _connectedDriveFolder = null;
-                            _driveFolderController.clear();
-                          });
-                          Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              backgroundColor: Colors.redAccent,
-                              content: Text('Google Drive folder removed.'),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.link_off, color: Colors.redAccent, size: 16),
-                        label: const Text('Remove', style: TextStyle(color: Colors.redAccent, fontSize: 12)),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Close', style: TextStyle(color: Colors.grey)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-  void _showNoticeDetailDialog(Map<String, dynamic> data) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1F2C34),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00A884).withOpacity(0.2),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                data['category'] ?? 'General',
-                style: const TextStyle(color: Color(0xFF00A884), fontSize: 12, fontWeight: FontWeight.bold),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                data['title'] ?? '',
-                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Text(
-            data['description'] ?? '',
-            style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close', style: TextStyle(color: Color(0xFF00A884))),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // 2. Student Search Function
   Future<void> _searchStudent() async {
-    final roll = _rollController.text.trim();
+    final roll =
+        _rollController.text.trim();
+
     if (roll.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kripya Roll Number bharein')),
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          content:
+              Text('Kripya Roll Number bharein'),
+        ),
       );
       return;
     }
 
-    setState(() => _isSearchingStudent = true);
-    final docId = '${_directoryClass}_Roll_$roll';
+    setState(() {
+      _isSearchingStudent = true;
+    });
 
-    final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+    try {
+      final docId =
+          '${_directoryClass}_Roll_$roll';
 
-    if (doc.exists) {
-      final data = doc.data()!;
-      _nameController.text = data['name'] ?? '';
-      _parentContactController.text = data['parentContact'] ?? '';
-      _studentPhotoUrl = data['photoUrl']; // Photo link fetch
+      final doc = await FirebaseFirestore
+          .instance
+          .collection('students_directory')
+          .doc(docId)
+          .get();
+
+      if (doc.exists) {
+        final data =
+            doc.data()!;
+
+        _nameController.text =
+            data['name']?.toString() ?? '';
+
+        _parentContactController.text =
+            data['parentContact']?.toString() ??
+                '';
+
+        _studentPhotoUrl =
+            data['photoUrl']?.toString();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(
+            const SnackBar(
+              backgroundColor:
+                  Color(0xFF00A884),
+              content:
+                  Text('Student mil gaya!'),
+            ),
+          );
+        }
+      } else {
+        _nameController.clear();
+        _parentContactController.clear();
+        _studentPhotoUrl = null;
+
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(
+            const SnackBar(
+              backgroundColor:
+                  Colors.redAccent,
+              content: Text(
+                'Is Roll No ka koi student nahi mila!',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Color(0xFF00A884),
-            content: Text('Student mil gaya!'),
+        ScaffoldMessenger.of(context)
+            .showSnackBar(
+          SnackBar(
+            backgroundColor:
+                Colors.redAccent,
+            content:
+                Text('Search error: $e'),
           ),
         );
       }
-    } else {
-      _nameController.clear();
-      _parentContactController.clear();
+    } finally {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('Is Roll No ka koi student nahi mila!'),
-          ),
-        );
+        setState(() {
+          _isSearchingStudent = false;
+        });
       }
     }
-
-    setState(() => _isSearchingStudent = false);
   }
 
-  // 3. Teacher Add Placeholder Dialog
+  // ----------------------------------------------------------
+  // TEACHER DIALOG
+  // ----------------------------------------------------------
+
   void _openAddTeacherDialog() {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Add Teacher', style: TextStyle(color: Colors.white, fontSize: 16)),
+      builder: (ctx) =>
+          AlertDialog(
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title: const Text(
+          'Add Teacher',
+          style: TextStyle(
+            color: Colors.white,
+          ),
+        ),
         content: const Text(
-          'Fields baad mein jode jayenge. Option abhi ready hai.',
-          style: TextStyle(color: Colors.grey, fontSize: 13),
+          'Teacher database fields baad mein connect kiye ja sakte hain. Yeh button abhi ready hai.',
+          style: TextStyle(
+            color: Colors.grey,
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close', style: TextStyle(color: Color(0xFF00A884))),
+            onPressed: () =>
+                Navigator.pop(ctx),
+            child: const Text(
+              'Close',
+              style: TextStyle(
+                color:
+                    Color(0xFF00A884),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-// Exact School ID Card Format with Complete Details & Working Download
-  void _showIdCardPreview() async {
-    final name = _nameController.text.trim().isEmpty ? 'Student Name' : _nameController.text.trim();
-    final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
-    final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
+  // ----------------------------------------------------------
+  // PROFILE
+  // ----------------------------------------------------------
 
-    // Firestore se baki fields (Father Name, Address, etc.) fetch karne ke liye
+  void _showProfileDialog() {
+    final user =
+        FirebaseAuth.instance.currentUser;
+
+    showDialog(
+      context: context,
+      builder: (ctx) =>
+          AlertDialog(
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title: const Text(
+          'Admin Profile',
+          style: TextStyle(
+            color: Colors.white,
+          ),
+        ),
+        content: Text(
+          user?.email ?? 'Admin',
+          style: const TextStyle(
+            color: Colors.white70,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(ctx),
+            child: const Text(
+              'Close',
+              style: TextStyle(
+                color:
+                    Color(0xFF00A884),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ----------------------------------------------------------
+  // ID CARD PREVIEW
+  // ----------------------------------------------------------
+
+  Future<void> _showIdCardPreview() async {
+    final name =
+        _nameController.text.trim().isEmpty
+            ? 'Student Name'
+            : _nameController.text.trim();
+
+    final roll =
+        _rollController.text.trim().isEmpty
+            ? '01'
+            : _rollController.text.trim();
+
+    final contact =
+        _parentContactController.text
+                .trim()
+                .isEmpty
+            ? 'Not Available'
+            : _parentContactController.text
+                .trim();
+
     String parentName = 'N/A';
     String address = 'N/A';
     String district = '';
     String state = '';
     String pinCode = '';
+    String admissionDate = 'N/A';
+    String dob = 'N/A';
 
-    String? fetchedPhotoUrl = _studentPhotoUrl;
+    String? fetchedPhotoUrl =
+        _studentPhotoUrl;
 
     try {
-      final docId = '${_directoryClass}_Roll_$roll';
-      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+      final docId =
+          '${_directoryClass}_Roll_$roll';
+
+      final doc = await FirebaseFirestore
+          .instance
+          .collection(
+              'students_directory')
+          .doc(docId)
+          .get();
+
       if (doc.exists) {
-        final data = doc.data()!;
-        parentName = data['parentName'] ?? 'N/A';
-        address = data['address'] ?? 'N/A';
-        district = data['district'] ?? '';
-        state = data['state'] ?? '';
-        pinCode = data['pinCode'] ?? '';
-        if (data['photoUrl'] != null && data['photoUrl'].toString().isNotEmpty) {
-          fetchedPhotoUrl = data['photoUrl'];
+        final data =
+            doc.data()!;
+
+        parentName =
+            data['parentName']
+                    ?.toString() ??
+                'N/A';
+
+        address =
+            data['address']
+                    ?.toString() ??
+                'N/A';
+
+        district =
+            data['district']
+                    ?.toString() ??
+                '';
+
+        state =
+            data['state']
+                    ?.toString() ??
+                '';
+
+        pinCode =
+            data['pinCode']
+                    ?.toString() ??
+                '';
+
+        admissionDate =
+            data['joiningDate']
+                    ?.toString() ??
+                'N/A';
+
+        dob =
+            data['dateOfBirth']
+                    ?.toString() ??
+                'N/A';
+
+        final dbPhoto =
+            data['photoUrl']
+                ?.toString();
+
+        if (dbPhoto != null &&
+            dbPhoto.isNotEmpty) {
+          fetchedPhotoUrl =
+              dbPhoto;
         }
-    }
+      }
     } catch (e) {
-      debugPrint('Error fetching extra details: $e');
+      debugPrint(
+        'ID card fetch error: $e',
+      );
     }
 
     if (!mounted) return;
 
     showDialog(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
+      builder: (ctx) =>
+          Dialog(
+        backgroundColor:
+            Colors.transparent,
         child: Container(
-          width: 340,
-          decoration: BoxDecoration(
+          width: 370,
+          decoration:
+              BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 15)],
+            borderRadius:
+                BorderRadius.circular(
+              16,
+            ),
           ),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize:
+                MainAxisSize.min,
             children: [
-              // 1. Header (School Name & Logo Bar)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: const BoxDecoration(
-                  color: Color(0xFFC85A17), // Theme Dark Orange
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(16),
-                    topRight: Radius.circular(16),
+                padding:
+                    const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration:
+                    const BoxDecoration(
+                  color: Color(
+                    0xFFC85A17,
+                  ),
+                  borderRadius:
+                      BorderRadius.only(
+                    topLeft:
+                        Radius.circular(
+                      16,
+                    ),
+                    topRight:
+                        Radius.circular(
+                      16,
+                    ),
                   ),
                 ),
                 child: const Row(
                   children: [
                     CircleAvatar(
                       radius: 18,
-                      backgroundColor: Colors.white,
-                      child: Icon(Icons.school, color: Color(0xFFC85A17), size: 20),
+                      backgroundColor:
+                          Colors.white,
+                      child: Icon(
+                        Icons.school,
+                        color: Color(
+                          0xFFC85A17,
+                        ),
+                        size: 20,
+                      ),
                     ),
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'SARASWATI VIDYA NIKETAN,MADHABDHAM',
-                        style: TextStyle(
-                          color: Colors.white,
+                        'SARASWATI VIDYA NIKETAN, MADHABDHAM',
+                        style:
+                            TextStyle(
+                          color:
+                              Colors.white,
                           fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
+                          fontWeight:
+                              FontWeight.bold,
                         ),
                       ),
                     ),
@@ -1539,104 +3257,240 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
               ),
 
-              const SizedBox(height: 10),
+              const SizedBox(
+                height: 12,
+              ),
 
-              // 2. Drive Photo with Border
               Container(
                 width: 85,
                 height: 100,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFC85A17), width: 2),
-                  color: const Color(0xFFECEFF1),
+                decoration:
+                    BoxDecoration(
+                  borderRadius:
+                      BorderRadius.circular(
+                    10,
+                  ),
+                  border:
+                      Border.all(
+                    color: const Color(
+                      0xFFC85A17,
+                    ),
+                    width: 2,
+                  ),
+                  color:
+                      const Color(
+                    0xFFECEFF1,
+                  ),
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: (fetchedPhotoUrl != null && fetchedPhotoUrl!.isNotEmpty)
+                  borderRadius:
+                      BorderRadius.circular(
+                    8,
+                  ),
+                  child: fetchedPhotoUrl !=
+                              null &&
+                          fetchedPhotoUrl!
+                              .isNotEmpty
                       ? Image.network(
                           fetchedPhotoUrl!,
                           fit: BoxFit.cover,
-                          errorBuilder: (ctx, err, stack) =>
-                              const Icon(Icons.person, size: 45, color: Colors.grey),
+                          errorBuilder:
+                              (
+                            context,
+                            error,
+                            stackTrace,
+                          ) {
+                            return const Icon(
+                              Icons.person,
+                              size: 45,
+                              color:
+                                  Colors.grey,
+                            );
+                          },
                         )
-                      : const Icon(Icons.person, size: 45, color: Colors.grey),
+                      : const Icon(
+                          Icons.person,
+                          size: 45,
+                          color:
+                              Colors.grey,
+                        ),
                 ),
               ),
 
-              const SizedBox(height: 8),
+              const SizedBox(
+                height: 8,
+              ),
 
-              // 3. STUDENT ID CARD Badge
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFC85A17),
-                  borderRadius: BorderRadius.circular(6),
+                padding:
+                    const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 3,
+                ),
+                decoration:
+                    BoxDecoration(
+                  color:
+                      const Color(
+                    0xFFC85A17,
+                  ),
+                  borderRadius:
+                      BorderRadius.circular(
+                    6,
+                  ),
                 ),
                 child: const Text(
                   'STUDENT ID CARD',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                  style:
+                      TextStyle(
+                    color:
+                        Colors.white,
+                    fontWeight:
+                        FontWeight.bold,
+                    fontSize: 10,
+                  ),
                 ),
               ),
 
-              const SizedBox(height: 10),
+              const SizedBox(
+                height: 10,
+              ),
 
-              // 4. Details Section (All requested fields included)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding:
+                    const EdgeInsets.symmetric(
+                  horizontal: 16,
+                ),
                 child: Column(
                   children: [
-                    _idCardField('Name', name),
-                    _idCardField('Father Name', parentName),
-                    _idCardField('Class', _directoryClass),
-                    _idCardField('Roll No', roll),
-                    _idCardField('Contact No', contact),
-                    _idCardField('Address', '$address, $district, $state - $pinCode'),
+                    _idCardField(
+                      'Name',
+                      name,
+                    ),
+                    _idCardField(
+                      'Father Name',
+                      parentName,
+                    ),
+                    _idCardField(
+                      'Class',
+                      _directoryClass,
+                    ),
+                    _idCardField(
+                      'Roll No',
+                      roll,
+                    ),
+                    _idCardField(
+                      'Contact',
+                      contact,
+                    ),
+                    _idCardField(
+                      'DOB',
+                      dob,
+                    ),
+                    _idCardField(
+                      'Admission',
+                      admissionDate,
+                    ),
+                    _idCardField(
+                      'Address',
+                      '$address, $district, $state - $pinCode',
+                    ),
                   ],
                 ),
               ),
 
-              const SizedBox(height: 10),
+              const SizedBox(
+                height: 10,
+              ),
 
-              // 5. Signature & Download Options Bar
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 6,
+                ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  mainAxisAlignment:
+                      MainAxisAlignment
+                          .spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    const Column(
+                      crossAxisAlignment:
+                          CrossAxisAlignment
+                              .start,
                       children: [
-                        Container(width: 65, height: 1, color: Colors.black45),
-                        const SizedBox(height: 2),
-                        const Text('Principal Sign', style: TextStyle(color: Colors.black87, fontSize: 8, fontWeight: FontWeight.w600)),
+                        SizedBox(
+                          width: 70,
+                          child: Divider(
+                            color:
+                                Colors.black45,
+                          ),
+                        ),
+                        Text(
+                          'Principal Sign',
+                          style:
+                              TextStyle(
+                            fontSize: 8,
+                            color:
+                                Colors.black87,
+                          ),
+                        ),
                       ],
                     ),
                     Row(
                       children: [
                         TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Close', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                          onPressed: () =>
+                              Navigator.pop(
+                            ctx,
+                          ),
+                          child:
+                              const Text(
+                            'Close',
+                            style:
+                                TextStyle(
+                              color:
+                                  Colors.grey,
+                            ),
+                          ),
                         ),
                         ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF00A884),
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          style:
+                              ElevatedButton
+                                  .styleFrom(
+                            backgroundColor:
+                                const Color(
+                              0xFF00A884,
+                            ),
                           ),
                           onPressed: () {
-                            Navigator.pop(context);
+                            Navigator.pop(
+                              ctx,
+                            );
                             _downloadIdCard();
                           },
-                          icon: const Icon(Icons.download, color: Colors.white, size: 12),
-                          label: const Text('Download', style: TextStyle(color: Colors.white, fontSize: 10)),
+                          icon:
+                              const Icon(
+                            Icons.download,
+                            color:
+                                Colors.white,
+                            size: 14,
+                          ),
+                          label:
+                              const Text(
+                            'Download',
+                            style:
+                                TextStyle(
+                              color:
+                                  Colors.white,
+                              fontSize: 11,
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 6),
             ],
           ),
         ),
@@ -1644,96 +3498,225 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  // 1. Web par Complete ID Card data download karne ka updated function
-  void _downloadIdCard() async {
-    final name = _nameController.text.trim().isEmpty ? 'Student' : _nameController.text.trim();
-    final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
-    final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
+  // ----------------------------------------------------------
+  // DOWNLOAD ID CARD DETAILS
+  // ----------------------------------------------------------
 
-    // Firestore se baki fields fetch karna
+  Future<void> _downloadIdCard() async {
+    final name =
+        _nameController.text.trim().isEmpty
+            ? 'Student'
+            : _nameController.text.trim();
+
+    final roll =
+        _rollController.text.trim().isEmpty
+            ? '01'
+            : _rollController.text.trim();
+
+    final contact =
+        _parentContactController.text.trim().isEmpty
+            ? 'Not Available'
+            : _parentContactController.text
+                .trim();
+
     String parentName = 'N/A';
     String address = 'N/A';
     String district = 'N/A';
     String state = 'N/A';
     String pinCode = 'N/A';
-    String photoInfo = _studentPhotoUrl != null && _studentPhotoUrl!.isNotEmpty ? _studentPhotoUrl! : 'No Photo Uploaded';
+    String admissionDate = 'N/A';
+    String dob = 'N/A';
+
+    String photoInfo =
+        (_studentPhotoUrl != null &&
+                _studentPhotoUrl!.isNotEmpty)
+            ? _studentPhotoUrl!
+            : 'No Photo Uploaded';
 
     try {
-      final docId = '${_directoryClass}_Roll_$roll';
-      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+      final docId =
+          '${_directoryClass}_Roll_$roll';
+
+      final doc = await FirebaseFirestore
+          .instance
+          .collection(
+              'students_directory')
+          .doc(docId)
+          .get();
+
       if (doc.exists) {
-        final data = doc.data()!;
-        parentName = data['parentName'] ?? 'N/A';
-        address = data['address'] ?? 'N/A';
-        district = data['district'] ?? 'N/A';
-        state = data['state'] ?? 'N/A';
-        pinCode = data['pinCode'] ?? 'N/A';
-        if (data['photoUrl'] != null && data['photoUrl'].toString().isNotEmpty) {
-          photoInfo = data['photoUrl'];
+        final data =
+            doc.data()!;
+
+        parentName =
+            data['parentName']
+                    ?.toString() ??
+                'N/A';
+
+        address =
+            data['address']
+                    ?.toString() ??
+                'N/A';
+
+        district =
+            data['district']
+                    ?.toString() ??
+                'N/A';
+
+        state =
+            data['state']
+                    ?.toString() ??
+                'N/A';
+
+        pinCode =
+            data['pinCode']
+                    ?.toString() ??
+                'N/A';
+
+        admissionDate =
+            data['joiningDate']
+                    ?.toString() ??
+                'N/A';
+
+        dob =
+            data['dateOfBirth']
+                    ?.toString() ??
+                'N/A';
+
+        final photoUrl =
+            data['photoUrl']
+                ?.toString();
+
+        if (photoUrl != null &&
+            photoUrl.isNotEmpty) {
+          photoInfo =
+              photoUrl;
         }
       }
     } catch (e) {
-      debugPrint('Error fetching details for download: $e');
+      debugPrint(
+        'Download fetch error: $e',
+      );
     }
 
-    // ID Card ka poora detailed text content
-    final idCardContent = '''
+    final content = '''
 ========================================
- SARASWATI VIDYANIKETAN, MADHABDHAM
+ SARASWATI VIDYA NIKETAN, MADHABDHAM
 ========================================
-            STUDENT ID CARD
+             STUDENT ID CARD
 ----------------------------------------
 Student Name   : $name
 Father Name    : $parentName
 Class          : $_directoryClass
 Roll No        : $roll
 Contact No     : $contact
+Date of Birth  : $dob
+Admission Date : $admissionDate
 Address        : $address
 District       : $district
 State          : $state
 PIN Code       : $pinCode
-----------------------------------------
 Photo Link     : $photoInfo
-========================================
+----------------------------------------
            Principal Signature
+========================================
 ''';
 
-    // Web browser ke zariye file download trigger karna
-    final bytes = utf8.encode(idCardContent);
-    final blob = html.Blob([bytes]);
-    final url = html.Url.createObjectUrlFromBlob(blob);
-    final anchor = html.AnchorElement(href: url)
-      ..setAttribute("download", "ID_Card_${name}_Roll_$roll.txt")
-      ..click();
+    final bytes =
+        utf8.encode(content);
+
+    final blob =
+        html.Blob([bytes], 'text/plain');
+
+    final url =
+        html.Url.createObjectUrlFromBlob(
+      blob,
+    );
+
+    final anchor =
+        html.AnchorElement(href: url)
+          ..setAttribute(
+            'download',
+            'ID_Card_${name}_Roll_$roll.txt',
+          )
+          ..style.display = 'none';
+
+    html.document.body?.children
+        .add(anchor);
+
+    anchor.click();
+
+    anchor.remove();
+
     html.Url.revokeObjectUrl(url);
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
-          backgroundColor: Color(0xFF00A884),
-          content: Text('ID Card successfully download ho gaya hai!'),
+          backgroundColor:
+              Color(0xFF00A884),
+          content: Text(
+            'ID Card details download ho gaye.',
+          ),
         ),
       );
     }
   }
-  Widget _idCardField(String label, String value) {
+
+  // ----------------------------------------------------------
+  // ID CARD FIELD
+  // ----------------------------------------------------------
+
+  Widget _idCardField(
+    String label,
+    String value,
+  ) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding:
+          const EdgeInsets.symmetric(
+        vertical: 2,
+      ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 75,
+            width: 80,
             child: Text(
               label,
-              style: const TextStyle(color: Color(0xFFC85A17), fontWeight: FontWeight.bold, fontSize: 11),
+              style:
+                  const TextStyle(
+                color:
+                    Color(0xFFC85A17),
+                fontWeight:
+                    FontWeight.bold,
+                fontSize: 10,
+              ),
             ),
           ),
-          const Text(': ', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 11)),
+          const Text(
+            ': ',
+            style:
+                TextStyle(
+              color:
+                  Colors.black87,
+              fontWeight:
+                  FontWeight.bold,
+              fontSize: 10,
+            ),
+          ),
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 11),
+              style:
+                  const TextStyle(
+                color:
+                    Colors.black87,
+                fontWeight:
+                    FontWeight.w600,
+                fontSize: 10,
+              ),
             ),
           ),
         ],
@@ -1741,43 +3724,121 @@ Photo Link     : $photoInfo
     );
   }
 
+  // ----------------------------------------------------------
+  // ADMIN BUILD
+  // ----------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121B22),
-appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Admin Command Center'),
+      backgroundColor:
+          const Color(0xFF121B22),
+      appBar: AppBar(
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title: const Text(
+          'Admin Command Center',
+        ),
         actions: [
           PopupMenuButton<String>(
-            color: const Color(0xFF1F2C34),
-            icon: const Icon(Icons.more_vert, color: Colors.white),
+            color:
+                const Color(0xFF1F2C34),
+            icon: const Icon(
+              Icons.more_vert,
+              color: Colors.white,
+            ),
             onSelected: (value) {
-              if (value == 'settings') {
+              if (value ==
+                  'profile') {
+                _showProfileDialog();
+              } else if (value ==
+                  'settings') {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                  MaterialPageRoute(
+                    builder:
+                        (context) =>
+                            const SettingsScreen(),
+                  ),
+                );
+              } else if (value ==
+                  'logout') {
+                FirebaseAuth.instance
+                    .signOut();
+
+                Navigator.popUntil(
+                  context,
+                  (route) =>
+                      route.isFirst,
                 );
               }
             },
-            itemBuilder: (BuildContext context) => [
-              const PopupMenuItem<String>(
+            itemBuilder:
+                (BuildContext context) =>
+                    const [
+              PopupMenuItem<String>(
                 value: 'profile',
                 child: Row(
                   children: [
-                    Icon(Icons.person_outline, color: Color(0xFF00A884), size: 20),
+                    Icon(
+                      Icons.person_outline,
+                      color:
+                          Color(0xFF00A884),
+                      size: 20,
+                    ),
                     SizedBox(width: 12),
-                    Text('Profile', style: TextStyle(color: Colors.white)),
+                    Text(
+                      'Profile',
+                      style:
+                          TextStyle(
+                        color:
+                            Colors.white,
+                      ),
+                    ),
                   ],
                 ),
               ),
-              const PopupMenuItem<String>(
+              PopupMenuItem<String>(
                 value: 'settings',
                 child: Row(
                   children: [
-                    Icon(Icons.settings_outlined, color: Color(0xFF00A884), size: 20),
+                    Icon(
+                      Icons.settings_outlined,
+                      color:
+                          Color(0xFF00A884),
+                      size: 20,
+                    ),
                     SizedBox(width: 12),
-                    Text('Settings', style: TextStyle(color: Colors.white)),
+                    Text(
+                      'Settings',
+                      style:
+                          TextStyle(
+                        color:
+                            Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.logout,
+                      color:
+                          Colors.redAccent,
+                      size: 20,
+                    ),
+                    SizedBox(width: 12),
+                    Text(
+                      'Logout',
+                      style:
+                          TextStyle(
+                        color:
+                            Colors.redAccent,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1785,407 +3846,1106 @@ appBar: AppBar(
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ================= LEFT COLUMN =================
-            Expanded(
-              flex: 1,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // --- DIGITAL NOTICE BOARD ---
-                  _buildSectionHeader('Digital Notice Board', Icons.campaign),
-                  _buildCardWrapper(
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: _noticeCategory,
-                                dropdownColor: const Color(0xFF1F2C34),
-                                style: const TextStyle(color: Colors.white),
-                                decoration: _inputDecoration('Notice Type'),
-                                items: _noticeCategories.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
-                                onChanged: (val) => setState(() => _noticeCategory = val!),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: _noticeTitleController,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Title (e.g. Summer Vacation / Unit Test)'),
-                        ),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: _noticeDescController,
-                          maxLines: 2,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Details / Instructions...'),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                                onPressed: _isSavingNotice ? null : _saveNotice,
-                                icon: Icon(_editingNoticeId == null ? Icons.campaign : Icons.check, color: Colors.white, size: 18),
-                                label: Text(
-                                  _editingNoticeId == null ? 'Publish Notice' : 'Update Notice',
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                              ),
-                            ),
-                            if (_editingNoticeId != null) ...[
-                              const SizedBox(width: 8),
-                              IconButton(
-                                onPressed: _cancelNoticeEdit,
-                                icon: const Icon(Icons.close, color: Colors.redAccent),
-                                tooltip: 'Cancel Edit',
-                              ),
-                            ],
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
 
-                  // --- STUDENT DIRECTORY HEADER WITH ADD BUTTON ---
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _buildSectionHeader('Student Directory & ID Cards', Icons.badge_outlined),
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF00A884),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                        onPressed: _openAddStudentDialog,
-                        icon: const Icon(Icons.add, color: Colors.white, size: 16),
-                        label: const Text('Add Student', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                      ),
-                    ],
+      body:
+          LayoutBuilder(
+        builder:
+            (context, constraints) {
+          final isWide =
+              constraints.maxWidth >=
+                  900;
+
+          if (!isWide) {
+            return SingleChildScrollView(
+              padding:
+                  const EdgeInsets.all(
+                16,
+              ),
+              child: Column(
+                children: [
+                  _buildLeftColumn(),
+                  const SizedBox(
+                    height: 24,
                   ),
-                  _buildCardWrapper(
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: _directoryClass,
-                                dropdownColor: const Color(0xFF1F2C34),
-                                style: const TextStyle(color: Colors.white),
-                                decoration: _inputDecoration('Class'),
-                                items: _classList.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                                onChanged: (val) => setState(() => _directoryClass = val!),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: TextField(
-                                controller: _rollController,
-                                keyboardType: TextInputType.number,
-                                style: const TextStyle(color: Colors.white),
-                                decoration: _inputDecoration('Roll No'),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: _nameController,
-                          readOnly: true,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Student Full Name (Auto Fetched)'),
-                        ),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: _parentContactController,
-                          readOnly: true,
-                          keyboardType: TextInputType.phone,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Parent Contact No (Auto Fetched)'),
-                        ),
-                        const SizedBox(height: 14),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                                onPressed: _isSearchingStudent ? null : _searchStudent,
-                                icon: const Icon(Icons.search, color: Colors.white, size: 18),
-                                label: Text(_isSearchingStudent ? 'Searching...' : 'Search Record', style: const TextStyle(color: Colors.white)),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(color: Color(0xFF00A884)),
-                                ),
-                                onPressed: _showIdCardPreview,
-                                icon: const Icon(Icons.visibility, color: Color(0xFF00A884), size: 18),
-                                label: const Text('View ID Card', style: TextStyle(color: Color(0xFF00A884))),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF2A3942),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                side: const BorderSide(color: Color(0xFF00A884), width: 1),
-                              ),
-                            ),
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (context) => const AllStudentsListScreen()),
-                              );
-                            },
-                            icon: const Icon(Icons.people_alt_outlined, color: Color(0xFF00A884), size: 18),
-                            label: const Text(
-                              'View All Students (Class 1-10)',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  _buildRightColumn(),
                 ],
               ),
+            );
+          }
+
+          return SingleChildScrollView(
+            padding:
+                const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child:
+                      _buildLeftColumn(),
+                ),
+                const SizedBox(
+                  width: 20,
+                ),
+                Expanded(
+                  child:
+                      _buildRightColumn(),
+                ),
+              ],
             ),
-
-            const SizedBox(width: 20),
-
-            // ================= RIGHT COLUMN =================
-            Expanded(
-              flex: 1,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // --- RIGHT TOP: TEACHERS DIRECTORY ---
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _buildSectionHeader('Teachers Directory', Icons.person_add_alt_1),
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF00A884),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                        onPressed: _openAddTeacherDialog,
-                        icon: const Icon(Icons.add, color: Colors.white, size: 16),
-                        label: const Text('Add Teacher', style: TextStyle(color: Colors.white, fontSize: 12)),
-                      ),
-                    ],
-                  ),
-                  _buildCardWrapper(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Registered Teachers List:', style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 10),
-                        ListView.separated(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _teachersList.length,
-                          separatorBuilder: (ctx, i) => const Divider(color: Colors.white12, height: 12),
-                          itemBuilder: (context, index) {
-                            final teacher = _teachersList[index];
-                            return ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              dense: true,
-                              leading: const CircleAvatar(
-                                radius: 18,
-                                backgroundColor: Color(0xFF121B22),
-                                child: Icon(Icons.school, color: Color(0xFF00A884), size: 18),
-                              ),
-                              title: Text(teacher['name']!, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                              subtitle: Text('${teacher['subject']} • ${teacher['phone']}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
-                              trailing: const Icon(Icons.more_vert, color: Colors.grey, size: 18),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // --- RIGHT BOTTOM: PUBLISHED NOTICES (SCROLLABLE + PREVIEW/EDIT/DELETE) ---
-                  _buildSectionHeader('Published Notices', Icons.article_outlined),
-                  _buildCardWrapper(
-                    child: SizedBox(
-                      height: 280, // 4 notices ke baad scroll hoga
-                      child: StreamBuilder<QuerySnapshot>(
-                        stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) {
-                            return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
-                          }
-                          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                            return const Center(
-                              child: Text('Koi notice published nahi hai.', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                            );
-                          }
-                          return ListView.builder(
-                            itemCount: snapshot.data!.docs.length,
-                            itemBuilder: (context, index) {
-                              final doc = snapshot.data!.docs[index];
-                              final data = doc.data() as Map<String, dynamic>;
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF121B22),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.white10),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: const Color(0xFF00A884).withOpacity(0.2),
-                                                  borderRadius: BorderRadius.circular(4),
-                                                ),
-                                                child: Text(
-                                                  data['category'] ?? 'General',
-                                                  style: const TextStyle(color: Color(0xFF00A884), fontSize: 10, fontWeight: FontWeight.bold),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Expanded(
-                                                child: Text(
-                                                  data['title'] ?? '',
-                                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            data['description'] ?? '',
-                                            style: const TextStyle(color: Colors.grey, fontSize: 11),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    // 1. Preview
-                                    IconButton(
-                                      icon: const Icon(Icons.visibility, color: Colors.tealAccent, size: 18),
-                                      tooltip: 'Preview Notice',
-                                      onPressed: () => _showNoticeDetailDialog(data),
-                                    ),
-                                    // 2. Edit
-                                    IconButton(
-                                      icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 18),
-                                      tooltip: 'Edit Notice',
-                                      onPressed: () => _startEditNotice(doc.id, data),
-                                    ),
-                                    // 3. Delete
-                                    IconButton(
-                                      icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-                                      tooltip: 'Delete Notice',
-                                    onPressed: () => _deleteNotice(doc.id),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildSectionHeader(String title, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Row(
-        children: [
-          Icon(icon, color: const Color(0xFF00A884), size: 20),
-          const SizedBox(width: 8),
-          Text(
-            title,
-            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+  // ----------------------------------------------------------
+  // LEFT COLUMN
+  // ----------------------------------------------------------
+
+  Widget _buildLeftColumn() {
+    return Column(
+      crossAxisAlignment:
+          CrossAxisAlignment.start,
+      children: [
+        _buildSectionHeader(
+          'Digital Notice Board',
+          Icons.campaign,
+        ),
+
+        _buildCardWrapper(
+          child: Column(
+            children: [
+              DropdownButtonFormField<
+                  String>(
+                value:
+                    _noticeCategory,
+                dropdownColor:
+                    const Color(
+                  0xFF1F2C34,
+                ),
+                style:
+                    const TextStyle(
+                  color:
+                      Colors.white,
+                ),
+                decoration:
+                    _inputDecoration(
+                  'Notice Type',
+                ),
+                items:
+                    _noticeCategories
+                        .map(
+                          (
+                            category,
+                          ) =>
+                              DropdownMenuItem<
+                                  String>(
+                            value:
+                                category,
+                            child: Text(
+                              category,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                onChanged:
+                    (value) {
+                  if (value !=
+                      null) {
+                    setState(
+                      () =>
+                          _noticeCategory =
+                              value,
+                    );
+                  }
+                },
+              ),
+
+              const SizedBox(
+                height: 10,
+              ),
+
+              TextField(
+                controller:
+                    _noticeTitleController,
+                style:
+                    const TextStyle(
+                  color:
+                      Colors.white,
+                ),
+                decoration:
+                    _inputDecoration(
+                  'Title',
+                ),
+              ),
+
+              const SizedBox(
+                height: 10,
+              ),
+
+              TextField(
+                controller:
+                    _noticeDescController,
+                maxLines: 3,
+                style:
+                    const TextStyle(
+                  color:
+                      Colors.white,
+                ),
+                decoration:
+                    _inputDecoration(
+                  'Details / Instructions',
+                ),
+              ),
+
+              const SizedBox(
+                height: 12,
+              ),
+
+              Row(
+                children: [
+                  Expanded(
+                    child:
+                        ElevatedButton.icon(
+                      style:
+                          ElevatedButton
+                              .styleFrom(
+                        backgroundColor:
+                            const Color(
+                          0xFF00A884,
+                        ),
+                      ),
+                      onPressed:
+                          _isSavingNotice
+                              ? null
+                              : _saveNotice,
+                      icon:
+                          Icon(
+                        _editingNoticeId ==
+                                null
+                            ? Icons.campaign
+                            : Icons.check,
+                        color:
+                            Colors.white,
+                        size: 18,
+                      ),
+                      label:
+                          Text(
+                        _editingNoticeId ==
+                                null
+                            ? 'Publish Notice'
+                            : 'Update Notice',
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_editingNoticeId !=
+                      null)
+                    IconButton(
+                      onPressed:
+                          _cancelNoticeEdit,
+                      icon:
+                          const Icon(
+                        Icons.close,
+                        color:
+                            Colors.redAccent,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(
+          height: 24,
+        ),
+
+        Row(
+          mainAxisAlignment:
+              MainAxisAlignment
+                  .spaceBetween,
+          children: [
+            Expanded(
+              child:
+                  _buildSectionHeader(
+                'Student Directory & ID Cards',
+                Icons.badge_outlined,
+              ),
+            ),
+            ElevatedButton.icon(
+              style:
+                  ElevatedButton
+                      .styleFrom(
+                backgroundColor:
+                    const Color(
+                  0xFF00A884,
+                ),
+              ),
+              onPressed:
+                  _openAddStudentDialog,
+              icon:
+                  const Icon(
+                Icons.add,
+                color:
+                    Colors.white,
+                size: 16,
+              ),
+              label:
+                  const Text(
+                'Add Student',
+                style:
+                    TextStyle(
+                  color:
+                      Colors.white,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        _buildCardWrapper(
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child:
+                        DropdownButtonFormField<
+                            String>(
+                      value:
+                          _directoryClass,
+                      dropdownColor:
+                          const Color(
+                        0xFF1F2C34,
+                      ),
+                      style:
+                          const TextStyle(
+                        color:
+                            Colors.white,
+                      ),
+                      decoration:
+                          _inputDecoration(
+                        'Class',
+                      ),
+                      items:
+                          _classList.map(
+                        (value) {
+                          return DropdownMenuItem<
+                              String>(
+                            value:
+                                value,
+                            child:
+                                Text(value),
+                          );
+                        },
+                      ).toList(),
+                      onChanged:
+                          (value) {
+                        if (value !=
+                            null) {
+                          setState(
+                            () =>
+                                _directoryClass =
+                                    value,
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(
+                    width: 10,
+                  ),
+                  Expanded(
+                    child:
+                        TextField(
+                      controller:
+                          _rollController,
+                      keyboardType:
+                          TextInputType
+                              .number,
+                      style:
+                          const TextStyle(
+                        color:
+                            Colors.white,
+                      ),
+                      decoration:
+                          _inputDecoration(
+                        'Roll No',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(
+                height: 10,
+              ),
+
+              TextField(
+                controller:
+                    _nameController,
+                readOnly: true,
+                style:
+                    const TextStyle(
+                  color:
+                      Colors.white,
+                ),
+                decoration:
+                    _inputDecoration(
+                  'Student Full Name',
+                ),
+              ),
+
+              const SizedBox(
+                height: 10,
+              ),
+
+              TextField(
+                controller:
+                    _parentContactController,
+                readOnly: true,
+                style:
+                    const TextStyle(
+                  color:
+                      Colors.white,
+                ),
+                decoration:
+                    _inputDecoration(
+                  'Parent Contact No',
+                ),
+              ),
+
+              const SizedBox(
+                height: 14,
+              ),
+
+              Row(
+                children: [
+                  Expanded(
+                    child:
+                        ElevatedButton.icon(
+                      style:
+                          ElevatedButton
+                              .styleFrom(
+                        backgroundColor:
+                            const Color(
+                          0xFF00A884,
+                        ),
+                      ),
+                      onPressed:
+                          _isSearchingStudent
+                              ? null
+                              : _searchStudent,
+                      icon:
+                          const Icon(
+                        Icons.search,
+                        color:
+                            Colors.white,
+                        size: 18,
+                      ),
+                      label:
+                          Text(
+                        _isSearchingStudent
+                            ? 'Searching...'
+                            : 'Search Record',
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(
+                    width: 10,
+                  ),
+                  Expanded(
+                    child:
+                        OutlinedButton.icon(
+                      style:
+                          OutlinedButton
+                              .styleFrom(
+                        side:
+                            const BorderSide(
+                          color:
+                              Color(
+                            0xFF00A884,
+                          ),
+                        ),
+                      ),
+                      onPressed:
+                          _showIdCardPreview,
+                      icon:
+                          const Icon(
+                        Icons.visibility,
+                        color:
+                            Color(
+                          0xFF00A884,
+                        ),
+                        size: 18,
+                      ),
+                      label:
+                          const Text(
+                        'View ID Card',
+                        style:
+                            TextStyle(
+                          color:
+                              Color(
+                            0xFF00A884,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(
+                height: 12,
+              ),
+
+              SizedBox(
+                width:
+                    double.infinity,
+                child:
+                    ElevatedButton.icon(
+                  style:
+                      ElevatedButton
+                          .styleFrom(
+                    backgroundColor:
+                        const Color(
+                      0xFF2A3942,
+                    ),
+                    padding:
+                        const EdgeInsets
+                            .symmetric(
+                      vertical: 12,
+                    ),
+                  ),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder:
+                            (context) =>
+                                const AllStudentsListScreen(),
+                      ),
+                    );
+                  },
+                  icon:
+                      const Icon(
+                    Icons
+                        .people_alt_outlined,
+                    color:
+                        Color(0xFF00A884),
+                  ),
+                  label:
+                      const Text(
+                    'View All Students (Class 1-10)',
+                    style:
+                        TextStyle(
+                      color:
+                          Colors.white,
+                      fontWeight:
+                          FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ----------------------------------------------------------
+  // RIGHT COLUMN
+  // ----------------------------------------------------------
+
+  Widget _buildRightColumn() {
+    return Column(
+      crossAxisAlignment:
+          CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child:
+                  _buildSectionHeader(
+                'Teachers Directory',
+                Icons
+                    .person_add_alt_1,
+              ),
+            ),
+            ElevatedButton.icon(
+              style:
+                  ElevatedButton
+                      .styleFrom(
+                backgroundColor:
+                    const Color(
+                  0xFF00A884,
+                ),
+              ),
+              onPressed:
+                  _openAddTeacherDialog,
+              icon:
+                  const Icon(
+                Icons.add,
+                color:
+                    Colors.white,
+                size: 16,
+              ),
+              label:
+                  const Text(
+                'Add Teacher',
+                style:
+                    TextStyle(
+                  color:
+                      Colors.white,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        _buildCardWrapper(
+          child: ListView.separated(
+            shrinkWrap: true,
+            physics:
+                const NeverScrollableScrollPhysics(),
+            itemCount:
+                _teachersList.length,
+            separatorBuilder:
+                (_, __) =>
+                    const Divider(
+              color:
+                  Colors.white12,
+            ),
+            itemBuilder:
+                (context, index) {
+              final teacher =
+                  _teachersList[
+                      index];
+
+              return ListTile(
+                contentPadding:
+                    EdgeInsets.zero,
+                leading:
+                    const CircleAvatar(
+                  backgroundColor:
+                      Color(
+                    0xFF121B22,
+                  ),
+                  child:
+                      Icon(
+                    Icons.school,
+                    color:
+                        Color(
+                      0xFF00A884,
+                    ),
+                  ),
+                ),
+                title:
+                    Text(
+                  teacher['name'] ??
+                      '',
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                    fontWeight:
+                        FontWeight.bold,
+                  ),
+                ),
+                subtitle:
+                    Text(
+                  '${teacher['subject']} • ${teacher['phone']}',
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.grey,
+                    fontSize: 11,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+
+        const SizedBox(
+          height: 24,
+        ),
+
+        _buildSectionHeader(
+          'Published Notices',
+          Icons
+              .article_outlined,
+        ),
+
+        _buildCardWrapper(
+          child: SizedBox(
+            height: 320,
+            child:
+                StreamBuilder<
+                    QuerySnapshot>(
+              stream:
+                  FirebaseFirestore.instance
+                      .collection(
+                        'school_notices',
+                      )
+                      .orderBy(
+                        'timestamp',
+                        descending:
+                            true,
+                      )
+                      .snapshots(),
+              builder: (
+                context,
+                snapshot,
+              ) {
+                if (snapshot
+                        .connectionState ==
+                    ConnectionState
+                        .waiting) {
+                  return const Center(
+                    child:
+                        CircularProgressIndicator(
+                      color:
+                          Color(
+                        0xFF00A884,
+                      ),
+                    ),
+                  );
+                }
+
+                if (!snapshot
+                        .hasData ||
+                    snapshot.data!
+                        .docs
+                        .isEmpty) {
+                  return const Center(
+                    child:
+                        Text(
+                      'Koi notice published nahi hai.',
+                      style:
+                          TextStyle(
+                        color:
+                            Colors.grey,
+                      ),
+                    ),
+                  );
+                }
+
+                return ListView.builder(
+                  itemCount:
+                      snapshot.data!
+                          .docs.length,
+                  itemBuilder:
+                      (context,
+                          index) {
+                    final doc =
+                        snapshot.data!
+                            .docs[index];
+
+                    final data =
+                        doc.data()
+                            as Map<
+                                String,
+                                dynamic>;
+
+                    return Container(
+                      margin:
+                          const EdgeInsets
+                              .only(
+                        bottom: 8,
+                      ),
+                      padding:
+                          const EdgeInsets
+                              .all(
+                        10,
+                      ),
+                      decoration:
+                          BoxDecoration(
+                        color:
+                            const Color(
+                          0xFF121B22,
+                        ),
+                        borderRadius:
+                            BorderRadius
+                                .circular(
+                          8,
+                        ),
+                      ),
+                      child:
+                          ListTile(
+                        contentPadding:
+                            EdgeInsets
+                                .zero,
+                        title:
+                            Row(
+                          children: [
+                            Container(
+                              padding:
+                                  const EdgeInsets
+                                      .symmetric(
+                                horizontal:
+                                    6,
+                                vertical:
+                                    2,
+                              ),
+                              decoration:
+                                  BoxDecoration(
+                                color: const Color(
+                                  0xFF00A884,
+                                ).withOpacity(
+                                  0.18,
+                                ),
+                                borderRadius:
+                                    BorderRadius
+                                        .circular(
+                                  4,
+                                ),
+                              ),
+                              child:
+                                  Text(
+                                data[
+                                            'category']
+                                        ?.toString() ??
+                                    'General',
+                                style:
+                                    const TextStyle(
+                                  color: Color(
+                                    0xFF00A884,
+                                  ),
+                                  fontSize:
+                                      10,
+                                  fontWeight:
+                                      FontWeight
+                                          .bold,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(
+                              width:
+                                  8,
+                            ),
+                            Expanded(
+                              child:
+                                  Text(
+                                data[
+                                            'title']
+                                        ?.toString() ??
+                                    '',
+                                overflow:
+                                    TextOverflow
+                                        .ellipsis,
+                                style:
+                                    const TextStyle(
+                                  color:
+                                      Colors.white,
+                                  fontWeight:
+                                      FontWeight
+                                          .bold,
+                                  fontSize:
+                                      13,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        subtitle:
+                            Padding(
+                          padding:
+                              const EdgeInsets
+                                  .only(
+                            top:
+                                4,
+                          ),
+                          child:
+                              Text(
+                            data[
+                                        'description']
+                                    ?.toString() ??
+                                '',
+                            maxLines:
+                                2,
+                            overflow:
+                                TextOverflow
+                                    .ellipsis,
+                            style:
+                                const TextStyle(
+                              color:
+                                  Colors.grey,
+                              fontSize:
+                                  11,
+                            ),
+                          ),
+                        ),
+                        trailing:
+                            PopupMenuButton<
+                                String>(
+                          color:
+                              const Color(
+                            0xFF1F2C34,
+                          ),
+                          onSelected:
+                              (value) {
+                            if (value ==
+                                'preview') {
+                              _showNoticeDetailDialog(
+                                data,
+                              );
+                            } else if (value ==
+                                'edit') {
+                              _startEditNotice(
+                                doc.id,
+                                data,
+                              );
+                            } else if (value ==
+                                'delete') {
+                              _deleteNotice(
+                                doc.id,
+                              );
+                            }
+                          },
+                          itemBuilder:
+                              (_) => const [
+                            PopupMenuItem(
+                              value:
+                                  'preview',
+                              child:
+                                  Text(
+                                'Preview',
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.white,
+                                ),
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value:
+                                  'edit',
+                              child:
+                                  Text(
+                                'Edit',
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.white,
+                                ),
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value:
+                                  'delete',
+                              child:
+                                  Text(
+                                'Delete',
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.redAccent,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ----------------------------------------------------------
+  // NOTICE PREVIEW
+  // ----------------------------------------------------------
+
+  void _showNoticeDetailDialog(
+    Map<String, dynamic> data,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) =>
+          AlertDialog(
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title: Text(
+          data['title']
+                  ?.toString() ??
+              '',
+          style:
+              const TextStyle(
+            color:
+                Colors.white,
+          ),
+        ),
+        content: Text(
+          data['description']
+                  ?.toString() ??
+              '',
+          style:
+              const TextStyle(
+            color:
+                Colors.white70,
+            height: 1.5,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(
+              ctx,
+            ),
+            child:
+                const Text(
+              'Close',
+              style:
+                  TextStyle(
+                color:
+                    Color(
+                  0xFF00A884,
+                ),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildCardWrapper({required Widget child}) {
+  // ----------------------------------------------------------
+  // HELPERS
+  // ----------------------------------------------------------
+
+  Widget _buildSectionHeader(
+    String title,
+    IconData icon,
+  ) {
+    return Padding(
+      padding:
+          const EdgeInsets.only(
+        bottom: 8,
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            color:
+                const Color(
+              0xFF00A884,
+            ),
+            size: 20,
+          ),
+          const SizedBox(
+            width: 8,
+          ),
+          Text(
+            title,
+            style:
+                const TextStyle(
+              color:
+                  Colors.white,
+              fontSize: 16,
+              fontWeight:
+                  FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCardWrapper({
+    required Widget child,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1F2C34),
-        borderRadius: BorderRadius.circular(12),
+      padding:
+          const EdgeInsets.all(16),
+      decoration:
+          BoxDecoration(
+        color:
+            const Color(0xFF1F2C34),
+        borderRadius:
+            BorderRadius.circular(
+          12,
+        ),
       ),
       child: child,
     );
   }
 
-  InputDecoration _inputDecoration(String hint) {
+  InputDecoration _inputDecoration(
+    String hint,
+  ) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+      hintStyle:
+          const TextStyle(
+        color: Colors.grey,
+        fontSize: 13,
+      ),
       filled: true,
-      fillColor: const Color(0xFF121B22),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide.none,
+      fillColor:
+          const Color(0xFF121B22),
+      contentPadding:
+          const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 10,
+      ),
+      border:
+          OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(
+          8,
+        ),
+        borderSide:
+            BorderSide.none,
       ),
     );
   }
 }
 
-// ==================== SETTINGS SCREEN (GOOGLE DRIVE INTEGRATION) ====================
+// ============================================================
+// SETTINGS SCREEN
+// ============================================================
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  State<SettingsScreen> createState() =>
+      _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
-  final TextEditingController _gmailController = TextEditingController();
-  final TextEditingController _scriptUrlController = TextEditingController();
+class _SettingsScreenState
+    extends State<SettingsScreen> {
+  final TextEditingController
+      _gmailController =
+      TextEditingController();
+
+  final TextEditingController
+      _scriptUrlController =
+      TextEditingController();
+
   String? _linkedGmail;
   String? _linkedScriptUrl;
+
   bool _isLoading = false;
 
   @override
@@ -2194,94 +4954,175 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _fetchLinkedAccount();
   }
 
-  Future<void> _fetchLinkedAccount() async {
-    final doc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
+  @override
+  void dispose() {
+    _gmailController.dispose();
+    _scriptUrlController.dispose();
+    super.dispose();
+  }
 
-    if (doc.exists && mounted) {
-      setState(() {
-        _linkedGmail = doc.data()?['email'];
-        _linkedScriptUrl = doc.data()?['scriptUrl'];
-        _gmailController.text = _linkedGmail ?? '';
-        _scriptUrlController.text = _linkedScriptUrl ?? '';
-      });
+  Future<void>
+      _fetchLinkedAccount() async {
+    try {
+      final doc =
+          await FirebaseFirestore.instance
+              .collection(
+                'school_config',
+              )
+              .doc(
+                'google_drive_account',
+              )
+              .get();
+
+      if (!mounted) return;
+
+      if (doc.exists) {
+        final data =
+            doc.data() ??
+                {};
+
+        setState(() {
+          _linkedGmail =
+              data['email']
+                  ?.toString();
+
+          _linkedScriptUrl =
+              data['scriptUrl']
+                  ?.toString();
+
+          _gmailController.text =
+              _linkedGmail ?? '';
+
+          _scriptUrlController.text =
+              _linkedScriptUrl ?? '';
+        });
+      }
+    } catch (e) {
+      debugPrint(
+        'Settings load error: $e',
+      );
     }
   }
 
   Future<void> _linkGmail() async {
-    final email = _gmailController.text.trim();
-    final scriptUrl = _scriptUrlController.text.trim();
+    final email =
+        _gmailController.text
+            .trim();
 
-    if (email.isEmpty || !email.contains('@gmail.com')) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    final scriptUrl =
+        _scriptUrlController.text
+            .trim();
+
+    if (email.isEmpty ||
+        !email.contains('@gmail.com')) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Kripya valid Gmail ID daalein (jaise example@gmail.com)'),
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Kripya valid Gmail ID daalein.',
+          ),
         ),
       );
       return;
     }
 
-    if (scriptUrl.isEmpty || !scriptUrl.startsWith('https://script.google.com')) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    if (scriptUrl.isEmpty ||
+        !scriptUrl.startsWith(
+          'https://script.google.com/',
+        )) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Kripya valid Google Apps Script Web App URL daalein'),
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Kripya valid Google Apps Script Web App URL daalein.',
+          ),
         ),
       );
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+    });
 
     try {
-      await FirebaseFirestore.instance
-          .collection('school_config')
-          .doc('google_drive_account')
+      await FirebaseFirestore
+          .instance
+          .collection(
+            'school_config',
+          )
+          .doc(
+            'google_drive_account',
+          )
           .set({
         'email': email,
         'scriptUrl': scriptUrl,
         'status': 'connected',
-        'linkedAt': DateTime.now().millisecondsSinceEpoch,
+        'linkedAt':
+            DateTime.now()
+                .millisecondsSinceEpoch,
       });
 
-      if (mounted) {
-        setState(() {
-          _linkedGmail = email;
-          _linkedScriptUrl = scriptUrl;
-          _isLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Color(0xFF00A884),
-            content: Text('Google Drive storage successfully link ho gaya!'),
+      if (!mounted) return;
+
+      setState(() {
+        _linkedGmail = email;
+        _linkedScriptUrl =
+            scriptUrl;
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor:
+              Color(0xFF00A884),
+          content: Text(
+            'Google Drive configuration save ho gayi!',
           ),
-        );
-      }
+        ),
+      );
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('Error: ${e.toString()}'),
-          ),
-        );
-      }
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content:
+              Text('Error: $e'),
+        ),
+      );
     }
   }
 
   Future<void> _unlinkGmail() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+    });
 
-    await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .delete();
+    try {
+      await FirebaseFirestore
+          .instance
+          .collection(
+            'school_config',
+          )
+          .doc(
+            'google_drive_account',
+          )
+          .delete();
 
-    if (mounted) {
+      if (!mounted) return;
+
       setState(() {
         _linkedGmail = null;
         _linkedScriptUrl = null;
@@ -2289,436 +5130,1391 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _scriptUrlController.clear();
         _isLoading = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Google Drive account unlink kar diya gaya.'),
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Google Drive configuration unlink kar di gayi.',
+          ),
         ),
       );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+
+        ScaffoldMessenger.of(context)
+            .showSnackBar(
+          SnackBar(
+            backgroundColor:
+                Colors.redAccent,
+            content:
+                Text('Error: $e'),
+          ),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121B22),
+      backgroundColor:
+          const Color(0xFF121B22),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Settings'),
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title:
+            const Text('Settings'),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Cloud Storage & Database',
-              style: TextStyle(
-                color: Color(0xFF00A884),
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+      body:
+          SingleChildScrollView(
+        padding:
+            const EdgeInsets.all(20),
+        child: Center(
+          child: ConstrainedBox(
+            constraints:
+                const BoxConstraints(
+              maxWidth: 650,
             ),
-            const SizedBox(height: 6),
-            const Text(
-              'Student records Google Sheet me aur photos Google Drive folder me direct save karne ke liye official Gmail ID aur Script URL link karein.',
-              style: TextStyle(color: Colors.grey, fontSize: 13, height: 1.4),
-            ),
-            const SizedBox(height: 20),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1F2C34),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+            child: Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment
+                      .start,
+              children: [
+                const Text(
+                  'Cloud Storage & Database',
+                  style:
+                      TextStyle(
+                    color:
+                        Color(0xFF00A884),
+                    fontSize: 17,
+                    fontWeight:
+                        FontWeight.bold,
+                  ),
+                ),
+
+                const SizedBox(
+                  height: 8,
+                ),
+
+                const Text(
+                  'Student records Google Sheet me aur photos Google Drive par bhejne ke liye Google Apps Script Web App URL save karein.',
+                  style:
+                      TextStyle(
+                    color:
+                        Colors.grey,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+
+                const SizedBox(
+                  height: 20,
+                ),
+
+                Container(
+                  width:
+                      double.infinity,
+                  padding:
+                      const EdgeInsets
+                          .all(20),
+                  decoration:
+                      BoxDecoration(
+                    color:
+                        const Color(
+                      0xFF1F2C34,
+                    ),
+                    borderRadius:
+                        BorderRadius
+                            .circular(
+                      16,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment:
+                        CrossAxisAlignment
+                            .start,
                     children: [
-                      const CircleAvatar(
-                        radius: 22,
-                        backgroundColor: Color(0xFF121B22),
-                        child: Icon(Icons.add_to_drive, color: Color(0xFF00A884), size: 24),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Google Drive Integration',
-                              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      Row(
+                        children: [
+                          const CircleAvatar(
+                            radius:
+                                22,
+                            backgroundColor:
+                                Color(
+                              0xFF121B22,
                             ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _linkedGmail != null ? 'Active Connection' : 'No Account Linked',
-                              style: TextStyle(
-                                color: _linkedGmail != null ? const Color(0xFF00A884) : Colors.orangeAccent,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                            child:
+                                Icon(
+                              Icons
+                                  .add_to_drive,
+                              color:
+                                  Color(
+                                0xFF00A884,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Divider(color: Colors.white12, height: 28),
-                  if (_linkedGmail != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF121B22),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFF00A884).withOpacity(0.4)),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.verified_user, color: Color(0xFF00A884), size: 20),
-                          const SizedBox(width: 12),
+                          ),
+                          const SizedBox(
+                            width: 14,
+                          ),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            child:
+                                Column(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment
+                                      .start,
                               children: [
-                                const Text('Linked Gmail ID', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                                const Text(
+                                  'Google Drive Integration',
+                                  style:
+                                      TextStyle(
+                                    color:
+                                        Colors.white,
+                                    fontWeight:
+                                        FontWeight.bold,
+                                    fontSize:
+                                        16,
+                                  ),
+                                ),
                                 Text(
-                                  _linkedGmail!,
-                                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
-                                  overflow: TextOverflow.ellipsis,
+                                  _linkedGmail !=
+                                          null
+                                      ? 'Configuration Saved'
+                                      : 'No configuration',
+                                  style:
+                                      TextStyle(
+                                    color: _linkedGmail !=
+                                            null
+                                        ? const Color(
+                                            0xFF00A884)
+                                        : Colors
+                                            .orangeAccent,
+                                    fontSize:
+                                        12,
+                                  ),
                                 ),
                               ],
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Colors.redAccent),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                        onPressed: _isLoading ? null : _unlinkGmail,
-                        icon: const Icon(Icons.link_off, color: Colors.redAccent, size: 18),
-                        label: const Text('Unlink / Change Account', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+
+                      const Divider(
+                        color:
+                            Colors.white12,
+                        height: 28,
                       ),
-                    ),
-                  ] else ...[
-                    TextField(
-                      controller: _gmailController,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      decoration: InputDecoration(
-                        hintText: 'school.admin@gmail.com',
-                        hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
-                        prefixIcon: const Icon(Icons.mail_outline, color: Color(0xFF00A884), size: 20),
-                        filled: true,
-                        fillColor: const Color(0xFF121B22),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none,
+
+                      if (_linkedGmail !=
+                          null) ...[
+                        Container(
+                          padding:
+                              const EdgeInsets
+                                  .all(14),
+                          decoration:
+                              BoxDecoration(
+                            color:
+                                const Color(
+                              0xFF121B22,
+                            ),
+                            borderRadius:
+                                BorderRadius
+                                    .circular(
+                              10,
+                            ),
+                          ),
+                          child:
+                              Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment
+                                    .start,
+                            children: [
+                              const Text(
+                                'Linked Gmail ID',
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.grey,
+                                  fontSize:
+                                      11,
+                                ),
+                              ),
+                              const SizedBox(
+                                height: 4,
+                              ),
+                              Text(
+                                _linkedGmail!,
+                                style:
+                                    const TextStyle(
+                                  color:
+                                      Colors.white,
+                                  fontWeight:
+                                      FontWeight
+                                          .bold,
+                                ),
+                              ),
+                              const SizedBox(
+                                height: 12,
+                              ),
+                              const Text(
+                                'Apps Script URL',
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.grey,
+                                  fontSize:
+                                      11,
+                                ),
+                              ),
+                              const SizedBox(
+                                height: 4,
+                              ),
+                              SelectableText(
+                                _linkedScriptUrl ??
+                                    '',
+                                style:
+                                    const TextStyle(
+                                  color:
+                                      Colors.white70,
+                                  fontSize:
+                                      12,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _scriptUrlController,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      decoration: InputDecoration(
-                        hintText: 'https://script.google.com/macros/s/.../exec',
-                        hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
-                        prefixIcon: const Icon(Icons.link, color: Color(0xFF00A884), size: 20),
-                        filled: true,
-                        fillColor: const Color(0xFF121B22),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none,
+
+                        const SizedBox(
+                          height: 18,
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF00A884),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+
+                        SizedBox(
+                          width:
+                              double.infinity,
+                          child:
+                              OutlinedButton.icon(
+                            style:
+                                OutlinedButton
+                                    .styleFrom(
+                              side:
+                                  const BorderSide(
+                                color:
+                                    Colors.redAccent,
+                              ),
+                            ),
+                            onPressed:
+                                _isLoading
+                                    ? null
+                                    : _unlinkGmail,
+                            icon:
+                                const Icon(
+                              Icons
+                                  .link_off,
+                              color:
+                                  Colors.redAccent,
+                            ),
+                            label:
+                                const Text(
+                              'Unlink / Change Configuration',
+                              style:
+                                  TextStyle(
+                                color:
+                                    Colors.redAccent,
+                              ),
+                            ),
+                          ),
                         ),
-                        onPressed: _isLoading ? null : _linkGmail,
-                        icon: const Icon(Icons.cloud_done, color: Colors.white, size: 18),
-                        label: Text(
-                          _isLoading ? 'Linking...' : 'Link Google Drive Storage',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      ] else ...[
+                        TextField(
+                          controller:
+                              _gmailController,
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _inputDecoration(
+                            'School Gmail ID',
+                          ),
                         ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+
+                        const SizedBox(
+                          height: 12,
+                        ),
+
+                        TextField(
+                          controller:
+                              _scriptUrlController,
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _inputDecoration(
+                            'Google Apps Script /exec URL',
+                          ),
+                        ),
+
+                        const SizedBox(
+                          height: 16,
+                        ),
+
+                        SizedBox(
+                          width:
+                              double.infinity,
+                          child:
+                              ElevatedButton.icon(
+                            style:
+                                ElevatedButton
+                                    .styleFrom(
+                              backgroundColor:
+                                  const Color(
+                                0xFF00A884,
+                              ),
+                              padding:
+                                  const EdgeInsets
+                                      .symmetric(
+                                vertical:
+                                    12,
+                              ),
+                            ),
+                            onPressed:
+                                _isLoading
+                                    ? null
+                                    : _linkGmail,
+                            icon:
+                                const Icon(
+                              Icons
+                                  .cloud_done,
+                              color:
+                                  Colors.white,
+                            ),
+                            label:
+                                Text(
+                              _isLoading
+                                  ? 'Saving...'
+                                  : 'Save Google Drive Configuration',
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                                fontWeight:
+                                    FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
   }
+
+  InputDecoration _inputDecoration(
+    String hint,
+  ) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle:
+          const TextStyle(
+        color: Colors.grey,
+      ),
+      filled: true,
+      fillColor:
+          const Color(0xFF121B22),
+      border:
+          OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(
+          10,
+        ),
+        borderSide:
+            BorderSide.none,
+      ),
+    );
+  }
 }
-// ==================== ALL STUDENTS LIST SCREEN (FULL WINDOW) ====================
-class AllStudentsListScreen extends StatefulWidget {
-  const AllStudentsListScreen({super.key});
+
+// ============================================================
+// ALL STUDENTS LIST
+// ============================================================
+
+class AllStudentsListScreen
+    extends StatefulWidget {
+  const AllStudentsListScreen({
+    super.key,
+  });
 
   @override
-  State<AllStudentsListScreen> createState() => _AllStudentsListScreenState();
+  State<AllStudentsListScreen>
+      createState() =>
+          _AllStudentsListScreenState();
 }
 
-class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
-  String _selectedClassFilter = 'Class 1';
-  final List<String> _classes = List.generate(10, (index) => 'Class ${index + 1}');
+class _AllStudentsListScreenState
+    extends State<
+        AllStudentsListScreen> {
+  String _selectedClassFilter =
+      'Class 1';
 
-  Future<void> _deleteStudent(String docId) async {
-    final confirm = await showDialog<bool>(
+  final List<String> _classes =
+      List.generate(
+    10,
+    (index) => 'Class ${index + 1}',
+  );
+
+  // ----------------------------------------------------------
+  // DELETE
+  // ----------------------------------------------------------
+
+  Future<void> _deleteStudent(
+    String docId,
+  ) async {
+    final confirmed =
+        await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Delete Student', style: TextStyle(color: Colors.white)),
-        content: const Text('Kya aap is student ka record delete karna chahte hain?', style: TextStyle(color: Colors.white70)),
+      builder: (ctx) =>
+          AlertDialog(
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title: const Text(
+          'Delete Student',
+          style: TextStyle(
+            color: Colors.white,
+          ),
+        ),
+        content: const Text(
+          'Kya aap is student ka record delete karna chahte hain?',
+          style: TextStyle(
+            color: Colors.white70,
+          ),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete', style: TextStyle(color: Colors.redAccent))),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(
+              ctx,
+              false,
+            ),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(
+              ctx,
+              true,
+            ),
+            child: const Text(
+              'Delete',
+              style: TextStyle(
+                color:
+                    Colors.redAccent,
+              ),
+            ),
+          ),
         ],
       ),
     );
 
-    if (confirm == true) {
-      await FirebaseFirestore.instance.collection('students_directory').doc(docId).delete();
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await FirebaseFirestore
+          .instance
+          .collection(
+              'students_directory')
+          .doc(docId)
+          .delete();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content:
+              Text('Student record delete ho gaya!'),
+        ),
+      );
+    } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(backgroundColor: Colors.redAccent, content: Text('Student record delete ho gaya!')),
+        ScaffoldMessenger.of(context)
+            .showSnackBar(
+          SnackBar(
+            backgroundColor:
+                Colors.redAccent,
+            content:
+                Text('Delete error: $e'),
+          ),
         );
       }
     }
   }
 
-  void _editStudent(String docId, Map<String, dynamic> data) {
-    final nameCtrl = TextEditingController(text: data['name']);
-    final parentCtrl = TextEditingController(text: data['parentName']);
-    final contactCtrl = TextEditingController(text: data['parentContact']);
-    final photoCtrl = TextEditingController(text: data['photoUrl']);
-    final addressCtrl = TextEditingController(text: data['address']);
-    final pinCtrl = TextEditingController(text: data['pinCode']);
-    final districtCtrl = TextEditingController(text: data['district']);
-    final stateCtrl = TextEditingController(text: data['state']);
+  // ----------------------------------------------------------
+  // EDIT STUDENT
+  // ----------------------------------------------------------
+
+  void _editStudent(
+    String docId,
+    Map<String, dynamic> data,
+  ) {
+    final nameCtrl =
+        TextEditingController(
+      text:
+          data['name']?.toString() ??
+              '',
+    );
+
+    final parentCtrl =
+        TextEditingController(
+      text:
+          data['parentName']
+                  ?.toString() ??
+              '',
+    );
+
+    final contactCtrl =
+        TextEditingController(
+      text:
+          data['parentContact']
+                  ?.toString() ??
+              '',
+    );
+
+    final photoCtrl =
+        TextEditingController(
+      text:
+          data['photoUrl']
+                  ?.toString() ??
+              '',
+    );
+
+    final addressCtrl =
+        TextEditingController(
+      text:
+          data['address']
+                  ?.toString() ??
+              '',
+    );
+
+    final pinCtrl =
+        TextEditingController(
+      text:
+          data['pinCode']
+                  ?.toString() ??
+              '',
+    );
+
+    final districtCtrl =
+        TextEditingController(
+      text:
+          data['district']
+                  ?.toString() ??
+              '',
+    );
+
+    final stateCtrl =
+        TextEditingController(
+      text:
+          data['state']
+                  ?.toString() ??
+              '',
+    );
+
+    final admissionCtrl =
+        TextEditingController(
+      text:
+          data['joiningDate']
+                  ?.toString() ??
+              '',
+    );
+
+    final dobCtrl =
+        TextEditingController(
+      text:
+          data['dateOfBirth']
+                  ?.toString() ??
+              '',
+    );
+
+    String hostelFacility =
+        data['hostelFacility']
+                ?.toString() ??
+            'No';
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1F2C34),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: Text('Edit Student (${data['class']} - Roll ${data['rollNo']})', style: const TextStyle(color: Colors.white, fontSize: 16)),
+      builder: (ctx) =>
+          AlertDialog(
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title: Text(
+          'Edit Student (${data['class'] ?? ''} - Roll ${data['rollNo'] ?? ''})',
+          style:
+              const TextStyle(
+            color:
+                Colors.white,
+            fontSize: 16,
+          ),
+        ),
         content: SizedBox(
-          width: 450,
-          child: SingleChildScrollView(
+          width: 500,
+          child:
+              SingleChildScrollView(
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              mainAxisSize:
+                  MainAxisSize.min,
               children: [
-                TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Full Name')),
-                const SizedBox(height: 8),
-                TextField(controller: parentCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput("Parent's Name")),
-                const SizedBox(height: 8),
-                TextField(controller: contactCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Contact No')),
-                const SizedBox(height: 8),
-                TextField(controller: photoCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Photo URL')),
-                const SizedBox(height: 8),
-                TextField(controller: addressCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Address')),
-                const SizedBox(height: 8),
+                TextField(
+                  controller:
+                      nameCtrl,
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                  ),
+                  decoration:
+                      _dialogInput(
+                    'Full Name',
+                  ),
+                ),
+                const SizedBox(
+                    height: 8),
+                TextField(
+                  controller:
+                      parentCtrl,
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                  ),
+                  decoration:
+                      _dialogInput(
+                    "Parent's Name",
+                  ),
+                ),
+                const SizedBox(
+                    height: 8),
+                TextField(
+                  controller:
+                      contactCtrl,
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                  ),
+                  decoration:
+                      _dialogInput(
+                    'Contact No',
+                  ),
+                ),
+                const SizedBox(
+                    height: 8),
+                DropdownButtonFormField<
+                    String>(
+                  value:
+                      hostelFacility,
+                  dropdownColor:
+                      const Color(
+                    0xFF1F2C34,
+                  ),
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                  ),
+                  decoration:
+                      _dialogInput(
+                    'Hostel Facility',
+                  ),
+                  items:
+                      const [
+                    DropdownMenuItem(
+                      value: 'No',
+                      child: Text(
+                          'Hostel Facility: No'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Yes',
+                      child: Text(
+                          'Hostel Facility: Yes'),
+                    ),
+                  ],
+                  onChanged:
+                      (value) {
+                    if (value !=
+                        null) {
+                      hostelFacility =
+                          value;
+                    }
+                  },
+                ),
+                const SizedBox(
+                    height: 8),
+                TextField(
+                  controller:
+                      photoCtrl,
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                  ),
+                  decoration:
+                      _dialogInput(
+                    'Photo URL',
+                  ),
+                ),
+                const SizedBox(
+                    height: 8),
+                TextField(
+                  controller:
+                      addressCtrl,
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                  ),
+                  decoration:
+                      _dialogInput(
+                    'Address',
+                  ),
+                ),
+                const SizedBox(
+                    height: 8),
                 Row(
                   children: [
-                    Expanded(child: TextField(controller: districtCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('District'))),
-                    const SizedBox(width: 8),
-                    Expanded(child: TextField(controller: stateCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('State'))),
+                    Expanded(
+                      child:
+                          TextField(
+                        controller:
+                            districtCtrl,
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                        decoration:
+                            _dialogInput(
+                          'District',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(
+                        width: 8),
+                    Expanded(
+                      child:
+                          TextField(
+                        controller:
+                            stateCtrl,
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                        ),
+                        decoration:
+                            _dialogInput(
+                          'State',
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                TextField(controller: pinCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('PIN Code')),
+                const SizedBox(
+                    height: 8),
+                TextField(
+                  controller:
+                      pinCtrl,
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                  ),
+                  decoration:
+                      _dialogInput(
+                    'PIN Code',
+                  ),
+                ),
+                const SizedBox(
+                    height: 8),
+                TextField(
+                  controller:
+                      admissionCtrl,
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                  ),
+                  decoration:
+                      _dialogInput(
+                    'Admission Date',
+                  ),
+                ),
+                const SizedBox(
+                    height: 8),
+                TextField(
+                  controller:
+                      dobCtrl,
+                  style:
+                      const TextStyle(
+                    color:
+                        Colors.white,
+                  ),
+                  decoration:
+                      _dialogInput(
+                    'Date of Birth',
+                  ),
+                ),
               ],
             ),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
-          const SizedBox(width: 12),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(ctx),
+            child: const Text(
+              'Cancel',
+              style:
+                  TextStyle(
+                color:
+                    Colors.grey,
+              ),
+            ),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+            style:
+                ElevatedButton.styleFrom(
+              backgroundColor:
+                  const Color(
+                0xFF00A884,
+              ),
+            ),
             onPressed: () async {
-              await FirebaseFirestore.instance.collection('students_directory').doc(docId).update({
-                'name': nameCtrl.text.trim(),
-                'parentName': parentCtrl.text.trim(),
-                'parentContact': contactCtrl.text.trim(),
-                'photoUrl': photoCtrl.text.trim(),
-                'address': addressCtrl.text.trim(),
-                'district': districtCtrl.text.trim(),
-                'state': stateCtrl.text.trim(),
-                'pinCode': pinCtrl.text.trim(),
-              });
-              if (mounted) {
+              try {
+                await FirebaseFirestore
+                    .instance
+                    .collection(
+                        'students_directory')
+                    .doc(docId)
+                    .update({
+                  'name':
+                      nameCtrl.text.trim(),
+                  'parentName':
+                      parentCtrl.text.trim(),
+                  'parentContact':
+                      contactCtrl.text.trim(),
+                  'photoUrl':
+                      photoCtrl.text.trim(),
+                  'address':
+                      addressCtrl.text.trim(),
+                  'district':
+                      districtCtrl.text.trim(),
+                  'state':
+                      stateCtrl.text.trim(),
+                  'pinCode':
+                      pinCtrl.text.trim(),
+                  'hostelFacility':
+                      hostelFacility,
+                  'joiningDate':
+                      admissionCtrl.text.trim(),
+                  'dateOfBirth':
+                      dobCtrl.text.trim(),
+                  'updatedAt':
+                      FieldValue
+                          .serverTimestamp(),
+                });
+
+                if (!mounted) return;
+
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student update ho gaya!')),
+
+                ScaffoldMessenger.of(
+                        context)
+                    .showSnackBar(
+                  const SnackBar(
+                    backgroundColor:
+                        Color(0xFF00A884),
+                    content: Text(
+                      'Student update ho gaya!',
+                    ),
+                  ),
                 );
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger
+                          .of(context)
+                      .showSnackBar(
+                    SnackBar(
+                      backgroundColor:
+                          Colors.redAccent,
+                      content:
+                          Text('Update error: $e'),
+                    ),
+                  );
+                }
               }
             },
-            child: const Text('Save Changes', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Save Changes',
+              style: TextStyle(
+                color:
+                    Colors.white,
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  InputDecoration _dialogInput(String hint) {
-    return InputDecoration(
-      labelText: hint,
-      labelStyle: const TextStyle(color: Colors.grey, fontSize: 13),
-      filled: true,
-      fillColor: const Color(0xFF121B22),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-    );
-  }
+  // ----------------------------------------------------------
+  // BUILD
+  // ----------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121B22),
+      backgroundColor:
+          const Color(0xFF121B22),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Student Directory Records'),
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title: const Text(
+          'Student Directory Records',
+        ),
       ),
       body: Column(
         children: [
-          // Class Tabs Selector
           Container(
-            color: const Color(0xFF1F2C34),
-            height: 50,
+            color:
+                const Color(0xFF1F2C34),
+            height: 52,
             child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              itemCount: _classes.length,
-              itemBuilder: (context, index) {
-                final c = _classes[index];
-                final isSelected = c == _selectedClassFilter;
+              scrollDirection:
+                  Axis.horizontal,
+              padding:
+                  const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 8,
+              ),
+              itemCount:
+                  _classes.length,
+              itemBuilder:
+                  (context, index) {
+                final currentClass =
+                    _classes[index];
+
+                final selected =
+                    currentClass ==
+                        _selectedClassFilter;
+
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                  child: ChoiceChip(
-                    label: Text(c, style: TextStyle(color: isSelected ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)),
-                    selected: isSelected,
-                    selectedColor: const Color(0xFF00A884),
-                    backgroundColor: const Color(0xFF121B22),
-                    onSelected: (val) => setState(() => _selectedClassFilter = c),
+                  padding:
+                      const EdgeInsets
+                          .symmetric(
+                    horizontal: 4,
+                  ),
+                  child:
+                      ChoiceChip(
+                    label:
+                        Text(
+                      currentClass,
+                      style:
+                          TextStyle(
+                        color:
+                            selected
+                                ? Colors
+                                    .white
+                                : Colors
+                                    .grey,
+                        fontWeight:
+                            FontWeight
+                                .bold,
+                        fontSize:
+                            12,
+                      ),
+                    ),
+                    selected:
+                        selected,
+                    selectedColor:
+                        const Color(
+                      0xFF00A884,
+                    ),
+                    backgroundColor:
+                        const Color(
+                      0xFF121B22,
+                    ),
+                    onSelected:
+                        (_) {
+                      setState(
+                        () {
+                          _selectedClassFilter =
+                              currentClass;
+                        },
+                      );
+                    },
                   ),
                 );
               },
             ),
           ),
 
-          // Students List Stream
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('students_directory')
-                  .where('class', isEqualTo: _selectedClassFilter)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
-                }
-
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return Center(
-                    child: Text('$_selectedClassFilter me koi student registered nahi hai.', style: const TextStyle(color: Colors.grey, fontSize: 14)),
+            child:
+                StreamBuilder<
+                    QuerySnapshot>(
+              stream:
+                  FirebaseFirestore
+                      .instance
+                      .collection(
+                        'students_directory',
+                      )
+                      .where(
+                        'class',
+                        isEqualTo:
+                            _selectedClassFilter,
+                      )
+                      .snapshots(),
+              builder:
+                  (context, snapshot) {
+                if (snapshot
+                        .connectionState ==
+                    ConnectionState
+                        .waiting) {
+                  return const Center(
+                    child:
+                        CircularProgressIndicator(
+                      color:
+                          Color(
+                        0xFF00A884,
+                      ),
+                    ),
                   );
                 }
 
+                if (!snapshot
+                        .hasData ||
+                    snapshot.data!
+                        .docs
+                        .isEmpty) {
+                  return Center(
+                    child:
+                        Text(
+                      '$_selectedClassFilter me koi student registered nahi hai.',
+                      style:
+                          const TextStyle(
+                        color:
+                            Colors.grey,
+                      ),
+                    ),
+                  );
+                }
+
+                final docs =
+                    snapshot.data!
+                        .docs
+                        .toList();
+
+                docs.sort(
+                  (a, b) {
+                    final aData =
+                        a.data()
+                            as Map<
+                                String,
+                                dynamic>;
+
+                    final bData =
+                        b.data()
+                            as Map<
+                                String,
+                                dynamic>;
+
+                    final aRoll =
+                        int.tryParse(
+                              aData[
+                                      'rollNo']
+                                  ?.toString() ??
+                                  '',
+                            ) ??
+                            999999;
+
+                    final bRoll =
+                        int.tryParse(
+                              bData[
+                                      'rollNo']
+                                  ?.toString() ??
+                                  '',
+                            ) ??
+                            999999;
+
+                    return aRoll
+                        .compareTo(
+                      bRoll,
+                    );
+                  },
+                );
+
                 return ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: snapshot.data!.docs.length,
-                  itemBuilder: (context, index) {
-                    final doc = snapshot.data!.docs[index];
-                    final student = doc.data() as Map<String, dynamic>;
-                    final photoUrl = student['photoUrl'] as String?;
+                  padding:
+                      const EdgeInsets.all(
+                    12,
+                  ),
+                  itemCount:
+                      docs.length,
+                  itemBuilder:
+                      (context, index) {
+                    final doc =
+                        docs[index];
+
+                    final student =
+                        doc.data()
+                            as Map<
+                                String,
+                                dynamic>;
+
+                    final photoUrl =
+                        student[
+                                'photoUrl']
+                            ?.toString();
 
                     return Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1F2C34),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white10),
+                      margin:
+                          const EdgeInsets
+                              .only(
+                        bottom: 10,
                       ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      padding:
+                          const EdgeInsets
+                              .all(
+                        12,
+                      ),
+                      decoration:
+                          BoxDecoration(
+                        color:
+                            const Color(
+                          0xFF1F2C34,
+                        ),
+                        borderRadius:
+                            BorderRadius
+                                .circular(
+                          12,
+                        ),
+                      ),
+                      child:
+                          Row(
+                        crossAxisAlignment:
+                            CrossAxisAlignment
+                                .start,
                         children: [
                           CircleAvatar(
                             radius: 28,
-                            backgroundColor: const Color(0xFF121B22),
-                            backgroundImage: (photoUrl != null && photoUrl.isNotEmpty) ? NetworkImage(photoUrl) : null,
-                            child: (photoUrl == null || photoUrl.isEmpty) ? const Icon(Icons.person, size: 30, color: Color(0xFF00A884)) : null,
+                            backgroundColor:
+                                const Color(
+                              0xFF121B22,
+                            ),
+                            backgroundImage:
+                                photoUrl !=
+                                            null &&
+                                        photoUrl
+                                            .isNotEmpty
+                                    ? NetworkImage(
+                                        photoUrl)
+                                    : null,
+                            child: photoUrl ==
+                                        null ||
+                                    photoUrl
+                                        .isEmpty
+                                ? const Icon(
+                                    Icons
+                                        .person,
+                                    size:
+                                        30,
+                                    color:
+                                        Color(
+                                      0xFF00A884,
+                                    ),
+                                  )
+                                : null,
                           ),
-                          const SizedBox(width: 14),
+
+                          const SizedBox(
+                              width: 14),
+
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            child:
+                                Column(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment
+                                      .start,
                               children: [
                                 Row(
                                   children: [
-                                    Text(
-                                      student['name'] ?? '',
-                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF00A884).withOpacity(0.2),
-                                        borderRadius: BorderRadius.circular(4),
+                                    Expanded(
+                                      child:
+                                          Text(
+                                        student[
+                                                    'name']
+                                                ?.toString() ??
+                                            '',
+                                        style:
+                                            const TextStyle(
+                                          color:
+                                              Colors
+                                                  .white,
+                                          fontWeight:
+                                              FontWeight
+                                                  .bold,
+                                          fontSize:
+                                              15,
+                                        ),
                                       ),
-                                      child: Text(
+                                    ),
+                                    Container(
+                                      padding:
+                                          const EdgeInsets
+                                              .symmetric(
+                                        horizontal:
+                                            6,
+                                        vertical:
+                                            2,
+                                      ),
+                                      decoration:
+                                          BoxDecoration(
+                                        color:
+                                            const Color(
+                                          0xFF00A884,
+                                        ).withOpacity(
+                                          0.18,
+                                        ),
+                                        borderRadius:
+                                            BorderRadius
+                                                .circular(
+                                          4,
+                                        ),
+                                      ),
+                                      child:
+                                          Text(
                                         'Roll: ${student['rollNo'] ?? 'N/A'}',
-                                        style: const TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.bold),
+                                        style:
+                                            const TextStyle(
+                                          color:
+                                              Color(
+                                            0xFF00A884,
+                                          ),
+                                          fontSize:
+                                              11,
+                                          fontWeight:
+                                              FontWeight
+                                                  .bold,
+                                        ),
                                       ),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 4),
-                                Text('Parent: ${student['parentName'] ?? 'N/A'}  •  Contact: ${student['parentContact'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                                const SizedBox(height: 2),
-                                Text('Address: ${student['address'] ?? ''}, ${student['district'] ?? ''}, ${student['state'] ?? ''} - ${student['pinCode'] ?? ''}', style: const TextStyle(color: Colors.white60, fontSize: 11)),
-                                const SizedBox(height: 2),
-                                Text('Hostel Facility: ${student['hostelFacility'] ?? 'No'}  •  Class: ${student['class'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                                const SizedBox(height: 2),
-                                Text('Addmission Date: ${student['AddmissionDate'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
-                                const SizedBox(height: 2),
-                                Text('Date of Birth: ${student['dateOfBirth'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+
+                                const SizedBox(
+                                    height: 5),
+
+                                Text(
+                                  'Parent: ${student['parentName'] ?? 'N/A'} • Contact: ${student['parentContact'] ?? 'N/A'}',
+                                  style:
+                                      const TextStyle(
+                                    color:
+                                        Colors
+                                            .grey,
+                                    fontSize:
+                                        12,
+                                  ),
+                                ),
+
+                                const SizedBox(
+                                    height: 3),
+
+                                Text(
+                                  'Address: ${student['address'] ?? ''}, ${student['district'] ?? ''}, ${student['state'] ?? ''} - ${student['pinCode'] ?? ''}',
+                                  style:
+                                      const TextStyle(
+                                    color:
+                                        Colors
+                                            .white60,
+                                    fontSize:
+                                        11,
+                                  ),
+                                ),
+
+                                const SizedBox(
+                                    height: 3),
+
+                                Text(
+                                  'Hostel: ${student['hostelFacility'] ?? 'No'} • Admission: ${student['joiningDate'] ?? 'N/A'} • DOB: ${student['dateOfBirth'] ?? 'N/A'}',
+                                  style:
+                                      const TextStyle(
+                                    color:
+                                        Colors
+                                            .grey,
+                                    fontSize:
+                                        11,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
+
                           Column(
                             children: [
                               IconButton(
-                                icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 20),
-                                tooltip: 'Edit Student',
-                                onPressed: () => _editStudent(doc.id, student),
+                                icon:
+                                    const Icon(
+                                  Icons.edit,
+                                  color:
+                                      Colors
+                                          .blueAccent,
+                                  size:
+                                      20,
+                                ),
+                                onPressed: () =>
+                                    _editStudent(
+                                  doc.id,
+                                  student,
+                                ),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-                                tooltip: 'Delete Student',
-                                onPressed: () => _deleteStudent(doc.id),
+                                icon:
+                                    const Icon(
+                                  Icons
+                                      .delete_outline,
+                                  color:
+                                      Colors
+                                          .redAccent,
+                                  size:
+                                      20,
+                                ),
+                                onPressed: () =>
+                                    _deleteStudent(
+                                  doc.id,
+                                ),
                               ),
                             ],
                           ),
@@ -2731,6 +6527,36 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  InputDecoration _dialogInput(
+    String hint,
+  ) {
+    return InputDecoration(
+      labelText: hint,
+      labelStyle:
+          const TextStyle(
+        color: Colors.grey,
+        fontSize: 13,
+      ),
+      filled: true,
+      fillColor:
+          const Color(0xFF121B22),
+      contentPadding:
+          const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 8,
+      ),
+      border:
+          OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(
+          8,
+        ),
+        borderSide:
+            BorderSide.none,
       ),
     );
   }
