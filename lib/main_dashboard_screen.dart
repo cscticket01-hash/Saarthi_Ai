@@ -5822,97 +5822,137 @@ class _AllStudentsListScreenState
   // DELETE
   // ----------------------------------------------------------
 
-  Future<void> _deleteStudent(
-    String docId,
-  ) async {
-    final confirmed =
-        await showDialog<bool>(
-      context: context,
-      builder: (ctx) =>
-          AlertDialog(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title: const Text(
-          'Delete Student',
-          style: TextStyle(
-            color: Colors.white,
-          ),
-        ),
-        content: const Text(
-          'Kya aap is student ka record delete karna chahte hain?',
-          style: TextStyle(
-            color: Colors.white70,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(
-              ctx,
-              false,
-            ),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(
-                color: Colors.grey,
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(
-              ctx,
-              true,
-            ),
-            child: const Text(
-              'Delete',
-              style: TextStyle(
-                color:
-                    Colors.redAccent,
-              ),
-            ),
-          ),
-        ],
+Future<void> _deleteStudent(String docId) async {
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: const Color(0xFF1F2C34),
+      title: const Text(
+        'Delete Student',
+        style: TextStyle(color: Colors.white),
       ),
+      content: const Text(
+        'Kya aap is student ka record delete karna chahte hain?',
+        style: TextStyle(color: Colors.white70),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text(
+            'Cancel',
+            style: TextStyle(color: Colors.grey),
+          ),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text(
+            'Delete',
+            style: TextStyle(color: Colors.redAccent),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  if (confirm != true) return;
+
+  try {
+    // Firestore se student data pehle lo
+    final studentDoc = await FirebaseFirestore.instance
+        .collection('students_directory')
+        .doc(docId)
+        .get();
+
+    if (!studentDoc.exists) {
+      throw Exception('Student Firestore me nahi mila.');
+    }
+
+    final data = studentDoc.data()!;
+
+    final studentClass =
+        data['class']?.toString() ?? '';
+
+    final rollNo =
+        data['rollNo']?.toString() ?? '';
+
+    // Google Script URL lo
+    final configDoc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+
+    final scriptUrl =
+        configDoc.data()?['scriptUrl']?.toString();
+
+    if (scriptUrl == null || scriptUrl.isEmpty) {
+      throw Exception(
+        'Google Apps Script URL Settings me saved nahi hai.',
+      );
+    }
+
+    // Google Sheet + Drive delete
+    final response = await http.post(
+      Uri.parse(scriptUrl),
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: jsonEncode({
+        'action': 'delete_student',
+        'studentClass': studentClass,
+        'roll': rollNo,
+      }),
     );
 
-    if (confirmed != true) {
-      return;
+    debugPrint(
+      'Google Delete Status: ${response.statusCode}',
+    );
+    debugPrint(
+      'Google Delete Body: ${response.body}',
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Google delete failed: ${response.statusCode}',
+      );
     }
 
-    try {
-      await FirebaseFirestore
-          .instance
-          .collection(
-              'students_directory')
-          .doc(docId)
-          .delete();
+    final result = jsonDecode(response.body);
 
-      if (!mounted) return;
+    if (result['success'] != true) {
+      throw Exception(
+        result['message'] ?? 'Google delete failed',
+      );
+    }
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
+    // Google successful hone ke baad Firestore delete
+    await FirebaseFirestore.instance
+        .collection('students_directory')
+        .doc(docId)
+        .delete();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content:
-              Text('Student record delete ho gaya!'),
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Student Firestore, Google Sheet aur Drive se delete ho gaya!',
+          ),
         ),
       );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            backgroundColor:
-                Colors.redAccent,
-            content:
-                Text('Delete error: $e'),
+    }
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Delete error: $e',
           ),
-        );
-      }
+        ),
+      );
     }
   }
+}
 
   // ----------------------------------------------------------
   // EDIT STUDENT
@@ -6254,6 +6294,117 @@ class _AllStudentsListScreenState
               ),
             ),
             onPressed: () async {
+  try {
+    // Google Script URL
+    final configDoc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+
+    final scriptUrl =
+        configDoc.data()?['scriptUrl']?.toString();
+
+    if (scriptUrl == null || scriptUrl.isEmpty) {
+      throw Exception(
+        'Google Apps Script URL Settings me saved nahi hai.',
+      );
+    }
+
+    final studentClass =
+        data['class']?.toString() ?? '';
+
+    final rollNo =
+        data['rollNo']?.toString() ?? '';
+
+    // Google Sheet update
+    final response = await http.post(
+      Uri.parse(scriptUrl),
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: jsonEncode({
+        'action': 'edit_student',
+        'name': nameCtrl.text.trim(),
+        'parentName': parentCtrl.text.trim(),
+        'studentClass': studentClass,
+        'roll': rollNo,
+        'contact': contactCtrl.text.trim(),
+        'photoUrl': photoCtrl.text.trim(),
+        'hostelFacility': hostelFacility,
+        'address': addressCtrl.text.trim(),
+        'district': districtCtrl.text.trim(),
+        'state': stateCtrl.text.trim(),
+        'pinCode': pinCtrl.text.trim(),
+        'joiningDate': admissionCtrl.text.trim(),
+        'dateOfBirth': dobCtrl.text.trim(),
+      }),
+    );
+
+    debugPrint(
+      'Google Edit Status: ${response.statusCode}',
+    );
+    debugPrint(
+      'Google Edit Body: ${response.body}',
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Google update failed: ${response.statusCode}',
+      );
+    }
+
+    final result = jsonDecode(response.body);
+
+    if (result['success'] != true) {
+      throw Exception(
+        result['message'] ?? 'Google update failed',
+      );
+    }
+
+    // Google successful hone ke baad Firestore update
+    await FirebaseFirestore.instance
+        .collection('students_directory')
+        .doc(docId)
+        .update({
+      'name': nameCtrl.text.trim(),
+      'parentName': parentCtrl.text.trim(),
+      'parentContact': contactCtrl.text.trim(),
+      'photoUrl': photoCtrl.text.trim(),
+      'hostelFacility': hostelFacility,
+      'address': addressCtrl.text.trim(),
+      'district': districtCtrl.text.trim(),
+      'state': stateCtrl.text.trim(),
+      'pinCode': pinCtrl.text.trim(),
+      'joiningDate': admissionCtrl.text.trim(),
+      'dateOfBirth': dobCtrl.text.trim(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    if (mounted) {
+      Navigator.pop(ctx);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text(
+            'Student Firestore aur Google Sheet dono me update ho gaya!',
+          ),
+        ),
+      );
+    }
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Update error: $e',
+          ),
+        ),
+      );
+    }
+  }
+},
               try {
                 await FirebaseFirestore
                     .instance
@@ -6570,35 +6721,37 @@ class _AllStudentsListScreenState
                             CrossAxisAlignment
                                 .start,
                         children: [
-                          CircleAvatar(
-                            radius: 28,
-                            backgroundColor:
-                                const Color(
-                              0xFF121B22,
-                            ),
-                            backgroundImage:
-                                photoUrl !=
-                                            null &&
-                                        photoUrl
-                                            .isNotEmpty
-                                    ? NetworkImage('https://corsproxy.io/?${Uri.encodeComponent(photoUrl)}')
-                                    : null,
-                            child: photoUrl ==
-                                        null ||
-                                    photoUrl
-                                        .isEmpty
-                                ? const Icon(
-                                    Icons
-                                        .person,
-                                    size:
-                                        30,
-                                    color:
-                                        Color(
-                                      0xFF00A884,
-                                    ),
-                                  )
-                                : null,
-                          ),
+SizedBox(
+  width: 56,
+  height: 56,
+  child: ClipOval(
+    child: (photoUrl != null && photoUrl.isNotEmpty)
+        ? Image.network(
+            photoUrl,
+            fit: BoxFit.cover,
+            webHtmlElementStrategy:
+                WebHtmlElementStrategy.prefer,
+            errorBuilder: (context, error, stackTrace) {
+              return const ColoredBox(
+                color: Color(0xFF121B22),
+                child: Icon(
+                  Icons.person,
+                  size: 30,
+                  color: Color(0xFF00A884),
+                ),
+              );
+            },
+          )
+        : const ColoredBox(
+            color: Color(0xFF121B22),
+            child: Icon(
+              Icons.person,
+              size: 30,
+              color: Color(0xFF00A884),
+            ),
+          ),
+  ),
+),
 
                           const SizedBox(
                               width: 14),
