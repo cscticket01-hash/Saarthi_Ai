@@ -145,7 +145,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     String reply = '';
 
     try {
-      
+      final response = await http.post(
         Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
         headers: {
           'Content-Type': 'application/json; charset=UTF-8',
