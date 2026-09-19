@@ -3287,8 +3287,9 @@ debugPrint(
                           fetchedPhotoUrl!
                               .isNotEmpty
                       ? Image.network(
-                          'https://corsproxy.io/?${Uri.encodeComponent(fetchedPhotoUrl!)}',
+                          fetchedPhotoUrl!,
                           fit: BoxFit.cover,
+                          webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
                           errorBuilder:(context, error, stackTrace,) {
                             return const Icon(
                               Icons.person,
