@@ -2522,58 +2522,51 @@ class _AdminDashboardScreenState
                                         : '';
 
                                 final response =
-                                    await http.post(
-                                  Uri.parse(
-                                      scriptUrl),
-                                  headers: {
-                                    'Content-Type':
-                                        'application/json',
-                                  },
-                                  body:
-                                      jsonEncode({
-                                    'action':
-                                        'add_student',
-                                    'name':
-                                        name,
-                                    'parentName':
-                                        parent,
-                                    'studentClass':
-                                        selectedClass,
-                                    'roll':
-                                        roll,
-                                    'contact':
-                                        contact,
-                                    'photoBase64':
-                                        base64Image,
-                                    'hostelFacility':
-                                        hostelFacility,
-                                    'address':
-                                        addressCtrl
-                                            .text
-                                            .trim(),
-                                    'district':
-                                        districtCtrl
-                                            .text
-                                            .trim(),
-                                    'state':
-                                        stateCtrl
-                                            .text
-                                            .trim(),
-                                    'pinCode':
-                                        pinCtrl
-                                            .text
-                                            .trim(),
-                                    'joiningDate':
-                                        admissionDateCtrl
-                                            .text
-                                            .trim(),
-                                    'dateOfBirth':
-                                        dobCtrl
-                                            .text
-                                            .trim(),
-                                  }),
-                                );
+    await http.post(
+  Uri.parse(scriptUrl),
+  headers: {
+    'Content-Type':
+        'text/plain;charset=utf-8',
+  },
+  body: jsonEncode({
+    'action':
+        'add_student',
+    'name':
+        name,
+    'parentName':
+        parent,
+    'studentClass':
+        selectedClass,
+    'roll':
+        roll,
+    'contact':
+        contact,
+    'photoBase64':
+        base64Image,
+    'hostelFacility':
+        hostelFacility,
+    'address':
+        addressCtrl.text.trim(),
+    'district':
+        districtCtrl.text.trim(),
+    'state':
+        stateCtrl.text.trim(),
+    'pinCode':
+        pinCtrl.text.trim(),
+    'joiningDate':
+        admissionDateCtrl.text.trim(),
+    'dateOfBirth':
+        dobCtrl.text.trim(),
+  }),
+);
 
+debugPrint(
+  'Google Status: ${response.statusCode}',
+);
+
+debugPrint(
+  'Google Body: ${response.body}',
+);
                                 if (response.statusCode ==
                                     200) {
                                   final responseJson =
