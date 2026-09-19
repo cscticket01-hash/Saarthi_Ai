@@ -1334,7 +1334,7 @@ class _SchoolAdminLoginScreenState
             context,
             MaterialPageRoute(
               builder: (context) =>
-                  StudentDashboardScreen(
+                  StudentPortalScreen( 
                 studentId: idText,
                 studentClass: _selectedClass,
               ),
@@ -1761,73 +1761,884 @@ class _SchoolAdminLoginScreenState
 }
 
 // ============================================================
-// SIMPLE STUDENT DASHBOARD
+// STUDENT PORTAL SCREEN (Modern UI + Profile + Notices)
 // ============================================================
 
-class StudentDashboardScreen extends StatelessWidget {
+class StudentPortalScreen extends StatelessWidget {
   final String studentId;
   final String studentClass;
 
-  const StudentDashboardScreen({
+  const StudentPortalScreen({
     super.key,
     required this.studentId,
     required this.studentClass,
   });
 
+  Color _categoryColor(String category) {
+    switch (category.toLowerCase()) {
+      case 'holiday':
+        return Colors.orangeAccent;
+      case 'exam':
+        return Colors.redAccent;
+      case 'event':
+        return Colors.blueAccent;
+      case 'general':
+      default:
+        return const Color(0xFF00A884);
+    }
+  }
+
+  IconData _categoryIcon(String category) {
+    switch (category.toLowerCase()) {
+      case 'holiday':
+        return Icons.beach_access_rounded;
+      case 'exam':
+        return Icons.menu_book_rounded;
+      case 'event':
+        return Icons.event_rounded;
+      case 'general':
+      default:
+        return Icons.campaign_rounded;
+    }
+  }
+
+  String _formatTimestamp(dynamic timestamp) {
+    if (timestamp is Timestamp) {
+      final date = timestamp.toDate();
+
+      final day = date.day.toString().padLeft(2, '0');
+      final month = date.month.toString().padLeft(2, '0');
+      final year = date.year.toString();
+
+      return '$day/$month/$year';
+    }
+
+    return '';
+  }
+
+  String _studentInitial(String value) {
+    final clean = value.trim();
+
+    if (clean.isEmpty) {
+      return 'S';
+    }
+
+    return clean.substring(0, 1).toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF121B22),
+      backgroundColor: const Color(0xFF0F171D),
+
       appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title:
-            const Text('Student Dashboard'),
-        actions: [
-          IconButton(
-            icon:
-                const Icon(Icons.logout),
-            onPressed: () =>
-                Navigator.pop(context),
-          ),
-        ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment:
-              MainAxisAlignment.center,
+        elevation: 0,
+        backgroundColor: const Color(0xFF172229),
+        titleSpacing: 18,
+        title: Row(
           children: [
-            const Icon(
-              Icons.school,
-              size: 70,
-              color: Color(0xFF00A884),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Student Login Successful',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight:
-                    FontWeight.bold,
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: const Color(0xFF00A884).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(
+                  color: const Color(0xFF00A884).withOpacity(0.35),
+                ),
+              ),
+              child: const Icon(
+                Icons.school_rounded,
+                color: Color(0xFF00A884),
+                size: 21,
               ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              'Student ID: $studentId',
-              style: const TextStyle(
-                color: Colors.white70,
-              ),
-            ),
-            Text(
-              'Class: $studentClass',
-              style: const TextStyle(
-                color: Colors.white70,
+            const SizedBox(width: 11),
+            const Expanded(
+              child: Text(
+                'Student Portal',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
               ),
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Logout',
+            icon: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: const Icon(
+                Icons.logout_rounded,
+                color: Colors.redAccent,
+                size: 19,
+              ),
+            ),
+            onPressed: () => Navigator.pop(context),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isMobile = constraints.maxWidth < 800;
+
+          if (isMobile) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+              child: Column(
+                children: [
+                  _buildMobileProfileCard(),
+                  const SizedBox(height: 14),
+                  _buildNoticeBoard(
+                    context,
+                    height: null,
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 330,
+                  child: SingleChildScrollView(
+                    child: _buildDesktopProfileCard(),
+                  ),
+                ),
+                const SizedBox(width: 18),
+                Expanded(
+                  child: _buildNoticeBoard(
+                    context,
+                    height: constraints.maxHeight - 36,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ==========================================================
+  // DESKTOP PROFILE
+  // ==========================================================
+
+  Widget _buildDesktopProfileCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.07),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.20),
+            blurRadius: 25,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          _buildProfileTop(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+            child: _buildProfileDetails(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================
+  // MOBILE PROFILE
+  // ==========================================================
+
+  Widget _buildMobileProfileCard() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.07),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18),
+            blurRadius: 22,
+            offset: const Offset(0, 9),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          _buildProfileTop(),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: _buildProfileDetails(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================
+  // PROFILE TOP HEADER
+  // ==========================================================
+
+  Widget _buildProfileTop() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 22, 18, 20),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Color(0xFF193A38),
+            Color(0xFF172229),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(20),
+          topRight: Radius.circular(20),
+        ),
+      ),
+      child: Column(
+        children: [
+          Stack(
+            alignment: Alignment.bottomRight,
+            children: [
+              Container(
+                width: 92,
+                height: 92,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF00A884),
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00A884).withOpacity(0.18),
+                      blurRadius: 18,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: CircleAvatar(
+                  backgroundColor: const Color(0xFF0F171D),
+                  child: Text(
+                    _studentInitial(studentId),
+                    style: const TextStyle(
+                      color: Color(0xFF00A884),
+                      fontSize: 34,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                width: 25,
+                height: 25,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00A884),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF172229),
+                    width: 3,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.check_rounded,
+                  size: 14,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 13),
+          const Text(
+            'Student Profile',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 19,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            'Saraswati Vidya Niketan',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.60),
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 13),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 11,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFF00A884).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: const Color(0xFF00A884).withOpacity(0.25),
+              ),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.verified_rounded,
+                  color: Color(0xFF00A884),
+                  size: 15,
+                ),
+                SizedBox(width: 6),
+                Text(
+                  'Active / Enrolled',
+                  style: TextStyle(
+                    color: Color(0xFF00A884),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================
+  // PROFILE DETAILS
+  // ==========================================================
+
+  Widget _buildProfileDetails() {
+    return Column(
+      children: [
+        _profileInfoTile(
+          icon: Icons.badge_outlined,
+          label: 'Student ID / Roll',
+          value: studentId,
+        ),
+        const SizedBox(height: 10),
+        _profileInfoTile(
+          icon: Icons.school_outlined,
+          label: 'Assigned Class',
+          value: studentClass,
+        ),
+        const SizedBox(height: 10),
+        _profileInfoTile(
+          icon: Icons.verified_user_outlined,
+          label: 'Status',
+          value: 'Active',
+          valueColor: const Color(0xFF00A884),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F171D),
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.05),
+            ),
+          ),
+          child: const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline_rounded,
+                color: Colors.white54,
+                size: 18,
+              ),
+              SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  'Yahan school ke latest notices, important instructions aur announcements milenge.',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11.5,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _profileInfoTile({
+    required IconData icon,
+    required String label,
+    required String value,
+    Color valueColor = Colors.white,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 12,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1D2A31),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F171D),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              icon,
+              color: const Color(0xFF00A884),
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 10,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: valueColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================
+  // NOTICE BOARD
+  // ==========================================================
+
+  Widget _buildNoticeBoard(
+    BuildContext context, {
+    double? height,
+  }) {
+    final content = Container(
+      width: double.infinity,
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.07),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18),
+            blurRadius: 25,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('school_notices')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                final count =
+                    snapshot.hasData ? snapshot.data!.docs.length : 0;
+
+                return Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00A884).withOpacity(0.13),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.campaign_rounded,
+                        color: Color(0xFF00A884),
+                        size: 21,
+                      ),
+                    ),
+                    const SizedBox(width: 11),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'School Notice Board',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Latest announcements & updates',
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F171D),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.05),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.notifications_none_rounded,
+                            color: Colors.white54,
+                            size: 15,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            '$count',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+
+            const SizedBox(height: 15),
+
+            Container(
+              height: 1,
+              color: Colors.white.withOpacity(0.06),
+            ),
+
+            const SizedBox(height: 14),
+
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('school_notices')
+                    .orderBy(
+                      'timestamp',
+                      descending: true,
+                    )
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState ==
+                      ConnectionState.waiting) {
+                    return const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF00A884),
+                        strokeWidth: 2.5,
+                      ),
+                    );
+                  }
+
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: _emptyNoticeState(
+                        icon: Icons.error_outline_rounded,
+                        title: 'Notice load nahi ho paya',
+                        subtitle: 'Internet ya Firebase connection check karein.',
+                      ),
+                    );
+                  }
+
+                  if (!snapshot.hasData ||
+                      snapshot.data!.docs.isEmpty) {
+                    return Center(
+                      child: _emptyNoticeState(
+                        icon: Icons.notifications_none_rounded,
+                        title: 'Abhi koi notice nahi hai',
+                        subtitle: 'School jab notice publish karega, yahan dikhega.',
+                      ),
+                    );
+                  }
+
+                  final docs = snapshot.data!.docs;
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.only(
+                      bottom: 8,
+                    ),
+                    itemCount: docs.length,
+                    itemBuilder: (context, index) {
+                      final notice =
+                          docs[index].data()
+                              as Map<String, dynamic>;
+
+                      final title =
+                          notice['title']?.toString() ?? 'Notice';
+
+                      final description =
+                          notice['description']?.toString() ?? '';
+
+                      final category =
+                          notice['category']?.toString() ?? 'General';
+
+                      final date =
+                          _formatTimestamp(notice['timestamp']);
+
+                      return _buildNoticeCard(
+                        title: title,
+                        description: description,
+                        category: category,
+                        date: date,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (height == null) {
+      return content;
+    }
+
+    return content;
+  }
+
+  // ==========================================================
+  // NOTICE CARD
+  // ==========================================================
+
+  Widget _buildNoticeCard({
+    required String title,
+    required String description,
+    required String category,
+    required String date,
+  }) {
+    final accent = _categoryColor(category);
+    final categoryIcon = _categoryIcon(category);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 11),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF10181E),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.055),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: accent.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              categoryIcon,
+              color: accent,
+              size: 20,
+            ),
+          ),
+
+          const SizedBox(width: 12),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 5,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: accent.withOpacity(0.11),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        category,
+                        style: TextStyle(
+                          color: accent,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (date.isNotEmpty)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.calendar_today_rounded,
+                            size: 11,
+                            color: Colors.white30,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            date,
+                            style: const TextStyle(
+                              color: Colors.white30,
+                              fontSize: 9.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+
+                const SizedBox(height: 7),
+
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    height: 1.25,
+                  ),
+                ),
+
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    description,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 11.5,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================
+  // EMPTY STATE
+  // ==========================================================
+
+  Widget _emptyNoticeState({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              color: const Color(0xFF00A884).withOpacity(0.08),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              icon,
+              color: const Color(0xFF00A884),
+              size: 30,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white30,
+              fontSize: 11,
+              height: 1.4,
+            ),
+          ),
+        ],
       ),
     );
   }
