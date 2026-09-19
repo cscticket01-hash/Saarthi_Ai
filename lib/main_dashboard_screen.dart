@@ -145,7 +145,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     String reply = '';
 
     try {
-      final response = await http.post(
+      
         Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
         headers: {
           'Content-Type': 'application/json; charset=UTF-8',
@@ -1078,16 +1078,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         String finalPhotoUrl = '';
                         String base64Image = selectedPhotoBytes != null ? base64Encode(selectedPhotoBytes!) : '';
 
-                        // 1. Google Drive Script URL check karein
-                        final configDoc = await FirebaseFirestore.instance
-                            .collection('school_config')
-                            .doc('google_drive_account')
-                            .get();
-
-                        final scriptUrl = configDoc.data()?['scriptUrl'];
-
-                        // 2. Google Drive / Google Sheet par Data & Photo bhejein
-                        if (scriptUrl != null && scriptUrl.toString().isNotEmpty) {
                           try {
                             final response = await http.post(
                               Uri.parse('https://script.google.com/macros/s/AKfycbwctS8ISLxevVfD7nsDf47HgbrMUfB7Fxl75VtVar9RvSz6zsFz-XrLDiRu6ELreyoZrw/exec'),
