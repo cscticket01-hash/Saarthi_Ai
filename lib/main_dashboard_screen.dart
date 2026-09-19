@@ -1764,8 +1764,7 @@ class _SchoolAdminLoginScreenState
 // STUDENT PORTAL SCREEN (Modern UI + Profile + Notices)
 // ============================================================
 
- class StudentPortalScreen extends StatefulWidget {
- class _StudentPortalScreenState extends State<StudentPortalScreen> {
+class StudentPortalScreen extends StatefulWidget {
   final String studentId;
   final String studentClass;
 
@@ -1775,6 +1774,11 @@ class _SchoolAdminLoginScreenState
     required this.studentClass,
   });
 
+  @override
+  State<StudentPortalScreen> createState() => _StudentPortalScreenState();
+}
+
+class _StudentPortalScreenState extends State<StudentPortalScreen> {
   Color _categoryColor(String category) {
     switch (category.toLowerCase()) {
       case 'holiday':
@@ -1806,32 +1810,173 @@ class _SchoolAdminLoginScreenState
   String _formatTimestamp(dynamic timestamp) {
     if (timestamp is Timestamp) {
       final date = timestamp.toDate();
-
       final day = date.day.toString().padLeft(2, '0');
       final month = date.month.toString().padLeft(2, '0');
       final year = date.year.toString();
-
       return '$day/$month/$year';
     }
-
     return '';
   }
 
   String _studentInitial(String value) {
     final clean = value.trim();
-
     if (clean.isEmpty) {
       return 'S';
     }
-
     return clean.substring(0, 1).toUpperCase();
+  }
+
+  // ----------------------------------------------------------
+  // MOBILE NUMBER UPDATE
+  // ----------------------------------------------------------
+
+  Future<void> _updateMobileNumber(String newMobile) async {
+    final mobile = newMobile.trim();
+
+    if (mobile.isEmpty) {
+      throw Exception('Mobile number bharna zaroori hai.');
+    }
+
+    if (!RegExp(r'^[0-9]{10}$').hasMatch(mobile)) {
+      throw Exception('10 digit mobile number daalein.');
+    }
+
+    final docId = '${widget.studentClass}_Roll_${widget.studentId}';
+
+    await FirebaseFirestore.instance
+        .collection('students_directory')
+        .doc(docId)
+        .update({
+      'parentContact': mobile,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  void _showMobileUpdateDialog() {
+    final mobileController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        bool isSaving = false;
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1F2C34),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Row(
+                children: [
+                  Icon(
+                    Icons.phone_android_rounded,
+                    color: Color(0xFF00A884),
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Update Mobile Number',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              content: TextField(
+                controller: mobileController,
+                keyboardType: TextInputType.phone,
+                maxLength: 10,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Enter 10 digit mobile number',
+                  hintStyle: const TextStyle(color: Colors.grey),
+                  prefixIcon: const Icon(
+                    Icons.phone_outlined,
+                    color: Color(0xFF00A884),
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF121B22),
+                  counterStyle: const TextStyle(color: Colors.grey),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSaving ? null : () => Navigator.pop(ctx),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                  ),
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            isSaving = true;
+                          });
+
+                          try {
+                            await _updateMobileNumber(mobileController.text);
+
+                            if (!mounted) return;
+
+                            Navigator.pop(ctx);
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Color(0xFF00A884),
+                                content: Text(
+                                  'Mobile number successfully update ho gaya!',
+                                ),
+                              ),
+                            );
+                          } catch (e) {
+                            setDialogState(() {
+                              isSaving = false;
+                            });
+
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                backgroundColor: Colors.redAccent,
+                                content: Text('Update error: $e'),
+                              ),
+                            );
+                          }
+                        },
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'Save',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0F171D),
-
       appBar: AppBar(
         elevation: 0,
         backgroundColor: const Color(0xFF172229),
@@ -1889,7 +2034,6 @@ class _SchoolAdminLoginScreenState
           const SizedBox(width: 8),
         ],
       ),
-
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isMobile = constraints.maxWidth < 800;
@@ -1901,10 +2045,7 @@ class _SchoolAdminLoginScreenState
                 children: [
                   _buildMobileProfileCard(),
                   const SizedBox(height: 14),
-                  _buildNoticeBoard(
-                    context,
-                    height: null,
-                  ),
+                  _buildNoticeBoard(context, height: null),
                 ],
               ),
             );
@@ -1945,9 +2086,7 @@ class _SchoolAdminLoginScreenState
       decoration: BoxDecoration(
         color: const Color(0xFF172229),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.07),
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.07)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.20),
@@ -1978,9 +2117,7 @@ class _SchoolAdminLoginScreenState
       decoration: BoxDecoration(
         color: const Color(0xFF172229),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.07),
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.07)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.18),
@@ -2001,180 +2138,6 @@ class _SchoolAdminLoginScreenState
     );
   }
 
- // ============================================================
-// MOBILE NUMBER UPDATE
-// ============================================================
-
-// 1. Mobile number update function
-Future<void> _updateMobileNumber(String newMobile) async {
-  final mobile = newMobile.trim();
-
-  if (mobile.isEmpty) {
-    throw Exception('Mobile number bharna zaroori hai.');
-  }
-
-  if (!RegExp(r'^[0-9]{10}$').hasMatch(mobile)) {
-    throw Exception('10 digit mobile number daalein.');
-  }
-
-  final docId =
-      '${widget.studentClass}_Roll_${widget.studentId}';
-
-  await FirebaseFirestore.instance
-      .collection('students_directory')
-      .doc(docId)
-      .update({
-    'parentContact': mobile,
-    'updatedAt': FieldValue.serverTimestamp(),
-  });
-}
-
-
-// 2. Edit Mobile Number button + 3. Update dialog
-void _showMobileUpdateDialog() {
-  final mobileController = TextEditingController();
-
-  showDialog(
-    context: context,
-    builder: (ctx) {
-      bool isSaving = false;
-
-      return StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF1F2C34),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            title: const Row(
-              children: [
-                Icon(
-                  Icons.phone_android_rounded,
-                  color: Color(0xFF00A884),
-                ),
-                SizedBox(width: 10),
-                Text(
-                  'Update Mobile Number',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            content: TextField(
-              controller: mobileController,
-              keyboardType: TextInputType.phone,
-              maxLength: 10,
-              style: const TextStyle(
-                color: Colors.white,
-              ),
-              decoration: InputDecoration(
-                hintText: 'Enter 10 digit mobile number',
-                hintStyle: const TextStyle(
-                  color: Colors.grey,
-                ),
-                prefixIcon: const Icon(
-                  Icons.phone_outlined,
-                  color: Color(0xFF00A884),
-                ),
-                filled: true,
-                fillColor: const Color(0xFF121B22),
-                counterStyle: const TextStyle(
-                  color: Colors.grey,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: isSaving
-                    ? null
-                    : () => Navigator.pop(ctx),
-                child: const Text(
-                  'Cancel',
-                  style: TextStyle(
-                    color: Colors.grey,
-                  ),
-                ),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00A884),
-                ),
-                onPressed: isSaving
-                    ? null
-                    : () async {
-                        setDialogState(() {
-                          isSaving = true;
-                        });
-
-                        try {
-                          await _updateMobileNumber(
-                            mobileController.text,
-                          );
-
-                          if (!mounted) return;
-
-                          Navigator.pop(ctx);
-
-                          ScaffoldMessenger.of(context)
-                              .showSnackBar(
-                            const SnackBar(
-                              backgroundColor:
-                                  Color(0xFF00A884),
-                              content: Text(
-                                'Mobile number successfully update ho gaya!',
-                              ),
-                            ),
-                          );
-                        } catch (e) {
-                          setDialogState(() {
-                            isSaving = false;
-                          });
-
-                          if (!mounted) return;
-
-                          ScaffoldMessenger.of(context)
-                              .showSnackBar(
-                            SnackBar(
-                              backgroundColor:
-                                  Colors.redAccent,
-                              content: Text(
-                                'Update error: $e',
-                              ),
-                            ),
-                          );
-                        }
-                      },
-                child: isSaving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text(
-                        'Save',
-                        style: TextStyle(
-                          color: Colors.white,
-                        ),
-                      ),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  );
-}
-  
   // ==========================================================
   // PROFILE TOP HEADER
   // ==========================================================
@@ -2185,10 +2148,7 @@ void _showMobileUpdateDialog() {
       padding: const EdgeInsets.fromLTRB(18, 22, 18, 20),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [
-            Color(0xFF193A38),
-            Color(0xFF172229),
-          ],
+          colors: [Color(0xFF193A38), Color(0xFF172229)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -2208,10 +2168,7 @@ void _showMobileUpdateDialog() {
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: const Color(0xFF00A884),
-                    width: 2,
-                  ),
+                  border: Border.all(color: const Color(0xFF00A884), width: 2),
                   boxShadow: [
                     BoxShadow(
                       color: const Color(0xFF00A884).withOpacity(0.18),
@@ -2238,10 +2195,7 @@ void _showMobileUpdateDialog() {
                 decoration: BoxDecoration(
                   color: const Color(0xFF00A884),
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: const Color(0xFF172229),
-                    width: 3,
-                  ),
+                  border: Border.all(color: const Color(0xFF172229), width: 3),
                 ),
                 child: const Icon(
                   Icons.check_rounded,
@@ -2270,10 +2224,7 @@ void _showMobileUpdateDialog() {
           ),
           const SizedBox(height: 13),
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 11,
-              vertical: 6,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFF00A884).withOpacity(0.12),
               borderRadius: BorderRadius.circular(20),
@@ -2284,11 +2235,7 @@ void _showMobileUpdateDialog() {
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  Icons.verified_rounded,
-                  color: Color(0xFF00A884),
-                  size: 15,
-                ),
+                Icon(Icons.verified_rounded, color: Color(0xFF00A884), size: 15),
                 SizedBox(width: 6),
                 Text(
                   'Active / Enrolled',
@@ -2316,7 +2263,7 @@ void _showMobileUpdateDialog() {
         _profileInfoTile(
           icon: Icons.badge_outlined,
           label: 'Student ID / Roll',
-          value: studentId,
+          value: widget.studentId,
         ),
         const SizedBox(height: 10),
         _profileInfoTile(
@@ -2332,53 +2279,38 @@ void _showMobileUpdateDialog() {
           valueColor: const Color(0xFF00A884),
         ),
         const SizedBox(height: 14),
-
-SizedBox(
-  width: double.infinity,
-  child: OutlinedButton.icon(
-    onPressed: _showMobileUpdateDialog,
-    style: OutlinedButton.styleFrom(
-      side: const BorderSide(
-        color: Color(0xFF00A884),
-      ),
-      foregroundColor: const Color(0xFF00A884),
-      padding: const EdgeInsets.symmetric(
-        vertical: 12,
-      ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-    ),
-    icon: const Icon(
-      Icons.phone_android_rounded,
-      size: 18,
-    ),
-    label: const Text(
-      'Update Mobile Number',
-      style: TextStyle(
-        fontWeight: FontWeight.bold,
-      ),
-    ),
-  ),
-),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _showMobileUpdateDialog,
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Color(0xFF00A884)),
+              foregroundColor: const Color(0xFF00A884),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            icon: const Icon(Icons.phone_android_rounded, size: 18),
+            label: const Text(
+              'Update Mobile Number',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(13),
           decoration: BoxDecoration(
             color: const Color(0xFF0F171D),
             borderRadius: BorderRadius.circular(13),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.05),
-            ),
+            border: Border.all(color: Colors.white.withOpacity(0.05)),
           ),
           child: const Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                Icons.info_outline_rounded,
-                color: Colors.white54,
-                size: 18,
-              ),
+              Icon(Icons.info_outline_rounded, color: Colors.white54, size: 18),
               SizedBox(width: 9),
               Expanded(
                 child: Text(
@@ -2396,6 +2328,401 @@ SizedBox(
       ],
     );
   }
+
+  Widget _profileInfoTile({
+    required IconData icon,
+    required String label,
+    required String value,
+    Color valueColor = Colors.white,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1D2A31),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F171D),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: const Color(0xFF00A884), size: 18),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(color: Colors.white38, fontSize: 10),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: valueColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================
+  // NOTICE BOARD
+  // ==========================================================
+
+  Widget _buildNoticeBoard(BuildContext context, {double? height}) {
+    return Container(
+      width: double.infinity,
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.07)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18),
+            blurRadius: 25,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('school_notices')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                final count =
+                    snapshot.hasData ? snapshot.data!.docs.length : 0;
+
+                return Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00A884).withOpacity(0.13),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.campaign_rounded,
+                        color: Color(0xFF00A884),
+                        size: 21,
+                      ),
+                    ),
+                    const SizedBox(width: 11),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'School Notice Board',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Latest announcements & updates',
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F171D),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.05),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.notifications_none_rounded,
+                            color: Colors.white54,
+                            size: 15,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            '$count',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 15),
+            Container(height: 1, color: Colors.white.withOpacity(0.06)),
+            const SizedBox(height: 14),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('school_notices')
+                    .orderBy('timestamp', descending: true)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState ==
+                      ConnectionState.waiting) {
+                    return const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF00A884),
+                        strokeWidth: 2.5,
+                      ),
+                    );
+                  }
+
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: _emptyNoticeState(
+                        icon: Icons.error_outline_rounded,
+                        title: 'Notice load nahi ho paya',
+                        subtitle: 'Internet ya Firebase connection check karein.',
+                      ),
+                    );
+                  }
+
+                  if (!snapshot.hasData ||
+                      snapshot.data!.docs.isEmpty) {
+                    return Center(
+                      child: _emptyNoticeState(
+                        icon: Icons.notifications_none_rounded,
+                        title: 'Abhi koi notice nahi hai',
+                        subtitle: 'School jab notice publish karega, yahan dikhega.',
+                      ),
+                    );
+                  }
+
+                  final docs = snapshot.data!.docs;
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    itemCount: docs.length,
+                    itemBuilder: (context, index) {
+                      final notice =
+                          docs[index].data() as Map<String, dynamic>;
+
+                      final title =
+                          notice['title']?.toString() ?? 'Notice';
+                      final description =
+                          notice['description']?.toString() ?? '';
+                      final category =
+                          notice['category']?.toString() ?? 'General';
+                      final date =
+                          _formatTimestamp(notice['timestamp']);
+
+                      return _buildNoticeCard(
+                        title: title,
+                        description: description,
+                        category: category,
+                        date: date,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoticeCard({
+    required String title,
+    required String description,
+    required String category,
+    required String date,
+  }) {
+    final accent = _categoryColor(category);
+    final categoryIcon = _categoryIcon(category);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 11),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF10181E),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.white.withOpacity(0.055)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: accent.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(categoryIcon, color: accent, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 5,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: accent.withOpacity(0.11),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        category,
+                        style: TextStyle(
+                          color: accent,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (date.isNotEmpty)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.calendar_today_rounded,
+                            size: 11,
+                            color: Colors.white30,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            date,
+                            style: const TextStyle(
+                              color: Colors.white30,
+                              fontSize: 9.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    height: 1.25,
+                  ),
+                ),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    description,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 11.5,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyNoticeState({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              color: const Color(0xFF00A884).withOpacity(0.08),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.notifications_none_rounded,
+              color: Color(0xFF00A884),
+              size: 30,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white30,
+              fontSize: 11,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
   Widget _profileInfoTile({
     required IconData icon,
