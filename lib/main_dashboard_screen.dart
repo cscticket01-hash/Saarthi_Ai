@@ -1764,7 +1764,8 @@ class _SchoolAdminLoginScreenState
 // STUDENT PORTAL SCREEN (Modern UI + Profile + Notices)
 // ============================================================
 
-class StudentPortalScreen extends StatelessWidget {
+ class StudentPortalScreen extends StatefulWidget {
+ class _StudentPortalScreenState extends State<StudentPortalScreen> {
   final String studentId;
   final String studentClass;
 
@@ -2000,6 +2001,180 @@ class StudentPortalScreen extends StatelessWidget {
     );
   }
 
+ // ============================================================
+// MOBILE NUMBER UPDATE
+// ============================================================
+
+// 1. Mobile number update function
+Future<void> _updateMobileNumber(String newMobile) async {
+  final mobile = newMobile.trim();
+
+  if (mobile.isEmpty) {
+    throw Exception('Mobile number bharna zaroori hai.');
+  }
+
+  if (!RegExp(r'^[0-9]{10}$').hasMatch(mobile)) {
+    throw Exception('10 digit mobile number daalein.');
+  }
+
+  final docId =
+      '${widget.studentClass}_Roll_${widget.studentId}';
+
+  await FirebaseFirestore.instance
+      .collection('students_directory')
+      .doc(docId)
+      .update({
+    'parentContact': mobile,
+    'updatedAt': FieldValue.serverTimestamp(),
+  });
+}
+
+
+// 2. Edit Mobile Number button + 3. Update dialog
+void _showMobileUpdateDialog() {
+  final mobileController = TextEditingController();
+
+  showDialog(
+    context: context,
+    builder: (ctx) {
+      bool isSaving = false;
+
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1F2C34),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Row(
+              children: [
+                Icon(
+                  Icons.phone_android_rounded,
+                  color: Color(0xFF00A884),
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Update Mobile Number',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            content: TextField(
+              controller: mobileController,
+              keyboardType: TextInputType.phone,
+              maxLength: 10,
+              style: const TextStyle(
+                color: Colors.white,
+              ),
+              decoration: InputDecoration(
+                hintText: 'Enter 10 digit mobile number',
+                hintStyle: const TextStyle(
+                  color: Colors.grey,
+                ),
+                prefixIcon: const Icon(
+                  Icons.phone_outlined,
+                  color: Color(0xFF00A884),
+                ),
+                filled: true,
+                fillColor: const Color(0xFF121B22),
+                counterStyle: const TextStyle(
+                  color: Colors.grey,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: isSaving
+                    ? null
+                    : () => Navigator.pop(ctx),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(
+                    color: Colors.grey,
+                  ),
+                ),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00A884),
+                ),
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        setDialogState(() {
+                          isSaving = true;
+                        });
+
+                        try {
+                          await _updateMobileNumber(
+                            mobileController.text,
+                          );
+
+                          if (!mounted) return;
+
+                          Navigator.pop(ctx);
+
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(
+                            const SnackBar(
+                              backgroundColor:
+                                  Color(0xFF00A884),
+                              content: Text(
+                                'Mobile number successfully update ho gaya!',
+                              ),
+                            ),
+                          );
+                        } catch (e) {
+                          setDialogState(() {
+                            isSaving = false;
+                          });
+
+                          if (!mounted) return;
+
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(
+                            SnackBar(
+                              backgroundColor:
+                                  Colors.redAccent,
+                              content: Text(
+                                'Update error: $e',
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                child: isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text(
+                        'Save',
+                        style: TextStyle(
+                          color: Colors.white,
+                        ),
+                      ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+  
   // ==========================================================
   // PROFILE TOP HEADER
   // ==========================================================
@@ -2048,7 +2223,7 @@ class StudentPortalScreen extends StatelessWidget {
                 child: CircleAvatar(
                   backgroundColor: const Color(0xFF0F171D),
                   child: Text(
-                    _studentInitial(studentId),
+                    _studentInitial(widget.studentId),
                     style: const TextStyle(
                       color: Color(0xFF00A884),
                       fontSize: 34,
@@ -2147,7 +2322,7 @@ class StudentPortalScreen extends StatelessWidget {
         _profileInfoTile(
           icon: Icons.school_outlined,
           label: 'Assigned Class',
-          value: studentClass,
+          value: widget.studentClass,
         ),
         const SizedBox(height: 10),
         _profileInfoTile(
@@ -2157,6 +2332,35 @@ class StudentPortalScreen extends StatelessWidget {
           valueColor: const Color(0xFF00A884),
         ),
         const SizedBox(height: 14),
+
+SizedBox(
+  width: double.infinity,
+  child: OutlinedButton.icon(
+    onPressed: _showMobileUpdateDialog,
+    style: OutlinedButton.styleFrom(
+      side: const BorderSide(
+        color: Color(0xFF00A884),
+      ),
+      foregroundColor: const Color(0xFF00A884),
+      padding: const EdgeInsets.symmetric(
+        vertical: 12,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+    ),
+    icon: const Icon(
+      Icons.phone_android_rounded,
+      size: 18,
+    ),
+    label: const Text(
+      'Update Mobile Number',
+      style: TextStyle(
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+  ),
+),
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(13),
