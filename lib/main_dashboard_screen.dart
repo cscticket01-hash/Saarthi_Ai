@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:html' as html;
+import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -3495,147 +3497,341 @@ debugPrint(
   // DOWNLOAD ID CARD DETAILS
   // ----------------------------------------------------------
 
-  Future<void> _downloadIdCard() async {
-    final name =
-        _nameController.text.trim().isEmpty
-            ? 'Student'
-            : _nameController.text.trim();
+Future<void> _downloadIdCard() async {
+  final name = _nameController.text.trim().isEmpty
+      ? 'Student'
+      : _nameController.text.trim();
 
-    final roll =
-        _rollController.text.trim().isEmpty
-            ? '01'
-            : _rollController.text.trim();
+  final roll = _rollController.text.trim().isEmpty
+      ? '01'
+      : _rollController.text.trim();
 
-    final contact =
-        _parentContactController.text.trim().isEmpty
-            ? 'Not Available'
-            : _parentContactController.text
-                .trim();
+  final contact = _parentContactController.text.trim().isEmpty
+      ? 'Not Available'
+      : _parentContactController.text.trim();
 
-    String parentName = 'N/A';
-    String address = 'N/A';
-    String district = 'N/A';
-    String state = 'N/A';
-    String pinCode = 'N/A';
-    String admissionDate = 'N/A';
-    String dob = 'N/A';
+  String parentName = 'N/A';
+  String address = 'N/A';
+  String district = 'N/A';
+  String state = 'N/A';
+  String pinCode = 'N/A';
+  String admissionDate = 'N/A';
+  String dob = 'N/A';
 
-    String photoInfo =
-        (_studentPhotoUrl != null &&
-                _studentPhotoUrl!.isNotEmpty)
-            ? _studentPhotoUrl!
-            : 'No Photo Uploaded';
+  String? photoUrl = _studentPhotoUrl;
 
+  try {
+    final docId = '${_directoryClass}_Roll_$roll';
+
+    final doc = await FirebaseFirestore.instance
+        .collection('students_directory')
+        .doc(docId)
+        .get();
+
+    if (doc.exists) {
+      final data = doc.data()!;
+
+      parentName = data['parentName']?.toString() ?? 'N/A';
+      address = data['address']?.toString() ?? 'N/A';
+      district = data['district']?.toString() ?? 'N/A';
+      state = data['state']?.toString() ?? 'N/A';
+      pinCode = data['pinCode']?.toString() ?? 'N/A';
+      admissionDate = data['joiningDate']?.toString() ?? 'N/A';
+      dob = data['dateOfBirth']?.toString() ?? 'N/A';
+
+      final dbPhoto = data['photoUrl']?.toString();
+
+      if (dbPhoto != null && dbPhoto.isNotEmpty) {
+        photoUrl = dbPhoto;
+      }
+    }
+  } catch (e) {
+    debugPrint('ID Card data fetch error: $e');
+  }
+
+  // ============================================================
+  // PHOTO LOAD
+  // ============================================================
+
+  pw.MemoryImage? studentPhoto;
+
+  if (photoUrl != null && photoUrl!.isNotEmpty) {
     try {
-      final docId =
-          '${_directoryClass}_Roll_$roll';
+      final imageResponse = await http.get(
+        Uri.parse(photoUrl!),
+      );
 
-      final doc = await FirebaseFirestore
-          .instance
-          .collection(
-              'students_directory')
-          .doc(docId)
-          .get();
-
-      if (doc.exists) {
-        final data =
-            doc.data()!;
-
-        parentName =
-            data['parentName']
-                    ?.toString() ??
-                'N/A';
-
-        address =
-            data['address']
-                    ?.toString() ??
-                'N/A';
-
-        district =
-            data['district']
-                    ?.toString() ??
-                'N/A';
-
-        state =
-            data['state']
-                    ?.toString() ??
-                'N/A';
-
-        pinCode =
-            data['pinCode']
-                    ?.toString() ??
-                'N/A';
-
-        admissionDate =
-            data['joiningDate']
-                    ?.toString() ??
-                'N/A';
-
-        dob =
-            data['dateOfBirth']
-                    ?.toString() ??
-                'N/A';
-
-        final photoUrl =
-            data['photoUrl']
-                ?.toString();
-
-        if (photoUrl != null &&
-            photoUrl.isNotEmpty) {
-          photoInfo =
-              photoUrl;
-        }
+      if (imageResponse.statusCode == 200 &&
+          imageResponse.bodyBytes.isNotEmpty) {
+        studentPhoto =
+            pw.MemoryImage(imageResponse.bodyBytes);
       }
     } catch (e) {
-      debugPrint(
-        'Download fetch error: $e',
-      );
+      debugPrint('ID Card photo load error: $e');
     }
+  }
 
-    final content = '''
-========================================
- SARASWATI VIDYA NIKETAN, MADHABDHAM
-========================================
-             STUDENT ID CARD
-----------------------------------------
-Student Name   : $name
-Father Name    : $parentName
-Class          : $_directoryClass
-Roll No        : $roll
-Contact No     : $contact
-Date of Birth  : $dob
-Admission Date : $admissionDate
-Address        : $address
-District       : $district
-State          : $state
-PIN Code       : $pinCode
-Photo Link     : $photoInfo
-----------------------------------------
-           Principal Signature
-========================================
-''';
+  // ============================================================
+  // CREATE PDF
+  // ============================================================
 
-    final bytes =
-        utf8.encode(content);
+  final pdf = pw.Document();
 
-    final blob =
-        html.Blob([bytes], 'text/plain');
+  pdf.addPage(
+    pw.Page(
+      pageFormat: const PdfPageFormat(
+        243,
+        153,
+        marginAll: 0,
+      ),
+      build: (pw.Context context) {
+        return pw.Container(
+          width: 243,
+          height: 153,
+          decoration: pw.BoxDecoration(
+            color: PdfColors.white,
+            border: pw.Border.all(
+              color: PdfColors.orange800,
+              width: 1.5,
+            ),
+            borderRadius: pw.BorderRadius.circular(8),
+          ),
+          child: pw.Column(
+            children: [
 
-    final url =
-        html.Url.createObjectUrlFromBlob(
-      blob,
+              // ==================================================
+              // HEADER
+              // ==================================================
+
+              pw.Container(
+                width: double.infinity,
+                padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 5,
+                ),
+                decoration: pw.BoxDecoration(
+                  color: PdfColors.orange800,
+                  borderRadius: const pw.BorderRadius.only(
+                    topLeft: pw.Radius.circular(6),
+                    topRight: pw.Radius.circular(6),
+                  ),
+                ),
+                child: pw.Row(
+                  children: [
+                    pw.Container(
+                      width: 25,
+                      height: 25,
+                      decoration: const pw.BoxDecoration(
+                        color: PdfColors.white,
+                        shape: pw.BoxShape.circle,
+                      ),
+                      child: pw.Center(
+                        child: pw.Text(
+                          'S',
+                          style: pw.TextStyle(
+                            color: PdfColors.orange800,
+                            fontSize: 15,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    pw.SizedBox(width: 6),
+                    pw.Expanded(
+                      child: pw.Text(
+                        'SARASWATI VIDYA NIKETAN, MADHABDHAM',
+                        style: pw.TextStyle(
+                          color: PdfColors.white,
+                          fontSize: 8,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              pw.SizedBox(height: 4),
+
+              // ==================================================
+              // ID CARD BADGE
+              // ==================================================
+
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 2,
+                ),
+                decoration: pw.BoxDecoration(
+                  color: PdfColors.orange800,
+                  borderRadius: pw.BorderRadius.circular(4),
+                ),
+                child: pw.Text(
+                  'STUDENT ID CARD',
+                  style: pw.TextStyle(
+                    color: PdfColors.white,
+                    fontSize: 7,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ),
+
+              pw.SizedBox(height: 5),
+
+              // ==================================================
+              // MAIN CONTENT
+              // ==================================================
+
+              pw.Expanded(
+                child: pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(
+                    horizontal: 8,
+                  ),
+                  child: pw.Row(
+                    crossAxisAlignment:
+                        pw.CrossAxisAlignment.start,
+                    children: [
+
+                      // PHOTO
+                      pw.Container(
+                        width: 50,
+                        height: 62,
+                        decoration: pw.BoxDecoration(
+                          border: pw.Border.all(
+                            color: PdfColors.orange800,
+                            width: 1,
+                          ),
+                        ),
+                        child: studentPhoto != null
+                            ? pw.Image(
+                                studentPhoto,
+                                fit: pw.BoxFit.cover,
+                              )
+                            : pw.Center(
+                                child: pw.Text(
+                                  'PHOTO',
+                                  style: const pw.TextStyle(
+                                    fontSize: 7,
+                                    color: PdfColors.grey700,
+                                  ),
+                                ),
+                              ),
+                      ),
+
+                      pw.SizedBox(width: 7),
+
+                      // DETAILS
+                      pw.Expanded(
+                        child: pw.Column(
+                          crossAxisAlignment:
+                              pw.CrossAxisAlignment.start,
+                          children: [
+                            _pdfField(
+                              'Name',
+                              name,
+                            ),
+                            _pdfField(
+                              'Father',
+                              parentName,
+                            ),
+                            _pdfField(
+                              'Class',
+                              _directoryClass,
+                            ),
+                            _pdfField(
+                              'Roll',
+                              roll,
+                            ),
+                            _pdfField(
+                              'Contact',
+                              contact,
+                            ),
+                            _pdfField(
+                              'DOB',
+                              dob,
+                            ),
+                            _pdfField(
+                              'Admission',
+                              admissionDate,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // ==================================================
+              // FOOTER
+              // ==================================================
+
+              pw.Container(
+                width: double.infinity,
+                padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: const pw.BoxDecoration(
+                  color: PdfColors.grey100,
+                ),
+                child: pw.Row(
+                  mainAxisAlignment:
+                      pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      '$district, $state - $pinCode',
+                      style: const pw.TextStyle(
+                        fontSize: 6,
+                        color: PdfColors.grey700,
+                      ),
+                    ),
+                    pw.Text(
+                      'Principal Sign',
+                      style: pw.TextStyle(
+                        fontSize: 6,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.black,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+
+  // ============================================================
+  // SAVE PDF
+  // ============================================================
+
+  try {
+    final pdfBytes = await pdf.save();
+
+    final blob = html.Blob(
+      [pdfBytes],
+      'application/pdf',
     );
 
-    final anchor =
-        html.AnchorElement(href: url)
-          ..setAttribute(
-            'download',
-            'ID_Card_${name}_Roll_$roll.txt',
-          )
-          ..style.display = 'none';
+    final url = html.Url.createObjectUrlFromBlob(blob);
 
-    html.document.body?.children
-        .add(anchor);
+    final safeName = name
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_');
+
+    final anchor = html.AnchorElement(
+      href: url,
+    )
+      ..setAttribute(
+        'download',
+        'Student_ID_Card_${safeName}_Roll_$roll.pdf',
+      )
+      ..style.display = 'none';
+
+    html.document.body?.children.add(anchor);
 
     anchor.click();
 
@@ -3644,22 +3840,77 @@ Photo Link     : $photoInfo
     html.Url.revokeObjectUrl(url);
 
     if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          backgroundColor:
-              Color(0xFF00A884),
+          backgroundColor: Color(0xFF00A884),
           content: Text(
-            'ID Card details download ho gaye.',
+            'Actual Student ID Card PDF download ho gaya.',
+          ),
+        ),
+      );
+    }
+  } catch (e) {
+    debugPrint('PDF generation error: $e');
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'ID Card PDF banane mein error: $e',
           ),
         ),
       );
     }
   }
+}
 
   // ----------------------------------------------------------
   // ID CARD FIELD
   // ----------------------------------------------------------
+
+pw.Widget _pdfField(
+  String label,
+  String value,
+) {
+  return pw.Padding(
+    padding: const pw.EdgeInsets.only(
+      bottom: 2,
+    ),
+    child: pw.Row(
+      crossAxisAlignment:
+          pw.CrossAxisAlignment.start,
+      children: [
+        pw.SizedBox(
+          width: 42,
+          child: pw.Text(
+            label,
+            style: pw.TextStyle(
+              fontSize: 6.5,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.orange800,
+            ),
+          ),
+        ),
+        pw.Text(
+          ': ',
+          style: const pw.TextStyle(
+            fontSize: 6.5,
+          ),
+        ),
+        pw.Expanded(
+          child: pw.Text(
+            value,
+            maxLines: 2,
+            style: const pw.TextStyle(
+              fontSize: 6.5,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
   Widget _idCardField(
     String label,
