@@ -747,18 +747,18 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
         userAgent.contains('mobile');
   }
 
-  void _startInlineScanner() {
-    if (!_isMobileScannerDevice() || _isAdminMode) return;
+void _startInlineScanner() {
+  if (_isAdminMode) return;
 
-    setState(() {
-      _showInlineScanner = true;
-      _scanHandled = false;
-      _isQrVerifying = false;
-      _scanError = null;
-      _scannedStudentData = null;
-      _passwordController.clear();
-    });
-  }
+  setState(() {
+    _showInlineScanner = true;
+    _scanHandled = false;
+    _isQrVerifying = false;
+    _scanError = null;
+    _scannedStudentData = null;
+    _passwordController.clear();
+  });
+}
 
   void _closeInlineScanner() {
     setState(() {
