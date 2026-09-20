@@ -10,7 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
-import 'package:printing/printing.dart';
+import 'package:printing/printing.dart'; 
 
 // ============================================================
 // MAIN DASHBOARD
