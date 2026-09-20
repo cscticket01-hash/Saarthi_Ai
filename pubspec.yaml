@@ -33,6 +33,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  qr_flutter: ^4.1.0
 assets:
   - assets/whatsapp.png
   - assets/school_logo.png
