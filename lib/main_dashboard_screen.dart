@@ -1576,8 +1576,10 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final showMobileScanner =
-        !_isAdminMode && _isMobileScannerDevice();
+final screenWidth = MediaQuery.of(context).size.width;
+
+final showMobileScanner =
+    !_isAdminMode && screenWidth <= 700;
 
     return Scaffold(
       backgroundColor: const Color(0xFF121B22),
