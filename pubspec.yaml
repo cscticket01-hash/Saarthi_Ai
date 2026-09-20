@@ -24,6 +24,7 @@ dependencies:
   permission_handler: ^11.3.0
   flutter_contacts: ^1.1.9+2
   pdf: ^3.10.8
+  printing: ^5.14.2
 
 dev_dependencies:
   flutter_test:
@@ -34,4 +35,6 @@ flutter:
   uses-material-design: true
 assets:
   - assets/whatsapp.png
+  - assets/school_logo.png
+  - assets/principal_sign.png
   
