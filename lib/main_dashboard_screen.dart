@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 // ============================================================
 // MAIN DASHBOARD
@@ -3418,7 +3419,11 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 ),
                                 child: IconButton(
                                   tooltip: 'WhatsApp Parent',
-                                  icon: Image.asset('assets/whatsapp.png', width: 21, height: 21,fit: BoxFit.contain,),
+                                  icon: const FaIcon(
+                                    FontAwesomeIcons.whatsapp,
+                                    color: Color(0xFF25D366),
+                                    size: 20,
+                                  ),
                                   onPressed: () {
                                     final contact = student['parentContact']?.toString() ?? '';
                                     final cleanNum = contact.replaceAll(RegExp(r'\D'), '');
