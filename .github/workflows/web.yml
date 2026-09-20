@@ -29,11 +29,11 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter Version
+      - name: Show Flutter Version
         run: flutter --version
 
-      - name: Clean Project
-        run: flutter clean
+      - name: Configure Flutter Web
+        run: flutter create --platforms=web .
 
       - name: Get Dependencies
         run: flutter pub get
@@ -47,14 +47,12 @@ jobs:
 
       - name: Check WhatsApp Asset
         run: |
-          echo "Checking WhatsApp asset..."
+          echo "Checking whatsapp.png..."
           find build/web -type f | grep -i "whatsapp" || true
 
-      - name: Check Build Files
+      - name: Show Build Assets
         run: |
-          echo "Build web files:"
-          ls -la build/web
-          echo "Assets:"
+          echo "Flutter build assets:"
           find build/web/assets -maxdepth 3 -type f | head -100
 
       - name: Upload Pages Artifact
