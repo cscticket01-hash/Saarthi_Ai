@@ -49,62 +49,150 @@ jobs:
 
 
       # ============================================================
-      # 4. SHOW VERSION
+      # 4. ANDROID SDK
+      # ============================================================
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+
+      # ============================================================
+      # 5. INSTALL ANDROID SDK 34
+      # mobile_scanner + Agora ke liye
+      # ============================================================
+      - name: Install Android SDK 34
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+
+      # ============================================================
+      # 6. SHOW BUILD ENVIRONMENT
       # ============================================================
       - name: Show Build Environment
         run: |
           flutter --version
           dart --version
           java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
 
 
       # ============================================================
-      # 5. GENERATE ANDROID PROJECT
+      # 7. CONFIGURE ANDROID PROJECT
+      #
+      # Existing android project ko overwrite nahi karega.
+      # Sirf android folder missing hua to generate karega.
       # ============================================================
       - name: Configure Android Project
+        shell: bash
         run: |
           flutter config --enable-android
-          flutter create \
-            --platforms=android \
-            --android-language=java \
-            .
+
+          if [ ! -f "android/app/src/main/AndroidManifest.xml" ]; then
+            echo "Android project missing. Creating..."
+            flutter create \
+              --platforms=android \
+              --android-language=java \
+              --no-pub \
+              .
+          else
+            echo "Existing Android project found."
+            echo "Existing Android configuration preserve kiya jayega."
+          fi
 
 
       # ============================================================
-      # 6. CLEAN
+      # 8. ENSURE CAMERA + INTERNET PERMISSIONS
+      # Scanner ke liye CAMERA permission
+      # Existing permissions ko delete/replace nahi karega
+      # ============================================================
+      - name: Ensure Android Permissions
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+
+          if not manifest.exists():
+              raise SystemExit("AndroidManifest.xml nahi mila")
+
+          text = manifest.read_text(encoding="utf-8")
+
+          additions = []
+
+          if 'android.permission.INTERNET' not in text:
+              additions.append(
+                  '    <uses-permission android:name="android.permission.INTERNET" />'
+              )
+
+          if 'android.permission.CAMERA' not in text:
+              additions.append(
+                  '    <uses-permission android:name="android.permission.CAMERA" />'
+              )
+
+          if 'android.hardware.camera.any' not in text:
+              additions.append(
+                  '    <uses-feature android:name="android.hardware.camera.any" android:required="false" />'
+              )
+
+          if additions:
+              manifest_end = text.find('>')
+
+              if manifest_end == -1:
+                  raise SystemExit("Invalid AndroidManifest.xml")
+
+              text = (
+                  text[:manifest_end + 1]
+                  + "\n"
+                  + "\n".join(additions)
+                  + "\n"
+                  + text[manifest_end + 1:]
+              )
+
+              manifest.write_text(text, encoding="utf-8")
+
+          print("===== ANDROID MANIFEST =====")
+          print(manifest.read_text(encoding="utf-8"))
+          PY
+
+
+      # ============================================================
+      # 9. CLEAN PROJECT
       # ============================================================
       - name: Clean Project
         run: flutter clean
 
 
       # ============================================================
-      # 7. GET DEPENDENCIES
+      # 10. GET DEPENDENCIES
       # ============================================================
       - name: Install Flutter Dependencies
         run: flutter pub get
 
 
       # ============================================================
-      # ANDROID SDK TOOLS SETUP
+      # 11. VERIFY MOBILE SCANNER
+      # pubspec me mobile_scanner missing hua to yahin fail karega
       # ============================================================
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: 'platform-tools'
-
-      # ============================================================
-      # INSTALL ANDROID SDK 34
-      # ============================================================
-      - name: Install Android SDK 34
+      - name: Verify Mobile Scanner
+        shell: bash
         run: |
-          sdkmanager "platforms;android-34"
-          sdkmanager "build-tools;34.0.0"
+          echo "Checking mobile_scanner dependency..."
+
+          flutter pub deps | grep "mobile_scanner"
+
+          echo ""
+          echo "mobile_scanner dependency found."
 
 
       # ============================================================
-      # 9. FIX AGORA RTC ENGINE
-      # Agora old package compileSdk 31 use karta hai.
-      # AndroidX Fragment 1.7.1 ko SDK 34 minimum chahiye.
+      # 12. FIX AGORA RTC ENGINE COMPILE SDK
+      # Purana Agora SDK 31 use kare to usko 34 karega
       # ============================================================
       - name: Fix Agora Compile SDK
         shell: bash
@@ -126,67 +214,96 @@ jobs:
           echo "Agora package found:"
           echo "$AGORA_DIR"
 
-          GRADLE_FILE="$AGORA_DIR/android/build.gradle"
-          GRADLE_KTS_FILE="$AGORA_DIR/android/build.gradle.kts"
+          python3 - "$AGORA_DIR" <<'PY'
+          import sys
+          import re
+          from pathlib import Path
 
-          if [ -f "$GRADLE_FILE" ]; then
-            echo "Patching build.gradle..."
+          agora = Path(sys.argv[1])
 
-            sed -i -E \
-              's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 34/g' \
-              "$GRADLE_FILE"
+          files = [
+              agora / "android" / "build.gradle",
+              agora / "android" / "build.gradle.kts",
+          ]
 
-            sed -i -E \
-              's/compileSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/compileSdkVersion = 34/g' \
-              "$GRADLE_FILE"
+          for file in files:
+              if not file.exists():
+                  continue
 
-            echo "Agora compileSdk after patch:"
-            grep -n "compileSdk" "$GRADLE_FILE" || true
-          fi
+              text = file.read_text(encoding="utf-8")
 
-          if [ -f "$GRADLE_KTS_FILE" ]; then
-            echo "Patching build.gradle.kts..."
+              text = re.sub(
+                  r'compileSdkVersion\s+flutter\.compileSdkVersion',
+                  'compileSdkVersion 34',
+                  text,
+              )
 
-            sed -i -E \
-              's/compileSdk[[:space:]]*=[[:space:]]*[0-9]+/compileSdk = 34/g' \
-              "$GRADLE_KTS_FILE"
+              text = re.sub(
+                  r'compileSdkVersion\s+[0-9]+',
+                  'compileSdkVersion 34',
+                  text,
+              )
 
-            echo "Agora compileSdk after patch:"
-            grep -n "compileSdk" "$GRADLE_KTS_FILE" || true
-          fi
+              text = re.sub(
+                  r'compileSdkVersion\s*=\s*[0-9]+',
+                  'compileSdkVersion = 34',
+                  text,
+              )
+
+              text = re.sub(
+                  r'compileSdk\s*=\s*flutter\.compileSdkVersion',
+                  'compileSdk = 34',
+                  text,
+              )
+
+              text = re.sub(
+                  r'compileSdk\s*=\s*[0-9]+',
+                  'compileSdk = 34',
+                  text,
+              )
+
+              file.write_text(text, encoding="utf-8")
+
+              print(f"Patched: {file}")
+
+              for number, line in enumerate(
+                  text.splitlines(),
+                  start=1,
+              ):
+                  if "compileSdk" in line:
+                      print(number, line)
+          PY
 
 
       # ============================================================
-      # 10. FORCE APP COMPILE SDK
+      # 13. VERIFY ANDROID CONFIGURATION
       # ============================================================
-      - name: Ensure App Uses SDK 34+
+      - name: Verify Android Configuration
         shell: bash
         run: |
-          if [ -f "android/app/build.gradle" ]; then
-            sed -i -E \
-              's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 34/g' \
-              android/app/build.gradle
-          fi
-
-          if [ -f "android/app/build.gradle.kts" ]; then
-            sed -i -E \
-              's/compileSdk[[:space:]]*=[[:space:]]*[0-9]+/compileSdk = 34/g' \
-              android/app/build.gradle.kts
-          fi
-
-          echo "Android app SDK configuration:"
+          echo "===== APP COMPILE SDK ====="
           grep -R -n "compileSdk" android/app 2>/dev/null || true
+
+          echo ""
+          echo "===== CAMERA PERMISSION ====="
+          grep -R -n "android.permission.CAMERA" \
+            android/app/src/main/AndroidManifest.xml
+
+          echo ""
+          echo "===== INTERNET PERMISSION ====="
+          grep -R -n "android.permission.INTERNET" \
+            android/app/src/main/AndroidManifest.xml
 
 
       # ============================================================
-      # 11. FLUTTER DOCTOR
+      # 14. FLUTTER DOCTOR
       # ============================================================
       - name: Flutter Doctor
         run: flutter doctor -v
 
 
       # ============================================================
-      # 12. BUILD RELEASE APK
+      # 15. BUILD RELEASE APK
       # ============================================================
       - name: Build Saarthi AI Release APK
         run: |
@@ -196,7 +313,21 @@ jobs:
 
 
       # ============================================================
-      # 13. PREPARE FINAL APK
+      # 16. VERIFY APK EXISTS
+      # ============================================================
+      - name: Verify APK
+        shell: bash
+        run: |
+          if [ ! -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
+            echo "::error::app-release.apk nahi mila!"
+            exit 1
+          fi
+
+          ls -lh build/app/outputs/flutter-apk/app-release.apk
+
+
+      # ============================================================
+      # 17. PREPARE FINAL APK
       # ============================================================
       - name: Prepare Final APK
         shell: bash
@@ -217,33 +348,41 @@ jobs:
 
           echo ""
           echo "APK SHA256:"
-          sha256sum release/Saarthi-AI-v${{ github.run_number }}.apk
+          sha256sum \
+            release/Saarthi-AI-v${{ github.run_number }}.apk
 
 
       # ============================================================
-      # 14. BUILD SUMMARY
+      # 18. BUILD SUMMARY
       # ============================================================
       - name: Create Build Summary
         shell: bash
         run: |
-          APK_SIZE=$(du -h release/Saarthi-AI-v${{ github.run_number }}.apk | cut -f1)
+          APK_SIZE=$(du -h \
+            release/Saarthi-AI-v${{ github.run_number }}.apk \
+            | cut -f1)
 
           echo "# 📱 Saarthi AI Android" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ APK Build Successful" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
+
           echo "### Build Information" >> "$GITHUB_STEP_SUMMARY"
           echo "- Build: **#${{ github.run_number }}**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Branch: **${{ github.ref_name }}**" >> "$GITHUB_STEP_SUMMARY"
           echo "- APK Size: **$APK_SIZE**" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Android Compile SDK: **34**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Android SDK: **34+**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Java: **17**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Camera Scanner: **Enabled**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Build Type: **Release**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "APK ko Artifacts section se download karein." >> "$GITHUB_STEP_SUMMARY"
+
+          echo "APK ko Artifacts section se download karein." \
+            >> "$GITHUB_STEP_SUMMARY"
 
 
       # ============================================================
-      # 15. UPLOAD APK
+      # 19. UPLOAD APK
       # ============================================================
       - name: Upload Saarthi AI APK
         uses: actions/upload-artifact@v4
