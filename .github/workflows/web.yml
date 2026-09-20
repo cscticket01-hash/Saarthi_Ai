@@ -20,9 +20,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # =========================================================
+      # CHECKOUT
+      # =========================================================
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # =========================================================
+      # FLUTTER
+      # =========================================================
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -32,31 +38,60 @@ jobs:
       - name: Show Flutter Version
         run: flutter --version
 
+      # =========================================================
+      # CHECK SOURCE ASSETS BEFORE BUILD
+      # =========================================================
       - name: Verify Source Assets
         run: |
-          echo "===== ASSETS FOLDER ====="
-          ls -lah assets || true
+          echo "===== SOURCE ASSETS FOLDER ====="
+          find assets -maxdepth 2 -type f -print | sort
 
-          echo "===== SCHOOL LOGO ====="
+          echo ""
+          echo "===== CHECK SCHOOL LOGO ====="
           test -f assets/school_logo.png
           ls -lh assets/school_logo.png
 
-          echo "===== PRINCIPAL SIGNATURE ====="
+          echo ""
+          echo "===== CHECK PRINCIPAL SIGNATURE ====="
           test -f assets/principal_sign.png
           ls -lh assets/principal_sign.png
 
-          echo "===== PUBSPEC ASSET SECTION ====="
+          echo ""
+          echo "===== CHECK WHATSAPP ICON ====="
+          test -f assets/whatsapp.png
+          ls -lh assets/whatsapp.png
+
+      # =========================================================
+      # SHOW PUBSPEC
+      # =========================================================
+      - name: Check Pubspec
+        run: |
+          echo "===== PUBSPEC.YAML ====="
+          cat pubspec.yaml
+
+          echo ""
+          echo "===== FLUTTER ASSET SECTION ====="
           grep -A10 "^flutter:" pubspec.yaml || true
 
+      # =========================================================
+      # CONFIGURE WEB
+      # --no-pub avoids flutter create running pub get itself
+      # =========================================================
       - name: Configure Flutter Web
-        run: flutter create --platforms=web .
+        run: flutter create --platforms=web --no-pub .
 
+      # =========================================================
+      # CLEAN + DEPENDENCIES
+      # =========================================================
       - name: Clean Flutter
         run: flutter clean
 
       - name: Get Dependencies
         run: flutter pub get
 
+      # =========================================================
+      # BUILD WEB
+      # =========================================================
       - name: Build Web
         run: |
           flutter build web \
@@ -64,28 +99,47 @@ jobs:
             --base-href "/Saarthi_Ai/" \
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
+      # =========================================================
+      # VERIFY BUILT ASSETS
+      # =========================================================
       - name: Verify Built Assets
         run: |
-          echo "===== BUILD ASSETS ====="
-          find build/web/assets -type f | sort
+          echo "===== ALL BUILD ASSETS ====="
+          find build/web/assets -type f -print | sort
 
-          echo "===== CHECK SCHOOL LOGO ====="
+          echo ""
+          echo "===== ASSET MANIFEST ====="
+          cat build/web/assets/AssetManifest.bin.json || true
+
+          echo ""
+          echo "===== CHECK SCHOOL LOGO IN BUILD ====="
           test -f build/web/assets/assets/school_logo.png
           ls -lh build/web/assets/assets/school_logo.png
 
-          echo "===== CHECK PRINCIPAL SIGNATURE ====="
+          echo ""
+          echo "===== CHECK PRINCIPAL SIGNATURE IN BUILD ====="
           test -f build/web/assets/assets/principal_sign.png
           ls -lh build/web/assets/assets/principal_sign.png
 
-          echo "===== CHECK WHATSAPP ====="
+          echo ""
+          echo "===== CHECK WHATSAPP IN BUILD ====="
           test -f build/web/assets/assets/whatsapp.png
           ls -lh build/web/assets/assets/whatsapp.png
 
+          echo ""
+          echo "===== ALL REQUIRED ASSETS FOUND ====="
+
+      # =========================================================
+      # UPLOAD GITHUB PAGES
+      # =========================================================
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
 
+  # ===========================================================
+  # DEPLOY
+  # ===========================================================
   deploy:
     environment:
       name: github-pages
