@@ -2381,6 +2381,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ],
         ),
         actions: [
+          // Profile / Logout menu
           PopupMenuButton<String>(
             color: const Color(0xFF1F2C34),
             tooltip: 'Admin Menu',
@@ -2397,11 +2398,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             onSelected: (value) async {
               if (value == 'profile') {
                 _showProfileDialog();
-              } else if (value == 'settings') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                );
               } else if (value == 'logout') {
                 await FirebaseAuth.instance.signOut();
                 if (!mounted) return;
@@ -2420,16 +2416,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
               ),
               PopupMenuItem<String>(
-                value: 'settings',
-                child: Row(
-                  children: [
-                    Icon(Icons.settings_outlined, color: Color(0xFF00A884), size: 20),
-                    SizedBox(width: 12),
-                    Text('Settings', style: TextStyle(color: Colors.white)),
-                  ],
-                ),
-              ),
-              PopupMenuItem<String>(
                 value: 'logout',
                 child: Row(
                   children: [
@@ -2441,7 +2427,44 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
             ],
           ),
-          const SizedBox(width: 8),
+
+          const SizedBox(width: 6),
+
+          // Visible Settings button at top-right
+          Tooltip(
+            message: 'Settings',
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const SettingsScreen(),
+                    ),
+                  );
+                },
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00A884).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: const Color(0xFF00A884).withOpacity(0.28),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.settings_rounded,
+                    color: Color(0xFF00A884),
+                    size: 21,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
         ],
       ),
       body: LayoutBuilder(
@@ -3882,9 +3905,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  bool get _isDriveLinked {
+    return (_linkedGmail?.trim().isNotEmpty ?? false) &&
+        (_linkedScriptUrl?.trim().isNotEmpty ?? false);
+  }
+
   Future<void> _fetchLinkedAccount() async {
     try {
-      final doc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
+      final doc = await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .get();
+
       if (!mounted) return;
 
       if (doc.exists) {
@@ -3905,20 +3937,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final email = _gmailController.text.trim();
     final scriptUrl = _scriptUrlController.text.trim();
 
-    if (email.isEmpty || !email.contains('@gmail.com')) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Kripya valid Gmail ID daalein.')));
+    if (email.isEmpty || !email.toLowerCase().endsWith('@gmail.com')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Kripya valid Gmail ID daalein.'),
+        ),
+      );
       return;
     }
 
-    if (scriptUrl.isEmpty || !scriptUrl.startsWith('https://script.google.com/')) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Kripya valid Google Apps Script Web App URL daalein.')));
+    if (scriptUrl.isEmpty ||
+        !scriptUrl.startsWith('https://script.google.com/')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Kripya valid Google Apps Script Web App URL daalein.'),
+        ),
+      );
       return;
     }
 
-    setState(() { _isLoading = true; });
+    setState(() => _isLoading = true);
 
     try {
-      await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').set({
+      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .set({
         'email': email,
         'scriptUrl': scriptUrl,
         'status': 'connected',
@@ -3933,19 +3979,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _isLoading = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Google Drive configuration save ho gayi!')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text('Google Drive configuration save ho gayi!'),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
-      setState(() { _isLoading = false; });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Error: $e')));
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Error: $e'),
+        ),
+      );
     }
   }
 
   Future<void> _unlinkGmail() async {
-    setState(() { _isLoading = true; });
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF172229),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.link_off_rounded, color: Colors.orangeAccent),
+            SizedBox(width: 10),
+            Text(
+              'Change Drive Account?',
+              style: TextStyle(color: Colors.white, fontSize: 17),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Current Google Drive / Apps Script configuration remove ho jayegi. Student records delete nahi honge.',
+          style: TextStyle(color: Colors.white70, height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orangeAccent,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isLoading = true);
 
     try {
-      await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').delete();
+      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .delete();
+
       if (!mounted) return;
 
       setState(() {
@@ -3956,115 +4054,532 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _isLoading = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Google Drive configuration unlink kar di gayi.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text('Google Drive configuration remove ho gayi.'),
+        ),
+      );
     } catch (e) {
-      if (mounted) {
-        setState(() { _isLoading = false; });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Error: $e')));
-      }
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Error: $e'),
+        ),
+      );
     }
+  }
+
+  Future<void> _confirmLogout() async {
+    final shouldLogout = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF172229),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.logout_rounded, color: Colors.redAccent),
+            SizedBox(width: 10),
+            Text(
+              'Logout Admin?',
+              style: TextStyle(color: Colors.white, fontSize: 17),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Aap School Admin Console se sign out ho jayenge.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.logout_rounded, size: 18),
+            label: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldLogout != true) return;
+
+    try {
+      await FirebaseAuth.instance.signOut();
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Logout error: $e'),
+        ),
+      );
+    }
+  }
+
+  String _profileInitial(User? user) {
+    final name = user?.displayName?.trim() ?? '';
+    if (name.isNotEmpty) return name.substring(0, 1).toUpperCase();
+
+    final email = user?.email?.trim() ?? '';
+    if (email.isNotEmpty) return email.substring(0, 1).toUpperCase();
+
+    return 'A';
   }
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    final adminEmail = user?.email?.trim().isNotEmpty == true
+        ? user!.email!.trim()
+        : 'Admin account';
+    final adminName = user?.displayName?.trim().isNotEmpty == true
+        ? user!.displayName!.trim()
+        : 'School Administrator';
+
     return Scaffold(
-      backgroundColor: const Color(0xFF121B22),
+      backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Settings'),
+        elevation: 0,
+        backgroundColor: const Color(0xFF172229),
+        titleSpacing: 6,
+        title: const Text(
+          'Settings',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 30),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 650),
+            constraints: const BoxConstraints(maxWidth: 920),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Cloud Storage & Database',
-                  style: TextStyle(color: Color(0xFF00A884), fontSize: 17, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Student records Google Sheet me aur photos Google Drive par bhejne ke liye Google Apps Script Web App URL save karein.',
-                  style: TextStyle(color: Colors.grey, fontSize: 13, height: 1.4),
-                ),
-                const SizedBox(height: 20),
+                // =====================================================
+                // SETTINGS HERO
+                // =====================================================
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1F2C34),
-                    borderRadius: BorderRadius.circular(16),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF123D38), Color(0xFF172229)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: const Color(0xFF00A884).withOpacity(0.20),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.20),
+                        blurRadius: 24,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          const CircleAvatar(
-                            radius: 22,
-                            backgroundColor: Color(0xFF121B22),
-                            child: Icon(Icons.add_to_drive, color: Color(0xFF00A884)),
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00A884).withOpacity(0.14),
+                          borderRadius: BorderRadius.circular(15),
+                          border: Border.all(
+                            color: const Color(0xFF00A884).withOpacity(0.28),
                           ),
-                          const SizedBox(width: 14),
+                        ),
+                        child: const Icon(
+                          Icons.tune_rounded,
+                          color: Color(0xFF00D9A5),
+                          size: 26,
+                        ),
+                      ),
+                      const SizedBox(width: 15),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'School Control Settings',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            SizedBox(height: 5),
+                            Text(
+                              'Admin profile, cloud connection aur account security ek hi jagah manage karein.',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontSize: 12,
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00A884).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.shield_rounded,
+                              color: Color(0xFF00D9A5),
+                              size: 14,
+                            ),
+                            SizedBox(width: 5),
+                            Text(
+                              'ADMIN',
+                              style: TextStyle(
+                                color: Color(0xFF00D9A5),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 18),
+
+                // =====================================================
+                // ADMIN PROFILE
+                // =====================================================
+                _settingsCard(
+                  icon: Icons.admin_panel_settings_rounded,
+                  iconColor: const Color(0xFF00D9A5),
+                  title: 'Admin Profile',
+                  subtitle: 'Signed-in administrator account',
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final compact = constraints.maxWidth < 600;
+
+                      final profileInfo = Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF00A884), Color(0xFF087B68)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF00A884).withOpacity(0.22),
+                                  blurRadius: 18,
+                                ),
+                              ],
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              _profileInitial(user),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 25,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 15),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Google Drive Integration', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                                 Text(
-                                  _linkedGmail != null ? 'Configuration Saved' : 'No configuration',
-                                  style: TextStyle(
-                                    color: _linkedGmail != null ? const Color(0xFF00A884) : Colors.orangeAccent,
-                                    fontSize: 12,
+                                  adminName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.alternate_email_rounded,
+                                      color: Colors.white38,
+                                      size: 14,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        adminEmail,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white60,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 9,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF00A884).withOpacity(0.10),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: const Color(0xFF00A884).withOpacity(0.22),
+                                    ),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.verified_user_rounded,
+                                        color: Color(0xFF00D9A5),
+                                        size: 13,
+                                      ),
+                                      SizedBox(width: 5),
+                                      Text(
+                                        'Authenticated',
+                                        style: TextStyle(
+                                          color: Color(0xFF00D9A5),
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
                             ),
                           ),
                         ],
-                      ),
-                      const Divider(color: Colors.white12, height: 28),
-                      if (_linkedGmail != null) ...[
-                        Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(color: const Color(0xFF121B22), borderRadius: BorderRadius.circular(10)),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Linked Gmail ID', style: TextStyle(color: Colors.grey, fontSize: 11)),
-                              const SizedBox(height: 4),
-                              Text(_linkedGmail!, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 12),
-                              const Text('Apps Script URL', style: TextStyle(color: Colors.grey, fontSize: 11)),
-                              const SizedBox(height: 4),
-                              SelectableText(_linkedScriptUrl ?? '', style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                            ],
+                      );
+
+                      final logoutButton = OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.redAccent,
+                          side: BorderSide(
+                            color: Colors.redAccent.withOpacity(0.55),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 13,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
                         ),
-                        const SizedBox(height: 18),
+                        onPressed: _confirmLogout,
+                        icon: const Icon(Icons.logout_rounded, size: 18),
+                        label: const Text(
+                          'Logout',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      );
+
+                      if (compact) {
+                        return Column(
+                          children: [
+                            profileInfo,
+                            const SizedBox(height: 16),
+                            SizedBox(width: double.infinity, child: logoutButton),
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Expanded(child: profileInfo),
+                          const SizedBox(width: 18),
+                          logoutButton,
+                        ],
+                      );
+                    },
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // =====================================================
+                // GOOGLE DRIVE INTEGRATION
+                // =====================================================
+                _settingsCard(
+                  icon: Icons.add_to_drive_rounded,
+                  iconColor: const Color(0xFF4DA3FF),
+                  title: 'Google Drive Integration',
+                  subtitle: 'Student Sheet + photo storage connection',
+                  trailing: _statusPill(
+                    _isDriveLinked ? 'CONNECTED' : 'NOT CONNECTED',
+                    _isDriveLinked
+                        ? const Color(0xFF00D9A5)
+                        : Colors.orangeAccent,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F191F),
+                          borderRadius: BorderRadius.circular(13),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.05),
+                          ),
+                        ),
+                        child: const Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.info_outline_rounded,
+                              color: Color(0xFF4DA3FF),
+                              size: 18,
+                            ),
+                            SizedBox(width: 9),
+                            Expanded(
+                              child: Text(
+                                'Student records Google Sheet me aur photos Google Drive par save karne ke liye School Gmail aur Google Apps Script Web App URL use hota hai.',
+                                style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11.5,
+                                  height: 1.45,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      if (_isDriveLinked) ...[
+                        _connectionInfoTile(
+                          icon: Icons.mail_outline_rounded,
+                          label: 'Linked Gmail ID',
+                          value: _linkedGmail ?? '',
+                        ),
+                        const SizedBox(height: 10),
+                        _connectionInfoTile(
+                          icon: Icons.link_rounded,
+                          label: 'Google Apps Script URL',
+                          value: _linkedScriptUrl ?? '',
+                          selectable: true,
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 11,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00A884).withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(11),
+                                  border: Border.all(
+                                    color: const Color(0xFF00A884).withOpacity(0.17),
+                                  ),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Icon(
+                                      Icons.cloud_done_rounded,
+                                      color: Color(0xFF00D9A5),
+                                      size: 18,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Cloud configuration active hai',
+                                        style: TextStyle(
+                                          color: Color(0xFF00D9A5),
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.orangeAccent,
+                              side: BorderSide(
+                                color: Colors.orangeAccent.withOpacity(0.50),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 13),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
                             onPressed: _isLoading ? null : _unlinkGmail,
-                            icon: const Icon(Icons.link_off, color: Colors.redAccent),
-                            label: const Text('Unlink / Change Configuration', style: TextStyle(color: Colors.redAccent)),
+                            icon: const Icon(Icons.sync_alt_rounded, size: 18),
+                            label: const Text(
+                              'Unlink / Change Google Drive Account',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
                           ),
                         ),
                       ] else ...[
                         TextField(
                           controller: _gmailController,
+                          keyboardType: TextInputType.emailAddress,
                           style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('School Gmail ID'),
+                          decoration: _modernInputDecoration(
+                            'School Gmail ID',
+                            Icons.mail_outline_rounded,
+                          ),
                         ),
                         const SizedBox(height: 12),
                         TextField(
                           controller: _scriptUrlController,
                           style: const TextStyle(color: Colors.white),
-                          decoration: _inputDecoration('Google Apps Script /exec URL'),
+                          decoration: _modernInputDecoration(
+                            'Google Apps Script /exec URL',
+                            Icons.link_rounded,
+                          ),
                         ),
                         const SizedBox(height: 16),
                         SizedBox(
@@ -4072,17 +4587,100 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           child: ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF00A884),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
                             onPressed: _isLoading ? null : _linkGmail,
-                            icon: const Icon(Icons.cloud_done, color: Colors.white),
+                            icon: _isLoading
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.cloud_done_rounded, size: 19),
                             label: Text(
-                              _isLoading ? 'Saving...' : 'Save Google Drive Configuration',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              _isLoading
+                                  ? 'Saving Configuration...'
+                                  : 'Connect Google Drive',
+                              style: const TextStyle(fontWeight: FontWeight.w800),
                             ),
                           ),
                         ),
                       ],
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // =====================================================
+                // SECURITY / LOGOUT
+                // =====================================================
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF172229),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: Colors.redAccent.withOpacity(0.16),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: Colors.redAccent.withOpacity(0.10),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.security_rounded,
+                          color: Colors.redAccent,
+                          size: 21,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Account Security',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            SizedBox(height: 3),
+                            Text(
+                              'Shared computer use kar rahe hain to kaam ke baad logout karein.',
+                              style: TextStyle(
+                                color: Colors.white38,
+                                fontSize: 10.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      IconButton(
+                        tooltip: 'Logout Admin',
+                        onPressed: _confirmLogout,
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.redAccent.withOpacity(0.10),
+                          foregroundColor: Colors.redAccent,
+                        ),
+                        icon: const Icon(Icons.logout_rounded, size: 19),
+                      ),
                     ],
                   ),
                 ),
@@ -4094,13 +4692,193 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  InputDecoration _inputDecoration(String hint) {
+  Widget _settingsCard({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required Widget child,
+    Widget? trailing,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.065)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.16),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.11),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: iconColor.withOpacity(0.18)),
+                ),
+                child: Icon(icon, color: iconColor, size: 21),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 10),
+                trailing,
+              ],
+            ],
+          ),
+          const SizedBox(height: 15),
+          Container(height: 1, color: Colors.white.withOpacity(0.055)),
+          const SizedBox(height: 15),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _statusPill(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.22)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _connectionInfoTile({
+    required IconData icon,
+    required String label,
+    required String value,
+    bool selectable = false,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F191F),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: const Color(0xFF4DA3FF).withOpacity(0.09),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, color: const Color(0xFF4DA3FF), size: 17),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 9.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                selectable
+                    ? SelectableText(
+                        value,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11.5,
+                          height: 1.35,
+                        ),
+                      )
+                    : Text(
+                        value,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _modernInputDecoration(String hint, IconData icon) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: Colors.grey),
+      hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
+      prefixIcon: Icon(icon, color: const Color(0xFF00A884), size: 19),
       filled: true,
-      fillColor: const Color(0xFF121B22),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+      fillColor: const Color(0xFF0F191F),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.white.withOpacity(0.06)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFF00A884)),
+      ),
     );
   }
 }
