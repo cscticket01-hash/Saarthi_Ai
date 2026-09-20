@@ -190,7 +190,7 @@ jobs:
           echo "mobile_scanner dependency found."
 
 
-             # ============================================================
+      # ============================================================
       # FIX AGORA + IRIS METHOD CHANNEL COMPILE SDK
       # ============================================================
       - name: Fix Agora And Iris Compile SDK
@@ -208,6 +208,7 @@ jobs:
           package_patterns = [
               "agora_rtc_engine-*",
               "iris_method_channel-*",
+              "printing-*",
           ]
 
           found_packages = 0
