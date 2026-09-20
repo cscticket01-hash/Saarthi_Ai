@@ -2381,54 +2381,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ],
         ),
         actions: [
-          // Profile / Logout menu
-          PopupMenuButton<String>(
-            color: const Color(0xFF1F2C34),
-            tooltip: 'Admin Menu',
-            icon: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.07)),
-              ),
-              child: const Icon(Icons.more_horiz_rounded, color: Colors.white70, size: 21),
-            ),
-            onSelected: (value) async {
-              if (value == 'profile') {
-                _showProfileDialog();
-              } else if (value == 'logout') {
-                await FirebaseAuth.instance.signOut();
-                if (!mounted) return;
-                Navigator.popUntil(context, (route) => route.isFirst);
-              }
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem<String>(
-                value: 'profile',
-                child: Row(
-                  children: [
-                    Icon(Icons.person_outline_rounded, color: Color(0xFF00A884), size: 20),
-                    SizedBox(width: 12),
-                    Text('Profile', style: TextStyle(color: Colors.white)),
-                  ],
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'logout',
-                child: Row(
-                  children: [
-                    Icon(Icons.logout_rounded, color: Colors.redAccent, size: 20),
-                    SizedBox(width: 12),
-                    Text('Logout', style: TextStyle(color: Colors.redAccent)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(width: 6),
 
           // Visible Settings button at top-right
           Tooltip(
@@ -4613,74 +4565,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ),
                       ],
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // =====================================================
-                // SECURITY / LOGOUT
-                // =====================================================
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF172229),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: Colors.redAccent.withOpacity(0.16),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: Colors.redAccent.withOpacity(0.10),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.security_rounded,
-                          color: Colors.redAccent,
-                          size: 21,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Account Security',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            SizedBox(height: 3),
-                            Text(
-                              'Shared computer use kar rahe hain to kaam ke baad logout karein.',
-                              style: TextStyle(
-                                color: Colors.white38,
-                                fontSize: 10.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      IconButton(
-                        tooltip: 'Logout Admin',
-                        onPressed: _confirmLogout,
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.redAccent.withOpacity(0.10),
-                          foregroundColor: Colors.redAccent,
-                        ),
-                        icon: const Icon(Icons.logout_rounded, size: 19),
-                      ),
                     ],
                   ),
                 ),
