@@ -20,13 +20,11 @@ jobs:
     timeout-minutes: 45
 
     steps:
-
       # ============================================================
       # 1. CHECKOUT
       # ============================================================
       - name: Checkout Repository
         uses: actions/checkout@v4
-
 
       # ============================================================
       # 2. JAVA 17
@@ -37,7 +35,6 @@ jobs:
           distribution: zulu
           java-version: "17"
 
-
       # ============================================================
       # 3. FLUTTER
       # ============================================================
@@ -47,17 +44,14 @@ jobs:
           channel: stable
           cache: true
 
-
       # ============================================================
       # 4. ANDROID SDK
       # ============================================================
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-
       # ============================================================
       # 5. INSTALL ANDROID SDK 34
-      # mobile_scanner + Agora ke liye
       # ============================================================
       - name: Install Android SDK 34
         shell: bash
@@ -69,23 +63,20 @@ jobs:
             "platforms;android-34" \
             "build-tools;34.0.0"
 
-
       # ============================================================
       # 6. SHOW BUILD ENVIRONMENT
       # ============================================================
       - name: Show Build Environment
+        shell: bash
         run: |
           flutter --version
           dart --version
           java -version
           echo "ANDROID_HOME=$ANDROID_HOME"
 
-
       # ============================================================
       # 7. CONFIGURE ANDROID PROJECT
-      #
-      # Existing android project ko overwrite nahi karega.
-      # Sirf android folder missing hua to generate karega.
+      # Existing project ko overwrite nahi karega
       # ============================================================
       - name: Configure Android Project
         shell: bash
@@ -104,11 +95,8 @@ jobs:
             echo "Existing Android configuration preserve kiya jayega."
           fi
 
-
       # ============================================================
       # 8. ENSURE CAMERA + INTERNET PERMISSIONS
-      # Scanner ke liye CAMERA permission
-      # Existing permissions ko delete/replace nahi karega
       # ============================================================
       - name: Ensure Android Permissions
         shell: bash
@@ -119,9 +107,12 @@ jobs:
           manifest = Path("android/app/src/main/AndroidManifest.xml")
 
           if not manifest.exists():
-              raise SystemExit("AndroidManifest.xml nahi mila")
+              raise SystemExit("ERROR: AndroidManifest.xml nahi mila")
 
-          text = manifest.read_text(encoding="utf-8")
+          text = manifest.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
 
           additions = []
 
@@ -144,7 +135,7 @@ jobs:
               manifest_end = text.find('>')
 
               if manifest_end == -1:
-                  raise SystemExit("Invalid AndroidManifest.xml")
+                  raise SystemExit("ERROR: Invalid AndroidManifest.xml")
 
               text = (
                   text[:manifest_end + 1]
@@ -154,12 +145,19 @@ jobs:
                   + text[manifest_end + 1:]
               )
 
-              manifest.write_text(text, encoding="utf-8")
+              manifest.write_text(
+                  text,
+                  encoding="utf-8",
+              )
 
           print("===== ANDROID MANIFEST =====")
-          print(manifest.read_text(encoding="utf-8"))
+          print(
+              manifest.read_text(
+                  encoding="utf-8",
+                  errors="ignore",
+              )
+          )
           PY
-
 
       # ============================================================
       # 9. CLEAN PROJECT
@@ -167,41 +165,35 @@ jobs:
       - name: Clean Project
         run: flutter clean
 
-
       # ============================================================
       # 10. GET DEPENDENCIES
       # ============================================================
       - name: Install Flutter Dependencies
         run: flutter pub get
 
-
       # ============================================================
       # 11. VERIFY MOBILE SCANNER
-      # pubspec me mobile_scanner missing hua to yahin fail karega
       # ============================================================
       - name: Verify Mobile Scanner
         shell: bash
         run: |
           echo "Checking mobile_scanner dependency..."
-
           flutter pub deps | grep "mobile_scanner"
-
           echo ""
           echo "mobile_scanner dependency found."
 
-
       # ============================================================
-      # FIX AGORA + IRIS METHOD CHANNEL COMPILE SDK
+      # 12. FIX OLD PLUGIN COMPILE SDK
+      # Agora + Iris + Printing runner-only patch
       # ============================================================
-      - name: Fix Agora And Iris Compile SDK
+      - name: Fix Plugin Compile SDK
         shell: bash
         run: |
-          echo "Fixing Agora related Android compileSdk..."
+          echo "Fixing Android plugin compileSdk..."
 
           python3 <<'PY'
           from pathlib import Path
           import re
-          import os
 
           pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
 
@@ -215,28 +207,19 @@ jobs:
           patched_files = 0
 
           for package_pattern in package_patterns:
-
-              packages = list(
-                  pub_cache.glob(package_pattern)
-              )
+              packages = list(pub_cache.glob(package_pattern))
 
               if not packages:
-                  print(
-                      f"WARNING: {package_pattern} nahi mila"
-                  )
+                  print(f"WARNING: {package_pattern} nahi mila")
                   continue
 
               for package in packages:
                   found_packages += 1
 
                   print("")
-                  print(
-                      "===================================="
-                  )
+                  print("====================================")
                   print("PACKAGE:", package)
-                  print(
-                      "===================================="
-                  )
+                  print("====================================")
 
                   android_dir = package / "android"
 
@@ -244,16 +227,10 @@ jobs:
                       print("Android folder nahi hai - skip")
                       continue
 
-                  gradle_files = list(
-                      android_dir.rglob("*.gradle")
-                  )
-
-                  gradle_files += list(
-                      android_dir.rglob("*.gradle.kts")
-                  )
+                  gradle_files = list(android_dir.rglob("*.gradle"))
+                  gradle_files += list(android_dir.rglob("*.gradle.kts"))
 
                   for file in gradle_files:
-
                       text = file.read_text(
                           encoding="utf-8",
                           errors="ignore",
@@ -261,79 +238,49 @@ jobs:
 
                       original = text
 
-                      # Groovy:
-                      # compileSdkVersion 31
-                      text = re.sub(
-                          r'(?m)^(\s*)compileSdkVersion\s+[0-9]+\s*$',
-                          r'\1compileSdkVersion 34',
-                          text,
-                      )
-
-                      # Groovy with expression:
-                      # compileSdkVersion safeExtGet(...)
-                      text = re.sub(
-                          r'(?m)^(\s*)compileSdkVersion\s+.*$',
-                          r'\1compileSdkVersion 34',
-                          text,
-                      )
-
-                      # Groovy:
-                      # compileSdk 31
-                      text = re.sub(
-                          r'(?m)^(\s*)compileSdk\s+[0-9]+\s*$',
-                          r'\1compileSdk 34',
-                          text,
-                      )
-
-                      # Groovy/KTS:
-                      # compileSdk = 31
-                      text = re.sub(
-                          r'(?m)^(\s*)compileSdk\s*=\s*.*$',
-                          r'\1compileSdk = 34',
-                          text,
-                      )
-
-                      # compileSdkVersion = 31
-                      text = re.sub(
-                          r'(?m)^(\s*)compileSdkVersion\s*=\s*.*$',
-                          r'\1compileSdkVersion 34',
-                          text,
-                      )
+                      if file.name.endswith(".gradle.kts"):
+                          text = re.sub(
+                              r'(?m)^(\s*)compileSdk\s*=.*$',
+                              r'\1compileSdk = 34',
+                              text,
+                          )
+                          text = re.sub(
+                              r'(?m)^(\s*)compileSdkVersion\s*=.*$',
+                              r'\1compileSdk = 34',
+                              text,
+                          )
+                      else:
+                          text = re.sub(
+                              r'(?m)^(\s*)compileSdkVersion\s+.*$',
+                              r'\1compileSdkVersion 34',
+                              text,
+                          )
+                          text = re.sub(
+                              r'(?m)^(\s*)compileSdk\s*(?:=\s*)?.*$',
+                              r'\1compileSdkVersion 34',
+                              text,
+                          )
 
                       if text != original:
-
                           file.write_text(
                               text,
                               encoding="utf-8",
                           )
-
                           patched_files += 1
-
-                          print(
-                              "PATCHED:",
-                              file,
-                          )
+                          print("PATCHED:", file)
 
           print("")
-          print(
-              "Found packages:",
-              found_packages,
-          )
-
-          print(
-              "Patched Gradle files:",
-              patched_files,
-          )
+          print("Found packages:", found_packages)
+          print("Patched Gradle files:", patched_files)
 
           if found_packages == 0:
               raise SystemExit(
-                  "ERROR: Agora/Iris packages nahi mile"
+                  "ERROR: Agora/Iris/Printing packages nahi mile"
               )
           PY
 
           echo ""
           echo "===== AGORA AFTER PATCH ====="
-
           find "$HOME/.pub-cache/hosted/pub.dev" \
             -maxdepth 1 \
             -type d \
@@ -343,7 +290,6 @@ jobs:
 
           echo ""
           echo "===== IRIS AFTER PATCH ====="
-
           find "$HOME/.pub-cache/hosted/pub.dev" \
             -maxdepth 1 \
             -type d \
@@ -352,8 +298,17 @@ jobs:
             2>/dev/null || true
 
           echo ""
-          echo "Agora + Iris SDK patch completed."
-          
+          echo "===== PRINTING AFTER PATCH ====="
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name "printing-*" \
+            -exec grep -R -n "compileSdk" {}/android \; \
+            2>/dev/null || true
+
+          echo ""
+          echo "Plugin compileSdk patch completed."
+
       # ============================================================
       # 13. VERIFY ANDROID CONFIGURATION
       # ============================================================
@@ -373,7 +328,6 @@ jobs:
           grep -R -n "android.permission.INTERNET" \
             android/app/src/main/AndroidManifest.xml
 
-
       # ============================================================
       # 14. FLUTTER DOCTOR
       # ============================================================
@@ -381,29 +335,32 @@ jobs:
         run: flutter doctor -v
 
       # ============================================================
-      # ANDROID-ONLY TEMPORARY DART PATCH
-      # Original GitHub Dart file bilkul unchanged rahega
+      # 15. ANDROID-ONLY TEMPORARY DART PATCH
+      # Original GitHub Dart files unchanged rahenge
       # ============================================================
       - name: Prepare Android Safe Dart Source
         shell: bash
         run: |
           echo "Preparing Android-only temporary source..."
 
-          # Android me WhatsApp link open karne ke liye
+          # Android me external WhatsApp link open karne ke liye.
+          # Runner-only pubspec change; repository me commit nahi hota.
           flutter pub add "url_launcher:^6.3.2"
 
           python3 <<'PY'
           from pathlib import Path
           import re
 
-          path = Path("lib/main_dashboard_screen.dart")
+          dashboard_path = Path(
+              "lib/main_dashboard_screen.dart"
+          )
 
-          if not path.exists():
+          if not dashboard_path.exists():
               raise SystemExit(
                   "ERROR: lib/main_dashboard_screen.dart nahi mila"
               )
 
-          text = path.read_text(
+          text = dashboard_path.read_text(
               encoding="utf-8",
               errors="ignore",
           )
@@ -425,7 +382,6 @@ jobs:
           )
 
           if launcher_import not in text:
-
               mobile_import = (
                   "import 'package:mobile_scanner/mobile_scanner.dart';\n"
               )
@@ -440,14 +396,12 @@ jobs:
                       mobile_import + launcher_import,
                       1,
                   )
-
               elif qr_import in text:
                   text = text.replace(
                       qr_import,
                       qr_import + launcher_import,
                       1,
                   )
-
               else:
                   raise SystemExit(
                       "ERROR: url_launcher import add karne ki jagah nahi mili"
@@ -455,11 +409,6 @@ jobs:
 
           # ========================================================
           # 3. SCANNER MOBILE DETECTION
-          #
-          # Android APK build hai, isliye agar old html user-agent
-          # code present hai to usko simply android bana do.
-          # Agar already screenWidth wala fix laga hai to kuch nahi
-          # karega.
           # ========================================================
           old_user_agent = (
               "html.window.navigator.userAgent.toLowerCase()"
@@ -470,7 +419,6 @@ jobs:
                   old_user_agent,
                   "'android'",
               )
-
               print(
                   "Scanner user-agent Android ke liye patched."
               )
@@ -488,7 +436,6 @@ jobs:
           pdf_start = text.find(pdf_start_marker)
 
           if pdf_start != -1:
-
               pdf_end = text.find(
                   pdf_end_marker,
                   pdf_start,
@@ -516,7 +463,6 @@ jobs:
               print(
                   "PDF download Android share me patched."
               )
-
           else:
               print(
                   "HTML PDF download block present nahi hai - skip."
@@ -552,37 +498,6 @@ jobs:
               print(
                   "WhatsApp html.window.open present nahi hai - skip."
               )
-          # ========================================================
-          # 5. WHATSAPP WEB OPEN -> ANDROID EXTERNAL APP
-          # ========================================================
-          whatsapp_pattern = re.compile(
-              r"html\.window\.open\(\s*"
-              r"'https://wa\.me/\$waNum'\s*,\s*"
-              r"'_blank'\s*\);"
-          )
-
-          whatsapp_replacement = """launchUrl(
-                                        Uri.parse(
-                                          'https://wa.me/$waNum',
-                                        ),
-                                        mode: LaunchMode.externalApplication,
-                                      );"""
-
-          text, whatsapp_count = whatsapp_pattern.subn(
-              whatsapp_replacement,
-              text,
-              count=1,
-          )
-
-          if whatsapp_count == 1:
-              print(
-                  "WhatsApp Android launcher patched."
-              )
-          else:
-              print(
-                  "WhatsApp html.window.open present nahi hai - skip."
-              )
-
 
           # ========================================================
           # 6. REMOVE WEB-ONLY FIREBASE AUTH PERSISTENCE ON ANDROID
@@ -617,34 +532,19 @@ jobs:
                   "Firebase setPersistence line nahi mili - skip."
               )
 
+          # ========================================================
+          # SAVE RUNNER-ONLY FILES
+          # ========================================================
+          dashboard_path.write_text(
+              text,
+              encoding="utf-8",
+          )
+
           main_path.write_text(
               main_text,
               encoding="utf-8",
           )
 
-
-          # ========================================================
-          # SAVE ONLY INSIDE GITHUB RUNNER
-          # ========================================================
-          path.write_text(
-              text,
-              encoding="utf-8",
-          )
-
-          print("")
-          print(
-              "Android temporary Dart source created successfully."
-          )
-          PY
-
-          # ========================================================
-          # SAVE ONLY INSIDE GITHUB RUNNER
-          # ========================================================
-          path.write_text(
-              text,
-              encoding="utf-8",
-          )
-
           print("")
           print(
               "Android temporary Dart source created successfully."
@@ -652,28 +552,19 @@ jobs:
           PY
 
           echo ""
-          echo "===== CHECK FIREBASE PERSISTENCE ====="
+          echo "========================================="
+          echo "CHECKING ANDROID TEMPORARY SOURCE"
+          echo "========================================="
 
-          if grep -n \
-            "setPersistence" \
-            lib/main.dart; then
+          echo ""
+          echo "Checking Firebase web persistence..."
 
+          if grep -n "setPersistence" lib/main.dart; then
             echo "::error::Android main.dart me setPersistence abhi bhi present hai!"
             exit 1
-
           else
             echo "OK - Android main.dart se web persistence removed."
           fi
-
-          echo ""
-          echo "========================================="
-          echo "CHECKING ANDROID SOURCE"
-          echo "========================================="
-
-          echo ""
-          echo "========================================="
-          echo "CHECKING ANDROID SOURCE"
-          echo "========================================="
 
           echo ""
           echo "Checking dart:html / html.* ..."
@@ -681,11 +572,9 @@ jobs:
           if grep -nE \
             "dart:html|html\." \
             lib/main_dashboard_screen.dart; then
-
             echo ""
             echo "::error::Android source me html code abhi bhi present hai!"
             exit 1
-
           else
             echo "OK - dart:html completely removed."
           fi
@@ -712,17 +601,18 @@ jobs:
           echo "Android temporary source READY."
 
       # ============================================================
-      # 15. BUILD RELEASE APK
+      # 16. BUILD RELEASE APK
       # ============================================================
       - name: Build Saarthi AI Release APK
+        shell: bash
         run: |
           flutter build apk \
             --release \
+            --dart-define=GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}" \
             --dart-define=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
 
-
       # ============================================================
-      # 16. VERIFY APK EXISTS
+      # 17. VERIFY APK EXISTS
       # ============================================================
       - name: Verify APK
         shell: bash
@@ -734,9 +624,8 @@ jobs:
 
           ls -lh build/app/outputs/flutter-apk/app-release.apk
 
-
       # ============================================================
-      # 17. PREPARE FINAL APK
+      # 18. PREPARE FINAL APK
       # ============================================================
       - name: Prepare Final APK
         shell: bash
@@ -760,9 +649,8 @@ jobs:
           sha256sum \
             release/Saarthi-AI-v${{ github.run_number }}.apk
 
-
       # ============================================================
-      # 18. BUILD SUMMARY
+      # 19. BUILD SUMMARY
       # ============================================================
       - name: Create Build Summary
         shell: bash
@@ -789,9 +677,8 @@ jobs:
           echo "APK ko Artifacts section se download karein." \
             >> "$GITHUB_STEP_SUMMARY"
 
-
       # ============================================================
-      # 19. UPLOAD APK
+      # 20. UPLOAD APK
       # ============================================================
       - name: Upload Saarthi AI APK
         uses: actions/upload-artifact@v4
