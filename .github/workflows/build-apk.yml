@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Saarthi AI Android APK
 
 on:
   push:
@@ -6,63 +6,170 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build Release APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-      # 1. Checkout source code
-      - name: Checkout repository
+
+      # ============================================================
+      # 1. CHECKOUT PROJECT
+      # ============================================================
+      - name: Checkout Saarthi AI
         uses: actions/checkout@v4
 
-      # 2. Setup Java
-      - name: Set up Java
+
+      # ============================================================
+      # 2. JAVA 17
+      # ============================================================
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: zulu
-          java-version: '17'
+          java-version: "17"
 
-      # 3. Setup Flutter
+
+      # ============================================================
+      # 3. FLUTTER STABLE
+      # ============================================================
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      # 4. Show environment information
-      - name: Flutter Doctor
+
+      # ============================================================
+      # 4. ENVIRONMENT INFO
+      # ============================================================
+      - name: Show Flutter Environment
         run: |
           flutter --version
-          flutter doctor -v
-          
-      # 4.1 Generate Android folder
-      - name: Generate Android project files
+          dart --version
+          java -version
+
+
+      # ============================================================
+      # 5. ENABLE + GENERATE ANDROID PROJECT
+      # Repo me android folder nahi hai to ye automatically banayega
+      # ============================================================
+      - name: Configure Android Project
         run: |
           flutter config --enable-android
-          flutter create --platforms=android --android-language java .
-       
-      - name: Force SDK 34 and Disable AAR Metadata Check
-        run: |
-          mkdir -p android
-          echo "android.suppressUnsupportedCompileSdk=34" >> android/gradle.properties
-          echo "android.enableD8=true" >> android/gradle.properties
-          echo 'allprojects { tasks.matching { it.name.contains("checkReleaseAarMetadata") }.configureEach { enabled = false } }' >> android/build.gradle
-          echo 'gradle.taskGraph.whenReady { allTasks.findAll { it.name.contains("checkReleaseAarMetadata") }.each { it.enabled = false } }' >> android/build.gradle
+          flutter create \
+            --platforms=android \
+            --android-language=java \
+            .
 
-      # 5. Get Flutter dependencies
-      - name: Install dependencies
+
+      # ============================================================
+      # 6. CLEAN OLD BUILD
+      # ============================================================
+      - name: Clean Flutter Build
+        run: flutter clean
+
+
+      # ============================================================
+      # 7. GET PACKAGES
+      # ============================================================
+      - name: Install Dependencies
         run: flutter pub get
 
-      # 8. Build release APK
-      - name: Build Release APK
-        run: flutter build apk --release
 
-      # 9. Upload APK
-      - name: Upload APK Artifact
+      # ============================================================
+      # 8. ANDROID / FLUTTER DOCTOR
+      # ============================================================
+      - name: Flutter Doctor
+        run: flutter doctor -v
+
+
+      # ============================================================
+      # 9. CHECK WEB-ONLY CODE
+      # Warning only - build ko yahan stop nahi karega
+      # ============================================================
+      - name: Check Web Only Imports
+        shell: bash
+        run: |
+          echo "Checking for web-only Dart imports..."
+
+          if grep -R "dart:html" lib/; then
+            echo "::warning::dart:html mila hai. Android build me is code ko platform-specific karna pad sakta hai."
+          else
+            echo "No dart:html import found."
+          fi
+
+
+      # ============================================================
+      # 10. BUILD RELEASE APK
+      # Current Dart code GEMINI_API_KEY naam expect karta hai
+      # ============================================================
+      - name: Build Release APK
+        run: |
+          flutter build apk \
+            --release \
+            --dart-define=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+
+
+      # ============================================================
+      # 11. PREPARE FINAL APK
+      # ============================================================
+      - name: Prepare Saarthi AI APK
+        shell: bash
+        run: |
+          mkdir -p release
+
+          cp \
+            build/app/outputs/flutter-apk/app-release.apk \
+            release/Saarthi-AI-Release-${{ github.run_number }}.apk
+
+          echo "========================================"
+          echo "        SAARTHI AI APK READY"
+          echo "========================================"
+
+          ls -lh release/
+
+          echo ""
+          echo "SHA256:"
+          sha256sum release/Saarthi-AI-Release-${{ github.run_number }}.apk
+
+
+      # ============================================================
+      # 12. BUILD SUMMARY
+      # ============================================================
+      - name: Create Build Summary
+        shell: bash
+        run: |
+          APK_SIZE=$(du -h release/Saarthi-AI-Release-${{ github.run_number }}.apk | cut -f1)
+
+          echo "## 📱 Saarthi AI Android Build" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ **Build Successful**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Build Number: **${{ github.run_number }}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Branch: **${{ github.ref_name }}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- APK Size: **$APK_SIZE**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Build Type: **Release APK**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK neeche Artifacts section se download karein." >> "$GITHUB_STEP_SUMMARY"
+
+
+      # ============================================================
+      # 13. UPLOAD APK
+      # ============================================================
+      - name: Upload Saarthi AI APK
         uses: actions/upload-artifact@v4
         with:
-          name: saarthi-ai-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: Saarthi-AI-Android-${{ github.run_number }}
+          path: release/*.apk
           if-no-files-found: error
           retention-days: 30
+          compression-level: 0
