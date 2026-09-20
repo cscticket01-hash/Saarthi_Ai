@@ -824,102 +824,310 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
     });
   }
 
-  Future<void> _handleLogin() async {
-    final idText = _usernameController.text.trim();
-    final password = _passwordController.text.trim();
+Future<void> _handleLogin() async {
+  final idText = _usernameController.text.trim();
+  final password = _passwordController.text.trim();
 
-    if (idText.isEmpty || password.isEmpty) {
+  // ============================================================
+  // BASIC VALIDATION
+  // ============================================================
+
+  if (idText.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.redAccent,
+        content: Text(
+          _isAdminMode
+              ? 'Admin Email bharein.'
+              : 'Student Roll No bharein.',
+        ),
+      ),
+    );
+    return;
+  }
+
+  if (password.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: Colors.redAccent,
+        content: Text(
+          'Password / Date of Birth bharein.',
+        ),
+      ),
+    );
+    return;
+  }
+
+  setState(() {
+    _isLoggingIn = true;
+  });
+
+  try {
+    // ==========================================================
+    // ADMIN LOGIN
+    // ==========================================================
+
+    if (_isAdminMode) {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: idText,
+        password: password,
+      );
+
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
           content: Text(
-            _isAdminMode
-                ? 'Kripya Admin Email aur Password bharein'
-                : 'Kripya Student ID / Roll No aur Password bharein',
+            'Admin Login Safal hua!',
           ),
         ),
       );
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) =>
+              const AdminDashboardScreen(),
+        ),
+      );
+
       return;
     }
 
-    setState(() {
-      _isLoggingIn = true;
-    });
+    // ==========================================================
+    // STUDENT LOGIN
+    // ==========================================================
 
-    try {
-      if (_isAdminMode) {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: idText,
-          password: password,
-        );
+    final studentRoll = idText;
 
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Color(0xFF00A884),
-            content: Text('Admin Login Safal hua!'),
+    final docId =
+        '${_selectedClass}_Roll_$studentRoll';
+
+    final studentDoc = await FirebaseFirestore
+        .instance
+        .collection('students_directory')
+        .doc(docId)
+        .get();
+
+    // Student record nahi mila
+    if (!studentDoc.exists) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Student record nahi mila! Class aur Roll No check karein.',
           ),
-        );
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
-        );
-      } else {
-        if (idText == 'student' && password == '123456') {
-          if (!mounted) return;
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => StudentPortalScreen(
-                studentId: idText,
-                studentClass: _selectedClass,
-              ),
-            ),
-          );
-        } else {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              backgroundColor: Colors.redAccent,
-              content: Text('Galat Student ID ya Password!'),
-            ),
-          );
-        }
-      }
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-      String errorMessage = 'Galat Admin Email ya Password!';
-      switch (e.code) {
-        case 'user-not-found':
-          errorMessage = 'Yeh Admin account registered nahi hai.';
-          break;
-        case 'wrong-password':
-        case 'invalid-credential':
-          errorMessage = 'Galat password ya login details.';
-          break;
-        case 'invalid-email':
-          errorMessage = 'Invalid Admin Email.';
-          break;
-        case 'user-disabled':
-          errorMessage = 'Admin account disabled hai.';
-          break;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.redAccent, content: Text(errorMessage)),
+        ),
       );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.redAccent, content: Text('Login error: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoggingIn = false;
-        });
-      }
+
+      return;
     }
+
+    final studentData =
+        studentDoc.data() as Map<String, dynamic>;
+
+    // ==========================================================
+    // STUDENT DOB AS PASSWORD
+    // ==========================================================
+
+    final storedDob =
+        studentData['dateOfBirth']
+                ?.toString()
+                .trim() ??
+            '';
+
+    if (storedDob.isEmpty) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text(
+            'Is student ka Date of Birth database mein set nahi hai.',
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    // DOB ko different common formats mein accept karna
+    final enteredPassword =
+        password.replaceAll(RegExp(r'[\s-]'), '/');
+
+    final normalizedStoredDob =
+        _normalizeDob(storedDob);
+
+    final normalizedEnteredDob =
+        _normalizeDob(enteredPassword);
+
+    final passwordMatched =
+        normalizedStoredDob.isNotEmpty &&
+        normalizedEnteredDob.isNotEmpty &&
+        normalizedStoredDob ==
+            normalizedEnteredDob;
+
+    if (!passwordMatched) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Galat Password! Apna Date of Birth sahi format mein enter karein.',
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    // ==========================================================
+    // STUDENT LOGIN SUCCESS
+    // ==========================================================
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: Color(0xFF00A884),
+        content: Text(
+          'Student Login Safal hua!',
+        ),
+      ),
+    );
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => StudentPortalScreen(
+          studentId: studentRoll,
+          studentClass: _selectedClass,
+        ),
+      ),
+    );
   }
 
+  // ============================================================
+  // ADMIN FIREBASE AUTH ERRORS
+  // ============================================================
+
+  on FirebaseAuthException catch (e) {
+    if (!mounted) return;
+
+    String errorMessage =
+        'Login details galat hain.';
+
+    switch (e.code) {
+      case 'user-not-found':
+        errorMessage =
+            'Yeh Admin account registered nahi hai.';
+        break;
+
+      case 'wrong-password':
+      case 'invalid-credential':
+        errorMessage =
+            'Galat Admin Email ya Password.';
+        break;
+
+      case 'invalid-email':
+        errorMessage =
+            'Invalid Admin Email.';
+        break;
+
+      case 'user-disabled':
+        errorMessage =
+            'Admin account disabled hai.';
+        break;
+
+      case 'too-many-requests':
+        errorMessage =
+            'Bahut zyada login attempts hue hain. Thodi der baad try karein.';
+        break;
+
+      case 'network-request-failed':
+        errorMessage =
+            'Internet connection check karein.';
+        break;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.redAccent,
+        content: Text(errorMessage),
+      ),
+    );
+  }
+
+  // ============================================================
+  // OTHER ERRORS
+  // ============================================================
+
+  catch (e) {
+    if (!mounted) return;
+
+    debugPrint(
+      'Student/Admin Login Error: $e',
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.redAccent,
+        content: Text(
+          'Login error: ${e.toString()}',
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // STOP LOADING
+  // ============================================================
+
+  finally {
+    if (mounted) {
+      setState(() {
+        _isLoggingIn = false;
+      });
+    }
+  }
+}
+
+
+// ============================================================
+// DOB NORMALIZATION
+// Accepts:
+// 02/12/1997
+// 02-12-1997
+// 02.12.1997
+// ============================================================
+
+String _normalizeDob(String value) {
+  final cleaned = value
+      .trim()
+      .replaceAll('-', '/')
+      .replaceAll('.', '/')
+      .replaceAll(RegExp(r'\s+'), '');
+
+  final parts = cleaned.split('/');
+
+  if (parts.length != 3) {
+    return '';
+  }
+
+  final day = parts[0].padLeft(2, '0');
+  final month = parts[1].padLeft(2, '0');
+  final year = parts[2];
+
+  if (year.length != 4) {
+    return '';
+  }
+
+  return '$day/$month/$year';
+}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
