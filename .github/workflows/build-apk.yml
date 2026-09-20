@@ -344,16 +344,16 @@ jobs:
       - name: Flutter Doctor
         run: flutter doctor -v
 
-      # ============================================================
+            # ============================================================
       # ANDROID-ONLY TEMPORARY DART PATCH
-      # Original GitHub Dart file ko change NAHI karta
+      # Original GitHub Dart file bilkul unchanged rahega
       # ============================================================
       - name: Prepare Android Safe Dart Source
         shell: bash
         run: |
           echo "Preparing Android-only temporary source..."
 
-          # WhatsApp link Android par open karne ke liye
+          # Android me WhatsApp link open karne ke liye
           flutter pub add "url_launcher:^6.3.2"
 
           python3 <<'PY'
@@ -367,26 +367,30 @@ jobs:
                   "ERROR: lib/main_dashboard_screen.dart nahi mila"
               )
 
-          text = path.read_text(encoding="utf-8")
-
-          # --------------------------------------------------------
-          # 1. REMOVE dart:html IMPORT FOR ANDROID BUILD
-          # --------------------------------------------------------
-          text = text.replace(
-              "import 'dart:html' as html;\n",
-              ""
+          text = path.read_text(
+              encoding="utf-8",
+              errors="ignore",
           )
 
-          # --------------------------------------------------------
+          # ========================================================
+          # 1. REMOVE dart:html IMPORT
+          # ========================================================
+          text = re.sub(
+              r"(?m)^\s*import\s+'dart:html'\s+as\s+html;\s*\n?",
+              "",
+              text,
+          )
+
+          # ========================================================
           # 2. ADD url_launcher IMPORT
-          # --------------------------------------------------------
+          # ========================================================
           launcher_import = (
               "import 'package:url_launcher/url_launcher.dart';\n"
           )
 
           if launcher_import not in text:
 
-              mobile_scanner_import = (
+              mobile_import = (
                   "import 'package:mobile_scanner/mobile_scanner.dart';\n"
               )
 
@@ -394,10 +398,10 @@ jobs:
                   "import 'package:qr_flutter/qr_flutter.dart';\n"
               )
 
-              if mobile_scanner_import in text:
+              if mobile_import in text:
                   text = text.replace(
-                      mobile_scanner_import,
-                      mobile_scanner_import + launcher_import,
+                      mobile_import,
+                      mobile_import + launcher_import,
                       1,
                   )
 
@@ -410,127 +414,163 @@ jobs:
 
               else:
                   raise SystemExit(
-                      "ERROR: Import insertion location nahi mila"
+                      "ERROR: url_launcher import add karne ki jagah nahi mili"
                   )
 
-          # --------------------------------------------------------
-          # 3. MOBILE SCANNER DETECTION
-          # APK khud Android hai, isliye true
-          # --------------------------------------------------------
-          scanner_pattern = re.compile(
-              r"bool _isMobileScannerDevice\(\) \{"
-              r".*?"
-              r"\n  \}"
-              r"\n\n  void _startInlineScanner",
-              re.DOTALL,
+          # ========================================================
+          # 3. SCANNER MOBILE DETECTION
+          #
+          # Android APK build hai, isliye agar old html user-agent
+          # code present hai to usko simply android bana do.
+          # Agar already screenWidth wala fix laga hai to kuch nahi
+          # karega.
+          # ========================================================
+          old_user_agent = (
+              "html.window.navigator.userAgent.toLowerCase()"
           )
 
-          scanner_replacement = """bool _isMobileScannerDevice() {
-              return true;
-            }
-
-            void _startInlineScanner"""
-
-          text, scanner_count = scanner_pattern.subn(
-              scanner_replacement,
-              text,
-              count=1,
-          )
-
-          if scanner_count != 1:
-              raise SystemExit(
-                  "ERROR: Scanner device function patch nahi hui"
+          if old_user_agent in text:
+              text = text.replace(
+                  old_user_agent,
+                  "'android'",
               )
 
-          # --------------------------------------------------------
-          # 4. WEB HTML PDF DOWNLOAD -> ANDROID SHARE PDF
-          # --------------------------------------------------------
-          pdf_pattern = re.compile(
-              r"\n    final blob = html\.Blob\("
-              r".*?"
-              r"\n    html\.Url\.revokeObjectUrl\(url\);",
-              re.DOTALL,
-          )
-
-          pdf_replacement = """
-              await Printing.sharePdf(
-                bytes: pdfBytes,
-                filename:
-                    'SVN_ID_Card_${safeName}_Roll_$roll.pdf',
-              );"""
-
-          text, pdf_count = pdf_pattern.subn(
-              pdf_replacement,
-              text,
-              count=1,
-          )
-
-          if pdf_count != 1:
-              raise SystemExit(
-                  "ERROR: PDF Android patch nahi hui"
+              print(
+                  "Scanner user-agent Android ke liye patched."
+              )
+          else:
+              print(
+                  "Scanner html user-agent code present nahi hai - skip."
               )
 
-          # --------------------------------------------------------
-          # 5. WEB WHATSAPP OPEN -> ANDROID EXTERNAL APP
-          # --------------------------------------------------------
-          old_whatsapp = (
-              "html.window.open("
-              "'https://wa.me/$waNum', '_blank');"
+          # ========================================================
+          # 4. WEB PDF DOWNLOAD -> ANDROID PDF SHARE
+          # ========================================================
+          pdf_start_marker = "final blob = html.Blob("
+          pdf_end_marker = "html.Url.revokeObjectUrl(url);"
+
+          pdf_start = text.find(pdf_start_marker)
+
+          if pdf_start != -1:
+
+              pdf_end = text.find(
+                  pdf_end_marker,
+                  pdf_start,
+              )
+
+              if pdf_end == -1:
+                  raise SystemExit(
+                      "ERROR: PDF html block ka end nahi mila"
+                  )
+
+              pdf_end += len(pdf_end_marker)
+
+              pdf_replacement = """await Printing.sharePdf(
+              bytes: pdfBytes,
+              filename:
+                  'SVN_ID_Card_${safeName}_Roll_$roll.pdf',
+            );"""
+
+              text = (
+                  text[:pdf_start]
+                  + pdf_replacement
+                  + text[pdf_end:]
+              )
+
+              print(
+                  "PDF download Android share me patched."
+              )
+
+          else:
+              print(
+                  "HTML PDF download block present nahi hai - skip."
+              )
+
+          # ========================================================
+          # 5. WHATSAPP WEB OPEN -> ANDROID EXTERNAL APP
+          # ========================================================
+          whatsapp_pattern = re.compile(
+              r"html\.window\.open\(\s*"
+              r"'https://wa\.me/\$waNum'\s*,\s*"
+              r"'_blank'\s*\);"
           )
 
-          new_whatsapp = """launchUrl(
+          whatsapp_replacement = """launchUrl(
                                         Uri.parse(
                                           'https://wa.me/$waNum',
                                         ),
                                         mode: LaunchMode.externalApplication,
                                       );"""
 
-          if old_whatsapp not in text:
-              raise SystemExit(
-                  "ERROR: WhatsApp HTML code nahi mila"
-              )
-
-          text = text.replace(
-              old_whatsapp,
-              new_whatsapp,
-              1,
+          text, whatsapp_count = whatsapp_pattern.subn(
+              whatsapp_replacement,
+              text,
+              count=1,
           )
 
-          # --------------------------------------------------------
-          # SAVE TEMPORARY FILE
-          # --------------------------------------------------------
+          if whatsapp_count == 1:
+              print(
+                  "WhatsApp Android launcher patched."
+              )
+          else:
+              print(
+                  "WhatsApp html.window.open present nahi hai - skip."
+              )
+
+          # ========================================================
+          # SAVE ONLY INSIDE GITHUB RUNNER
+          # ========================================================
           path.write_text(
               text,
               encoding="utf-8",
           )
 
-          print("Scanner patch:", scanner_count)
-          print("PDF patch:", pdf_count)
-          print("Android temporary Dart patch successful.")
+          print("")
+          print(
+              "Android temporary Dart source created successfully."
+          )
           PY
 
           echo ""
-          echo "===== CHECK dart:html ====="
+          echo "========================================="
+          echo "CHECKING ANDROID SOURCE"
+          echo "========================================="
 
-          if grep -R -nE \
+          echo ""
+          echo "Checking dart:html / html.* ..."
+
+          if grep -nE \
             "dart:html|html\." \
             lib/main_dashboard_screen.dart; then
 
-            echo "::error::HTML code abhi bhi Dart file me mila!"
+            echo ""
+            echo "::error::Android source me html code abhi bhi present hai!"
             exit 1
 
           else
-            echo "OK - Android source me dart:html nahi hai."
+            echo "OK - dart:html completely removed."
           fi
 
           echo ""
-          echo "===== CHECK URL LAUNCHER ====="
+          echo "Checking mobile_scanner..."
+          grep -n \
+            "mobile_scanner" \
+            lib/main_dashboard_screen.dart || true
+
+          echo ""
+          echo "Checking url_launcher..."
           grep -n \
             "url_launcher" \
             lib/main_dashboard_screen.dart
 
           echo ""
-          echo "Android temporary source ready."
+          echo "Checking Printing.sharePdf..."
+          grep -n \
+            "Printing.sharePdf" \
+            lib/main_dashboard_screen.dart || true
+
+          echo ""
+          echo "Android temporary source READY."
 
       # ============================================================
       # 15. BUILD RELEASE APK
