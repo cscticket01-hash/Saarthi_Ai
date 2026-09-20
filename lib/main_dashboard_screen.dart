@@ -2617,18 +2617,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               subtitle: 'Publish & manage updates',
               accent: Colors.orangeAccent,
             ),
-            _overviewCard(
-              width: itemWidth,
-              icon: Icons.school_rounded,
-              title: 'Teachers',
-              subtitle: '${_teachersList.length} directory entries',
-              accent: Colors.purpleAccent,
-            ),
-          ],
-        );
-      },
+_overviewCard(
+  width: itemWidth,
+  icon: Icons.school_rounded,
+  title: 'Teachers',
+  subtitle: 'Directory, profiles & schedules',
+  accent: Colors.purpleAccent,
+  onTap: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const TeachersDirectoryScreen(),
+      ),
     );
-  }
+  },
+),
 
   Widget _overviewCard({
     required double width,
@@ -3118,135 +3121,110 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _adminPanel(
-          icon: Icons.school_rounded,
-          title: 'Teachers Directory',
-          subtitle: 'Quick view of teaching staff',
-          accent: Colors.purpleAccent,
-          trailing: TextButton.icon(
-            onPressed: _openAddTeacherDialog,
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.purpleAccent,
-              backgroundColor: Colors.purpleAccent.withOpacity(0.08),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+  icon: Icons.school_rounded,
+  title: 'Teachers Directory',
+  subtitle: 'Staff profiles, subjects & class schedules',
+  accent: Colors.purpleAccent,
+  trailing: TextButton.icon(
+    onPressed: () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const TeachersDirectoryScreen(),
+        ),
+      );
+    },
+    style: TextButton.styleFrom(
+      foregroundColor: Colors.purpleAccent,
+      backgroundColor: Colors.purpleAccent.withOpacity(0.08),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 9,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+      ),
+    ),
+    icon: const Icon(
+      Icons.arrow_forward_rounded,
+      size: 16,
+    ),
+    label: const Text(
+      'Open Directory',
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  ),
+  child: StreamBuilder<QuerySnapshot>(
+    stream: FirebaseFirestore.instance
+        .collection('teachers_directory')
+        .snapshots(),
+    builder: (context, snapshot) {
+      final count =
+          snapshot.hasData ? snapshot.data!.docs.length : 0;
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Colors.purpleAccent.withOpacity(0.10),
+              const Color(0xFF00A884).withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: Colors.purpleAccent.withOpacity(0.12),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.purpleAccent.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.groups_2_rounded,
+                color: Colors.purpleAccent,
+                size: 25,
               ),
             ),
-            icon: const Icon(Icons.add_rounded, size: 16),
-            label: const Text(
-              'Add Teacher',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$count Teachers Registered',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Teacher details, photos aur weekly schedules manage karein.',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          child: _teachersList.isEmpty
-              ? const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 30),
-                  child: Center(
-                    child: Text(
-                      'Teacher directory empty hai.',
-                      style: TextStyle(color: Colors.white38, fontSize: 11),
-                    ),
-                  ),
-                )
-              : ListView.separated(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _teachersList.length,
-                  separatorBuilder: (_, __) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Container(
-                      height: 1,
-                      color: Colors.white.withOpacity(0.045),
-                    ),
-                  ),
-                  itemBuilder: (context, index) {
-                    final teacher = _teachersList[index];
-                    final teacherName = teacher['name'] ?? '';
-                    final initial = teacherName.trim().isEmpty
-                        ? 'T'
-                        : teacherName.trim()[0].toUpperCase();
-
-                    return Row(
-                      children: [
-                        Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.purpleAccent.withOpacity(0.20),
-                                const Color(0xFF00A884).withOpacity(0.10),
-                              ],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(13),
-                            border: Border.all(
-                              color: Colors.purpleAccent.withOpacity(0.14),
-                            ),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            initial,
-                            style: const TextStyle(
-                              color: Colors.purpleAccent,
-                              fontSize: 17,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 11),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                teacherName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                teacher['subject'] ?? '',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white38,
-                                  fontSize: 10.3,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0D171C),
-                            borderRadius: BorderRadius.circular(9),
-                          ),
-                          child: Text(
-                            teacher['phone'] ?? '',
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
+          ],
         ),
+      );
+    },
+  ),
+),
         const SizedBox(height: 18),
         _adminPanel(
           icon: Icons.notifications_active_outlined,
@@ -4767,6 +4745,1391 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
+// ============================================================
+// TEACHERS DIRECTORY
+// ============================================================
+class TeachersDirectoryScreen extends StatefulWidget {
+  const TeachersDirectoryScreen({super.key});
+
+  @override
+  State<TeachersDirectoryScreen> createState() =>
+      _TeachersDirectoryScreenState();
+}
+
+class _TeachersDirectoryScreenState
+    extends State<TeachersDirectoryScreen> {
+  final TextEditingController _searchController =
+      TextEditingController();
+
+  String _statusFilter = 'All';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Widget _teacherPhoto(
+    String photoBase64,
+    String name,
+  ) {
+    if (photoBase64.trim().isNotEmpty) {
+      try {
+        return Image.memory(
+          base64Decode(photoBase64),
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+        );
+      } catch (_) {}
+    }
+
+    return Container(
+      color: const Color(0xFF10191F),
+      alignment: Alignment.center,
+      child: Text(
+        name.trim().isEmpty
+            ? 'T'
+            : name.trim()[0].toUpperCase(),
+        style: const TextStyle(
+          color: Colors.purpleAccent,
+          fontSize: 28,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openSchedule(
+    String docId,
+    Map<String, dynamic> data,
+  ) async {
+    final oldSchedule =
+        data['schedule'] is Map
+            ? Map<String, dynamic>.from(data['schedule'])
+            : <String, dynamic>{};
+
+    final monday = TextEditingController(
+      text: oldSchedule['Monday']?.toString() ?? '',
+    );
+    final tuesday = TextEditingController(
+      text: oldSchedule['Tuesday']?.toString() ?? '',
+    );
+    final wednesday = TextEditingController(
+      text: oldSchedule['Wednesday']?.toString() ?? '',
+    );
+    final thursday = TextEditingController(
+      text: oldSchedule['Thursday']?.toString() ?? '',
+    );
+    final friday = TextEditingController(
+      text: oldSchedule['Friday']?.toString() ?? '',
+    );
+    final saturday = TextEditingController(
+      text: oldSchedule['Saturday']?.toString() ?? '',
+    );
+
+    bool saving = false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Widget scheduleField(
+              String day,
+              TextEditingController controller,
+            ) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: TextField(
+                  controller: controller,
+                  style: const TextStyle(
+                    color: Colors.white,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: day,
+                    hintText:
+                        'Example: 09:00-10:00 Class 6 Mathematics',
+                    labelStyle: const TextStyle(
+                      color: Colors.purpleAccent,
+                    ),
+                    hintStyle: const TextStyle(
+                      color: Colors.white24,
+                      fontSize: 11,
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xFF10191F),
+                    border: OutlineInputBorder(
+                      borderRadius:
+                          BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF172229),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: Colors.purpleAccent
+                          .withOpacity(0.12),
+                      borderRadius:
+                          BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.calendar_month_rounded,
+                      color: Colors.purpleAccent,
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Weekly Schedule',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          data['name']?.toString() ??
+                              'Teacher',
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      scheduleField(
+                        'Monday',
+                        monday,
+                      ),
+                      scheduleField(
+                        'Tuesday',
+                        tuesday,
+                      ),
+                      scheduleField(
+                        'Wednesday',
+                        wednesday,
+                      ),
+                      scheduleField(
+                        'Thursday',
+                        thursday,
+                      ),
+                      scheduleField(
+                        'Friday',
+                        friday,
+                      ),
+                      scheduleField(
+                        'Saturday',
+                        saturday,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving
+                      ? null
+                      : () => Navigator.pop(ctx),
+                  child: const Text(
+                    'Cancel',
+                    style:
+                        TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        Colors.purpleAccent,
+                  ),
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          setDialogState(
+                            () => saving = true,
+                          );
+
+                          try {
+                            await FirebaseFirestore
+                                .instance
+                                .collection(
+                                  'teachers_directory',
+                                )
+                                .doc(docId)
+                                .update({
+                              'schedule': {
+                                'Monday':
+                                    monday.text.trim(),
+                                'Tuesday':
+                                    tuesday.text.trim(),
+                                'Wednesday':
+                                    wednesday.text.trim(),
+                                'Thursday':
+                                    thursday.text.trim(),
+                                'Friday':
+                                    friday.text.trim(),
+                                'Saturday':
+                                    saturday.text.trim(),
+                              },
+                              'updatedAt':
+                                  FieldValue
+                                      .serverTimestamp(),
+                            });
+
+                            if (!mounted) return;
+
+                            Navigator.pop(ctx);
+
+                            ScaffoldMessenger.of(context)
+                                .showSnackBar(
+                              const SnackBar(
+                                backgroundColor:
+                                    Color(0xFF00A884),
+                                content: Text(
+                                  'Teacher schedule saved!',
+                                ),
+                              ),
+                            );
+                          } catch (e) {
+                            setDialogState(
+                              () => saving = false,
+                            );
+
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(context)
+                                .showSnackBar(
+                              SnackBar(
+                                backgroundColor:
+                                    Colors.redAccent,
+                                content: Text(
+                                  'Schedule save error: $e',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                  icon: saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child:
+                              CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.save_rounded,
+                          color: Colors.white,
+                          size: 17,
+                        ),
+                  label: const Text(
+                    'Save Schedule',
+                    style:
+                        TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    monday.dispose();
+    tuesday.dispose();
+    wednesday.dispose();
+    thursday.dispose();
+    friday.dispose();
+    saturday.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF111B21),
+        elevation: 0,
+        title: const Row(
+          children: [
+            Icon(
+              Icons.groups_2_rounded,
+              color: Colors.purpleAccent,
+            ),
+            SizedBox(width: 10),
+            Text(
+              'Teachers Directory',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              vertical: 9,
+              horizontal: 12,
+            ),
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    Colors.purpleAccent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(11),
+                ),
+              ),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const AddTeacherScreen(),
+                  ),
+                );
+              },
+              icon: const Icon(
+                Icons.person_add_alt_1_rounded,
+                size: 18,
+              ),
+              label: const Text(
+                'Add Teacher',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            color: const Color(0xFF111B21),
+            child: Column(
+              children: [
+                TextField(
+                  controller: _searchController,
+                  onChanged: (_) => setState(() {}),
+                  style: const TextStyle(
+                    color: Colors.white,
+                  ),
+                  decoration: InputDecoration(
+                    hintText:
+                        'Search teacher, subject, ID...',
+                    hintStyle: const TextStyle(
+                      color: Colors.white30,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      color: Colors.purpleAccent,
+                    ),
+                    filled: true,
+                    fillColor:
+                        const Color(0xFF0B141A),
+                    border: OutlineInputBorder(
+                      borderRadius:
+                          BorderRadius.circular(13),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 7,
+                  children: [
+                    for (final status in [
+                      'All',
+                      'Active',
+                      'On Leave',
+                      'Inactive',
+                    ])
+                      ChoiceChip(
+                        label: Text(status),
+                        selected:
+                            _statusFilter == status,
+                        selectedColor:
+                            Colors.purpleAccent,
+                        backgroundColor:
+                            const Color(0xFF172229),
+                        labelStyle: TextStyle(
+                          color:
+                              _statusFilter == status
+                                  ? Colors.white
+                                  : Colors.white54,
+                          fontSize: 11,
+                          fontWeight:
+                              FontWeight.w700,
+                        ),
+                        onSelected: (_) {
+                          setState(() {
+                            _statusFilter = status;
+                          });
+                        },
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('teachers_directory')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState ==
+                    ConnectionState.waiting) {
+                  return const Center(
+                    child:
+                        CircularProgressIndicator(
+                      color: Colors.purpleAccent,
+                    ),
+                  );
+                }
+
+                if (!snapshot.hasData ||
+                    snapshot.data!.docs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'Abhi koi teacher registered nahi hai.',
+                      style: TextStyle(
+                        color: Colors.white38,
+                      ),
+                    ),
+                  );
+                }
+
+                final query = _searchController.text
+                    .trim()
+                    .toLowerCase();
+
+                final docs =
+                    snapshot.data!.docs.where((doc) {
+                  final data =
+                      doc.data()
+                          as Map<String, dynamic>;
+
+                  final name = data['name']
+                          ?.toString()
+                          .toLowerCase() ??
+                      '';
+                  final subject = data['subject']
+                          ?.toString()
+                          .toLowerCase() ??
+                      '';
+                  final employeeId =
+                      data['employeeId']
+                              ?.toString()
+                              .toLowerCase() ??
+                          '';
+                  final status =
+                      data['status']?.toString() ??
+                          'Active';
+
+                  final searchMatch =
+                      query.isEmpty ||
+                          name.contains(query) ||
+                          subject.contains(query) ||
+                          employeeId.contains(query);
+
+                  final statusMatch =
+                      _statusFilter == 'All' ||
+                          status == _statusFilter;
+
+                  return searchMatch &&
+                      statusMatch;
+                }).toList();
+
+                docs.sort((a, b) {
+                  final aData =
+                      a.data()
+                          as Map<String, dynamic>;
+                  final bData =
+                      b.data()
+                          as Map<String, dynamic>;
+
+                  return (aData['name']
+                              ?.toString() ??
+                          '')
+                      .compareTo(
+                    bData['name']?.toString() ??
+                        '',
+                  );
+                });
+
+                return ListView.builder(
+                  padding:
+                      const EdgeInsets.all(14),
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) {
+                    final doc = docs[index];
+                    final data =
+                        doc.data()
+                            as Map<String, dynamic>;
+
+                    final name =
+                        data['name']?.toString() ??
+                            'Teacher';
+                    final photo =
+                        data['photoBase64']
+                                ?.toString() ??
+                            '';
+                    final status =
+                        data['status']?.toString() ??
+                            'Active';
+
+                    return Container(
+                      margin:
+                          const EdgeInsets.only(
+                        bottom: 12,
+                      ),
+                      padding:
+                          const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color:
+                            const Color(0xFF111B21),
+                        borderRadius:
+                            BorderRadius.circular(17),
+                        border: Border.all(
+                          color: Colors.white
+                              .withOpacity(0.055),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 72,
+                            height: 72,
+                            padding:
+                                const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors
+                                    .purpleAccent,
+                                width: 2,
+                              ),
+                            ),
+                            child: ClipOval(
+                              child: _teacherPhoto(
+                                photo,
+                                name,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment
+                                      .start,
+                              children: [
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 6,
+                                  crossAxisAlignment:
+                                      WrapCrossAlignment
+                                          .center,
+                                  children: [
+                                    Text(
+                                      name,
+                                      style:
+                                          const TextStyle(
+                                        color:
+                                            Colors.white,
+                                        fontSize: 16,
+                                        fontWeight:
+                                            FontWeight
+                                                .w800,
+                                      ),
+                                    ),
+                                    Container(
+                                      padding:
+                                          const EdgeInsets
+                                              .symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration:
+                                          BoxDecoration(
+                                        color: status ==
+                                                'Active'
+                                            ? const Color(
+                                                    0xFF00A884)
+                                                .withOpacity(
+                                                    0.12)
+                                            : Colors
+                                                .orangeAccent
+                                                .withOpacity(
+                                                    0.12),
+                                        borderRadius:
+                                            BorderRadius
+                                                .circular(
+                                                    20),
+                                      ),
+                                      child: Text(
+                                        status,
+                                        style:
+                                            TextStyle(
+                                          color: status ==
+                                                  'Active'
+                                              ? const Color(
+                                                  0xFF00D9A5)
+                                              : Colors
+                                                  .orangeAccent,
+                                          fontSize: 9,
+                                          fontWeight:
+                                              FontWeight
+                                                  .w800,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 7),
+                                Text(
+                                  '${data['designation'] ?? 'Teacher'} • ${data['subject'] ?? 'Subject not assigned'}',
+                                  style:
+                                      const TextStyle(
+                                    color:
+                                        Colors.white70,
+                                    fontSize: 11.5,
+                                    fontWeight:
+                                        FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  'Employee ID: ${data['employeeId'] ?? 'N/A'}  •  Qualification: ${data['qualification'] ?? 'N/A'}',
+                                  style:
+                                      const TextStyle(
+                                    color:
+                                        Colors.white38,
+                                    fontSize: 10.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  'Classes: ${data['assignedClasses'] ?? 'Not Assigned'}',
+                                  style:
+                                      const TextStyle(
+                                    color:
+                                        Colors.white38,
+                                    fontSize: 10.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  '${data['phone'] ?? ''}  •  ${data['email'] ?? ''}',
+                                  style:
+                                      const TextStyle(
+                                    color:
+                                        Colors.white38,
+                                    fontSize: 10.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          OutlinedButton.icon(
+                            style:
+                                OutlinedButton.styleFrom(
+                              foregroundColor:
+                                  Colors.purpleAccent,
+                              side: BorderSide(
+                                color: Colors
+                                    .purpleAccent
+                                    .withOpacity(
+                                        0.45),
+                              ),
+                              shape:
+                                  RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius
+                                        .circular(11),
+                              ),
+                            ),
+                            onPressed: () =>
+                                _openSchedule(
+                              doc.id,
+                              data,
+                            ),
+                            icon: const Icon(
+                              Icons
+                                  .calendar_month_rounded,
+                              size: 17,
+                            ),
+                            label: const Text(
+                              'Schedule',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight:
+                                    FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ============================================================
+// ADD TEACHER SCREEN
+// ============================================================
+class AddTeacherScreen extends StatefulWidget {
+  const AddTeacherScreen({super.key});
+
+  @override
+  State<AddTeacherScreen> createState() =>
+      _AddTeacherScreenState();
+}
+
+class _AddTeacherScreenState
+    extends State<AddTeacherScreen> {
+  final _nameCtrl = TextEditingController();
+  final _employeeIdCtrl = TextEditingController();
+  final _designationCtrl =
+      TextEditingController(text: 'Teacher');
+  final _subjectCtrl = TextEditingController();
+  final _qualificationCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _dobCtrl = TextEditingController();
+  final _joiningCtrl = TextEditingController();
+  final _addressCtrl = TextEditingController();
+  final _classesCtrl = TextEditingController();
+
+  String _employmentType = 'Permanent';
+  String _status = 'Active';
+
+  List<int>? _photoBytes;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final now = DateTime.now();
+
+    _joiningCtrl.text =
+        '${now.day.toString().padLeft(2, '0')}/'
+        '${now.month.toString().padLeft(2, '0')}/'
+        '${now.year}';
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _employeeIdCtrl.dispose();
+    _designationCtrl.dispose();
+    _subjectCtrl.dispose();
+    _qualificationCtrl.dispose();
+    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    _dobCtrl.dispose();
+    _joiningCtrl.dispose();
+    _addressCtrl.dispose();
+    _classesCtrl.dispose();
+    super.dispose();
+  }
+
+  InputDecoration _field(
+    String label,
+    IconData icon,
+  ) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle:
+          const TextStyle(color: Colors.white54),
+      prefixIcon: Icon(
+        icon,
+        color: Colors.purpleAccent,
+        size: 19,
+      ),
+      filled: true,
+      fillColor: const Color(0xFF10191F),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+    );
+  }
+
+  Future<void> _pickPhoto() async {
+    final picker = ImagePicker();
+
+    final image = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 700,
+      imageQuality: 60,
+    );
+
+    if (image == null) return;
+
+    final bytes = await image.readAsBytes();
+
+    if (bytes.length > 700000) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Photo size zyada hai. Chhota photo select karein.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _photoBytes = bytes;
+    });
+  }
+
+  Future<void> _saveTeacher() async {
+    final name = _nameCtrl.text.trim();
+    final employeeId =
+        _employeeIdCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+
+    if (name.isEmpty ||
+        employeeId.isEmpty ||
+        phone.isEmpty ||
+        _subjectCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Name, Employee ID, Subject aur Mobile required hain.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!RegExp(r'^[A-Za-z0-9_-]+$')
+        .hasMatch(employeeId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Employee ID me sirf letters, numbers, - aur _ use karein.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!RegExp(r'^[0-9]{10}$').hasMatch(phone)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content:
+              Text('10 digit mobile number daalein.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+
+    try {
+      final ref = FirebaseFirestore.instance
+          .collection('teachers_directory')
+          .doc(employeeId);
+
+      final old = await ref.get();
+
+      if (old.exists) {
+        throw Exception(
+          'Ye Employee ID already registered hai.',
+        );
+      }
+
+      await ref.set({
+        'name': name,
+        'employeeId': employeeId,
+        'designation':
+            _designationCtrl.text.trim(),
+        'subject': _subjectCtrl.text.trim(),
+        'qualification':
+            _qualificationCtrl.text.trim(),
+        'phone': phone,
+        'email': _emailCtrl.text.trim(),
+        'dateOfBirth': _dobCtrl.text.trim(),
+        'joiningDate':
+            _joiningCtrl.text.trim(),
+        'address': _addressCtrl.text.trim(),
+        'assignedClasses':
+            _classesCtrl.text.trim(),
+        'employmentType': _employmentType,
+        'status': _status,
+        'photoBase64': _photoBytes == null
+            ? ''
+            : base64Encode(_photoBytes!),
+        'schedule': {
+          'Monday': '',
+          'Tuesday': '',
+          'Wednesday': '',
+          'Thursday': '',
+          'Friday': '',
+          'Saturday': '',
+        },
+        'createdAt':
+            FieldValue.serverTimestamp(),
+        'updatedAt':
+            FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content:
+              Text('Teacher successfully added!'),
+        ),
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() => _saving = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Teacher save error: $e'),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF111B21),
+        title: const Text(
+          'Add New Teacher',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(18),
+        child: Center(
+          child: ConstrainedBox(
+            constraints:
+                const BoxConstraints(maxWidth: 850),
+            child: Container(
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: const Color(0xFF172229),
+                borderRadius:
+                    BorderRadius.circular(20),
+                border: Border.all(
+                  color:
+                      Colors.white.withOpacity(0.06),
+                ),
+              ),
+              child: Column(
+                children: [
+                  GestureDetector(
+                    onTap: _saving ? null : _pickPhoto,
+                    child: Container(
+                      width: 115,
+                      height: 115,
+                      padding:
+                          const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color:
+                              Colors.purpleAccent,
+                          width: 2,
+                        ),
+                      ),
+                      child: ClipOval(
+                        child: _photoBytes != null
+                            ? Image.memory(
+                                base64Decode(
+                                  base64Encode(
+                                    _photoBytes!,
+                                  ),
+                                ),
+                                fit: BoxFit.cover,
+                              )
+                            : Container(
+                                color: const Color(
+                                    0xFF10191F),
+                                child: const Icon(
+                                  Icons
+                                      .add_a_photo_rounded,
+                                  color: Colors
+                                      .purpleAccent,
+                                  size: 35,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  const Text(
+                    'Upload Teacher Photo',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11,
+                    ),
+                  ),
+
+                  const SizedBox(height: 22),
+
+                  TextField(
+                    controller: _nameCtrl,
+                    style:
+                        const TextStyle(color: Colors.white),
+                    decoration: _field(
+                      'Teacher Full Name *',
+                      Icons.person_outline_rounded,
+                    ),
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _employeeIdCtrl,
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Employee ID *',
+                            Icons.badge_outlined,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: TextField(
+                          controller: _designationCtrl,
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Designation',
+                            Icons.work_outline_rounded,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _subjectCtrl,
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Subject / Department *',
+                            Icons.menu_book_rounded,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: TextField(
+                          controller:
+                              _qualificationCtrl,
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Qualification',
+                            Icons.school_outlined,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _phoneCtrl,
+                          keyboardType:
+                              TextInputType.phone,
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Mobile Number *',
+                            Icons.phone_outlined,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: TextField(
+                          controller: _emailCtrl,
+                          keyboardType: TextInputType
+                              .emailAddress,
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Email Address',
+                            Icons.email_outlined,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _dobCtrl,
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Date of Birth',
+                            Icons.cake_outlined,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: TextField(
+                          controller: _joiningCtrl,
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Joining Date',
+                            Icons
+                                .calendar_today_outlined,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  TextField(
+                    controller: _classesCtrl,
+                    style:
+                        const TextStyle(color: Colors.white),
+                    decoration: _field(
+                      'Assigned Classes (Example: Class 5, Class 6)',
+                      Icons.class_outlined,
+                    ),
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  TextField(
+                    controller: _addressCtrl,
+                    minLines: 2,
+                    maxLines: 3,
+                    style:
+                        const TextStyle(color: Colors.white),
+                    decoration: _field(
+                      'Address',
+                      Icons.location_on_outlined,
+                    ),
+                  ),
+
+                  const SizedBox(height: 11),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child:
+                            DropdownButtonFormField<String>(
+                          value: _employmentType,
+                          dropdownColor:
+                              const Color(0xFF172229),
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Employment Type',
+                            Icons.business_center_outlined,
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'Permanent',
+                              child: Text('Permanent'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Contract',
+                              child: Text('Contract'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Guest',
+                              child: Text('Guest'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _employmentType = value;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child:
+                            DropdownButtonFormField<String>(
+                          value: _status,
+                          dropdownColor:
+                              const Color(0xFF172229),
+                          style: const TextStyle(
+                              color: Colors.white),
+                          decoration: _field(
+                            'Status',
+                            Icons
+                                .verified_user_outlined,
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'Active',
+                              child: Text('Active'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'On Leave',
+                              child: Text('On Leave'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Inactive',
+                              child: Text('Inactive'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _status = value;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 22),
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      style:
+                          ElevatedButton.styleFrom(
+                        backgroundColor:
+                            Colors.purpleAccent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(13),
+                        ),
+                      ),
+                      onPressed:
+                          _saving ? null : _saveTeacher,
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 19,
+                              height: 19,
+                              child:
+                                  CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.save_rounded,
+                              color: Colors.white,
+                            ),
+                      label: Text(
+                        _saving
+                            ? 'Saving Teacher...'
+                            : 'SAVE TEACHER PROFILE',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight:
+                              FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+            
 // ============================================================
 // ALL STUDENTS LIST
 // ============================================================
