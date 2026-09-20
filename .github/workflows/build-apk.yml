@@ -22,9 +22,9 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. CHECKOUT PROJECT
+      # 1. CHECKOUT
       # ============================================================
-      - name: Checkout Saarthi AI
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
 
@@ -39,7 +39,7 @@ jobs:
 
 
       # ============================================================
-      # 3. FLUTTER STABLE
+      # 3. FLUTTER
       # ============================================================
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -49,9 +49,9 @@ jobs:
 
 
       # ============================================================
-      # 4. ENVIRONMENT INFO
+      # 4. SHOW VERSION
       # ============================================================
-      - name: Show Flutter Environment
+      - name: Show Build Environment
         run: |
           flutter --version
           dart --version
@@ -59,8 +59,7 @@ jobs:
 
 
       # ============================================================
-      # 5. ENABLE + GENERATE ANDROID PROJECT
-      # Repo me android folder nahi hai to ye automatically banayega
+      # 5. GENERATE ANDROID PROJECT
       # ============================================================
       - name: Configure Android Project
         run: |
@@ -72,47 +71,116 @@ jobs:
 
 
       # ============================================================
-      # 6. CLEAN OLD BUILD
+      # 6. CLEAN
       # ============================================================
-      - name: Clean Flutter Build
+      - name: Clean Project
         run: flutter clean
 
 
       # ============================================================
-      # 7. GET PACKAGES
+      # 7. GET DEPENDENCIES
       # ============================================================
-      - name: Install Dependencies
+      - name: Install Flutter Dependencies
         run: flutter pub get
 
 
       # ============================================================
-      # 8. ANDROID / FLUTTER DOCTOR
+      # 8. INSTALL ANDROID SDK 34
+      # ============================================================
+      - name: Install Android SDK 34
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+
+      # ============================================================
+      # 9. FIX AGORA RTC ENGINE
+      # Agora old package compileSdk 31 use karta hai.
+      # AndroidX Fragment 1.7.1 ko SDK 34 minimum chahiye.
+      # ============================================================
+      - name: Fix Agora Compile SDK
+        shell: bash
+        run: |
+          echo "Searching Agora RTC Engine..."
+
+          AGORA_DIR=$(find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name "agora_rtc_engine-*" \
+            | sort -V \
+            | tail -n 1)
+
+          if [ -z "$AGORA_DIR" ]; then
+            echo "::error::Agora RTC Engine package nahi mila!"
+            exit 1
+          fi
+
+          echo "Agora package found:"
+          echo "$AGORA_DIR"
+
+          GRADLE_FILE="$AGORA_DIR/android/build.gradle"
+          GRADLE_KTS_FILE="$AGORA_DIR/android/build.gradle.kts"
+
+          if [ -f "$GRADLE_FILE" ]; then
+            echo "Patching build.gradle..."
+
+            sed -i -E \
+              's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 34/g' \
+              "$GRADLE_FILE"
+
+            sed -i -E \
+              's/compileSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/compileSdkVersion = 34/g' \
+              "$GRADLE_FILE"
+
+            echo "Agora compileSdk after patch:"
+            grep -n "compileSdk" "$GRADLE_FILE" || true
+          fi
+
+          if [ -f "$GRADLE_KTS_FILE" ]; then
+            echo "Patching build.gradle.kts..."
+
+            sed -i -E \
+              's/compileSdk[[:space:]]*=[[:space:]]*[0-9]+/compileSdk = 34/g' \
+              "$GRADLE_KTS_FILE"
+
+            echo "Agora compileSdk after patch:"
+            grep -n "compileSdk" "$GRADLE_KTS_FILE" || true
+          fi
+
+
+      # ============================================================
+      # 10. FORCE APP COMPILE SDK
+      # ============================================================
+      - name: Ensure App Uses SDK 34+
+        shell: bash
+        run: |
+          if [ -f "android/app/build.gradle" ]; then
+            sed -i -E \
+              's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 34/g' \
+              android/app/build.gradle
+          fi
+
+          if [ -f "android/app/build.gradle.kts" ]; then
+            sed -i -E \
+              's/compileSdk[[:space:]]*=[[:space:]]*[0-9]+/compileSdk = 34/g' \
+              android/app/build.gradle.kts
+          fi
+
+          echo "Android app SDK configuration:"
+          grep -R -n "compileSdk" android/app 2>/dev/null || true
+
+
+      # ============================================================
+      # 11. FLUTTER DOCTOR
       # ============================================================
       - name: Flutter Doctor
         run: flutter doctor -v
 
 
       # ============================================================
-      # 9. CHECK WEB-ONLY CODE
-      # Warning only - build ko yahan stop nahi karega
+      # 12. BUILD RELEASE APK
       # ============================================================
-      - name: Check Web Only Imports
-        shell: bash
-        run: |
-          echo "Checking for web-only Dart imports..."
-
-          if grep -R "dart:html" lib/; then
-            echo "::warning::dart:html mila hai. Android build me is code ko platform-specific karna pad sakta hai."
-          else
-            echo "No dart:html import found."
-          fi
-
-
-      # ============================================================
-      # 10. BUILD RELEASE APK
-      # Current Dart code GEMINI_API_KEY naam expect karta hai
-      # ============================================================
-      - name: Build Release APK
+      - name: Build Saarthi AI Release APK
         run: |
           flutter build apk \
             --release \
@@ -120,55 +188,59 @@ jobs:
 
 
       # ============================================================
-      # 11. PREPARE FINAL APK
+      # 13. PREPARE FINAL APK
       # ============================================================
-      - name: Prepare Saarthi AI APK
+      - name: Prepare Final APK
         shell: bash
         run: |
           mkdir -p release
 
           cp \
             build/app/outputs/flutter-apk/app-release.apk \
-            release/Saarthi-AI-Release-${{ github.run_number }}.apk
+            release/Saarthi-AI-v${{ github.run_number }}.apk
 
-          echo "========================================"
-          echo "        SAARTHI AI APK READY"
-          echo "========================================"
+          echo ""
+          echo "========================================="
+          echo "       SAARTHI AI APK READY"
+          echo "========================================="
+          echo ""
 
           ls -lh release/
 
           echo ""
-          echo "SHA256:"
-          sha256sum release/Saarthi-AI-Release-${{ github.run_number }}.apk
+          echo "APK SHA256:"
+          sha256sum release/Saarthi-AI-v${{ github.run_number }}.apk
 
 
       # ============================================================
-      # 12. BUILD SUMMARY
+      # 14. BUILD SUMMARY
       # ============================================================
       - name: Create Build Summary
         shell: bash
         run: |
-          APK_SIZE=$(du -h release/Saarthi-AI-Release-${{ github.run_number }}.apk | cut -f1)
+          APK_SIZE=$(du -h release/Saarthi-AI-v${{ github.run_number }}.apk | cut -f1)
 
-          echo "## 📱 Saarthi AI Android Build" >> "$GITHUB_STEP_SUMMARY"
+          echo "# 📱 Saarthi AI Android" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "✅ **Build Successful**" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ APK Build Successful" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Build Number: **${{ github.run_number }}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Build Information" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Build: **#${{ github.run_number }}**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Branch: **${{ github.ref_name }}**" >> "$GITHUB_STEP_SUMMARY"
           echo "- APK Size: **$APK_SIZE**" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Build Type: **Release APK**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Android Compile SDK: **34**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Build Type: **Release**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "APK neeche Artifacts section se download karein." >> "$GITHUB_STEP_SUMMARY"
+          echo "APK ko Artifacts section se download karein." >> "$GITHUB_STEP_SUMMARY"
 
 
       # ============================================================
-      # 13. UPLOAD APK
+      # 15. UPLOAD APK
       # ============================================================
       - name: Upload Saarthi AI APK
         uses: actions/upload-artifact@v4
         with:
-          name: Saarthi-AI-Android-${{ github.run_number }}
+          name: Saarthi-AI-APK-${{ github.run_number }}
           path: release/*.apk
           if-no-files-found: error
           retention-days: 30
