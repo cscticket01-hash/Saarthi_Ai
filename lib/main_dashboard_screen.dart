@@ -12,6 +12,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 // ============================================================
 // MAIN DASHBOARD
@@ -681,9 +682,18 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoggingIn = false;
+
+  // QR scanner state - Student mode only.
+  bool _showInlineScanner = false;
+  bool _scanHandled = false;
+  bool _isQrVerifying = false;
+  String? _scanError;
+  Map<String, dynamic>? _scannedStudentData;
+
   String _selectedClass = 'Class 1';
 
-  final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
+  final List<String> _classList =
+      List.generate(10, (index) => 'Class ${index + 1}');
 
   @override
   void dispose() {
@@ -697,11 +707,22 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
       _isAdminMode = isAdmin;
       _usernameController.clear();
       _passwordController.clear();
+
+      // Scanner should never remain active when changing role.
+      _showInlineScanner = false;
+      _scanHandled = false;
+      _isQrVerifying = false;
+      _scanError = null;
+      _scannedStudentData = null;
     });
   }
 
   String _normalizeDob(String value) {
-    final cleaned = value.trim().replaceAll('-', '/').replaceAll('.', '/').replaceAll(RegExp(r'\s+'), '');
+    final cleaned = value
+        .trim()
+        .replaceAll('-', '/')
+        .replaceAll('.', '/')
+        .replaceAll(RegExp(r'\s+'), '');
     final parts = cleaned.split('/');
     if (parts.length != 3) return '';
     final day = parts[0].padLeft(2, '0');
@@ -711,17 +732,675 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
     return '$day/$month/$year';
   }
 
+  // ============================================================
+  // MOBILE-ONLY INLINE STUDENT ID SCANNER
+  // Scanner stays on THIS login page. Desktop is hidden.
+  // ============================================================
+
+  bool _isMobileScannerDevice() {
+    final userAgent = html.window.navigator.userAgent.toLowerCase();
+
+    return userAgent.contains('android') ||
+        userAgent.contains('iphone') ||
+        userAgent.contains('ipad') ||
+        userAgent.contains('ipod') ||
+        userAgent.contains('mobile');
+  }
+
+  void _startInlineScanner() {
+    if (!_isMobileScannerDevice() || _isAdminMode) return;
+
+    setState(() {
+      _showInlineScanner = true;
+      _scanHandled = false;
+      _isQrVerifying = false;
+      _scanError = null;
+      _scannedStudentData = null;
+      _passwordController.clear();
+    });
+  }
+
+  void _closeInlineScanner() {
+    setState(() {
+      _showInlineScanner = false;
+      _scanHandled = false;
+      _isQrVerifying = false;
+      _scanError = null;
+    });
+  }
+
+  void _clearScannedStudent() {
+    setState(() {
+      _showInlineScanner = false;
+      _scanHandled = false;
+      _isQrVerifying = false;
+      _scanError = null;
+      _scannedStudentData = null;
+      _usernameController.clear();
+      _passwordController.clear();
+    });
+  }
+
+  String? _extractRecordIdFromQr(String qrValue) {
+    final value = qrValue.trim();
+
+    // New secure card format.
+    final isNewCard = value.contains('SVN_STUDENT_CARD');
+
+    // Temporary support for previously printed cards.
+    final isOldCard = value.contains('STUDENT VERIFICATION') &&
+        value.contains('SARASWATI VIDYA NIKETAN');
+
+    if (!isNewCard && !isOldCard) return null;
+
+    final lines = value.split(RegExp(r'\r?\n'));
+
+    for (final line in lines) {
+      final cleaned = line.trim();
+
+      if (cleaned.toLowerCase().startsWith('record id:')) {
+        final recordId =
+            cleaned.substring('record id:'.length).trim();
+
+        if (recordId.isNotEmpty) return recordId;
+      }
+    }
+
+    return null;
+  }
+
+  void _onInlineQrDetected(BarcodeCapture capture) {
+    if (_scanHandled ||
+        _isQrVerifying ||
+        capture.barcodes.isEmpty) {
+      return;
+    }
+
+    final rawValue = capture.barcodes.first.rawValue?.trim();
+
+    if (rawValue == null || rawValue.isEmpty) return;
+
+    _scanHandled = true;
+    _verifyScannedStudent(rawValue);
+  }
+
+  Future<void> _verifyScannedStudent(String qrValue) async {
+    final recordId = _extractRecordIdFromQr(qrValue);
+
+    if (recordId == null || recordId.isEmpty) {
+      if (!mounted) return;
+
+      setState(() {
+        _scanHandled = false;
+        _scanError =
+            'Invalid School ID Card QR. Sahi student card scan karein.';
+      });
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isQrVerifying = true;
+        _scanError = null;
+      });
+    }
+
+    try {
+      final studentDoc = await FirebaseFirestore.instance
+          .collection('students_directory')
+          .doc(recordId)
+          .get();
+
+      if (!studentDoc.exists) {
+        if (!mounted) return;
+
+        setState(() {
+          _isQrVerifying = false;
+          _scanHandled = false;
+          _scanError =
+              'Is ID Card ka student record database me nahi mila.';
+        });
+        return;
+      }
+
+      final data = studentDoc.data() as Map<String, dynamic>;
+      final studentClass = data['class']?.toString().trim() ?? '';
+      final roll = data['rollNo']?.toString().trim() ?? '';
+      final status = data['status']?.toString().trim().toLowerCase();
+
+      if (status != null &&
+          status.isNotEmpty &&
+          status != 'active') {
+        if (!mounted) return;
+
+        setState(() {
+          _isQrVerifying = false;
+          _scanHandled = false;
+          _scanError = 'Yeh Student ID Card Active nahi hai.';
+        });
+        return;
+      }
+
+      if (studentClass.isEmpty || roll.isEmpty) {
+        if (!mounted) return;
+
+        setState(() {
+          _isQrVerifying = false;
+          _scanHandled = false;
+          _scanError =
+              'Student ke Class / Roll details database me missing hain.';
+        });
+        return;
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _selectedClass = studentClass;
+        _usernameController.text = roll;
+        _passwordController.clear();
+
+        _scannedStudentData = data;
+        _showInlineScanner = false;
+        _scanHandled = false;
+        _isQrVerifying = false;
+        _scanError = null;
+      });
+    } catch (e) {
+      debugPrint('Student QR verification error: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _isQrVerifying = false;
+        _scanHandled = false;
+        _scanError = 'QR verify nahi ho paya. Dobara try karein.';
+      });
+    }
+  }
+
+  Widget _buildInlineScannerPanel() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C171D),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: const Color(0xFF00A884).withOpacity(0.45),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00A884).withOpacity(0.08),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 10),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00A884).withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: const Icon(
+                    Icons.qr_code_scanner_rounded,
+                    color: Color(0xFF00D9A5),
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'SCAN STUDENT ID CARD',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'ID card ka QR frame ke andar rakhein',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close scanner',
+                  onPressed: _closeInlineScanner,
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    color: Colors.white60,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          AspectRatio(
+            aspectRatio: 1.15,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                MobileScanner(
+                  fit: BoxFit.cover,
+                  onDetect: _onInlineQrDetected,
+                ),
+
+                // Dark focus overlay.
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      radius: 0.78,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.42),
+                      ],
+                      stops: const [0.56, 1],
+                    ),
+                  ),
+                ),
+
+                Center(
+                  child: Container(
+                    width: 220,
+                    height: 220,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: const Color(0xFF00E8B5),
+                        width: 2.5,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF00E8B5)
+                              .withOpacity(0.18),
+                          blurRadius: 18,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: Stack(
+                      children: [
+                        Center(
+                          child: Container(
+                            margin:
+                                const EdgeInsets.symmetric(horizontal: 16),
+                            height: 2,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00E8B5),
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF00E8B5)
+                                      .withOpacity(0.7),
+                                  blurRadius: 10,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                if (_isQrVerifying)
+                  Container(
+                    color: Colors.black.withOpacity(0.55),
+                    child: const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(
+                            color: Color(0xFF00E8B5),
+                            strokeWidth: 3,
+                          ),
+                          SizedBox(height: 12),
+                          Text(
+                            'Student verify ho raha hai...',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (_scanError != null)
+            Container(
+              width: double.infinity,
+              color: Colors.redAccent.withOpacity(0.12),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 10,
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    color: Colors.redAccent,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _scanError!,
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 11,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScanLaunchCard() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: _startInlineScanner,
+      child: Ink(
+        width: double.infinity,
+        padding: const EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [
+              Color(0xFF153A3A),
+              Color(0xFF12313A),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: const Color(0xFF00A884).withOpacity(0.42),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: const Color(0xFF00A884).withOpacity(0.14),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: const Icon(
+                Icons.qr_code_scanner_rounded,
+                color: Color(0xFF00E8B5),
+                size: 29,
+              ),
+            ),
+            const SizedBox(width: 13),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Scan Student ID Card',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'Camera se ID card ka QR scan karein',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.arrow_forward_ios_rounded,
+              color: Color(0xFF00D9A5),
+              size: 17,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVerifiedStudentCard() {
+    final data = _scannedStudentData ?? {};
+    final name = data['name']?.toString().trim() ?? 'Student';
+    final studentClass = data['class']?.toString().trim() ?? _selectedClass;
+    final roll = data['rollNo']?.toString().trim() ??
+        _usernameController.text.trim();
+    final photoUrl = data['photoUrl']?.toString().trim() ?? '';
+    final parentName =
+        data['parentName']?.toString().trim() ?? 'N/A';
+
+    final initial = name.isEmpty
+        ? 'S'
+        : name.substring(0, 1).toUpperCase();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF143A35),
+            Color(0xFF162A30),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFF00A884).withOpacity(0.46),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 68,
+            height: 76,
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(
+                color: const Color(0xFF00D9A5),
+                width: 1.6,
+              ),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: photoUrl.isNotEmpty
+                  ? Image.network(
+                      photoUrl,
+                      fit: BoxFit.cover,
+                      webHtmlElementStrategy:
+                          WebHtmlElementStrategy.prefer,
+                      errorBuilder: (context, error, stackTrace) {
+                        return _scannerPhotoFallback(initial);
+                      },
+                    )
+                  : _scannerPhotoFallback(initial),
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(
+                      Icons.verified_rounded,
+                      color: Color(0xFF00D9A5),
+                      size: 16,
+                    ),
+                    SizedBox(width: 5),
+                    Text(
+                      'STUDENT VERIFIED',
+                      style: TextStyle(
+                        color: Color(0xFF00D9A5),
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '$studentClass  •  Roll $roll',
+                  style: const TextStyle(
+                    color: Colors.white60,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Guardian: $parentName',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 9.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Scan another card',
+            onPressed: _clearScannedStudent,
+            icon: const Icon(
+              Icons.refresh_rounded,
+              color: Colors.white54,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _scannerPhotoFallback(String initial) {
+    return Container(
+      color: const Color(0xFF0E171C),
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: Color(0xFF00A884),
+            fontSize: 28,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildManualLoginDivider() {
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            height: 1,
+            color: Colors.white12,
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 10),
+          child: Text(
+            'OR LOGIN MANUALLY',
+            style: TextStyle(
+              color: Colors.white30,
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.7,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Container(
+            height: 1,
+            color: Colors.white12,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ============================================================
+  // EXISTING LOGIN LOGIC - KEPT INTACT
+  // ============================================================
+
   Future<void> _handleLogin() async {
     final idText = _usernameController.text.trim();
     final password = _passwordController.text.trim();
 
     if (idText.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text(_isAdminMode ? 'Admin Email bharein.' : 'Student Roll No bharein.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            _isAdminMode
+                ? 'Admin Email bharein.'
+                : 'Student Roll No bharein.',
+          ),
+        ),
+      );
       return;
     }
 
     if (password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Password / Date of Birth bharein.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Password / Date of Birth bharein.',
+          ),
+        ),
+      );
       return;
     }
 
@@ -729,69 +1408,177 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
 
     try {
       if (_isAdminMode) {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(email: idText, password: password);
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: idText,
+          password: password,
+        );
+
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Admin Login Safal hua!')));
-        Navigator.push(context, MaterialPageRoute(builder: (context) => const AdminDashboardScreen()));
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF00A884),
+            content: Text('Admin Login Safal hua!'),
+          ),
+        );
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                const AdminDashboardScreen(),
+          ),
+        );
         return;
       }
 
       final studentRoll = idText;
-      final docId = '${_selectedClass}_Roll_$studentRoll';
-      final studentDoc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+      final docId =
+          '${_selectedClass}_Roll_$studentRoll';
+
+      final studentDoc =
+          await FirebaseFirestore.instance
+              .collection('students_directory')
+              .doc(docId)
+              .get();
 
       if (!studentDoc.exists) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Student record nahi mila! Class aur Roll No check karein.')));
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(
+              'Student record nahi mila! Class aur Roll No check karein.',
+            ),
+          ),
+        );
         return;
       }
 
-      final studentData = studentDoc.data() as Map<String, dynamic>;
-      final storedDob = studentData['dateOfBirth']?.toString().trim() ?? '';
+      final studentData =
+          studentDoc.data() as Map<String, dynamic>;
+
+      final storedDob =
+          studentData['dateOfBirth']
+                  ?.toString()
+                  .trim() ??
+              '';
 
       if (storedDob.isEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.orangeAccent, content: Text('Is student ka Date of Birth database mein set nahi hai.')));
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.orangeAccent,
+            content: Text(
+              'Is student ka Date of Birth database mein set nahi hai.',
+            ),
+          ),
+        );
         return;
       }
 
-      final enteredPassword = password.replaceAll(RegExp(r'[\s-]'), '/');
-      final normalizedStoredDob = _normalizeDob(storedDob);
-      final normalizedEnteredDob = _normalizeDob(enteredPassword);
+      final enteredPassword =
+          password.replaceAll(RegExp(r'[\s-]'), '/');
 
-      final passwordMatched = normalizedStoredDob.isNotEmpty && normalizedEnteredDob.isNotEmpty && normalizedStoredDob == normalizedEnteredDob;
+      final normalizedStoredDob =
+          _normalizeDob(storedDob);
 
-      if (!passwordMatched && password != '123456') { // Fallback password just in case
+      final normalizedEnteredDob =
+          _normalizeDob(enteredPassword);
+
+      final passwordMatched =
+          normalizedStoredDob.isNotEmpty &&
+              normalizedEnteredDob.isNotEmpty &&
+              normalizedStoredDob ==
+                  normalizedEnteredDob;
+
+      if (!passwordMatched &&
+          password != '123456') {
+        // Existing fallback password kept unchanged.
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Galat Password! Apna Date of Birth sahi format mein enter karein.')));
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(
+              'Galat Password! Apna Date of Birth sahi format mein enter karein.',
+            ),
+          ),
+        );
         return;
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student Login Safal hua!')));
-      Navigator.push(context, MaterialPageRoute(builder: (context) => StudentPortalScreen(studentId: studentRoll, studentClass: _selectedClass)));
 
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text('Student Login Safal hua!'),
+        ),
+      );
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => StudentPortalScreen(
+            studentId: studentRoll,
+            studentClass: _selectedClass,
+          ),
+        ),
+      );
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
+
       String errorMessage = 'Login details galat hain.';
+
       switch (e.code) {
-        case 'user-not-found': errorMessage = 'Yeh Admin account registered nahi hai.'; break;
+        case 'user-not-found':
+          errorMessage =
+              'Yeh Admin account registered nahi hai.';
+          break;
         case 'wrong-password':
-        case 'invalid-credential': errorMessage = 'Galat Admin Email ya Password.'; break;
-        case 'invalid-email': errorMessage = 'Invalid Admin Email.'; break;
-        case 'user-disabled': errorMessage = 'Admin account disabled hai.'; break;
+        case 'invalid-credential':
+          errorMessage =
+              'Galat Admin Email ya Password.';
+          break;
+        case 'invalid-email':
+          errorMessage = 'Invalid Admin Email.';
+          break;
+        case 'user-disabled':
+          errorMessage =
+              'Admin account disabled hai.';
+          break;
       }
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text(errorMessage)));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(errorMessage),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Login error: $e')));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Login error: $e'),
+        ),
+      );
     } finally {
-      if (mounted) setState(() => _isLoggingIn = false);
+      if (mounted) {
+        setState(() => _isLoggingIn = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final showMobileScanner =
+        !_isAdminMode && _isMobileScannerDevice();
+
     return Scaffold(
       backgroundColor: const Color(0xFF121B22),
       appBar: AppBar(
@@ -806,33 +1593,66 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
             child: Column(
               children: [
                 Icon(
-                  _isAdminMode ? Icons.admin_panel_settings_rounded : Icons.school_rounded,
+                  _isAdminMode
+                      ? Icons.admin_panel_settings_rounded
+                      : Icons.school_rounded,
                   size: 65,
                   color: const Color(0xFF00A884),
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  _isAdminMode ? 'ADMIN LOGIN' : 'STUDENT LOGIN',
-                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                  _isAdminMode
+                      ? 'ADMIN LOGIN'
+                      : 'STUDENT LOGIN',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 24),
+
+                // Admin / Student selector - existing behavior kept.
                 Container(
                   padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(color: const Color(0xFF1F2C34), borderRadius: BorderRadius.circular(12)),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F2C34),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   child: Row(
                     children: [
                       Expanded(
                         child: GestureDetector(
                           onTap: () => _switchRole(true),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            decoration: BoxDecoration(color: _isAdminMode ? const Color(0xFF00A884) : Colors.transparent, borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _isAdminMode
+                                  ? const Color(0xFF00A884)
+                                  : Colors.transparent,
+                              borderRadius:
+                                  BorderRadius.circular(10),
+                            ),
                             child: const Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.security, size: 16, color: Colors.white),
+                                Icon(
+                                  Icons.security,
+                                  size: 16,
+                                  color: Colors.white,
+                                ),
                                 SizedBox(width: 6),
-                                Text('Admin', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                Text(
+                                  'Admin',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight:
+                                        FontWeight.bold,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -842,14 +1662,34 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
                         child: GestureDetector(
                           onTap: () => _switchRole(false),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            decoration: BoxDecoration(color: !_isAdminMode ? const Color(0xFF00A884) : Colors.transparent, borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: !_isAdminMode
+                                  ? const Color(0xFF00A884)
+                                  : Colors.transparent,
+                              borderRadius:
+                                  BorderRadius.circular(10),
+                            ),
                             child: const Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.person, size: 16, color: Colors.white),
+                                Icon(
+                                  Icons.person,
+                                  size: 16,
+                                  color: Colors.white,
+                                ),
                                 SizedBox(width: 6),
-                                Text('Student', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                Text(
+                                  'Student',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight:
+                                        FontWeight.bold,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -858,57 +1698,148 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 24),
-                if (!_isAdminMode) ...[
+
+                const SizedBox(height: 18),
+
+                // =================================================
+                // MOBILE-ONLY INLINE SCANNER
+                // Desktop / PC gets none of this UI.
+                // =================================================
+                if (showMobileScanner) ...[
+                  if (_showInlineScanner)
+                    _buildInlineScannerPanel()
+                  else if (_scannedStudentData != null)
+                    _buildVerifiedStudentCard()
+                  else
+                    _buildScanLaunchCard(),
+
+                  const SizedBox(height: 16),
+
+                  if (_scannedStudentData == null) ...[
+                    _buildManualLoginDivider(),
+                    const SizedBox(height: 16),
+                  ],
+                ],
+
+                // =================================================
+                // EXISTING MANUAL STUDENT LOGIN
+                // After QR verification, Class + Roll are auto-filled
+                // and hidden; DOB + existing login button remain.
+                // =================================================
+                if (!_isAdminMode &&
+                    _scannedStudentData == null) ...[
                   DropdownButtonFormField<String>(
                     value: _selectedClass,
-                    dropdownColor: const Color(0xFF1F2C34),
-                    style: const TextStyle(color: Colors.white),
+                    dropdownColor:
+                        const Color(0xFF1F2C34),
+                    style:
+                        const TextStyle(color: Colors.white),
                     decoration: _inputDecoration('Class'),
-                    items: _classList.map((value) => DropdownMenuItem<String>(value: value, child: Text(value))).toList(),
+                    items: _classList
+                        .map(
+                          (value) =>
+                              DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (value) {
-                      if (value != null) setState(() => _selectedClass = value);
+                      if (value != null) {
+                        setState(
+                          () => _selectedClass = value,
+                        );
+                      }
                     },
                   ),
                   const SizedBox(height: 16),
                 ],
-                TextField(
-                  controller: _usernameController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _inputDecoration(
-                    _isAdminMode ? 'Admin Email' : 'Student ID / Roll No',
-                    icon: _isAdminMode ? Icons.person_outline : Icons.badge_outlined,
+
+                // Hide Roll field only after successful QR scan.
+                if (_isAdminMode ||
+                    _scannedStudentData == null)
+                  TextField(
+                    controller: _usernameController,
+                    style:
+                        const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration(
+                      _isAdminMode
+                          ? 'Admin Email'
+                          : 'Student ID / Roll No',
+                      icon: _isAdminMode
+                          ? Icons.person_outline
+                          : Icons.badge_outlined,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
+
+                if (_isAdminMode ||
+                    _scannedStudentData == null)
+                  const SizedBox(height: 16),
+
+                // DOB / Password remains exactly part of login.
                 TextField(
                   controller: _passwordController,
                   obscureText: _obscurePassword,
-                  style: const TextStyle(color: Colors.white),
+                  style:
+                      const TextStyle(color: Colors.white),
                   decoration: _inputDecoration(
-                    _isAdminMode ? 'Password' : 'Date of Birth (DD/MM/YYYY)',
+                    _isAdminMode
+                        ? 'Password'
+                        : _scannedStudentData != null
+                            ? 'Confirm Date of Birth (DD/MM/YYYY)'
+                            : 'Date of Birth (DD/MM/YYYY)',
                     icon: Icons.lock_outline,
                     suffixIcon: IconButton(
-                      icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility, color: Colors.grey),
-                      onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () => setState(
+                        () => _obscurePassword =
+                            !_obscurePassword,
+                      ),
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 24),
+
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00A884),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      backgroundColor:
+                          const Color(0xFF00A884),
+                      shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(12),
+                      ),
                     ),
-                    onPressed: _isLoggingIn ? null : _handleLogin,
+                    onPressed:
+                        _isLoggingIn ? null : _handleLogin,
                     child: _isLoggingIn
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child:
+                                CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
                         : Text(
-                            _isAdminMode ? 'LOGIN AS ADMIN' : 'LOGIN AS STUDENT',
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            _isAdminMode
+                                ? 'LOGIN AS ADMIN'
+                                : _scannedStudentData != null
+                                    ? 'VERIFY DOB & ENTER PORTAL'
+                                    : 'LOGIN AS STUDENT',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                   ),
                 ),
@@ -920,15 +1851,30 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
     );
   }
 
-  InputDecoration _inputDecoration(String hint, {IconData? icon, Widget? suffixIcon}) {
+  InputDecoration _inputDecoration(
+    String hint, {
+    IconData? icon,
+    Widget? suffixIcon,
+  }) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
-      prefixIcon: icon == null ? null : Icon(icon, color: const Color(0xFF00A884)),
+      hintStyle: const TextStyle(
+        color: Colors.grey,
+        fontSize: 13,
+      ),
+      prefixIcon: icon == null
+          ? null
+          : Icon(
+              icon,
+              color: const Color(0xFF00A884),
+            ),
       suffixIcon: suffixIcon,
       filled: true,
       fillColor: const Color(0xFF1F2C34),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
     );
   }
 }
@@ -2200,14 +3146,9 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   final docId = '${_directoryClass}_Roll_$roll';
 
   final qrData = '''
-SARASWATI VIDYA NIKETAN, MADHABDHAM
-STUDENT VERIFICATION
-Student ID: $studentId
+SVN_STUDENT_CARD
 Record ID: $docId
-Name: $name
-Class: $_directoryClass
-Roll: $roll
-DOB: $dob
+Student ID: $studentId
 ''';
 
   return {
