@@ -4965,8 +4965,6 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                   },
                 ),
                 const SizedBox(height: 8),
-                TextField(controller: photoCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Photo URL')),
-                const SizedBox(height: 8),
                 TextField(controller: addressCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Address')),
                 const SizedBox(height: 8),
                 Row(
