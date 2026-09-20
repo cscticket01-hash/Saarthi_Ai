@@ -2,7 +2,8 @@ name: Deploy Saarthi Web Preview
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -17,21 +18,46 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: stable
+          cache: true
+
+      - name: Flutter Version
+        run: flutter --version
+
+      - name: Clean Project
+        run: flutter clean
+
+      - name: Get Dependencies
+        run: flutter pub get
 
       - name: Build Web
         run: |
-          flutter create --platforms=web .
-          flutter pub get
-          flutter build web --release --base-href "/Saarthi_Ai/" --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          flutter build web \
+            --release \
+            --base-href "/Saarthi_Ai/" \
+            --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
-      - name: Upload Pages artifact
+      - name: Check WhatsApp Asset
+        run: |
+          echo "Checking WhatsApp asset..."
+          find build/web -type f | grep -i "whatsapp" || true
+
+      - name: Check Build Files
+        run: |
+          echo "Build web files:"
+          ls -la build/web
+          echo "Assets:"
+          find build/web/assets -maxdepth 3 -type f | head -100
+
+      - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
@@ -40,8 +66,10 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     runs-on: ubuntu-latest
     needs: build
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
