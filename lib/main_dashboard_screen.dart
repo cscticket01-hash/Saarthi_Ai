@@ -2310,22 +2310,143 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final adminEmail = FirebaseAuth.instance.currentUser?.email ?? 'School Administrator';
+
     return Scaffold(
-      backgroundColor: const Color(0xFF121B22),
+      backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Admin Command Center'),
+        toolbarHeight: 72,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        backgroundColor: const Color(0xFF111B21),
+        surfaceTintColor: Colors.transparent,
+        titleSpacing: 18,
+        title: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF00A884), Color(0xFF00C896)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(13),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00A884).withOpacity(0.22),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.admin_panel_settings_rounded,
+                color: Colors.white,
+                size: 23,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'School Admin Console',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Saarthi AI • School Management',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
         actions: [
+          Builder(
+            builder: (context) {
+              final compact = MediaQuery.of(context).size.width < 760;
+              if (compact) return const SizedBox.shrink();
+
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: const Color(0xFF00A884).withOpacity(0.12),
+                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                      side: BorderSide(
+                        color: const Color(0xFF00A884).withOpacity(0.26),
+                      ),
+                    ),
+                  ),
+                  onPressed: _openAddStudentDialog,
+                  icon: const Icon(
+                    Icons.person_add_alt_1_rounded,
+                    color: Color(0xFF00D9A5),
+                    size: 18,
+                  ),
+                  label: const Text(
+                    'Add Student',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
           PopupMenuButton<String>(
-            color: const Color(0xFF1F2C34),
-            icon: const Icon(Icons.more_vert, color: Colors.white),
-            onSelected: (value) {
+            tooltip: 'Admin Menu',
+            color: const Color(0xFF1B2A32),
+            surfaceTintColor: Colors.transparent,
+            icon: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.06)),
+              ),
+              child: const Icon(
+                Icons.more_horiz_rounded,
+                color: Colors.white70,
+                size: 21,
+              ),
+            ),
+            onSelected: (value) async {
               if (value == 'profile') {
                 _showProfileDialog();
               } else if (value == 'settings') {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                );
               } else if (value == 'logout') {
-                FirebaseAuth.instance.signOut();
+                await FirebaseAuth.instance.signOut();
+                if (!mounted) return;
                 Navigator.popUntil(context, (route) => route.isFirst);
               }
             },
@@ -2334,9 +2455,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 value: 'profile',
                 child: Row(
                   children: [
-                    Icon(Icons.person_outline, color: Color(0xFF00A884), size: 20),
+                    Icon(Icons.person_outline_rounded, color: Color(0xFF00A884), size: 20),
                     SizedBox(width: 12),
-                    Text('Profile', style: TextStyle(color: Colors.white)),
+                    Text('Admin Profile', style: TextStyle(color: Colors.white)),
                   ],
                 ),
               ),
@@ -2350,11 +2471,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   ],
                 ),
               ),
+              PopupMenuDivider(),
               PopupMenuItem<String>(
                 value: 'logout',
                 child: Row(
                   children: [
-                    Icon(Icons.logout, color: Colors.redAccent, size: 20),
+                    Icon(Icons.logout_rounded, color: Colors.redAccent, size: 20),
                     SizedBox(width: 12),
                     Text('Logout', style: TextStyle(color: Colors.redAccent)),
                   ],
@@ -2362,35 +2484,375 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
             ],
           ),
+          const SizedBox(width: 10),
         ],
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final isWide = constraints.maxWidth >= 900;
-          if (!isWide) {
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  _buildLeftColumn(),
-                  const SizedBox(height: 24),
-                  _buildRightColumn(),
-                ],
-              ),
-            );
-          }
+          final isWide = constraints.maxWidth >= 1080;
+
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: _buildLeftColumn()),
-                const SizedBox(width: 20),
-                Expanded(child: _buildRightColumn()),
-              ],
+            padding: EdgeInsets.fromLTRB(
+              constraints.maxWidth < 600 ? 12 : 18,
+              18,
+              constraints.maxWidth < 600 ? 12 : 18,
+              28,
+            ),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1450),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildAdminHero(adminEmail),
+                    const SizedBox(height: 16),
+                    _buildOverviewCards(),
+                    const SizedBox(height: 22),
+                    if (isWide)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            flex: 11,
+                            child: _buildLeftColumn(),
+                          ),
+                          const SizedBox(width: 18),
+                          Expanded(
+                            flex: 9,
+                            child: _buildRightColumn(),
+                          ),
+                        ],
+                      )
+                    else
+                      Column(
+                        children: [
+                          _buildLeftColumn(),
+                          const SizedBox(height: 20),
+                          _buildRightColumn(),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildAdminHero(String adminEmail) {
+    final now = DateTime.now();
+    final months = const [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final dateText = '${now.day} ${months[now.month - 1]} ${now.year}';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF173A36),
+            Color(0xFF13262A),
+            Color(0xFF111B21),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFF00A884).withOpacity(0.16)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.22),
+            blurRadius: 28,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 720;
+
+          final info = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00A884).withOpacity(0.13),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFF00A884).withOpacity(0.20),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.verified_user_rounded,
+                      color: Color(0xFF00D9A5),
+                      size: 14,
+                    ),
+                    SizedBox(width: 6),
+                    Text(
+                      'ADMIN ACCESS',
+                      style: TextStyle(
+                        color: Color(0xFF00D9A5),
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.7,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 13),
+              const Text(
+                'Welcome to your School Command Center',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  height: 1.2,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                adminEmail,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                dateText,
+                style: const TextStyle(
+                  color: Colors.white38,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          );
+
+          final actions = Wrap(
+            spacing: 9,
+            runSpacing: 9,
+            children: [
+              _heroActionButton(
+                icon: Icons.person_add_alt_1_rounded,
+                label: 'Add Student',
+                onTap: _openAddStudentDialog,
+              ),
+              _heroActionButton(
+                icon: Icons.people_alt_outlined,
+                label: 'All Students',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const AllStudentsListScreen(),
+                    ),
+                  );
+                },
+                outlined: true,
+              ),
+              _heroActionButton(
+                icon: Icons.settings_outlined,
+                label: 'Settings',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                  );
+                },
+                outlined: true,
+              ),
+            ],
+          );
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                info,
+                const SizedBox(height: 18),
+                actions,
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              Expanded(child: info),
+              const SizedBox(width: 20),
+              actions,
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _heroActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool outlined = false,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+          decoration: BoxDecoration(
+            color: outlined
+                ? Colors.white.withOpacity(0.045)
+                : const Color(0xFF00A884),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: outlined
+                  ? Colors.white.withOpacity(0.10)
+                  : const Color(0xFF00C896).withOpacity(0.55),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                color: outlined ? const Color(0xFF00D9A5) : Colors.white,
+                size: 17,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOverviewCards() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        final columns = maxWidth >= 1000 ? 4 : (maxWidth >= 620 ? 2 : 1);
+        final spacing = 12.0;
+        final itemWidth = columns == 1
+            ? maxWidth
+            : (maxWidth - (spacing * (columns - 1))) / columns;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            _overviewCard(
+              width: itemWidth,
+              icon: Icons.people_alt_rounded,
+              title: 'Student Records',
+              subtitle: 'Class 1 to 10 directory',
+              accent: const Color(0xFF00A884),
+            ),
+            _overviewCard(
+              width: itemWidth,
+              icon: Icons.badge_rounded,
+              title: 'ID Card Center',
+              subtitle: 'Search, preview & download',
+              accent: Colors.blueAccent,
+            ),
+            _overviewCard(
+              width: itemWidth,
+              icon: Icons.campaign_rounded,
+              title: 'Notice Center',
+              subtitle: 'Publish & manage updates',
+              accent: Colors.orangeAccent,
+            ),
+            _overviewCard(
+              width: itemWidth,
+              icon: Icons.school_rounded,
+              title: 'Teachers',
+              subtitle: '${_teachersList.length} directory entries',
+              accent: Colors.purpleAccent,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _overviewCard({
+    required double width,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color accent,
+  }) {
+    return Container(
+      width: width,
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111B21),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: Colors.white.withOpacity(0.055)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 43,
+            height: 43,
+            decoration: BoxDecoration(
+              color: accent.withOpacity(0.11),
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: accent.withOpacity(0.18)),
+            ),
+            child: Icon(icon, color: accent, size: 21),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 9.8,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2399,154 +2861,409 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionHeader('Digital Notice Board', Icons.campaign),
-        _buildCardWrapper(
+        _adminPanel(
+          icon: Icons.campaign_rounded,
+          title: 'Digital Notice Board',
+          subtitle: _editingNoticeId == null
+              ? 'Create and publish a new school announcement'
+              : 'Editing an existing school announcement',
+          accent: Colors.orangeAccent,
+          trailing: _editingNoticeId == null
+              ? null
+              : TextButton.icon(
+                  onPressed: _cancelNoticeEdit,
+                  icon: const Icon(Icons.close_rounded, size: 16),
+                  label: const Text('Cancel Edit'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.redAccent,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                ),
           child: Column(
             children: [
-              DropdownButtonFormField<String>(
-                value: _noticeCategory,
-                dropdownColor: const Color(0xFF1F2C34),
-                style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration('Notice Type'),
-                items: _noticeCategories.map((category) => DropdownMenuItem<String>(value: category, child: Text(category))).toList(),
-                onChanged: (value) {
-                  if (value != null) setState(() => _noticeCategory = value);
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 560;
+
+                  final category = DropdownButtonFormField<String>(
+                    value: _noticeCategory,
+                    dropdownColor: const Color(0xFF1B2A32),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Notice Type').copyWith(
+                      prefixIcon: const Icon(
+                        Icons.category_outlined,
+                        color: Color(0xFF00A884),
+                        size: 19,
+                      ),
+                    ),
+                    items: _noticeCategories
+                        .map(
+                          (value) => DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _noticeCategory = value);
+                      }
+                    },
+                  );
+
+                  final title = TextField(
+                    controller: _noticeTitleController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Notice Title').copyWith(
+                      prefixIcon: const Icon(
+                        Icons.title_rounded,
+                        color: Color(0xFF00A884),
+                        size: 19,
+                      ),
+                    ),
+                  );
+
+                  if (compact) {
+                    return Column(
+                      children: [
+                        category,
+                        const SizedBox(height: 10),
+                        title,
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    children: [
+                      SizedBox(width: 180, child: category),
+                      const SizedBox(width: 10),
+                      Expanded(child: title),
+                    ],
+                  );
                 },
               ),
               const SizedBox(height: 10),
               TextField(
-                controller: _noticeTitleController,
-                style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration('Title'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
                 controller: _noticeDescController,
-                maxLines: 3,
+                minLines: 3,
+                maxLines: 5,
                 style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration('Details / Instructions'),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                      onPressed: _isSavingNotice ? null : _saveNotice,
-                      icon: Icon(
-                        _editingNoticeId == null ? Icons.campaign : Icons.check,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                      label: Text(
-                        _editingNoticeId == null ? 'Publish Notice' : 'Update Notice',
-                        style: const TextStyle(color: Colors.white),
-                      ),
+                decoration: _inputDecoration('Details / Instructions').copyWith(
+                  alignLabelWithHint: true,
+                  prefixIcon: const Padding(
+                    padding: EdgeInsets.only(bottom: 54),
+                    child: Icon(
+                      Icons.notes_rounded,
+                      color: Color(0xFF00A884),
+                      size: 19,
                     ),
                   ),
-                  if (_editingNoticeId != null)
-                    IconButton(
-                      onPressed: _cancelNoticeEdit,
-                      icon: const Icon(Icons.close, color: Colors.redAccent),
+                ),
+              ),
+              const SizedBox(height: 13),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                    disabledBackgroundColor: const Color(0xFF00A884).withOpacity(0.35),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                ],
+                  ),
+                  onPressed: _isSavingNotice ? null : _saveNotice,
+                  icon: _isSavingNotice
+                      ? const SizedBox(
+                          width: 17,
+                          height: 17,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Icon(
+                          _editingNoticeId == null
+                              ? Icons.send_rounded
+                              : Icons.check_circle_outline_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                  label: Text(
+                    _isSavingNotice
+                        ? 'Saving...'
+                        : (_editingNoticeId == null
+                            ? 'Publish Notice'
+                            : 'Update Notice'),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 24),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(child: _buildSectionHeader('Student Directory & ID Cards', Icons.badge_outlined)),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-              onPressed: _openAddStudentDialog,
-              icon: const Icon(Icons.add, color: Colors.white, size: 16),
-              label: const Text('Add Student', style: TextStyle(color: Colors.white, fontSize: 12)),
+        const SizedBox(height: 18),
+        _adminPanel(
+          icon: Icons.badge_rounded,
+          title: 'Student Directory & ID Cards',
+          subtitle: 'Search student records and manage digital ID cards',
+          accent: const Color(0xFF00A884),
+          trailing: TextButton.icon(
+            onPressed: _openAddStudentDialog,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF00D9A5),
+              backgroundColor: const Color(0xFF00A884).withOpacity(0.09),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
-          ],
-        ),
-        _buildCardWrapper(
+            icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
+            label: const Text(
+              'Add Student',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+            ),
+          ),
           child: Column(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _directoryClass,
-                      dropdownColor: const Color(0xFF1F2C34),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: _inputDecoration('Class'),
-                      items: _classList.map((value) => DropdownMenuItem<String>(value: value, child: Text(value))).toList(),
-                      onChanged: (value) {
-                        if (value != null) setState(() => _directoryClass = value);
-                      },
+              if (_studentPhotoUrl != null && _studentPhotoUrl!.trim().isNotEmpty) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0D171C),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: const Color(0xFF00A884).withOpacity(0.12),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: _rollController,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: _inputDecoration('Roll No'),
-                    ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 54,
+                        height: 54,
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: const Color(0xFF00A884),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: ClipOval(
+                          child: Image.network(
+                            _studentPhotoUrl!,
+                            fit: BoxFit.cover,
+                            webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                            errorBuilder: (_, __, ___) => const ColoredBox(
+                              color: Color(0xFF162229),
+                              child: Icon(
+                                Icons.person_rounded,
+                                color: Color(0xFF00A884),
+                                size: 27,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _nameController.text.trim().isEmpty
+                                  ? 'Student Found'
+                                  : _nameController.text.trim(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '$_directoryClass • Roll ${_rollController.text.trim()}',
+                              style: const TextStyle(
+                                color: Colors.white38,
+                                fontSize: 10.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(
+                        Icons.verified_rounded,
+                        color: Color(0xFF00A884),
+                        size: 19,
+                      ),
+                    ],
                   ),
-                ],
+                ),
+              ],
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 520;
+
+                  final classField = DropdownButtonFormField<String>(
+                    value: _directoryClass,
+                    dropdownColor: const Color(0xFF1B2A32),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Class').copyWith(
+                      prefixIcon: const Icon(
+                        Icons.school_outlined,
+                        color: Color(0xFF00A884),
+                        size: 19,
+                      ),
+                    ),
+                    items: _classList
+                        .map(
+                          (value) => DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() {
+                          _directoryClass = value;
+                          _nameController.clear();
+                          _parentContactController.clear();
+                          _studentPhotoUrl = null;
+                        });
+                      }
+                    },
+                  );
+
+                  final rollField = TextField(
+                    controller: _rollController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: Colors.white),
+                    onChanged: (_) {
+                      if (_studentPhotoUrl != null ||
+                          _nameController.text.isNotEmpty ||
+                          _parentContactController.text.isNotEmpty) {
+                        setState(() {
+                          _studentPhotoUrl = null;
+                          _nameController.clear();
+                          _parentContactController.clear();
+                        });
+                      }
+                    },
+                    decoration: _inputDecoration('Roll No').copyWith(
+                      prefixIcon: const Icon(
+                        Icons.numbers_rounded,
+                        color: Color(0xFF00A884),
+                        size: 19,
+                      ),
+                    ),
+                  );
+
+                  if (compact) {
+                    return Column(
+                      children: [
+                        classField,
+                        const SizedBox(height: 10),
+                        rollField,
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    children: [
+                      Expanded(child: classField),
+                      const SizedBox(width: 10),
+                      Expanded(child: rollField),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: _nameController,
                 readOnly: true,
                 style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration('Student Full Name'),
+                decoration: _inputDecoration('Student Full Name').copyWith(
+                  prefixIcon: const Icon(
+                    Icons.person_outline_rounded,
+                    color: Colors.white38,
+                    size: 19,
+                  ),
+                ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: _parentContactController,
                 readOnly: true,
                 style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration('Parent Contact No'),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                      onPressed: _isSearchingStudent ? null : _searchStudent,
-                      icon: const Icon(Icons.search, color: Colors.white, size: 18),
-                      label: Text(_isSearchingStudent ? 'Searching...' : 'Search Record', style: const TextStyle(color: Colors.white)),
-                    ),
+                decoration: _inputDecoration('Parent Contact No').copyWith(
+                  prefixIcon: const Icon(
+                    Icons.phone_outlined,
+                    color: Colors.white38,
+                    size: 19,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF00A884))),
-                      onPressed: _showIdCardPreview,
-                      icon: const Icon(Icons.visibility, color: Color(0xFF00A884), size: 18),
-                      label: const Text('View ID Card', style: TextStyle(color: Color(0xFF00A884))),
-                    ),
-                  ),
-                ],
+                ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 13),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 520;
+
+                  final searchButton = _dashboardActionButton(
+                    icon: Icons.search_rounded,
+                    label: _isSearchingStudent ? 'Searching...' : 'Search Record',
+                    onPressed: _isSearchingStudent ? null : _searchStudent,
+                    primary: true,
+                  );
+
+                  final idButton = _dashboardActionButton(
+                    icon: Icons.badge_outlined,
+                    label: 'View ID Card',
+                    onPressed: _showIdCardPreview,
+                  );
+
+                  if (compact) {
+                    return Column(
+                      children: [
+                        SizedBox(width: double.infinity, child: searchButton),
+                        const SizedBox(height: 9),
+                        SizedBox(width: double.infinity, child: idButton),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    children: [
+                      Expanded(child: searchButton),
+                      const SizedBox(width: 9),
+                      Expanded(child: idButton),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 9),
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2A3942),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
+                child: _dashboardActionButton(
+                  icon: Icons.groups_2_outlined,
+                  label: 'Open Complete Student Directory',
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => const AllStudentsListScreen()),
+                      MaterialPageRoute(
+                        builder: (context) => const AllStudentsListScreen(),
+                      ),
                     );
                   },
-                  icon: const Icon(Icons.people_alt_outlined, color: Color(0xFF00A884)),
-                  label: const Text('View All Students (Class 1-10)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  soft: true,
                 ),
               ),
             ],
@@ -2560,119 +3277,333 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(child: _buildSectionHeader('Teachers Directory', Icons.person_add_alt_1)),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-              onPressed: _openAddTeacherDialog,
-              icon: const Icon(Icons.add, color: Colors.white, size: 16),
-              label: const Text('Add Teacher', style: TextStyle(color: Colors.white, fontSize: 12)),
+        _adminPanel(
+          icon: Icons.school_rounded,
+          title: 'Teachers Directory',
+          subtitle: 'Quick view of teaching staff',
+          accent: Colors.purpleAccent,
+          trailing: TextButton.icon(
+            onPressed: _openAddTeacherDialog,
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.purpleAccent,
+              backgroundColor: Colors.purpleAccent.withOpacity(0.08),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
-          ],
-        ),
-        _buildCardWrapper(
-          child: ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: _teachersList.length,
-            separatorBuilder: (_, __) => const Divider(color: Colors.white12),
-            itemBuilder: (context, index) {
-              final teacher = _teachersList[index];
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const CircleAvatar(
-                  backgroundColor: Color(0xFF121B22),
-                  child: Icon(Icons.school, color: Color(0xFF00A884)),
-                ),
-                title: Text(
-                  teacher['name'] ?? '',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(
-                  '${teacher['subject']} • ${teacher['phone']}',
-                  style: const TextStyle(color: Colors.grey, fontSize: 11),
-                ),
-              );
-            },
+            icon: const Icon(Icons.add_rounded, size: 16),
+            label: const Text(
+              'Add Teacher',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+            ),
           ),
-        ),
-        const SizedBox(height: 24),
-        _buildSectionHeader('Published Notices', Icons.article_outlined),
-        _buildCardWrapper(
-          child: SizedBox(
-            height: 320,
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
-                }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Text('Koi notice published nahi hai.', style: TextStyle(color: Colors.grey)));
-                }
-                return ListView.builder(
-                  itemCount: snapshot.data!.docs.length,
+          child: _teachersList.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 30),
+                  child: Center(
+                    child: Text(
+                      'Teacher directory empty hai.',
+                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
+                  ),
+                )
+              : ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _teachersList.length,
+                  separatorBuilder: (_, __) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Container(
+                      height: 1,
+                      color: Colors.white.withOpacity(0.045),
+                    ),
+                  ),
                   itemBuilder: (context, index) {
-                    final doc = snapshot.data!.docs[index];
-                    final data = doc.data() as Map<String, dynamic>;
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF121B22),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF00A884).withOpacity(0.18),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                data['category']?.toString() ?? 'General',
-                                style: const TextStyle(color: Color(0xFF00A884), fontSize: 10, fontWeight: FontWeight.bold),
-                              ),
+                    final teacher = _teachersList[index];
+                    final teacherName = teacher['name'] ?? '';
+                    final initial = teacherName.trim().isEmpty
+                        ? 'T'
+                        : teacherName.trim()[0].toUpperCase();
+
+                    return Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.purpleAccent.withOpacity(0.20),
+                                const Color(0xFF00A884).withOpacity(0.10),
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                data['title']?.toString() ?? '',
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
+                            borderRadius: BorderRadius.circular(13),
+                            border: Border.all(
+                              color: Colors.purpleAccent.withOpacity(0.14),
                             ),
-                          ],
-                        ),
-                        subtitle: Padding(
-                          padding: const EdgeInsets.only(top: 4),
+                          ),
+                          alignment: Alignment.center,
                           child: Text(
-                            data['description']?.toString() ?? '',
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.grey, fontSize: 11),
+                            initial,
+                            style: const TextStyle(
+                              color: Colors.purpleAccent,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
-                        trailing: PopupMenuButton<String>(
-                          color: const Color(0xFF1F2C34),
-                          onSelected: (value) {
-                            if (value == 'preview') {
-                              _showNoticeDetailDialog(data);
-                            } else if (value == 'edit') {
-                              _startEditNotice(doc.id, data);
-                            } else if (value == 'delete') {
-                              _deleteNotice(doc.id);
-                            }
-                          },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(value: 'preview', child: Text('Preview', style: TextStyle(color: Colors.white))),
-                            PopupMenuItem(value: 'edit', child: Text('Edit', style: TextStyle(color: Colors.white))),
-                            PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: Colors.redAccent))),
-                          ],
+                        const SizedBox(width: 11),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                teacherName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                teacher['subject'] ?? '',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 10.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0D171C),
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          child: Text(
+                            teacher['phone'] ?? '',
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+        ),
+        const SizedBox(height: 18),
+        _adminPanel(
+          icon: Icons.notifications_active_outlined,
+          title: 'Published Notices',
+          subtitle: 'Preview, edit or remove live announcements',
+          accent: Colors.blueAccent,
+          child: SizedBox(
+            height: 430,
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('school_notices')
+                  .orderBy('timestamp', descending: true)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      color: Color(0xFF00A884),
+                      strokeWidth: 2.4,
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return _adminEmptyState(
+                    icon: Icons.cloud_off_rounded,
+                    title: 'Notice load nahi ho paya',
+                    subtitle: 'Internet ya Firebase connection check karein.',
+                  );
+                }
+
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return _adminEmptyState(
+                    icon: Icons.notifications_none_rounded,
+                    title: 'Abhi koi notice published nahi hai',
+                    subtitle: 'Left panel se pehla notice publish karein.',
+                  );
+                }
+
+                final docs = snapshot.data!.docs;
+
+                return ListView.separated(
+                  padding: EdgeInsets.zero,
+                  itemCount: docs.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 9),
+                  itemBuilder: (context, index) {
+                    final doc = docs[index];
+                    final data = doc.data() as Map<String, dynamic>;
+                    final category = data['category']?.toString() ?? 'General';
+                    final accent = _adminCategoryColor(category);
+
+                    return Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => _showNoticeDetailDialog(data),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0D171C),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.045),
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: accent.withOpacity(0.11),
+                                  borderRadius: BorderRadius.circular(11),
+                                ),
+                                child: Icon(
+                                  _adminCategoryIcon(category),
+                                  color: accent,
+                                  size: 19,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Wrap(
+                                      spacing: 7,
+                                      runSpacing: 5,
+                                      crossAxisAlignment: WrapCrossAlignment.center,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 7,
+                                            vertical: 3,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: accent.withOpacity(0.10),
+                                            borderRadius: BorderRadius.circular(20),
+                                          ),
+                                          child: Text(
+                                            category,
+                                            style: TextStyle(
+                                              color: accent,
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                        Text(
+                                          'Notice ${index + 1}',
+                                          style: const TextStyle(
+                                            color: Colors.white24,
+                                            fontSize: 8.8,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      data['title']?.toString() ?? 'Untitled Notice',
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w800,
+                                        height: 1.25,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 5),
+                                    Text(
+                                      data['description']?.toString() ?? '',
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white38,
+                                        fontSize: 10.2,
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              PopupMenuButton<String>(
+                                tooltip: 'Notice Actions',
+                                color: const Color(0xFF1B2A32),
+                                icon: const Icon(
+                                  Icons.more_vert_rounded,
+                                  color: Colors.white38,
+                                  size: 20,
+                                ),
+                                onSelected: (value) {
+                                  if (value == 'preview') {
+                                    _showNoticeDetailDialog(data);
+                                  } else if (value == 'edit') {
+                                    _startEditNotice(doc.id, data);
+                                  } else if (value == 'delete') {
+                                    _deleteNotice(doc.id);
+                                  }
+                                },
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(
+                                    value: 'preview',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.visibility_outlined, color: Color(0xFF00A884), size: 18),
+                                        SizedBox(width: 9),
+                                        Text('Preview', style: TextStyle(color: Colors.white)),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'edit',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.edit_outlined, color: Colors.blueAccent, size: 18),
+                                        SizedBox(width: 9),
+                                        Text('Edit', style: TextStyle(color: Colors.white)),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 18),
+                                        SizedBox(width: 9),
+                                        Text('Delete', style: TextStyle(color: Colors.redAccent)),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
@@ -2686,60 +3617,373 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  Widget _adminPanel({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color accent,
+    required Widget child,
+    Widget? trailing,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111B21),
+        borderRadius: BorderRadius.circular(19),
+        border: Border.all(color: Colors.white.withOpacity(0.055)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.14),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(0.11),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: accent.withOpacity(0.15)),
+                ),
+                child: Icon(icon, color: accent, size: 20),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 9.8,
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 8),
+                trailing,
+              ],
+            ],
+          ),
+          const SizedBox(height: 15),
+          Container(
+            height: 1,
+            color: Colors.white.withOpacity(0.045),
+          ),
+          const SizedBox(height: 15),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _dashboardActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+    bool primary = false,
+    bool soft = false,
+  }) {
+    if (primary) {
+      return ElevatedButton.icon(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF00A884),
+          disabledBackgroundColor: const Color(0xFF00A884).withOpacity(0.30),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(11),
+          ),
+        ),
+        icon: Icon(icon, size: 18),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+
+    if (soft) {
+      return TextButton.icon(
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          foregroundColor: const Color(0xFF00D9A5),
+          backgroundColor: const Color(0xFF00A884).withOpacity(0.075),
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(11),
+            side: BorderSide(
+              color: const Color(0xFF00A884).withOpacity(0.14),
+            ),
+          ),
+        ),
+        icon: Icon(icon, size: 18),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF00D9A5),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+        side: BorderSide(
+          color: const Color(0xFF00A884).withOpacity(0.38),
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(11),
+        ),
+      ),
+      icon: Icon(icon, size: 18),
+      label: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _adminEmptyState({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 62,
+              height: 62,
+              decoration: BoxDecoration(
+                color: const Color(0xFF00A884).withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                color: const Color(0xFF00A884),
+                size: 27,
+              ),
+            ),
+            const SizedBox(height: 13),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white30,
+                fontSize: 10,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _adminCategoryColor(String category) {
+    switch (category.toLowerCase()) {
+      case 'holiday':
+        return Colors.orangeAccent;
+      case 'exam':
+        return Colors.redAccent;
+      case 'event':
+        return Colors.blueAccent;
+      case 'general':
+      default:
+        return const Color(0xFF00A884);
+    }
+  }
+
+  IconData _adminCategoryIcon(String category) {
+    switch (category.toLowerCase()) {
+      case 'holiday':
+        return Icons.beach_access_rounded;
+      case 'exam':
+        return Icons.menu_book_rounded;
+      case 'event':
+        return Icons.event_rounded;
+      case 'general':
+      default:
+        return Icons.campaign_rounded;
+    }
+  }
+
   void _showNoticeDetailDialog(Map<String, dynamic> data) {
+    final category = data['category']?.toString() ?? 'General';
+    final accent = _adminCategoryColor(category);
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: Text(data['title']?.toString() ?? '', style: const TextStyle(color: Colors.white)),
-        content: Text(data['description']?.toString() ?? '', style: const TextStyle(color: Colors.white70, height: 1.5)),
+        backgroundColor: const Color(0xFF111B21),
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+        contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+        title: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: accent.withOpacity(0.11),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                _adminCategoryIcon(category),
+                color: accent,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: accent.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      category,
+                      style: TextStyle(
+                        color: accent,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    data['title']?.toString() ?? 'Notice',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Text(
+            data['description']?.toString() ?? '',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              height: 1.6,
+            ),
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close', style: TextStyle(color: Color(0xFF00A884))),
+            child: const Text(
+              'Close',
+              style: TextStyle(
+                color: Color(0xFF00A884),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSectionHeader(String title, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Icon(icon, color: const Color(0xFF00A884), size: 20),
-          const SizedBox(width: 8),
-          Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCardWrapper({required Widget child}) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1F2C34),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: child,
-    );
-  }
-
   InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+      hintStyle: const TextStyle(
+        color: Colors.white30,
+        fontSize: 11.5,
+      ),
       filled: true,
-      fillColor: const Color(0xFF121B22),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      fillColor: const Color(0xFF0D171C),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 13,
+        vertical: 13,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: BorderSide(
+          color: Colors.white.withOpacity(0.055),
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: const BorderSide(
+          color: Color(0xFF00A884),
+          width: 1.15,
+        ),
+      ),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(11),
         borderSide: BorderSide.none,
       ),
     );
   }
+
 }
 
 // ============================================================
