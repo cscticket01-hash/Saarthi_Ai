@@ -190,9 +190,10 @@ jobs:
           echo "mobile_scanner dependency found."
 
 
-      # ============================================================
-      # 12. FIX AGORA RTC ENGINE COMPILE SDK
-      # Purana Agora SDK 31 use kare to usko 34 karega
+            # ============================================================
+      # FIX AGORA RTC ENGINE COMPILE SDK
+      # Agora kisi bhi syntax me SDK 31 use kare,
+      # is step se compileSdk 34 force hoga.
       # ============================================================
       - name: Fix Agora Compile SDK
         shell: bash
@@ -211,70 +212,112 @@ jobs:
             exit 1
           fi
 
-          echo "Agora package found:"
+          echo "Agora package:"
           echo "$AGORA_DIR"
+
+          echo ""
+          echo "===== BEFORE PATCH ====="
+          grep -R -n "compileSdk" "$AGORA_DIR/android" || true
 
           python3 - "$AGORA_DIR" <<'PY'
           import sys
           import re
           from pathlib import Path
 
-          agora = Path(sys.argv[1])
+          agora_dir = Path(sys.argv[1])
+          android_dir = agora_dir / "android"
 
-          files = [
-              agora / "android" / "build.gradle",
-              agora / "android" / "build.gradle.kts",
-          ]
+          files = list(android_dir.rglob("*.gradle"))
+          files += list(android_dir.rglob("*.gradle.kts"))
+
+          changed_total = 0
 
           for file in files:
-              if not file.exists():
-                  continue
-
-              text = file.read_text(encoding="utf-8")
-
-              text = re.sub(
-                  r'compileSdkVersion\s+flutter\.compileSdkVersion',
-                  'compileSdkVersion 34',
-                  text,
+              text = file.read_text(
+                  encoding="utf-8",
+                  errors="ignore",
               )
 
-              text = re.sub(
-                  r'compileSdkVersion\s+[0-9]+',
-                  'compileSdkVersion 34',
-                  text,
+              original = text
+
+              if file.name.endswith(".gradle.kts"):
+                  # Kotlin Gradle:
+                  # compileSdk = 31
+                  # compileSdk = flutter.compileSdkVersion
+                  text, count1 = re.subn(
+                      r'(?m)^(\s*)compileSdk\s*=.*$',
+                      r'\1compileSdk = 34',
+                      text,
+                  )
+
+                  # Rare compileSdkVersion syntax
+                  text, count2 = re.subn(
+                      r'(?m)^(\s*)compileSdkVersion\s*=.*$',
+                      r'\1compileSdk = 34',
+                      text,
+                  )
+
+              else:
+                  # Groovy Gradle:
+                  # compileSdkVersion 31
+                  # compileSdkVersion safeExtGet(...)
+                  # compileSdkVersion flutter.compileSdkVersion
+                  text, count1 = re.subn(
+                      r'(?m)^(\s*)compileSdkVersion\s+.*$',
+                      r'\1compileSdkVersion 34',
+                      text,
+                  )
+
+                  # New Groovy syntax:
+                  # compileSdk 31
+                  # compileSdk = 31
+                  text, count2 = re.subn(
+                      r'(?m)^(\s*)compileSdk\s*(?:=\s*)?.*$',
+                      r'\1compileSdkVersion 34',
+                      text,
+                  )
+
+              if text != original:
+                  file.write_text(
+                      text,
+                      encoding="utf-8",
+                  )
+
+                  changed_total += count1 + count2
+                  print(f"PATCHED: {file}")
+
+          print(
+              f"Total compileSdk replacements: {changed_total}"
+          )
+
+          if changed_total == 0:
+              print(
+                  "ERROR: Agora compileSdk line patch nahi hui."
               )
 
-              text = re.sub(
-                  r'compileSdkVersion\s*=\s*[0-9]+',
-                  'compileSdkVersion = 34',
-                  text,
-              )
+              for file in files:
+                  print(
+                      "\n===== FILE:",
+                      file,
+                      "====="
+                  )
+                  print(
+                      file.read_text(
+                          encoding="utf-8",
+                          errors="ignore",
+                      )
+                  )
 
-              text = re.sub(
-                  r'compileSdk\s*=\s*flutter\.compileSdkVersion',
-                  'compileSdk = 34',
-                  text,
-              )
-
-              text = re.sub(
-                  r'compileSdk\s*=\s*[0-9]+',
-                  'compileSdk = 34',
-                  text,
-              )
-
-              file.write_text(text, encoding="utf-8")
-
-              print(f"Patched: {file}")
-
-              for number, line in enumerate(
-                  text.splitlines(),
-                  start=1,
-              ):
-                  if "compileSdk" in line:
-                      print(number, line)
+              raise SystemExit(1)
           PY
 
+          echo ""
+          echo "===== AFTER PATCH ====="
+          grep -R -n "compileSdk" "$AGORA_DIR/android" || true
 
+          echo ""
+          echo "Agora compileSdk patch completed."
+          
       # ============================================================
       # 13. VERIFY ANDROID CONFIGURATION
       # ============================================================
