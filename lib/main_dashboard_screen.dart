@@ -6272,16 +6272,45 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
       if (scriptUrl == null || scriptUrl.isEmpty) throw Exception('Google Apps Script URL Settings me saved nahi hai.');
 
-      final response = await http.post(
-        Uri.parse(scriptUrl),
-        headers: {'Content-Type': 'text/plain;charset=utf-8'},
-        body: jsonEncode({'action': 'delete_student', 'studentClass': studentClass, 'roll': rollNo}),
-      );
+Future<Map<String, dynamic>> deleteFromGoogle(String rollValue) async {
+  final response = await http.post(
+    Uri.parse(scriptUrl),
+    headers: {'Content-Type': 'text/plain;charset=utf-8'},
+    body: jsonEncode({
+      'action': 'delete_student',
+      'studentClass': studentClass.trim(),
+      'roll': rollValue.trim(),
+    }),
+  );
 
-      if (response.statusCode != 200) throw Exception('Google delete failed: ${response.statusCode}');
+  if (response.statusCode != 200) {
+    throw Exception('Google delete failed: ${response.statusCode}');
+  }
 
-      final result = jsonDecode(response.body);
-      if (result['success'] != true) throw Exception(result['message'] ?? 'Google delete failed');
+  return Map<String, dynamic>.from(jsonDecode(response.body));
+}
+
+Map<String, dynamic> result = await deleteFromGoogle(rollNo);
+
+// Google Sheet me 01 kabhi number 1 ban jata hai.
+// Original Roll se na mile to numeric Roll se retry karega.
+if (result['success'] != true) {
+  final rollNumber = int.tryParse(rollNo);
+
+  if (rollNumber != null) {
+    final normalizedRoll = rollNumber.toString();
+
+    if (normalizedRoll != rollNo) {
+      result = await deleteFromGoogle(normalizedRoll);
+    }
+  }
+}
+
+if (result['success'] != true) {
+  throw Exception(
+    result['message'] ?? 'Student Google Sheet me nahi mila.',
+  );
+}
 
       await FirebaseFirestore.instance.collection('students_directory').doc(docId).delete();
 
