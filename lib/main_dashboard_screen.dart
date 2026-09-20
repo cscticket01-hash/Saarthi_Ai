@@ -3307,12 +3307,105 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                               ],
                             ),
                           ),
-                          Column(
-                            children: [
-                              IconButton(icon: const Icon(Icons.edit, color: Colors.blueAccent, size: 20), onPressed: () => _editStudent(doc.id, student)),
-                              IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20), onPressed: () => _deleteStudent(doc.id)),
-                            ],
-                          ),
+Column(
+  mainAxisSize: MainAxisSize.min,
+  children: [
+    // ========================================================
+    // WHATSAPP BUTTON
+    // ========================================================
+    Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF25D366).withOpacity(0.12),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: const Color(0xFF25D366).withOpacity(0.30),
+        ),
+      ),
+      child: IconButton(
+        tooltip: 'WhatsApp Parent',
+        icon: const Icon(
+          Icons.chat_rounded,
+          color: Color(0xFF25D366),
+          size: 19,
+        ),
+        onPressed: () {
+          final contact =
+              student['parentContact']?.toString() ?? '';
+
+          final cleanNum =
+              contact.replaceAll(RegExp(r'\D'), '');
+
+          if (cleanNum.length >= 10) {
+            final waNum =
+                cleanNum.length == 10
+                    ? '91$cleanNum'
+                    : cleanNum;
+
+            html.window.open(
+              'https://wa.me/$waNum',
+              '_blank',
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                backgroundColor: Colors.redAccent,
+                content: Text(
+                  'Student ka valid contact number nahi hai!',
+                ),
+              ),
+            );
+          }
+        },
+      ),
+    ),
+
+    const SizedBox(height: 8),
+
+    // ========================================================
+    // EDIT + DELETE
+    // ========================================================
+    Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.blueAccent.withOpacity(0.10),
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            tooltip: 'Edit Record',
+            icon: const Icon(
+              Icons.edit_rounded,
+              color: Colors.blueAccent,
+              size: 18,
+            ),
+            onPressed: () =>
+                _editStudent(doc.id, student),
+          ),
+        ),
+
+        const SizedBox(width: 6),
+
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.redAccent.withOpacity(0.10),
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            tooltip: 'Delete Record',
+            icon: const Icon(
+              Icons.delete_outline_rounded,
+              color: Colors.redAccent,
+              size: 18,
+            ),
+            onPressed: () =>
+                _deleteStudent(doc.id),
+          ),
+        ),
+      ],
+    ),
+  ],
+),
                         ],
                       ),
                     );
