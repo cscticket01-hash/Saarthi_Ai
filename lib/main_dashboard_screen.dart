@@ -1316,407 +1316,598 @@ String _normalizeDob(String value) {
 }
 
 // ============================================================
-// STUDENT PORTAL SCREEN (Modern UI + Profile + Notices)
+// STUDENT PROFILE DATA + LIVE PROFILE UI
 // ============================================================
 
-class StudentPortalScreen extends StatefulWidget {
-  final String studentId;
-  final String studentClass;
+Map<String, dynamic>? studentData;
+bool isLoadingProfile = true;
+String? profileError;
 
-  const StudentPortalScreen({
-    super.key,
-    required this.studentId,
-    required this.studentClass,
-  });
-
-  @override
-  State<StudentPortalScreen> createState() => _StudentPortalScreenState();
+@override
+void initState() {
+  super.initState();
+  _fetchStudentProfile();
 }
 
-class _StudentPortalScreenState extends State<StudentPortalScreen> {
-  
-  Color _categoryColor(String category) {
-    switch (category.toLowerCase()) {
-      case 'holiday': return Colors.orangeAccent;
-      case 'exam': return Colors.redAccent;
-      case 'event': return Colors.blueAccent;
-      case 'general':
-      default: return const Color(0xFF00A884);
+// ============================================================
+// FETCH REAL STUDENT DATA FROM FIRESTORE
+// ============================================================
+
+Future<void> _fetchStudentProfile() async {
+  try {
+    final docId =
+        '${widget.studentClass}_Roll_${widget.studentId}';
+
+    final doc = await FirebaseFirestore.instance
+        .collection('students_directory')
+        .doc(docId)
+        .get();
+
+    if (!mounted) return;
+
+    if (doc.exists) {
+      setState(() {
+        studentData = doc.data();
+        isLoadingProfile = false;
+        profileError = null;
+      });
+    } else {
+      setState(() {
+        studentData = null;
+        isLoadingProfile = false;
+        profileError = 'Student profile nahi mila.';
+      });
     }
-  }
+  } catch (e) {
+    debugPrint('Profile load error: $e');
 
-  IconData _categoryIcon(String category) {
-    switch (category.toLowerCase()) {
-      case 'holiday': return Icons.beach_access_rounded;
-      case 'exam': return Icons.menu_book_rounded;
-      case 'event': return Icons.event_rounded;
-      case 'general':
-      default: return Icons.campaign_rounded;
-    }
-  }
+    if (!mounted) return;
 
-  String _formatTimestamp(dynamic timestamp) {
-    if (timestamp is Timestamp) {
-      final date = timestamp.toDate();
-      final day = date.day.toString().padLeft(2, '0');
-      final month = date.month.toString().padLeft(2, '0');
-      final year = date.year.toString();
-      return '$day/$month/$year';
-    }
-    return '';
-  }
-
-  String _studentInitial(String value) {
-    final clean = value.trim();
-    if (clean.isEmpty) return 'S';
-    return clean.substring(0, 1).toUpperCase();
-  }
-
-  Future<void> _updateMobileNumber(String newMobile) async {
-    final mobile = newMobile.trim();
-    if (mobile.isEmpty) throw Exception('Mobile number bharna zaroori hai.');
-    if (!RegExp(r'^[0-9]{10}$').hasMatch(mobile)) throw Exception('10 digit mobile number daalein.');
-
-    final docId = '${widget.studentClass}_Roll_${widget.studentId}';
-    await FirebaseFirestore.instance.collection('students_directory').doc(docId).update({
-      'parentContact': mobile,
-      'updatedAt': FieldValue.serverTimestamp(),
+    setState(() {
+      isLoadingProfile = false;
+      profileError = 'Profile load nahi ho paya.';
     });
   }
+}
 
-  void _showMobileUpdateDialog() {
-    final mobileController = TextEditingController();
+// ============================================================
+// PROFILE TOP
+// ============================================================
 
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        bool isSaving = false;
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF1F2C34),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: const Row(
-                children: [
-                  Icon(Icons.phone_android_rounded, color: Color(0xFF00A884)),
-                  SizedBox(width: 10),
-                  Text('Update Mobile Number', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              content: TextField(
-                controller: mobileController,
-                keyboardType: TextInputType.phone,
-                maxLength: 10,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: 'Enter 10 digit mobile number',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.phone_outlined, color: Color(0xFF00A884)),
-                  filled: true,
-                  fillColor: const Color(0xFF121B22),
-                  counterStyle: const TextStyle(color: Colors.grey),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isSaving ? null : () => Navigator.pop(ctx),
-                  child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                  onPressed: isSaving
-                      ? null
-                      : () async {
-                          setDialogState(() { isSaving = true; });
-                          try {
-                            await _updateMobileNumber(mobileController.text);
-                            if (!mounted) return;
-                            Navigator.pop(ctx);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                backgroundColor: Color(0xFF00A884),
-                                content: Text('Mobile number successfully update ho gaya!'),
-                              ),
-                            );
-                          } catch (e) {
-                            setDialogState(() { isSaving = false; });
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(backgroundColor: Colors.redAccent, content: Text('Update error: $e')),
-                            );
-                          }
-                        },
-                  child: isSaving
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Text('Save', style: TextStyle(color: Colors.white)),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
+Widget _buildProfileTop() {
+  final photoUrl =
+      studentData?['photoUrl']?.toString().trim() ?? '';
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0F171D),
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: const Color(0xFF172229),
-        titleSpacing: 18,
-        title: Row(
+  final studentName =
+      studentData?['name']?.toString().trim().isNotEmpty == true
+          ? studentData!['name'].toString().trim()
+          : 'Student Profile';
+
+  final studentInitial =
+      _studentInitial(studentName);
+
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.fromLTRB(
+      18,
+      24,
+      18,
+      20,
+    ),
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        colors: [
+          Color(0xFF193A38),
+          Color(0xFF172229),
+        ],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+      borderRadius: BorderRadius.only(
+        topLeft: Radius.circular(20),
+        topRight: Radius.circular(20),
+      ),
+    ),
+    child: Column(
+      children: [
+        // ------------------------------------------------------
+        // PROFILE PHOTO
+        // ------------------------------------------------------
+
+        Stack(
+          alignment: Alignment.bottomRight,
           children: [
             Container(
-              width: 38,
-              height: 38,
+              width: 108,
+              height: 108,
+              padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
-                color: const Color(0xFF00A884).withOpacity(0.15),
-                borderRadius: BorderRadius.circular(11),
-                border: Border.all(color: const Color(0xFF00A884).withOpacity(0.35)),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFF00A884),
+                  width: 2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00A884)
+                        .withOpacity(0.18),
+                    blurRadius: 22,
+                    spreadRadius: 2,
+                  ),
+                ],
               ),
-              child: const Icon(Icons.school_rounded, color: Color(0xFF00A884), size: 21),
+              child: ClipOval(
+                child: isLoadingProfile
+                    ? const ColoredBox(
+                        color: Color(0xFF0F171D),
+                        child: Center(
+                          child: SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: Color(0xFF00A884),
+                            ),
+                          ),
+                        ),
+                      )
+                    : photoUrl.isNotEmpty
+                        ? Image.network(
+                            photoUrl,
+                            fit: BoxFit.cover,
+                            webHtmlElementStrategy:
+                                WebHtmlElementStrategy.prefer,
+                            errorBuilder:
+                                (context, error, stackTrace) {
+                              return ColoredBox(
+                                color: const Color(0xFF0F171D),
+                                child: Center(
+                                  child: Text(
+                                    studentInitial,
+                                    style: const TextStyle(
+                                      color: Color(0xFF00A884),
+                                      fontSize: 38,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          )
+                        : ColoredBox(
+                            color: const Color(0xFF0F171D),
+                            child: Center(
+                              child: Text(
+                                studentInitial,
+                                style: const TextStyle(
+                                  color: Color(0xFF00A884),
+                                  fontSize: 38,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+              ),
             ),
-            const SizedBox(width: 11),
-            const Expanded(
-              child: Text(
-                'Student Portal',
-                style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: 0.2),
+
+            // Verified badge
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: const Color(0xFF00A884),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFF172229),
+                  width: 3,
+                ),
+              ),
+              child: const Icon(
+                Icons.check_rounded,
+                size: 15,
+                color: Colors.white,
               ),
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Logout',
-            icon: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: Colors.redAccent.withOpacity(0.10),
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 19),
-            ),
-            onPressed: () => Navigator.pop(context),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final isMobile = constraints.maxWidth < 800;
-          if (isMobile) {
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
-              child: Column(
-                children: [
-                  _buildMobileProfileCard(),
-                  const SizedBox(height: 14),
-                  _buildNoticeBoard(context, height: null),
-                ],
-              ),
-            );
-          }
-          return Padding(
-            padding: const EdgeInsets.all(18),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: 330,
-                  child: SingleChildScrollView(child: _buildDesktopProfileCard()),
-                ),
-                const SizedBox(width: 18),
-                Expanded(child: _buildNoticeBoard(context, height: constraints.maxHeight - 36)),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
 
-  Widget _buildDesktopProfileCard() {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF172229),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.07)),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.20), blurRadius: 25, offset: const Offset(0, 10)),
-        ],
-      ),
-      child: Column(
-        children: [
-          _buildProfileTop(),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-            child: _buildProfileDetails(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMobileProfileCard() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: const Color(0xFF172229),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.07)),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 22, offset: const Offset(0, 9)),
-        ],
-      ),
-      child: Column(
-        children: [
-          _buildProfileTop(),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: _buildProfileDetails(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProfileTop() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 22, 18, 20),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF193A38), Color(0xFF172229)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          Stack(
-            alignment: Alignment.bottomRight,
-            children: [
-              Container(
-                width: 92,
-                height: 92,
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF00A884), width: 2),
-                  boxShadow: [
-                    BoxShadow(color: const Color(0xFF00A884).withOpacity(0.18), blurRadius: 18, spreadRadius: 2),
-                  ],
-                ),
-                child: CircleAvatar(
-                  backgroundColor: const Color(0xFF0F171D),
-                  child: Text(
-                    _studentInitial(widget.studentId),
-                    style: const TextStyle(color: Color(0xFF00A884), fontSize: 34, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-              Container(
-                width: 25,
-                height: 25,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF00A884),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF172229), width: 3),
-                ),
-                child: const Icon(Icons.check_rounded, size: 14, color: Colors.white),
-              ),
-            ],
-          ),
-          const SizedBox(height: 13),
-          const Text(
-            'Student Profile',
-            style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            'Saraswati Vidya Niketan',
-            style: TextStyle(color: Colors.white.withOpacity(0.60), fontSize: 12),
-          ),
-          const SizedBox(height: 13),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF00A884).withOpacity(0.12),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFF00A884).withOpacity(0.25)),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.verified_rounded, color: Color(0xFF00A884), size: 15),
-                SizedBox(width: 6),
-                Text(
-                  'Active / Enrolled',
-                  style: TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProfileDetails() {
-    return Column(
-      children: [
-        _profileInfoTile(icon: Icons.badge_outlined, label: 'Student ID / Roll', value: widget.studentId),
-        const SizedBox(height: 10),
-        _profileInfoTile(icon: Icons.school_outlined, label: 'Assigned Class', value: widget.studentClass),
-        const SizedBox(height: 10),
-        _profileInfoTile(icon: Icons.verified_user_outlined, label: 'Status', value: 'Active', valueColor: const Color(0xFF00A884)),
         const SizedBox(height: 14),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: _showMobileUpdateDialog,
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Color(0xFF00A884)),
-              foregroundColor: const Color(0xFF00A884),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            icon: const Icon(Icons.phone_android_rounded, size: 18),
-            label: const Text('Update Mobile Number', style: TextStyle(fontWeight: FontWeight.bold)),
+
+        // ------------------------------------------------------
+        // STUDENT NAME
+        // ------------------------------------------------------
+
+        Text(
+          studentName,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 14),
+
+        const SizedBox(height: 5),
+
+        const Text(
+          'Saraswati Vidya Niketan',
+          style: TextStyle(
+            color: Colors.white54,
+            fontSize: 12,
+          ),
+        ),
+
+        const SizedBox(height: 13),
+
+        // ------------------------------------------------------
+        // ACTIVE STATUS
+        // ------------------------------------------------------
+
         Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(13),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 7,
+          ),
           decoration: BoxDecoration(
-            color: const Color(0xFF0F171D),
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: Colors.white.withOpacity(0.05)),
+            color: const Color(0xFF00A884).withOpacity(0.12),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: const Color(0xFF00A884).withOpacity(0.28),
+            ),
           ),
           child: const Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.info_outline_rounded, color: Colors.white54, size: 18),
-              SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  'Yahan school ke latest notices, important instructions aur announcements milenge.',
-                  style: TextStyle(color: Colors.white54, fontSize: 11.5, height: 1.45),
+              Icon(
+                Icons.verified_rounded,
+                color: Color(0xFF00A884),
+                size: 15,
+              ),
+              SizedBox(width: 6),
+              Text(
+                'Active / Enrolled',
+                style: TextStyle(
+                  color: Color(0xFF00A884),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ],
           ),
         ),
       ],
+    ),
+  );
+}
+
+// ============================================================
+// PROFILE DETAILS
+// ============================================================
+
+Widget _buildProfileDetails() {
+  if (isLoadingProfile) {
+    return const Padding(
+      padding: EdgeInsets.all(20),
+      child: Center(
+        child: CircularProgressIndicator(
+          color: Color(0xFF00A884),
+        ),
+      ),
     );
   }
 
+  if (studentData == null) {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.person_off_outlined,
+            color: Colors.white38,
+            size: 38,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            profileError ?? 'Profile unavailable',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _fetchStudentProfile,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF00A884),
+              side: const BorderSide(
+                color: Color(0xFF00A884),
+              ),
+            ),
+            icon: const Icon(
+              Icons.refresh_rounded,
+              size: 17,
+            ),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  final parentName =
+      studentData?['parentName']?.toString().trim() ?? 'N/A';
+
+  final dob =
+      studentData?['dateOfBirth']?.toString().trim() ?? 'N/A';
+
+  final contact =
+      studentData?['parentContact']?.toString().trim() ?? 'N/A';
+
+  final address =
+      studentData?['address']?.toString().trim() ?? '';
+
+  final district =
+      studentData?['district']?.toString().trim() ?? '';
+
+  final state =
+      studentData?['state']?.toString().trim() ?? '';
+
+  final pinCode =
+      studentData?['pinCode']?.toString().trim() ?? '';
+
+  final hostel =
+      studentData?['hostelFacility']?.toString().trim() ?? 'No';
+
+  String fullAddress = [
+    address,
+    district,
+    state,
+  ].where((e) => e.isNotEmpty).join(', ');
+
+  if (pinCode.isNotEmpty) {
+    fullAddress =
+        fullAddress.isEmpty
+            ? pinCode
+            : '$fullAddress - $pinCode';
+  }
+
+  if (fullAddress.isEmpty) {
+    fullAddress = 'Not Available';
+  }
+
+  return Column(
+    children: [
+      // ------------------------------------------------------
+      // BASIC DETAILS
+      // ------------------------------------------------------
+
+      _profileInfoTile(
+        icon: Icons.badge_outlined,
+        label: 'Student ID / Roll',
+        value: widget.studentId,
+      ),
+
+      const SizedBox(height: 9),
+
+      _profileInfoTile(
+        icon: Icons.school_outlined,
+        label: 'Assigned Class',
+        value: widget.studentClass,
+      ),
+
+      const SizedBox(height: 9),
+
+      _profileInfoTile(
+        icon: Icons.person_outline_rounded,
+        label: "Father's / Guardian Name",
+        value: parentName.isEmpty
+            ? 'N/A'
+            : parentName,
+      ),
+
+      const SizedBox(height: 9),
+
+      _profileInfoTile(
+        icon: Icons.cake_outlined,
+        label: 'Date of Birth',
+        value: dob.isEmpty
+            ? 'N/A'
+            : dob,
+      ),
+
+      const SizedBox(height: 9),
+
+      _profileInfoTile(
+        icon: Icons.phone_outlined,
+        label: 'Contact Number',
+        value: contact.isEmpty
+            ? 'N/A'
+            : contact,
+      ),
+
+      const SizedBox(height: 9),
+
+      _profileInfoTile(
+        icon: Icons.home_outlined,
+        label: 'Address',
+        value: fullAddress,
+      ),
+
+      const SizedBox(height: 9),
+
+      _profileInfoTile(
+        icon: Icons.hotel_outlined,
+        label: 'Hostel Facility',
+        value: hostel.isEmpty
+            ? 'No'
+            : hostel,
+      ),
+
+      const SizedBox(height: 9),
+
+      _profileInfoTile(
+        icon: Icons.verified_user_outlined,
+        label: 'Status',
+        value: 'Active',
+        valueColor: const Color(0xFF00A884),
+      ),
+
+      const SizedBox(height: 14),
+
+      // ------------------------------------------------------
+      // MOBILE UPDATE BUTTON
+      // ------------------------------------------------------
+
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: _showMobileUpdateDialog,
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(
+              color: Color(0xFF00A884),
+            ),
+            foregroundColor: const Color(0xFF00A884),
+            padding: const EdgeInsets.symmetric(
+              vertical: 12,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          icon: const Icon(
+            Icons.phone_android_rounded,
+            size: 18,
+          ),
+          label: const Text(
+            'Update Mobile Number',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+
+      const SizedBox(height: 14),
+
+      // ------------------------------------------------------
+      // INFO BOX
+      // ------------------------------------------------------
+
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F171D),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.05),
+          ),
+        ),
+        child: const Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.lock_outline_rounded,
+              color: Colors.white38,
+              size: 17,
+            ),
+            SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                'Profile details school database se linked hain. '
+                'Student sirf apna mobile number update kar sakta hai.',
+                style: TextStyle(
+                  color: Colors.white45,
+                  fontSize: 11,
+                  height: 1.45,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+// ============================================================
+// PROFILE INFO TILE
+// ============================================================
+
+Widget _profileInfoTile({
+  required IconData icon,
+  required String label,
+  required String value,
+  Color valueColor = Colors.white,
+}) {
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(
+      horizontal: 12,
+      vertical: 12,
+    ),
+    decoration: BoxDecoration(
+      color: const Color(0xFF1D2A31),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(
+        color: Colors.white.withOpacity(0.035),
+      ),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 35,
+          height: 35,
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F171D),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            icon,
+            color: const Color(0xFF00A884),
+            size: 18,
+          ),
+        ),
+
+        const SizedBox(width: 11),
+
+        Expanded(
+          child: Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white38,
+                  fontSize: 9.5,
+                ),
+              ),
+
+              const SizedBox(height: 3),
+
+              Text(
+                value,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: valueColor,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
   Widget _profileInfoTile({
     required IconData icon,
     required String label,
