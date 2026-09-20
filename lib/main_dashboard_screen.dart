@@ -2380,112 +2380,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
           ],
         ),
-        actions: [
-          Builder(
-            builder: (context) {
-              final compact = MediaQuery.of(context).size.width < 760;
-              if (compact) return const SizedBox.shrink();
-
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: TextButton.icon(
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    backgroundColor: const Color(0xFF00A884).withOpacity(0.12),
-                    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(11),
-                      side: BorderSide(
-                        color: const Color(0xFF00A884).withOpacity(0.26),
-                      ),
-                    ),
-                  ),
-                  onPressed: _openAddStudentDialog,
-                  icon: const Icon(
-                    Icons.person_add_alt_1_rounded,
-                    color: Color(0xFF00D9A5),
-                    size: 18,
-                  ),
-                  label: const Text(
-                    'Add Student',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'Admin Menu',
-            color: const Color(0xFF1B2A32),
-            surfaceTintColor: Colors.transparent,
-            icon: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.06)),
-              ),
-              child: const Icon(
-                Icons.more_horiz_rounded,
-                color: Colors.white70,
-                size: 21,
-              ),
-            ),
-            onSelected: (value) async {
-              if (value == 'profile') {
-                _showProfileDialog();
-              } else if (value == 'settings') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                );
-              } else if (value == 'logout') {
-                await FirebaseAuth.instance.signOut();
-                if (!mounted) return;
-                Navigator.popUntil(context, (route) => route.isFirst);
-              }
-            },
-            itemBuilder: (BuildContext context) => const [
-              PopupMenuItem<String>(
-                value: 'profile',
-                child: Row(
-                  children: [
-                    Icon(Icons.person_outline_rounded, color: Color(0xFF00A884), size: 20),
-                    SizedBox(width: 12),
-                    Text('Admin Profile', style: TextStyle(color: Colors.white)),
-                  ],
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'settings',
-                child: Row(
-                  children: [
-                    Icon(Icons.settings_outlined, color: Color(0xFF00A884), size: 20),
-                    SizedBox(width: 12),
-                    Text('Settings', style: TextStyle(color: Colors.white)),
-                  ],
-                ),
-              ),
-              PopupMenuDivider(),
-              PopupMenuItem<String>(
-                value: 'logout',
-                child: Row(
-                  children: [
-                    Icon(Icons.logout_rounded, color: Colors.redAccent, size: 20),
-                    SizedBox(width: 12),
-                    Text('Logout', style: TextStyle(color: Colors.redAccent)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(width: 10),
-        ],
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
@@ -2563,7 +2457,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFF00A884).withOpacity(0.16)),
+        border: Border.all(
+          color: const Color(0xFF00A884).withOpacity(0.16),
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.22),
@@ -2572,179 +2468,70 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ],
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 720;
-
-          final info = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF00A884).withOpacity(0.13),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: const Color(0xFF00A884).withOpacity(0.20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF00A884).withOpacity(0.13),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: const Color(0xFF00A884).withOpacity(0.20),
+              ),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.verified_user_rounded,
+                  color: Color(0xFF00D9A5),
+                  size: 14,
+                ),
+                SizedBox(width: 6),
+                Text(
+                  'ADMIN ACCESS',
+                  style: TextStyle(
+                    color: Color(0xFF00D9A5),
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.7,
                   ),
                 ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.verified_user_rounded,
-                      color: Color(0xFF00D9A5),
-                      size: 14,
-                    ),
-                    SizedBox(width: 6),
-                    Text(
-                      'ADMIN ACCESS',
-                      style: TextStyle(
-                        color: Color(0xFF00D9A5),
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.7,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 13),
-              const Text(
-                'Welcome to your School Command Center',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  height: 1.2,
-                ),
-              ),
-              const SizedBox(height: 7),
-              Text(
-                adminEmail,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white60,
-                  fontSize: 12,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                dateText,
-                style: const TextStyle(
-                  color: Colors.white38,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          );
-
-          final actions = Wrap(
-            spacing: 9,
-            runSpacing: 9,
-            children: [
-              _heroActionButton(
-                icon: Icons.person_add_alt_1_rounded,
-                label: 'Add Student',
-                onTap: _openAddStudentDialog,
-              ),
-              _heroActionButton(
-                icon: Icons.people_alt_outlined,
-                label: 'All Students',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const AllStudentsListScreen(),
-                    ),
-                  );
-                },
-                outlined: true,
-              ),
-              _heroActionButton(
-                icon: Icons.settings_outlined,
-                label: 'Settings',
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                  );
-                },
-                outlined: true,
-              ),
-            ],
-          );
-
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                info,
-                const SizedBox(height: 18),
-                actions,
               ],
-            );
-          }
-
-          return Row(
-            children: [
-              Expanded(child: info),
-              const SizedBox(width: 20),
-              actions,
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _heroActionButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-    bool outlined = false,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-          decoration: BoxDecoration(
-            color: outlined
-                ? Colors.white.withOpacity(0.045)
-                : const Color(0xFF00A884),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: outlined
-                  ? Colors.white.withOpacity(0.10)
-                  : const Color(0xFF00C896).withOpacity(0.55),
             ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                color: outlined ? const Color(0xFF00D9A5) : Colors.white,
-                size: 17,
-              ),
-              const SizedBox(width: 7),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
+          const SizedBox(height: 13),
+          const Text(
+            'Welcome to your School Command Center',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              height: 1.2,
+            ),
           ),
-        ),
+          const SizedBox(height: 7),
+          Text(
+            adminEmail,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white60,
+              fontSize: 12,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            dateText,
+            style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2767,8 +2554,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               width: itemWidth,
               icon: Icons.people_alt_rounded,
               title: 'Student Records',
-              subtitle: 'Class 1 to 10 directory',
+              subtitle: 'View all classes & student records',
               accent: const Color(0xFF00A884),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AllStudentsListScreen(),
+                  ),
+                );
+              },
             ),
             _overviewCard(
               width: itemWidth,
@@ -2803,14 +2598,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required String title,
     required String subtitle,
     required Color accent,
+    VoidCallback? onTap,
   }) {
-    return Container(
+    final card = Container(
       width: width,
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: const Color(0xFF111B21),
         borderRadius: BorderRadius.circular(17),
-        border: Border.all(color: Colors.white.withOpacity(0.055)),
+        border: Border.all(
+          color: onTap != null
+              ? accent.withOpacity(0.28)
+              : Colors.white.withOpacity(0.055),
+        ),
       ),
       child: Row(
         children: [
@@ -2852,7 +2652,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ],
             ),
           ),
+          if (onTap != null) ...[
+            const SizedBox(width: 8),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              color: accent.withOpacity(0.85),
+              size: 14,
+            ),
+          ],
         ],
+      ),
+    );
+
+    if (onTap == null) return card;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(17),
+        child: card,
       ),
     );
   }
@@ -3248,23 +3067,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ],
                   );
                 },
-              ),
-              const SizedBox(height: 9),
-              SizedBox(
-                width: double.infinity,
-                child: _dashboardActionButton(
-                  icon: Icons.groups_2_outlined,
-                  label: 'Open Complete Student Directory',
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const AllStudentsListScreen(),
-                      ),
-                    );
-                  },
-                  soft: true,
-                ),
               ),
             ],
           ),
@@ -4251,9 +4053,12 @@ class AllStudentsListScreen extends StatefulWidget {
 }
 
 class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
-  String _selectedClassFilter = 'Class 1';
+  String _selectedClassFilter = 'All Classes';
 
-  final List<String> _classes = List.generate(10, (index) => 'Class ${index + 1}');
+  final List<String> _classes = [
+    'All Classes',
+    ...List.generate(10, (index) => 'Class ${index + 1}'),
+  ];
 
   Future<void> _deleteStudent(String docId) async {
     final passwordController = TextEditingController();
@@ -4580,20 +4385,58 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('students_directory').where('class', isEqualTo: _selectedClassFilter).snapshots(),
+              stream: _selectedClassFilter == 'All Classes'
+                  ? FirebaseFirestore.instance
+                      .collection('students_directory')
+                      .snapshots()
+                  : FirebaseFirestore.instance
+                      .collection('students_directory')
+                      .where('class', isEqualTo: _selectedClassFilter)
+                      .snapshots(),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      color: Color(0xFF00A884),
+                    ),
+                  );
+                }
 
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return Center(child: Text('$_selectedClassFilter me koi student registered nahi hai.', style: const TextStyle(color: Colors.grey)));
+                  return Center(
+                    child: Text(
+                      _selectedClassFilter == 'All Classes'
+                          ? 'Abhi koi student registered nahi hai.'
+                          : '$_selectedClassFilter me koi student registered nahi hai.',
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  );
                 }
 
                 final docs = snapshot.data!.docs.toList();
                 docs.sort((a, b) {
                   final aData = a.data() as Map<String, dynamic>;
                   final bData = b.data() as Map<String, dynamic>;
-                  final aRoll = int.tryParse(aData['rollNo']?.toString() ?? '') ?? 999999;
-                  final bRoll = int.tryParse(bData['rollNo']?.toString() ?? '') ?? 999999;
+
+                  final aClassText = aData['class']?.toString() ?? '';
+                  final bClassText = bData['class']?.toString() ?? '';
+
+                  final aClass =
+                      int.tryParse(aClassText.replaceAll(RegExp(r'[^0-9]'), '')) ??
+                          999999;
+                  final bClass =
+                      int.tryParse(bClassText.replaceAll(RegExp(r'[^0-9]'), '')) ??
+                          999999;
+
+                  if (aClass != bClass) {
+                    return aClass.compareTo(bClass);
+                  }
+
+                  final aRoll =
+                      int.tryParse(aData['rollNo']?.toString() ?? '') ?? 999999;
+                  final bRoll =
+                      int.tryParse(bData['rollNo']?.toString() ?? '') ?? 999999;
+
                   return aRoll.compareTo(bRoll);
                 });
 
@@ -4634,12 +4477,54 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 Row(
                                   children: [
                                     Expanded(
-                                      child: Text(student['name']?.toString() ?? '', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                                      child: Text(
+                                        student['name']?.toString() ?? '',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
+                                    const SizedBox(width: 8),
                                     Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(color: const Color(0xFF00A884).withOpacity(0.18), borderRadius: BorderRadius.circular(4)),
-                                      child: Text('Roll: ${student['rollNo'] ?? 'N/A'}', style: const TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.bold)),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 7,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.blueAccent.withOpacity(0.12),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        student['class']?.toString() ?? 'N/A',
+                                        style: const TextStyle(
+                                          color: Colors.blueAccent,
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 7,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF00A884)
+                                            .withOpacity(0.18),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        'Roll: ${student['rollNo'] ?? 'N/A'}',
+                                        style: const TextStyle(
+                                          color: Color(0xFF00A884),
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
                                     ),
                                   ],
                                 ),
