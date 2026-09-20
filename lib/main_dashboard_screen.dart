@@ -3011,17 +3011,102 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
   final List<String> _classes = List.generate(10, (index) => 'Class ${index + 1}');
 
   Future<void> _deleteStudent(String docId) async {
+    final passwordController = TextEditingController();
+    bool obscureText = true;
+    bool isLoading = false;
+    String? errorMessage;
+
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Delete Student', style: TextStyle(color: Colors.white)),
-        content: const Text('Kya aap is student ka record delete karna chahte hain?', style: TextStyle(color: Colors.white70)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete', style: TextStyle(color: Colors.redAccent))),
-        ],
-      ),
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1F2C34),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+                  SizedBox(width: 10),
+                  Text('Delete Student?', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Kya aap sach mein is student ka record hamesha ke liye delete karna chahte hain? Yeh wapas nahi aayega.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text('Admin Password daalein:', style: TextStyle(color: Colors.white, fontSize: 12)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: obscureText,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Enter Admin Password',
+                      hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
+                      filled: true,
+                      fillColor: const Color(0xFF121B22),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                      suffixIcon: IconButton(
+                        icon: Icon(obscureText ? Icons.visibility_off : Icons.visibility, color: Colors.grey, size: 18),
+                        onPressed: () => setDialogState(() => obscureText = !obscureText),
+                      ),
+                    ),
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 8),
+                    Text(errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                  ]
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isLoading ? null : () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                  onPressed: isLoading
+                      ? null
+                      : () async {
+                          final pass = passwordController.text.trim();
+                          if (pass.isEmpty) {
+                            setDialogState(() => errorMessage = 'Password daalna zaroori hai.');
+                            return;
+                          }
+                          setDialogState(() {
+                            isLoading = true;
+                            errorMessage = null;
+                          });
+
+                          try {
+                            final user = FirebaseAuth.instance.currentUser;
+                            if (user != null && user.email != null) {
+                              final credential = EmailAuthProvider.credential(email: user.email!, password: pass);
+                              await user.reauthenticateWithCredential(credential);
+                              Navigator.pop(ctx, true);
+                            } else {
+                              setDialogState(() { isLoading = false; errorMessage = 'Admin user nahi mila.'; });
+                            }
+                          } catch (e) {
+                            setDialogState(() { isLoading = false; errorMessage = 'Galat Password!'; });
+                          }
+                        },
+                  child: isLoading
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text('Delete Now', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          }
+        );
+      },
     );
 
     if (confirm != true) return;
@@ -3054,7 +3139,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       await FirebaseFirestore.instance.collection('students_directory').doc(docId).delete();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Student Firestore, Google Sheet aur Drive se delete ho gaya!')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Student permanently delete ho gaya!')));
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Delete error: $e')));
@@ -3126,70 +3211,85 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
             ),
           ),
         ),
+        actionsAlignment: MainAxisAlignment.spaceBetween,
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-            onPressed: () async {
-              try {
-                final configDoc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
-                final scriptUrl = configDoc.data()?['scriptUrl']?.toString();
-
-                if (scriptUrl == null || scriptUrl.isEmpty) throw Exception('Google Apps Script URL Settings me saved nahi hai.');
-
-                final studentClass = data['class']?.toString() ?? '';
-                final rollNo = data['rollNo']?.toString() ?? '';
-
-                final response = await http.post(
-                  Uri.parse(scriptUrl),
-                  headers: {'Content-Type': 'text/plain;charset=utf-8'},
-                  body: jsonEncode({
-                    'action': 'edit_student',
-                    'name': nameCtrl.text.trim(),
-                    'parentName': parentCtrl.text.trim(),
-                    'studentClass': studentClass,
-                    'roll': rollNo,
-                    'contact': contactCtrl.text.trim(),
-                    'photoUrl': photoCtrl.text.trim(),
-                    'hostelFacility': hostelFacility,
-                    'address': addressCtrl.text.trim(),
-                    'district': districtCtrl.text.trim(),
-                    'state': stateCtrl.text.trim(),
-                    'pinCode': pinCtrl.text.trim(),
-                    'joiningDate': admissionCtrl.text.trim(),
-                    'dateOfBirth': dobCtrl.text.trim(),
-                  }),
-                );
-
-                if (response.statusCode != 200) throw Exception('Google update failed: ${response.statusCode}');
-
-                final result = jsonDecode(response.body);
-                if (result['success'] != true) throw Exception(result['message'] ?? 'Google update failed');
-
-                await FirebaseFirestore.instance.collection('students_directory').doc(docId).update({
-                  'name': nameCtrl.text.trim(),
-                  'parentName': parentCtrl.text.trim(),
-                  'parentContact': contactCtrl.text.trim(),
-                  'photoUrl': photoCtrl.text.trim(),
-                  'hostelFacility': hostelFacility,
-                  'address': addressCtrl.text.trim(),
-                  'district': districtCtrl.text.trim(),
-                  'state': stateCtrl.text.trim(),
-                  'pinCode': pinCtrl.text.trim(),
-                  'joiningDate': admissionCtrl.text.trim(),
-                  'dateOfBirth': dobCtrl.text.trim(),
-                  'updatedAt': FieldValue.serverTimestamp(),
-                });
-
-                if (mounted) {
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student Firestore aur Google Sheet dono me update ho gaya!')));
-                }
-              } catch (e) {
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Update error: $e')));
-              }
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _deleteStudent(docId);
             },
-            child: const Text('Save Changes', style: TextStyle(color: Colors.white)),
+            icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+            label: const Text('Delete Student', style: TextStyle(color: Colors.redAccent)),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                onPressed: () async {
+                  try {
+                    final configDoc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
+                    final scriptUrl = configDoc.data()?['scriptUrl']?.toString();
+
+                    if (scriptUrl == null || scriptUrl.isEmpty) throw Exception('Google Apps Script URL Settings me saved nahi hai.');
+
+                    final studentClass = data['class']?.toString() ?? '';
+                    final rollNo = data['rollNo']?.toString() ?? '';
+
+                    final response = await http.post(
+                      Uri.parse(scriptUrl),
+                      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+                      body: jsonEncode({
+                        'action': 'edit_student',
+                        'name': nameCtrl.text.trim(),
+                        'parentName': parentCtrl.text.trim(),
+                        'studentClass': studentClass,
+                        'roll': rollNo,
+                        'contact': contactCtrl.text.trim(),
+                        'photoUrl': photoCtrl.text.trim(),
+                        'hostelFacility': hostelFacility,
+                        'address': addressCtrl.text.trim(),
+                        'district': districtCtrl.text.trim(),
+                        'state': stateCtrl.text.trim(),
+                        'pinCode': pinCtrl.text.trim(),
+                        'joiningDate': admissionCtrl.text.trim(),
+                        'dateOfBirth': dobCtrl.text.trim(),
+                      }),
+                    );
+
+                    if (response.statusCode != 200) throw Exception('Google update failed: ${response.statusCode}');
+
+                    final result = jsonDecode(response.body);
+                    if (result['success'] != true) throw Exception(result['message'] ?? 'Google update failed');
+
+                    await FirebaseFirestore.instance.collection('students_directory').doc(docId).update({
+                      'name': nameCtrl.text.trim(),
+                      'parentName': parentCtrl.text.trim(),
+                      'parentContact': contactCtrl.text.trim(),
+                      'photoUrl': photoCtrl.text.trim(),
+                      'hostelFacility': hostelFacility,
+                      'address': addressCtrl.text.trim(),
+                      'district': districtCtrl.text.trim(),
+                      'state': stateCtrl.text.trim(),
+                      'pinCode': pinCtrl.text.trim(),
+                      'joiningDate': admissionCtrl.text.trim(),
+                      'dateOfBirth': dobCtrl.text.trim(),
+                      'updatedAt': FieldValue.serverTimestamp(),
+                    });
+
+                    if (mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student Firestore aur Google Sheet dono me update ho gaya!')));
+                    }
+                  } catch (e) {
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Update error: $e')));
+                  }
+                },
+                child: const Text('Save Changes', style: TextStyle(color: Colors.white)),
+              ),
+            ],
           ),
         ],
       ),
@@ -3307,105 +3407,46 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                               ],
                             ),
                           ),
-Column(
-  mainAxisSize: MainAxisSize.min,
-  children: [
-    // ========================================================
-    // WHATSAPP BUTTON
-    // ========================================================
-    Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF25D366).withOpacity(0.12),
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: const Color(0xFF25D366).withOpacity(0.30),
-        ),
-      ),
-      child: IconButton(
-        tooltip: 'WhatsApp Parent',
-        icon: Image.asset(
-          'assets/whatsapp.png',
-          width: 21,
-          height: 21,
-        ),
-        onPressed: () {
-          final contact =
-              student['parentContact']?.toString() ?? '';
-
-          final cleanNum =
-              contact.replaceAll(RegExp(r'\D'), '');
-
-          if (cleanNum.length >= 10) {
-            final waNum =
-                cleanNum.length == 10
-                    ? '91$cleanNum'
-                    : cleanNum;
-
-            html.window.open(
-              'https://wa.me/$waNum',
-              '_blank',
-            );
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                backgroundColor: Colors.redAccent,
-                content: Text(
-                  'Student ka valid contact number nahi hai!',
-                ),
-              ),
-            );
-          }
-        },
-      ),
-    ),
-
-    const SizedBox(height: 8),
-
-    // ========================================================
-    // EDIT + DELETE
-    // ========================================================
-    Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.blueAccent.withOpacity(0.10),
-            shape: BoxShape.circle,
-          ),
-          child: IconButton(
-            tooltip: 'Edit Record',
-            icon: const Icon(
-              Icons.edit_rounded,
-              color: Colors.blueAccent,
-              size: 18,
-            ),
-            onPressed: () =>
-                _editStudent(doc.id, student),
-          ),
-        ),
-
-        const SizedBox(width: 6),
-
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.redAccent.withOpacity(0.10),
-            shape: BoxShape.circle,
-          ),
-          child: IconButton(
-            tooltip: 'Delete Record',
-            icon: const Icon(
-              Icons.delete_outline_rounded,
-              color: Colors.redAccent,
-              size: 18,
-            ),
-            onPressed: () =>
-                _deleteStudent(doc.id),
-          ),
-        ),
-      ],
-    ),
-  ],
-),
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF25D366).withOpacity(0.12),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: const Color(0xFF25D366).withOpacity(0.30)),
+                                ),
+                                child: IconButton(
+                                  tooltip: 'WhatsApp Parent',
+                                  icon: Image.asset('assets/whatsapp.png', width: 21, height: 21),
+                                  onPressed: () {
+                                    final contact = student['parentContact']?.toString() ?? '';
+                                    final cleanNum = contact.replaceAll(RegExp(r'\D'), '');
+                                    if (cleanNum.length >= 10) {
+                                      final waNum = cleanNum.length == 10 ? '91$cleanNum' : cleanNum;
+                                      html.window.open('https://wa.me/$waNum', '_blank');
+                                    } else {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(backgroundColor: Colors.redAccent, content: Text('Student ka valid contact number nahi hai!')),
+                                      );
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.blueAccent.withOpacity(0.10),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: IconButton(
+                                  tooltip: 'Edit Record',
+                                  icon: const Icon(Icons.edit_rounded, color: Colors.blueAccent, size: 18),
+                                  onPressed: () => _editStudent(doc.id, student),
+                                ),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     );
