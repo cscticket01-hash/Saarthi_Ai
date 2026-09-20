@@ -1762,145 +1762,207 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
                 ),
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                  onPressed: isSaving ? null : () async {
-                    final name = nameCtrl.text.trim();
-                    final parent = parentCtrl.text.trim();
-                    final roll = rollCtrl.text.trim();
-                    final contact = contactCtrl.text.trim();
-                    if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Name, Roll No aur Contact bharna zaroori hai!')));
-                      return;
-                    }
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                  ),
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final name = nameCtrl.text.trim();
+                          final parent = parentCtrl.text.trim();
+                          final roll = rollCtrl.text.trim();
+                          final contact = contactCtrl.text.trim();
 
-final docId = '${selectedClass}_Roll_$roll';
-String finalPhotoUrl = '';
-bool driveSaved = false;
+                          if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Colors.redAccent,
+                                content: Text(
+                                  'Name, Roll No aur Contact bharna zaroori hai!',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
 
-try {
-  String normalizeRoll(String value) {
-    final cleaned = value.trim();
+                          String normalizeRoll(String value) {
+                            final cleaned = value.trim();
+                            final number = int.tryParse(cleaned);
 
-    final number = int.tryParse(cleaned);
+                            if (number != null) {
+                              return number.toString();
+                            }
 
-    if (number != null) {
-      return number.toString();
-    }
+                            return cleaned.toLowerCase();
+                          }
 
-    return cleaned.toLowerCase();
-  }
+                          setDlgState(() => isSaving = true);
 
-  final normalizedNewRoll = normalizeRoll(roll);
+                          final docId = '${selectedClass}_Roll_$roll';
+                          String finalPhotoUrl = '';
+                          bool driveSaved = false;
 
-  final existingStudents = await FirebaseFirestore.instance
-      .collection('students_directory')
-      .where('class', isEqualTo: selectedClass)
-      .get();
+                          try {
+                            // Duplicate protection:
+                            // 1, 01, 001, 0001 ko same roll maana jayega.
+                            final normalizedNewRoll = normalizeRoll(roll);
 
-  final alreadyExists = existingStudents.docs.any((doc) {
-    final data = doc.data();
+                            final existingStudents =
+                                await FirebaseFirestore.instance
+                                    .collection('students_directory')
+                                    .where('class', isEqualTo: selectedClass)
+                                    .get();
 
-    final existingRoll =
-        data['rollNo']?.toString().trim() ?? '';
+                            final alreadyExists =
+                                existingStudents.docs.any((doc) {
+                              final data = doc.data();
+                              final existingRoll =
+                                  data['rollNo']?.toString() ?? '';
 
-    return normalizeRoll(existingRoll) == normalizedNewRoll;
-  });
+                              return normalizeRoll(existingRoll) ==
+                                  normalizedNewRoll;
+                            });
 
-  if (alreadyExists) {
-    setDlgState(() => isSaving = false);
+                            if (alreadyExists) {
+                              setDlgState(() => isSaving = false);
 
-    if (!mounted) return;
+                              if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: Colors.orangeAccent,
-        content: Text(
-          '$selectedClass me Roll $roll already exist karta hai!',
-        ),
-      ),
-    );
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  backgroundColor: Colors.orangeAccent,
+                                  content: Text(
+                                    '$selectedClass me Roll $roll already exist karta hai!',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
 
-    return;
-  }
-  
-try {
-                      final configDoc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
-                      final scriptUrl = configDoc.data()?['scriptUrl']?.toString().trim();
+                            final configDoc =
+                                await FirebaseFirestore.instance
+                                    .collection('school_config')
+                                    .doc('google_drive_account')
+                                    .get();
 
-                      if (scriptUrl != null && scriptUrl.isNotEmpty) {
-                        try {
-                          final base64Image = selectedPhotoBytes != null ? base64Encode(selectedPhotoBytes!) : '';
-                          final response = await http.post(
-                            Uri.parse(scriptUrl),
-                            headers: {'Content-Type': 'text/plain;charset=utf-8'},
-                            body: jsonEncode({
-                              'action': 'add_student',
+                            final scriptUrl = configDoc.data()?['scriptUrl']
+                                ?.toString()
+                                .trim();
+
+                            if (scriptUrl != null && scriptUrl.isNotEmpty) {
+                              final base64Image =
+                                  selectedPhotoBytes != null
+                                      ? base64Encode(selectedPhotoBytes!)
+                                      : '';
+
+                              final response = await http.post(
+                                Uri.parse(scriptUrl),
+                                headers: {
+                                  'Content-Type':
+                                      'text/plain;charset=utf-8',
+                                },
+                                body: jsonEncode({
+                                  'action': 'add_student',
+                                  'name': name,
+                                  'parentName': parent,
+                                  'studentClass': selectedClass,
+                                  'roll': roll,
+                                  'contact': contact,
+                                  'photoBase64': base64Image,
+                                  'hostelFacility': hostelFacility,
+                                  'address': addressCtrl.text.trim(),
+                                  'district': districtCtrl.text.trim(),
+                                  'state': stateCtrl.text.trim(),
+                                  'pinCode': pinCtrl.text.trim(),
+                                  'joiningDate':
+                                      admissionDateCtrl.text.trim(),
+                                  'dateOfBirth': dobCtrl.text.trim(),
+                                }),
+                              );
+
+                              if (response.statusCode != 200) {
+                                throw Exception(
+                                  'Google save failed: ${response.statusCode}',
+                                );
+                              }
+
+                              final responseJson =
+                                  Map<String, dynamic>.from(
+                                jsonDecode(response.body),
+                              );
+
+                              if (responseJson['success'] != true) {
+                                throw Exception(
+                                  responseJson['message'] ??
+                                      'Student save failed',
+                                );
+                              }
+
+                              driveSaved = true;
+
+                              if (responseJson['photoUrl'] != null) {
+                                finalPhotoUrl =
+                                    responseJson['photoUrl'].toString();
+                              }
+                            }
+
+                            await FirebaseFirestore.instance
+                                .collection('students_directory')
+                                .doc(docId)
+                                .set({
                               'name': name,
                               'parentName': parent,
-                              'studentClass': selectedClass,
-                              'roll': roll,
-                              'contact': contact,
-                              'photoBase64': base64Image,
+                              'class': selectedClass,
+                              'rollNo': roll,
+                              'parentContact': contact,
+                              'photoUrl': finalPhotoUrl,
                               'hostelFacility': hostelFacility,
                               'address': addressCtrl.text.trim(),
+                              'pinCode': pinCtrl.text.trim(),
                               'district': districtCtrl.text.trim(),
                               'state': stateCtrl.text.trim(),
-                              'pinCode': pinCtrl.text.trim(),
-                              'joiningDate': admissionDateCtrl.text.trim(),
+                              'joiningDate':
+                                  admissionDateCtrl.text.trim(),
                               'dateOfBirth': dobCtrl.text.trim(),
-                            }),
-                          );
-                          if (response.statusCode == 200) {
-                            final responseJson = jsonDecode(response.body);
-                           if (responseJson['success'] != true) {
-                           throw Exception(
-                             responseJson['message'] ?? 'Student save failed',
-                           );
-                         }
+                              'createdAt': FieldValue.serverTimestamp(),
+                              'updatedAt': FieldValue.serverTimestamp(),
+                            });
 
-                         driveSaved = true;
+                            if (!mounted) return;
 
-                         if (responseJson['photoUrl'] != null) {
-                           finalPhotoUrl = responseJson['photoUrl'].toString();
-                        }
-                        } catch (e) {
-                          debugPrint('Drive error: $e');
-                        }
-                      }
+                            Navigator.pop(dialogContext);
 
-                      await FirebaseFirestore.instance.collection('students_directory').doc(docId).set({
-                        'name': name,
-                        'parentName': parent,
-                        'class': selectedClass,
-                        'rollNo': roll,
-                        'parentContact': contact,
-                        'photoUrl': finalPhotoUrl,
-                        'hostelFacility': hostelFacility,
-                        'address': addressCtrl.text.trim(),
-                        'pinCode': pinCtrl.text.trim(),
-                        'district': districtCtrl.text.trim(),
-                        'state': stateCtrl.text.trim(),
-                        'joiningDate': admissionDateCtrl.text.trim(),
-                        'dateOfBirth': dobCtrl.text.trim(),
-                        'createdAt': FieldValue.serverTimestamp(),
-                        'updatedAt': FieldValue.serverTimestamp(),
-                      });
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                backgroundColor: driveSaved
+                                    ? const Color(0xFF00A884)
+                                    : Colors.orangeAccent,
+                                content: Text(
+                                  driveSaved
+                                      ? 'Student Google Sheet, Drive aur Firestore me save ho gaya.'
+                                      : 'Student Firestore me save hua.',
+                                ),
+                              ),
+                            );
+                          } catch (e) {
+                            setDlgState(() => isSaving = false);
 
-                      if (!mounted) return;
-                      Navigator.pop(dialogContext);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          backgroundColor: driveSaved ? const Color(0xFF00A884) : Colors.orangeAccent,
-                          content: Text(driveSaved ? 'Student aur Photo Google Drive par save ho gaye.' : 'Student Firestore me save hua, Google Drive nahi.'),
-                        ),
-                      );
-                    } catch (e) {
-                      setDlgState(() => isSaving = false);
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Student save error: $e')));
-                    }
-                  },
-                  child: Text(isSaving ? 'Saving...' : 'Save Student', style: const TextStyle(color: Colors.white)),
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                backgroundColor: Colors.redAccent,
+                                content: Text(
+                                  'Student save error: $e',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                  child: Text(
+                    isSaving ? 'Saving...' : 'Save Student',
+                    style: const TextStyle(color: Colors.white),
+                  ),
                 ),
               ],
             );
@@ -5843,6 +5905,53 @@ class _TeachersDirectoryScreenState
                             return;
                           }
 
+                          String normalizeTeacherPhone(dynamic value) {
+                            String digits = (value ?? '')
+                                .toString()
+                                .replaceAll(RegExp(r'\D'), '');
+
+                            if (digits.length == 12 &&
+                                digits.startsWith('91')) {
+                              digits = digits.substring(2);
+                            }
+
+                            return digits;
+                          }
+
+                          final normalizedPhone =
+                              normalizeTeacherPhone(phone);
+
+                          final existingTeachers =
+                              await FirebaseFirestore.instance
+                                  .collection('teachers_directory')
+                                  .get();
+
+                          final duplicatePhone =
+                              existingTeachers.docs.any((teacherDoc) {
+                            if (teacherDoc.id == docId) {
+                              return false;
+                            }
+
+                            final teacherData = teacherDoc.data();
+
+                            return normalizeTeacherPhone(
+                                  teacherData['phone'],
+                                ) ==
+                                normalizedPhone;
+                          });
+
+                          if (duplicatePhone) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Colors.orangeAccent,
+                                content: Text(
+                                  'Is Mobile Number se dusra teacher already registered hai.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
                           setDialogState(
                             () => saving = true,
                           );
@@ -7444,21 +7553,35 @@ class _AddTeacherScreenState
     String createdTeacherId = '';
 
     try {
-      // Firestore duplicate check
-      final existing =
-          await FirebaseFirestore
-              .instance
-              .collection(
-                'teachers_directory',
-              )
-              .where(
-                'phone',
-                isEqualTo: phone,
-              )
-              .limit(1)
+      // Firestore duplicate check.
+      // Purane data me +91 / spaces ho tab bhi same mobile duplicate maana jayega.
+      String normalizeTeacherPhone(dynamic value) {
+        String digits = (value ?? '')
+            .toString()
+            .replaceAll(RegExp(r'\D'), '');
+
+        if (digits.length == 12 && digits.startsWith('91')) {
+          digits = digits.substring(2);
+        }
+
+        return digits;
+      }
+
+      final normalizedPhone = normalizeTeacherPhone(phone);
+
+      final existingTeachers =
+          await FirebaseFirestore.instance
+              .collection('teachers_directory')
               .get();
 
-      if (existing.docs.isNotEmpty) {
+      final alreadyExists = existingTeachers.docs.any((doc) {
+        final data = doc.data();
+
+        return normalizeTeacherPhone(data['phone']) ==
+            normalizedPhone;
+      });
+
+      if (alreadyExists) {
         throw Exception(
           'Is Mobile Number se teacher already registered hai.',
         );
