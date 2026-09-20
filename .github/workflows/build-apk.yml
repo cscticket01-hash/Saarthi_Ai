@@ -380,7 +380,7 @@ jobs:
       - name: Flutter Doctor
         run: flutter doctor -v
 
-            # ============================================================
+      # ============================================================
       # ANDROID-ONLY TEMPORARY DART PATCH
       # Original GitHub Dart file bilkul unchanged rahega
       # ============================================================
@@ -552,6 +552,76 @@ jobs:
               print(
                   "WhatsApp html.window.open present nahi hai - skip."
               )
+          # ========================================================
+          # 5. WHATSAPP WEB OPEN -> ANDROID EXTERNAL APP
+          # ========================================================
+          whatsapp_pattern = re.compile(
+              r"html\.window\.open\(\s*"
+              r"'https://wa\.me/\$waNum'\s*,\s*"
+              r"'_blank'\s*\);"
+          )
+
+          whatsapp_replacement = """launchUrl(
+                                        Uri.parse(
+                                          'https://wa.me/$waNum',
+                                        ),
+                                        mode: LaunchMode.externalApplication,
+                                      );"""
+
+          text, whatsapp_count = whatsapp_pattern.subn(
+              whatsapp_replacement,
+              text,
+              count=1,
+          )
+
+          if whatsapp_count == 1:
+              print(
+                  "WhatsApp Android launcher patched."
+              )
+          else:
+              print(
+                  "WhatsApp html.window.open present nahi hai - skip."
+              )
+
+
+          # ========================================================
+          # 6. REMOVE WEB-ONLY FIREBASE AUTH PERSISTENCE ON ANDROID
+          # Original main.dart GitHub me unchanged rahega
+          # ========================================================
+          main_path = Path("lib/main.dart")
+
+          if not main_path.exists():
+              raise SystemExit(
+                  "ERROR: lib/main.dart nahi mila"
+              )
+
+          main_text = main_path.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          main_text, persistence_count = re.subn(
+              r'(?m)^\s*await\s+FirebaseAuth\.instance'
+              r'\.setPersistence\(Persistence\.LOCAL\);\s*$',
+              '',
+              main_text,
+              count=1,
+          )
+
+          if persistence_count == 1:
+              print(
+                  "Android: Firebase web persistence removed."
+              )
+          else:
+              print(
+                  "Firebase setPersistence line nahi mili - skip."
+              )
+
+          main_path.write_text(
+              main_text,
+              encoding="utf-8",
+          )
+
 
           # ========================================================
           # SAVE ONLY INSIDE GITHUB RUNNER
@@ -566,6 +636,39 @@ jobs:
               "Android temporary Dart source created successfully."
           )
           PY
+
+          # ========================================================
+          # SAVE ONLY INSIDE GITHUB RUNNER
+          # ========================================================
+          path.write_text(
+              text,
+              encoding="utf-8",
+          )
+
+          print("")
+          print(
+              "Android temporary Dart source created successfully."
+          )
+          PY
+
+          echo ""
+          echo "===== CHECK FIREBASE PERSISTENCE ====="
+
+          if grep -n \
+            "setPersistence" \
+            lib/main.dart; then
+
+            echo "::error::Android main.dart me setPersistence abhi bhi present hai!"
+            exit 1
+
+          else
+            echo "OK - Android main.dart se web persistence removed."
+          fi
+
+          echo ""
+          echo "========================================="
+          echo "CHECKING ANDROID SOURCE"
+          echo "========================================="
 
           echo ""
           echo "========================================="
