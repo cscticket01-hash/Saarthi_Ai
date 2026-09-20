@@ -3422,7 +3422,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                   icon: const FaIcon(
                                     FontAwesomeIcons.whatsapp,
                                     color: Color(0xFF25D366),
-                                    size: 20,
+                                    size: 22,
                                   ),
                                   onPressed: () {
                                     final contact = student['parentContact']?.toString() ?? '';
