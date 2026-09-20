@@ -1773,12 +1773,57 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       return;
                     }
 
-                    setDlgState(() => isSaving = true);
-                    final docId = '${selectedClass}_Roll_$roll';
-                    String finalPhotoUrl = '';
-                    bool driveSaved = false;
+final docId = '${selectedClass}_Roll_$roll';
+String finalPhotoUrl = '';
+bool driveSaved = false;
 
-                    try {
+try {
+  String normalizeRoll(String value) {
+    final cleaned = value.trim();
+
+    final number = int.tryParse(cleaned);
+
+    if (number != null) {
+      return number.toString();
+    }
+
+    return cleaned.toLowerCase();
+  }
+
+  final normalizedNewRoll = normalizeRoll(roll);
+
+  final existingStudents = await FirebaseFirestore.instance
+      .collection('students_directory')
+      .where('class', isEqualTo: selectedClass)
+      .get();
+
+  final alreadyExists = existingStudents.docs.any((doc) {
+    final data = doc.data();
+
+    final existingRoll =
+        data['rollNo']?.toString().trim() ?? '';
+
+    return normalizeRoll(existingRoll) == normalizedNewRoll;
+  });
+
+  if (alreadyExists) {
+    setDlgState(() => isSaving = false);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.orangeAccent,
+        content: Text(
+          '$selectedClass me Roll $roll already exist karta hai!',
+        ),
+      ),
+    );
+
+    return;
+  }
+  
+try {
                       final configDoc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
                       final scriptUrl = configDoc.data()?['scriptUrl']?.toString().trim();
 
@@ -1807,9 +1852,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           );
                           if (response.statusCode == 200) {
                             final responseJson = jsonDecode(response.body);
-                            driveSaved = responseJson['success'] != false;
-                            if (responseJson['photoUrl'] != null) finalPhotoUrl = responseJson['photoUrl'].toString();
-                          }
+                           if (responseJson['success'] != true) {
+                           throw Exception(
+                             responseJson['message'] ?? 'Student save failed',
+                           );
+                         }
+
+                         driveSaved = true;
+
+                         if (responseJson['photoUrl'] != null) {
+                           finalPhotoUrl = responseJson['photoUrl'].toString();
+                        }
                         } catch (e) {
                           debugPrint('Drive error: $e');
                         }
