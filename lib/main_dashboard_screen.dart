@@ -2541,7 +2541,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
           const SizedBox(height: 13),
           const Text(
-            'Welcome to your School Command Center',
+            'Welcome to SARASWATI VIDYA NIKETAN, MADHABDHAM',
             style: TextStyle(
               color: Colors.white,
               fontSize: 22,
