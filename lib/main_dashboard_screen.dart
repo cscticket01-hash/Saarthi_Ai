@@ -1494,21 +1494,19 @@ void _startInlineScanner() {
               normalizedStoredDob ==
                   normalizedEnteredDob;
 
-      if (!passwordMatched &&
-          password != '123456') {
-        // Existing fallback password kept unchanged.
-        if (!mounted) return;
+if (!passwordMatched) {
+  if (!mounted) return;
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text(
-              'Galat Password! Apna Date of Birth sahi format mein enter karein.',
-            ),
-          ),
-        );
-        return;
-      }
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      backgroundColor: Colors.redAccent,
+      content: Text(
+        'Galat Password! Apna Date of Birth sahi format mein enter karein.',
+      ),
+    ),
+  );
+  return;
+}
 
       if (!mounted) return;
 
