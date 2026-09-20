@@ -4778,21 +4778,105 @@ class _TeachersDirectoryScreenState
     super.dispose();
   }
 
+  // ============================================================
+  // GOOGLE APPS SCRIPT
+  // ============================================================
+
+  Future<String> _getTeacherScriptUrl() async {
+    final configDoc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+
+    final scriptUrl =
+        configDoc.data()?['scriptUrl']?.toString().trim() ?? '';
+
+    if (scriptUrl.isEmpty) {
+      throw Exception(
+        'Google Apps Script URL Settings me saved nahi hai.',
+      );
+    }
+
+    return scriptUrl;
+  }
+
+  Future<Map<String, dynamic>> _callTeacherApi(
+    Map<String, dynamic> body,
+  ) async {
+    final scriptUrl = await _getTeacherScriptUrl();
+
+    final response = await http
+        .post(
+          Uri.parse(scriptUrl),
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 30));
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Google API error: ${response.statusCode}',
+      );
+    }
+
+    final decoded = jsonDecode(response.body);
+
+    if (decoded is! Map) {
+      throw Exception('Google API se invalid response mila.');
+    }
+
+    return Map<String, dynamic>.from(decoded);
+  }
+
+  // ============================================================
+  // TEACHER PHOTO
+  // ============================================================
+
   Widget _teacherPhoto(
-    String photoBase64,
+    Map<String, dynamic> data,
     String name,
   ) {
-    if (photoBase64.trim().isNotEmpty) {
+    final photoUrl =
+        data['photoUrl']?.toString().trim() ?? '';
+
+    final photoBase64 =
+        data['photoBase64']?.toString().trim() ?? '';
+
+    if (photoUrl.isNotEmpty) {
+      return Image.network(
+        photoUrl,
+        width: double.infinity,
+        height: double.infinity,
+        fit: BoxFit.cover,
+        webHtmlElementStrategy:
+            WebHtmlElementStrategy.prefer,
+        errorBuilder: (
+          context,
+          error,
+          stackTrace,
+        ) {
+          return _teacherFallback(name);
+        },
+      );
+    }
+
+    if (photoBase64.isNotEmpty) {
       try {
         return Image.memory(
           base64Decode(photoBase64),
-          fit: BoxFit.cover,
           width: double.infinity,
           height: double.infinity,
+          fit: BoxFit.cover,
         );
       } catch (_) {}
     }
 
+    return _teacherFallback(name);
+  }
+
+  Widget _teacherFallback(String name) {
     return Container(
       color: const Color(0xFF10191F),
       alignment: Alignment.center,
@@ -4809,30 +4893,38 @@ class _TeachersDirectoryScreenState
     );
   }
 
+  // ============================================================
+  // SCHEDULE
+  // ============================================================
+
   Future<void> _openSchedule(
     String docId,
     Map<String, dynamic> data,
   ) async {
-    final oldSchedule =
-        data['schedule'] is Map
-            ? Map<String, dynamic>.from(data['schedule'])
-            : <String, dynamic>{};
+    final oldSchedule = data['schedule'] is Map
+        ? Map<String, dynamic>.from(data['schedule'])
+        : <String, dynamic>{};
 
     final monday = TextEditingController(
       text: oldSchedule['Monday']?.toString() ?? '',
     );
+
     final tuesday = TextEditingController(
       text: oldSchedule['Tuesday']?.toString() ?? '',
     );
+
     final wednesday = TextEditingController(
       text: oldSchedule['Wednesday']?.toString() ?? '',
     );
+
     final thursday = TextEditingController(
       text: oldSchedule['Thursday']?.toString() ?? '',
     );
+
     final friday = TextEditingController(
       text: oldSchedule['Friday']?.toString() ?? '',
     );
+
     final saturday = TextEditingController(
       text: oldSchedule['Saturday']?.toString() ?? '',
     );
@@ -4841,6 +4933,7 @@ class _TeachersDirectoryScreenState
 
     await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
@@ -4852,9 +4945,8 @@ class _TeachersDirectoryScreenState
                 padding: const EdgeInsets.only(bottom: 10),
                 child: TextField(
                   controller: controller,
-                  style: const TextStyle(
-                    color: Colors.white,
-                  ),
+                  style:
+                      const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     labelText: day,
                     hintText:
@@ -4879,9 +4971,11 @@ class _TeachersDirectoryScreenState
             }
 
             return AlertDialog(
-              backgroundColor: const Color(0xFF172229),
+              backgroundColor:
+                  const Color(0xFF172229),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+                borderRadius:
+                    BorderRadius.circular(20),
               ),
               title: Row(
                 children: [
@@ -4910,7 +5004,8 @@ class _TeachersDirectoryScreenState
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 17,
-                            fontWeight: FontWeight.w800,
+                            fontWeight:
+                                FontWeight.w800,
                           ),
                         ),
                         Text(
@@ -4978,48 +5073,174 @@ class _TeachersDirectoryScreenState
                   onPressed: saving
                       ? null
                       : () async {
+                          final schedule =
+                              <String, String>{
+                            'Monday':
+                                monday.text.trim(),
+                            'Tuesday':
+                                tuesday.text.trim(),
+                            'Wednesday':
+                                wednesday.text.trim(),
+                            'Thursday':
+                                thursday.text.trim(),
+                            'Friday':
+                                friday.text.trim(),
+                            'Saturday':
+                                saturday.text.trim(),
+                          };
+
                           setDialogState(
                             () => saving = true,
                           );
 
                           try {
+                            Map<String, dynamic>
+                                result =
+                                await _callTeacherApi({
+                              'action':
+                                  'update_teacher_schedule',
+                              'teacherId':
+                                  data['teacherId']
+                                          ?.toString()
+                                          .trim() ??
+                                      '',
+                              'phone':
+                                  data['phone']
+                                          ?.toString()
+                                          .trim() ??
+                                      '',
+                              'schedule': schedule,
+                            });
+
+                            // OLD FIRESTORE TEACHER:
+                            // Google Sheet me na mile to
+                            // automatically migrate karega.
+                            if (result['success'] != true &&
+                                result['message']
+                                        ?.toString()
+                                        .contains(
+                                          'Teacher Google Sheet me nahi mila',
+                                        ) ==
+                                    true) {
+                              result =
+                                  await _callTeacherApi({
+                                'action':
+                                    'add_teacher',
+                                'name':
+                                    data['name'] ??
+                                        '',
+                                'designation':
+                                    data['designation'] ??
+                                        'Teacher',
+                                'subject':
+                                    data['subject'] ??
+                                        '',
+                                'qualification':
+                                    data['qualification'] ??
+                                        '',
+                                'phone':
+                                    data['phone'] ??
+                                        '',
+                                'email':
+                                    data['email'] ??
+                                        '',
+                                'dateOfBirth':
+                                    data['dateOfBirth'] ??
+                                        '',
+                                'joiningDate':
+                                    data['joiningDate'] ??
+                                        '',
+                                'address':
+                                    data['address'] ??
+                                        '',
+                                'assignedClasses':
+                                    data['assignedClasses'] ??
+                                        '',
+                                'employmentType':
+                                    data['employmentType'] ??
+                                        'Permanent',
+                                'status':
+                                    data['status'] ??
+                                        'Active',
+                                'photoBase64':
+                                    data['photoBase64']
+                                            ?.toString() ??
+                                        '',
+                                'photoUrl':
+                                    data['photoUrl']
+                                            ?.toString() ??
+                                        '',
+                                'schedule': schedule,
+                              });
+                            }
+
+                            if (result['success'] !=
+                                true) {
+                              throw Exception(
+                                result['message'] ??
+                                    'Schedule update failed',
+                              );
+                            }
+
+                            final updateData =
+                                <String, dynamic>{
+                              'schedule': schedule,
+                              'updatedAt':
+                                  FieldValue
+                                      .serverTimestamp(),
+                              'employeeId':
+                                  FieldValue.delete(),
+                            };
+
+                            final returnedTeacherId =
+                                result['teacherId']
+                                    ?.toString()
+                                    .trim();
+
+                            final returnedPhotoUrl =
+                                result['photoUrl']
+                                    ?.toString()
+                                    .trim();
+
+                            if (returnedTeacherId !=
+                                    null &&
+                                returnedTeacherId
+                                    .isNotEmpty) {
+                              updateData['teacherId'] =
+                                  returnedTeacherId;
+                            }
+
+                            if (returnedPhotoUrl !=
+                                    null &&
+                                returnedPhotoUrl
+                                    .isNotEmpty) {
+                              updateData['photoUrl'] =
+                                  returnedPhotoUrl;
+                              updateData[
+                                      'photoBase64'] =
+                                  FieldValue.delete();
+                            }
+
                             await FirebaseFirestore
                                 .instance
                                 .collection(
                                   'teachers_directory',
                                 )
                                 .doc(docId)
-                                .update({
-                              'schedule': {
-                                'Monday':
-                                    monday.text.trim(),
-                                'Tuesday':
-                                    tuesday.text.trim(),
-                                'Wednesday':
-                                    wednesday.text.trim(),
-                                'Thursday':
-                                    thursday.text.trim(),
-                                'Friday':
-                                    friday.text.trim(),
-                                'Saturday':
-                                    saturday.text.trim(),
-                              },
-                              'updatedAt':
-                                  FieldValue
-                                      .serverTimestamp(),
-                            });
+                                .update(updateData);
 
                             if (!mounted) return;
 
                             Navigator.pop(ctx);
 
-                            ScaffoldMessenger.of(context)
-                                .showSnackBar(
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
                               const SnackBar(
                                 backgroundColor:
                                     Color(0xFF00A884),
                                 content: Text(
-                                  'Teacher schedule saved!',
+                                  'Teacher schedule successfully saved!',
                                 ),
                               ),
                             );
@@ -5030,8 +5251,9 @@ class _TeachersDirectoryScreenState
 
                             if (!mounted) return;
 
-                            ScaffoldMessenger.of(context)
-                                .showSnackBar(
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
                               SnackBar(
                                 backgroundColor:
                                     Colors.redAccent,
@@ -5057,10 +5279,13 @@ class _TeachersDirectoryScreenState
                           color: Colors.white,
                           size: 17,
                         ),
-                  label: const Text(
-                    'Save Schedule',
-                    style:
-                        TextStyle(color: Colors.white),
+                  label: Text(
+                    saving
+                        ? 'Saving...'
+                        : 'Save Schedule',
+                    style: const TextStyle(
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ],
@@ -5078,43 +5303,1151 @@ class _TeachersDirectoryScreenState
     saturday.dispose();
   }
 
+  // ============================================================
+  // EDIT TEACHER
+  // ============================================================
+
+  Future<void> _editTeacher(
+    String docId,
+    Map<String, dynamic> data,
+  ) async {
+    final nameCtrl = TextEditingController(
+      text: data['name']?.toString() ?? '',
+    );
+
+    final designationCtrl = TextEditingController(
+      text: data['designation']?.toString() ??
+          'Teacher',
+    );
+
+    final subjectCtrl = TextEditingController(
+      text: data['subject']?.toString() ?? '',
+    );
+
+    final qualificationCtrl = TextEditingController(
+      text: data['qualification']?.toString() ?? '',
+    );
+
+    final phoneCtrl = TextEditingController(
+      text: data['phone']?.toString() ?? '',
+    );
+
+    final emailCtrl = TextEditingController(
+      text: data['email']?.toString() ?? '',
+    );
+
+    final dobCtrl = TextEditingController(
+      text: data['dateOfBirth']?.toString() ?? '',
+    );
+
+    final joiningCtrl = TextEditingController(
+      text: data['joiningDate']?.toString() ?? '',
+    );
+
+    final classesCtrl = TextEditingController(
+      text:
+          data['assignedClasses']?.toString() ?? '',
+    );
+
+    final addressCtrl = TextEditingController(
+      text: data['address']?.toString() ?? '',
+    );
+
+    final oldPhone =
+        data['phone']?.toString().trim() ?? '';
+
+    final oldEmployment =
+        data['employmentType']?.toString() ??
+            'Permanent';
+
+    final oldStatus =
+        data['status']?.toString() ?? 'Active';
+
+    String employmentType = [
+      'Permanent',
+      'Contract',
+      'Guest',
+    ].contains(oldEmployment)
+        ? oldEmployment
+        : 'Permanent';
+
+    String status = [
+      'Active',
+      'On Leave',
+      'Inactive',
+    ].contains(oldStatus)
+        ? oldStatus
+        : 'Active';
+
+    bool saving = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (
+            context,
+            setDialogState,
+          ) {
+            InputDecoration input(
+              String label,
+              IconData icon,
+            ) {
+              return InputDecoration(
+                labelText: label,
+                labelStyle: const TextStyle(
+                  color: Colors.white54,
+                ),
+                prefixIcon: Icon(
+                  icon,
+                  color: Colors.purpleAccent,
+                  size: 19,
+                ),
+                filled: true,
+                fillColor:
+                    const Color(0xFF10191F),
+                border: OutlineInputBorder(
+                  borderRadius:
+                      BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor:
+                  const Color(0xFF172229),
+              shape: RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.circular(20),
+              ),
+              title: const Row(
+                children: [
+                  Icon(
+                    Icons.edit_rounded,
+                    color: Colors.blueAccent,
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Edit Teacher',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight:
+                          FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 650,
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: nameCtrl,
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration: input(
+                          'Teacher Full Name *',
+                          Icons.person_outline_rounded,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller:
+                            designationCtrl,
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration: input(
+                          'Designation',
+                          Icons.work_outline_rounded,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller:
+                                  subjectCtrl,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration: input(
+                                'Subject / Department *',
+                                Icons
+                                    .menu_book_rounded,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller:
+                                  qualificationCtrl,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration: input(
+                                'Qualification',
+                                Icons
+                                    .school_outlined,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller:
+                                  phoneCtrl,
+                              keyboardType:
+                                  TextInputType
+                                      .phone,
+                              maxLength: 10,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration: input(
+                                'Mobile Number *',
+                                Icons
+                                    .phone_outlined,
+                              ).copyWith(
+                                counterText: '',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller:
+                                  emailCtrl,
+                              keyboardType:
+                                  TextInputType
+                                      .emailAddress,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration: input(
+                                'Email Address',
+                                Icons
+                                    .email_outlined,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: dobCtrl,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration: input(
+                                'Date of Birth',
+                                Icons
+                                    .cake_outlined,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller:
+                                  joiningCtrl,
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration: input(
+                                'Joining Date',
+                                Icons
+                                    .calendar_today_outlined,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: classesCtrl,
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration: input(
+                          'Assigned Classes',
+                          Icons.class_outlined,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: addressCtrl,
+                        minLines: 2,
+                        maxLines: 3,
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration: input(
+                          'Address',
+                          Icons.location_on_outlined,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child:
+                                DropdownButtonFormField<
+                                    String>(
+                              value:
+                                  employmentType,
+                              dropdownColor:
+                                  const Color(
+                                    0xFF172229,
+                                  ),
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration: input(
+                                'Employment Type',
+                                Icons
+                                    .business_center_outlined,
+                              ),
+                              items: const [
+                                DropdownMenuItem(
+                                  value:
+                                      'Permanent',
+                                  child: Text(
+                                    'Permanent',
+                                  ),
+                                ),
+                                DropdownMenuItem(
+                                  value:
+                                      'Contract',
+                                  child: Text(
+                                    'Contract',
+                                  ),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'Guest',
+                                  child: Text(
+                                    'Guest',
+                                  ),
+                                ),
+                              ],
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setDialogState(
+                                    () {
+                                      employmentType =
+                                          value;
+                                    },
+                                  );
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child:
+                                DropdownButtonFormField<
+                                    String>(
+                              value: status,
+                              dropdownColor:
+                                  const Color(
+                                    0xFF172229,
+                                  ),
+                              style:
+                                  const TextStyle(
+                                color:
+                                    Colors.white,
+                              ),
+                              decoration: input(
+                                'Status',
+                                Icons
+                                    .verified_user_outlined,
+                              ),
+                              items: const [
+                                DropdownMenuItem(
+                                  value: 'Active',
+                                  child: Text(
+                                    'Active',
+                                  ),
+                                ),
+                                DropdownMenuItem(
+                                  value:
+                                      'On Leave',
+                                  child: Text(
+                                    'On Leave',
+                                  ),
+                                ),
+                                DropdownMenuItem(
+                                  value:
+                                      'Inactive',
+                                  child: Text(
+                                    'Inactive',
+                                  ),
+                                ),
+                              ],
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setDialogState(
+                                    () {
+                                      status = value;
+                                    },
+                                  );
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving
+                      ? null
+                      : () => Navigator.pop(ctx),
+                  child: const Text(
+                    'Cancel',
+                    style:
+                        TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        const Color(0xFF00A884),
+                  ),
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          final name =
+                              nameCtrl.text.trim();
+
+                          final subject =
+                              subjectCtrl.text.trim();
+
+                          final phone =
+                              phoneCtrl.text.trim();
+
+                          if (name.isEmpty ||
+                              subject.isEmpty) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
+                              const SnackBar(
+                                backgroundColor:
+                                    Colors.redAccent,
+                                content: Text(
+                                  'Name aur Subject required hain.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          if (!RegExp(
+                            r'^[0-9]{10}$',
+                          ).hasMatch(phone)) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
+                              const SnackBar(
+                                backgroundColor:
+                                    Colors.redAccent,
+                                content: Text(
+                                  'Valid 10 digit Mobile Number daalein.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          setDialogState(
+                            () => saving = true,
+                          );
+
+                          try {
+                            Map<String, dynamic>
+                                result =
+                                await _callTeacherApi({
+                              'action':
+                                  'edit_teacher',
+                              'teacherId':
+                                  data['teacherId']
+                                          ?.toString()
+                                          .trim() ??
+                                      '',
+                              'oldPhone':
+                                  oldPhone,
+                              'name': name,
+                              'designation':
+                                  designationCtrl
+                                      .text
+                                      .trim(),
+                              'subject':
+                                  subject,
+                              'qualification':
+                                  qualificationCtrl
+                                      .text
+                                      .trim(),
+                              'phone': phone,
+                              'email':
+                                  emailCtrl.text
+                                      .trim(),
+                              'dateOfBirth':
+                                  dobCtrl.text
+                                      .trim(),
+                              'joiningDate':
+                                  joiningCtrl.text
+                                      .trim(),
+                              'address':
+                                  addressCtrl.text
+                                      .trim(),
+                              'assignedClasses':
+                                  classesCtrl.text
+                                      .trim(),
+                              'employmentType':
+                                  employmentType,
+                              'status': status,
+                              'schedule':
+                                  data['schedule'] ??
+                                      {},
+                            });
+
+                            // Old Firestore-only teacher:
+                            // Google Sheet me automatically
+                            // add/migrate ho jayega.
+                            if (result['success'] != true &&
+                                result['message']
+                                        ?.toString()
+                                        .contains(
+                                          'Teacher Google Sheet me nahi mila',
+                                        ) ==
+                                    true) {
+                              result =
+                                  await _callTeacherApi({
+                                'action':
+                                    'add_teacher',
+                                'name': name,
+                                'designation':
+                                    designationCtrl
+                                        .text
+                                        .trim(),
+                                'subject':
+                                    subject,
+                                'qualification':
+                                    qualificationCtrl
+                                        .text
+                                        .trim(),
+                                'phone': phone,
+                                'email':
+                                    emailCtrl.text
+                                        .trim(),
+                                'dateOfBirth':
+                                    dobCtrl.text
+                                        .trim(),
+                                'joiningDate':
+                                    joiningCtrl.text
+                                        .trim(),
+                                'address':
+                                    addressCtrl.text
+                                        .trim(),
+                                'assignedClasses':
+                                    classesCtrl.text
+                                        .trim(),
+                                'employmentType':
+                                    employmentType,
+                                'status': status,
+                                'photoBase64':
+                                    data['photoBase64']
+                                            ?.toString() ??
+                                        '',
+                                'photoUrl':
+                                    data['photoUrl']
+                                            ?.toString() ??
+                                        '',
+                                'schedule':
+                                    data['schedule'] ??
+                                        {},
+                              });
+                            }
+
+                            if (result['success'] !=
+                                true) {
+                              throw Exception(
+                                result['message'] ??
+                                    'Teacher update failed',
+                              );
+                            }
+
+                            final updateData =
+                                <String, dynamic>{
+                              'name': name,
+                              'designation':
+                                  designationCtrl
+                                      .text
+                                      .trim(),
+                              'subject':
+                                  subject,
+                              'qualification':
+                                  qualificationCtrl
+                                      .text
+                                      .trim(),
+                              'phone': phone,
+                              'email':
+                                  emailCtrl.text
+                                      .trim(),
+                              'dateOfBirth':
+                                  dobCtrl.text
+                                      .trim(),
+                              'joiningDate':
+                                  joiningCtrl.text
+                                      .trim(),
+                              'address':
+                                  addressCtrl.text
+                                      .trim(),
+                              'assignedClasses':
+                                  classesCtrl.text
+                                      .trim(),
+                              'employmentType':
+                                  employmentType,
+                              'status': status,
+                              'updatedAt':
+                                  FieldValue
+                                      .serverTimestamp(),
+
+                              // Old Employee ID hata dega
+                              'employeeId':
+                                  FieldValue.delete(),
+                            };
+
+                            final teacherId =
+                                result['teacherId']
+                                    ?.toString()
+                                    .trim();
+
+                            final photoUrl =
+                                result['photoUrl']
+                                    ?.toString()
+                                    .trim();
+
+                            if (teacherId != null &&
+                                teacherId
+                                    .isNotEmpty) {
+                              updateData['teacherId'] =
+                                  teacherId;
+                            }
+
+                            if (photoUrl != null &&
+                                photoUrl.isNotEmpty) {
+                              updateData['photoUrl'] =
+                                  photoUrl;
+                              updateData[
+                                      'photoBase64'] =
+                                  FieldValue.delete();
+                            }
+
+                            await FirebaseFirestore
+                                .instance
+                                .collection(
+                                  'teachers_directory',
+                                )
+                                .doc(docId)
+                                .update(updateData);
+
+                            if (!mounted) return;
+
+                            Navigator.pop(ctx);
+
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
+                              const SnackBar(
+                                backgroundColor:
+                                    Color(0xFF00A884),
+                                content: Text(
+                                  'Teacher Google Sheet aur Firestore dono me update ho gaya!',
+                                ),
+                              ),
+                            );
+                          } catch (e) {
+                            setDialogState(
+                              () => saving = false,
+                            );
+
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
+                              SnackBar(
+                                backgroundColor:
+                                    Colors.redAccent,
+                                content: Text(
+                                  'Teacher update error: $e',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                  icon: saving
+                      ? const SizedBox(
+                          width: 17,
+                          height: 17,
+                          child:
+                              CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.save_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                  label: Text(
+                    saving
+                        ? 'Saving...'
+                        : 'Save Changes',
+                    style: const TextStyle(
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    nameCtrl.dispose();
+    designationCtrl.dispose();
+    subjectCtrl.dispose();
+    qualificationCtrl.dispose();
+    phoneCtrl.dispose();
+    emailCtrl.dispose();
+    dobCtrl.dispose();
+    joiningCtrl.dispose();
+    classesCtrl.dispose();
+    addressCtrl.dispose();
+  }
+
+  // ============================================================
+  // DELETE TEACHER
+  // ============================================================
+
+  Future<void> _deleteTeacher(
+    String docId,
+    Map<String, dynamic> data,
+  ) async {
+    final passwordController =
+        TextEditingController();
+
+    bool obscureText = true;
+    bool deleting = false;
+    String? errorText;
+
+    final confirmed =
+        await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (
+            context,
+            setDialogState,
+          ) {
+            return AlertDialog(
+              backgroundColor:
+                  const Color(0xFF172229),
+              shape: RoundedRectangleBorder(
+                borderRadius:
+                    BorderRadius.circular(18),
+              ),
+              title: const Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.redAccent,
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Delete Teacher?',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight:
+                          FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize:
+                    MainAxisSize.min,
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${data['name'] ?? 'Teacher'} ka Sheet, Drive photo aur Firestore record delete hoga.',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Admin Password daalein:',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller:
+                        passwordController,
+                    obscureText:
+                        obscureText,
+                    style: const TextStyle(
+                      color: Colors.white,
+                    ),
+                    decoration:
+                        InputDecoration(
+                      hintText:
+                          'Admin Password',
+                      hintStyle:
+                          const TextStyle(
+                        color:
+                            Colors.white30,
+                      ),
+                      filled: true,
+                      fillColor:
+                          const Color(
+                        0xFF10191F,
+                      ),
+                      prefixIcon:
+                          const Icon(
+                        Icons
+                            .lock_outline_rounded,
+                        color:
+                            Colors.redAccent,
+                      ),
+                      suffixIcon:
+                          IconButton(
+                        icon: Icon(
+                          obscureText
+                              ? Icons
+                                  .visibility_off
+                              : Icons
+                                  .visibility,
+                          color:
+                              Colors.white38,
+                        ),
+                        onPressed: () {
+                          setDialogState(
+                            () {
+                              obscureText =
+                                  !obscureText;
+                            },
+                          );
+                        },
+                      ),
+                      border:
+                          OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius
+                                .circular(12),
+                        borderSide:
+                            BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  if (errorText !=
+                      null) ...[
+                    const SizedBox(
+                      height: 8,
+                    ),
+                    Text(
+                      errorText!,
+                      style:
+                          const TextStyle(
+                        color:
+                            Colors.redAccent,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: deleting
+                      ? null
+                      : () =>
+                          Navigator.pop(
+                            ctx,
+                            false,
+                          ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  style:
+                      ElevatedButton
+                          .styleFrom(
+                    backgroundColor:
+                        Colors.redAccent,
+                  ),
+                  onPressed: deleting
+                      ? null
+                      : () async {
+                          final password =
+                              passwordController
+                                  .text
+                                  .trim();
+
+                          if (password
+                              .isEmpty) {
+                            setDialogState(
+                              () {
+                                errorText =
+                                    'Admin Password daalein.';
+                              },
+                            );
+                            return;
+                          }
+
+                          setDialogState(
+                            () {
+                              deleting =
+                                  true;
+                              errorText =
+                                  null;
+                            },
+                          );
+
+                          try {
+                            final user =
+                                FirebaseAuth
+                                    .instance
+                                    .currentUser;
+
+                            if (user ==
+                                    null ||
+                                user.email ==
+                                    null) {
+                              throw Exception();
+                            }
+
+                            final credential =
+                                EmailAuthProvider
+                                    .credential(
+                              email:
+                                  user.email!,
+                              password:
+                                  password,
+                            );
+
+                            await user
+                                .reauthenticateWithCredential(
+                              credential,
+                            );
+
+                            if (!mounted) {
+                              return;
+                            }
+
+                            Navigator.pop(
+                              ctx,
+                              true,
+                            );
+                          } catch (_) {
+                            setDialogState(
+                              () {
+                                deleting =
+                                    false;
+                                errorText =
+                                    'Galat Admin Password!';
+                              },
+                            );
+                          }
+                        },
+                  icon: deleting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child:
+                              CircularProgressIndicator(
+                            color:
+                                Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(
+                          Icons
+                              .delete_forever_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                  label: const Text(
+                    'Delete Teacher',
+                    style: TextStyle(
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+
+    if (confirmed != true) return;
+
+    try {
+      final result =
+          await _callTeacherApi({
+        'action': 'delete_teacher',
+        'teacherId':
+            data['teacherId']
+                    ?.toString()
+                    .trim() ??
+                '',
+        'phone':
+            data['phone']
+                    ?.toString()
+                    .trim() ??
+                '',
+      });
+
+      if (result['success'] != true) {
+        throw Exception(
+          result['message'] ??
+              'Teacher Google delete failed',
+        );
+      }
+
+      await FirebaseFirestore.instance
+          .collection('teachers_directory')
+          .doc(docId)
+          .delete();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Teacher Google Sheet, Drive aur Firestore se delete ho gaya!',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Teacher delete error: $e',
+          ),
+        ),
+      );
+    }
+  }
+
+  // ============================================================
+  // BUILD DIRECTORY
+  // ============================================================
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B141A),
+      backgroundColor:
+          const Color(0xFF0B141A),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF111B21),
+        backgroundColor:
+            const Color(0xFF111B21),
         elevation: 0,
         title: const Row(
           children: [
             Icon(
               Icons.groups_2_rounded,
-              color: Colors.purpleAccent,
+              color:
+                  Colors.purpleAccent,
             ),
             SizedBox(width: 10),
             Text(
               'Teachers Directory',
               style: TextStyle(
                 color: Colors.white,
-                fontWeight: FontWeight.w800,
+                fontWeight:
+                    FontWeight.w800,
               ),
             ),
           ],
         ),
         actions: [
           Padding(
-            padding: const EdgeInsets.symmetric(
+            padding:
+                const EdgeInsets.symmetric(
               vertical: 9,
               horizontal: 12,
             ),
             child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
+              style:
+                  ElevatedButton.styleFrom(
                 backgroundColor:
                     Colors.purpleAccent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
+                foregroundColor:
+                    Colors.white,
+                shape:
+                    RoundedRectangleBorder(
                   borderRadius:
-                      BorderRadius.circular(11),
+                      BorderRadius.circular(
+                    11,
+                  ),
                 ),
               ),
               onPressed: () {
@@ -5127,13 +6460,15 @@ class _TeachersDirectoryScreenState
                 );
               },
               icon: const Icon(
-                Icons.person_add_alt_1_rounded,
+                Icons
+                    .person_add_alt_1_rounded,
                 size: 18,
               ),
               label: const Text(
                 'Add Teacher',
                 style: TextStyle(
-                  fontWeight: FontWeight.w700,
+                  fontWeight:
+                      FontWeight.w700,
                 ),
               ),
             ),
@@ -5143,66 +6478,92 @@ class _TeachersDirectoryScreenState
       body: Column(
         children: [
           Container(
-            padding: const EdgeInsets.all(14),
-            color: const Color(0xFF111B21),
+            padding:
+                const EdgeInsets.all(14),
+            color:
+                const Color(0xFF111B21),
             child: Column(
               children: [
                 TextField(
-                  controller: _searchController,
-                  onChanged: (_) => setState(() {}),
+                  controller:
+                      _searchController,
+                  onChanged: (_) =>
+                      setState(() {}),
                   style: const TextStyle(
                     color: Colors.white,
                   ),
-                  decoration: InputDecoration(
+                  decoration:
+                      InputDecoration(
                     hintText:
-                        'Search teacher, subject, ID...',
-                    hintStyle: const TextStyle(
-                      color: Colors.white30,
+                        'Search teacher, subject, mobile...',
+                    hintStyle:
+                        const TextStyle(
+                      color:
+                          Colors.white30,
                     ),
-                    prefixIcon: const Icon(
+                    prefixIcon:
+                        const Icon(
                       Icons.search_rounded,
-                      color: Colors.purpleAccent,
+                      color: Colors
+                          .purpleAccent,
                     ),
                     filled: true,
                     fillColor:
-                        const Color(0xFF0B141A),
-                    border: OutlineInputBorder(
+                        const Color(
+                      0xFF0B141A,
+                    ),
+                    border:
+                        OutlineInputBorder(
                       borderRadius:
-                          BorderRadius.circular(13),
-                      borderSide: BorderSide.none,
+                          BorderRadius
+                              .circular(13),
+                      borderSide:
+                          BorderSide.none,
                     ),
                   ),
                 ),
                 const SizedBox(height: 10),
                 Wrap(
                   spacing: 7,
+                  runSpacing: 7,
                   children: [
-                    for (final status in [
+                    for (final filter in [
                       'All',
                       'Active',
                       'On Leave',
                       'Inactive',
                     ])
                       ChoiceChip(
-                        label: Text(status),
+                        label:
+                            Text(filter),
                         selected:
-                            _statusFilter == status,
+                            _statusFilter ==
+                                filter,
                         selectedColor:
-                            Colors.purpleAccent,
+                            Colors
+                                .purpleAccent,
                         backgroundColor:
-                            const Color(0xFF172229),
-                        labelStyle: TextStyle(
+                            const Color(
+                          0xFF172229,
+                        ),
+                        labelStyle:
+                            TextStyle(
                           color:
-                              _statusFilter == status
-                                  ? Colors.white
-                                  : Colors.white54,
+                              _statusFilter ==
+                                      filter
+                                  ? Colors
+                                      .white
+                                  : Colors
+                                      .white54,
                           fontSize: 11,
                           fontWeight:
-                              FontWeight.w700,
+                              FontWeight
+                                  .w700,
                         ),
                         onSelected: (_) {
                           setState(() {
-                            _statusFilter = status;
+                            _statusFilter =
+                                filter;
                           });
                         },
                       ),
@@ -5212,154 +6573,250 @@ class _TeachersDirectoryScreenState
             ),
           ),
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('teachers_directory')
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState ==
-                    ConnectionState.waiting) {
+            child:
+                StreamBuilder<QuerySnapshot>(
+              stream:
+                  FirebaseFirestore.instance
+                      .collection(
+                        'teachers_directory',
+                      )
+                      .snapshots(),
+              builder:
+                  (context, snapshot) {
+                if (snapshot
+                        .connectionState ==
+                    ConnectionState
+                        .waiting) {
                   return const Center(
                     child:
                         CircularProgressIndicator(
-                      color: Colors.purpleAccent,
+                      color: Colors
+                          .purpleAccent,
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text(
+                      'Teacher data load error: ${snapshot.error}',
+                      style:
+                          const TextStyle(
+                        color:
+                            Colors.redAccent,
+                      ),
                     ),
                   );
                 }
 
                 if (!snapshot.hasData ||
-                    snapshot.data!.docs.isEmpty) {
+                    snapshot
+                        .data!.docs.isEmpty) {
                   return const Center(
                     child: Text(
                       'Abhi koi teacher registered nahi hai.',
                       style: TextStyle(
-                        color: Colors.white38,
+                        color:
+                            Colors.white38,
                       ),
                     ),
                   );
                 }
 
-                final query = _searchController.text
-                    .trim()
-                    .toLowerCase();
+                final query =
+                    _searchController.text
+                        .trim()
+                        .toLowerCase();
 
                 final docs =
-                    snapshot.data!.docs.where((doc) {
+                    snapshot.data!.docs
+                        .where((doc) {
                   final data =
                       doc.data()
-                          as Map<String, dynamic>;
+                          as Map<String,
+                              dynamic>;
 
-                  final name = data['name']
-                          ?.toString()
-                          .toLowerCase() ??
-                      '';
-                  final subject = data['subject']
-                          ?.toString()
-                          .toLowerCase() ??
-                      '';
-                  final employeeId =
-                      data['employeeId']
+                  final name =
+                      data['name']
                               ?.toString()
                               .toLowerCase() ??
                           '';
+
+                  final subject =
+                      data['subject']
+                              ?.toString()
+                              .toLowerCase() ??
+                          '';
+
+                  final phone =
+                      data['phone']
+                              ?.toString()
+                              .toLowerCase() ??
+                          '';
+
+                  final qualification =
+                      data['qualification']
+                              ?.toString()
+                              .toLowerCase() ??
+                          '';
+
                   final status =
-                      data['status']?.toString() ??
+                      data['status']
+                              ?.toString() ??
                           'Active';
 
                   final searchMatch =
                       query.isEmpty ||
-                          name.contains(query) ||
-                          subject.contains(query) ||
-                          employeeId.contains(query);
+                          name.contains(
+                            query,
+                          ) ||
+                          subject.contains(
+                            query,
+                          ) ||
+                          phone.contains(
+                            query,
+                          ) ||
+                          qualification
+                              .contains(
+                            query,
+                          );
 
                   final statusMatch =
-                      _statusFilter == 'All' ||
-                          status == _statusFilter;
+                      _statusFilter ==
+                              'All' ||
+                          status ==
+                              _statusFilter;
 
                   return searchMatch &&
                       statusMatch;
                 }).toList();
 
-                docs.sort((a, b) {
-                  final aData =
-                      a.data()
-                          as Map<String, dynamic>;
-                  final bData =
-                      b.data()
-                          as Map<String, dynamic>;
+                docs.sort(
+                  (a, b) {
+                    final aData =
+                        a.data()
+                            as Map<String,
+                                dynamic>;
 
-                  return (aData['name']
-                              ?.toString() ??
-                          '')
-                      .compareTo(
-                    bData['name']?.toString() ??
-                        '',
+                    final bData =
+                        b.data()
+                            as Map<String,
+                                dynamic>;
+
+                    return (aData['name']
+                                ?.toString()
+                                .toLowerCase() ??
+                            '')
+                        .compareTo(
+                      bData['name']
+                              ?.toString()
+                              .toLowerCase() ??
+                          '',
+                    );
+                  },
+                );
+
+                if (docs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'Search/filter me koi teacher nahi mila.',
+                      style: TextStyle(
+                        color:
+                            Colors.white38,
+                      ),
+                    ),
                   );
-                });
+                }
 
                 return ListView.builder(
                   padding:
-                      const EdgeInsets.all(14),
-                  itemCount: docs.length,
-                  itemBuilder: (context, index) {
-                    final doc = docs[index];
+                      const EdgeInsets.all(
+                    14,
+                  ),
+                  itemCount:
+                      docs.length,
+                  itemBuilder:
+                      (context, index) {
+                    final doc =
+                        docs[index];
+
                     final data =
                         doc.data()
-                            as Map<String, dynamic>;
+                            as Map<String,
+                                dynamic>;
 
                     final name =
-                        data['name']?.toString() ??
-                            'Teacher';
-                    final photo =
-                        data['photoBase64']
+                        data['name']
                                 ?.toString() ??
-                            '';
+                            'Teacher';
+
                     final status =
-                        data['status']?.toString() ??
+                        data['status']
+                                ?.toString() ??
                             'Active';
 
                     return Container(
                       margin:
-                          const EdgeInsets.only(
+                          const EdgeInsets
+                              .only(
                         bottom: 12,
                       ),
                       padding:
-                          const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
+                          const EdgeInsets
+                              .all(14),
+                      decoration:
+                          BoxDecoration(
                         color:
-                            const Color(0xFF111B21),
+                            const Color(
+                          0xFF111B21,
+                        ),
                         borderRadius:
-                            BorderRadius.circular(17),
-                        border: Border.all(
-                          color: Colors.white
-                              .withOpacity(0.055),
+                            BorderRadius
+                                .circular(
+                          17,
+                        ),
+                        border:
+                            Border.all(
+                          color: Colors
+                              .white
+                              .withOpacity(
+                            0.055,
+                          ),
                         ),
                       ),
                       child: Row(
                         crossAxisAlignment:
-                            CrossAxisAlignment.start,
+                            CrossAxisAlignment
+                                .start,
                         children: [
                           Container(
                             width: 72,
                             height: 72,
                             padding:
-                                const EdgeInsets.all(3),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
+                                const EdgeInsets
+                                    .all(3),
+                            decoration:
+                                BoxDecoration(
+                              shape:
+                                  BoxShape.circle,
+                              border:
+                                  Border.all(
                                 color: Colors
                                     .purpleAccent,
                                 width: 2,
                               ),
                             ),
                             child: ClipOval(
-                              child: _teacherPhoto(
-                                photo,
+                              child:
+                                  _teacherPhoto(
+                                data,
                                 name,
                               ),
                             ),
                           ),
-                          const SizedBox(width: 14),
+                          const SizedBox(
+                            width: 14,
+                          ),
                           Expanded(
                             child: Column(
                               crossAxisAlignment:
@@ -5368,7 +6825,8 @@ class _TeachersDirectoryScreenState
                               children: [
                                 Wrap(
                                   spacing: 8,
-                                  runSpacing: 6,
+                                  runSpacing:
+                                      6,
                                   crossAxisAlignment:
                                       WrapCrossAlignment
                                           .center,
@@ -5379,7 +6837,8 @@ class _TeachersDirectoryScreenState
                                           const TextStyle(
                                         color:
                                             Colors.white,
-                                        fontSize: 16,
+                                        fontSize:
+                                            16,
                                         fontWeight:
                                             FontWeight
                                                 .w800,
@@ -5389,25 +6848,30 @@ class _TeachersDirectoryScreenState
                                       padding:
                                           const EdgeInsets
                                               .symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
+                                        horizontal:
+                                            8,
+                                        vertical:
+                                            4,
                                       ),
                                       decoration:
                                           BoxDecoration(
                                         color: status ==
                                                 'Active'
                                             ? const Color(
-                                                    0xFF00A884)
-                                                .withOpacity(
-                                                    0.12)
+                                                0xFF00A884,
+                                              ).withOpacity(
+                                                0.12,
+                                              )
                                             : Colors
                                                 .orangeAccent
                                                 .withOpacity(
-                                                    0.12),
+                                                0.12,
+                                              ),
                                         borderRadius:
                                             BorderRadius
                                                 .circular(
-                                                    20),
+                                          20,
+                                        ),
                                       ),
                                       child: Text(
                                         status,
@@ -5416,10 +6880,12 @@ class _TeachersDirectoryScreenState
                                           color: status ==
                                                   'Active'
                                               ? const Color(
-                                                  0xFF00D9A5)
+                                                  0xFF00D9A5,
+                                                )
                                               : Colors
                                                   .orangeAccent,
-                                          fontSize: 9,
+                                          fontSize:
+                                              9,
                                           fontWeight:
                                               FontWeight
                                                   .w800,
@@ -5428,88 +6894,198 @@ class _TeachersDirectoryScreenState
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 7),
+                                const SizedBox(
+                                  height: 7,
+                                ),
                                 Text(
                                   '${data['designation'] ?? 'Teacher'} • ${data['subject'] ?? 'Subject not assigned'}',
                                   style:
                                       const TextStyle(
                                     color:
                                         Colors.white70,
-                                    fontSize: 11.5,
+                                    fontSize:
+                                        11.5,
                                     fontWeight:
-                                        FontWeight.w600,
+                                        FontWeight
+                                            .w600,
                                   ),
                                 ),
-                                const SizedBox(height: 5),
+                                const SizedBox(
+                                  height: 5,
+                                ),
                                 Text(
-                                  'Employee ID: ${data['employeeId'] ?? 'N/A'}  •  Qualification: ${data['qualification'] ?? 'N/A'}',
+                                  'Qualification: ${data['qualification'] ?? 'N/A'}',
                                   style:
                                       const TextStyle(
                                     color:
                                         Colors.white38,
-                                    fontSize: 10.5,
+                                    fontSize:
+                                        10.5,
                                   ),
                                 ),
-                                const SizedBox(height: 5),
+                                const SizedBox(
+                                  height: 5,
+                                ),
                                 Text(
                                   'Classes: ${data['assignedClasses'] ?? 'Not Assigned'}',
                                   style:
                                       const TextStyle(
                                     color:
                                         Colors.white38,
-                                    fontSize: 10.5,
+                                    fontSize:
+                                        10.5,
                                   ),
                                 ),
-                                const SizedBox(height: 5),
+                                const SizedBox(
+                                  height: 5,
+                                ),
                                 Text(
-                                  '${data['phone'] ?? ''}  •  ${data['email'] ?? ''}',
+                                  '${data['phone'] ?? ''}${(data['email']?.toString().isNotEmpty ?? false) ? ' • ${data['email']}' : ''}',
                                   style:
                                       const TextStyle(
                                     color:
                                         Colors.white38,
-                                    fontSize: 10.5,
+                                    fontSize:
+                                        10.5,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          OutlinedButton.icon(
-                            style:
-                                OutlinedButton.styleFrom(
-                              foregroundColor:
-                                  Colors.purpleAccent,
-                              side: BorderSide(
-                                color: Colors
-                                    .purpleAccent
-                                    .withOpacity(
-                                        0.45),
+                          const SizedBox(
+                            width: 12,
+                          ),
+
+                          // ==================================================
+                          // SCHEDULE / EDIT / DELETE
+                          // ==================================================
+                          Column(
+                            mainAxisSize:
+                                MainAxisSize.min,
+                            children: [
+                              OutlinedButton.icon(
+                                style:
+                                    OutlinedButton
+                                        .styleFrom(
+                                  foregroundColor:
+                                      Colors
+                                          .purpleAccent,
+                                  side:
+                                      BorderSide(
+                                    color: Colors
+                                        .purpleAccent
+                                        .withOpacity(
+                                      0.45,
+                                    ),
+                                  ),
+                                  shape:
+                                      RoundedRectangleBorder(
+                                    borderRadius:
+                                        BorderRadius
+                                            .circular(
+                                      10,
+                                    ),
+                                  ),
+                                ),
+                                onPressed: () =>
+                                    _openSchedule(
+                                  doc.id,
+                                  data,
+                                ),
+                                icon: const Icon(
+                                  Icons
+                                      .calendar_month_rounded,
+                                  size: 16,
+                                ),
+                                label:
+                                    const Text(
+                                  'Schedule',
+                                  style:
+                                      TextStyle(
+                                    fontSize:
+                                        10.5,
+                                    fontWeight:
+                                        FontWeight
+                                            .w700,
+                                  ),
+                                ),
                               ),
-                              shape:
-                                  RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(11),
+                              const SizedBox(
+                                height: 7,
                               ),
-                            ),
-                            onPressed: () =>
-                                _openSchedule(
-                              doc.id,
-                              data,
-                            ),
-                            icon: const Icon(
-                              Icons
-                                  .calendar_month_rounded,
-                              size: 17,
-                            ),
-                            label: const Text(
-                              'Schedule',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight:
-                                    FontWeight.w700,
+                              Row(
+                                mainAxisSize:
+                                    MainAxisSize
+                                        .min,
+                                children: [
+                                  Tooltip(
+                                    message:
+                                        'Edit Teacher',
+                                    child:
+                                        IconButton(
+                                      style:
+                                          IconButton
+                                              .styleFrom(
+                                        backgroundColor:
+                                            Colors
+                                                .blueAccent
+                                                .withOpacity(
+                                          0.12,
+                                        ),
+                                        foregroundColor:
+                                            Colors
+                                                .blueAccent,
+                                      ),
+                                      onPressed: () =>
+                                          _editTeacher(
+                                        doc.id,
+                                        data,
+                                      ),
+                                      icon:
+                                          const Icon(
+                                        Icons
+                                            .edit_rounded,
+                                        size: 18,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(
+                                    width: 6,
+                                  ),
+                                  Tooltip(
+                                    message:
+                                        'Delete Teacher',
+                                    child:
+                                        IconButton(
+                                      style:
+                                          IconButton
+                                              .styleFrom(
+                                        backgroundColor:
+                                            Colors
+                                                .redAccent
+                                                .withOpacity(
+                                          0.12,
+                                        ),
+                                        foregroundColor:
+                                            Colors
+                                                .redAccent,
+                                      ),
+                                      onPressed: () =>
+                                          _deleteTeacher(
+                                        doc.id,
+                                        data,
+                                      ),
+                                      icon:
+                                          const Icon(
+                                        Icons
+                                            .delete_outline_rounded,
+                                        size: 18,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
+                            ],
                           ),
                         ],
                       ),
@@ -5525,6 +7101,1063 @@ class _TeachersDirectoryScreenState
   }
 }
 
+
+// ============================================================
+// ADD TEACHER SCREEN
+// ============================================================
+class AddTeacherScreen extends StatefulWidget {
+  const AddTeacherScreen({super.key});
+
+  @override
+  State<AddTeacherScreen> createState() =>
+      _AddTeacherScreenState();
+}
+
+class _AddTeacherScreenState
+    extends State<AddTeacherScreen> {
+  final _nameCtrl =
+      TextEditingController();
+
+  final _designationCtrl =
+      TextEditingController(
+    text: 'Teacher',
+  );
+
+  final _subjectCtrl =
+      TextEditingController();
+
+  final _qualificationCtrl =
+      TextEditingController();
+
+  final _phoneCtrl =
+      TextEditingController();
+
+  final _emailCtrl =
+      TextEditingController();
+
+  final _dobCtrl =
+      TextEditingController();
+
+  final _joiningCtrl =
+      TextEditingController();
+
+  final _addressCtrl =
+      TextEditingController();
+
+  final _classesCtrl =
+      TextEditingController();
+
+  String _employmentType =
+      'Permanent';
+
+  String _status = 'Active';
+
+  List<int>? _photoBytes;
+  String _photoMimeType =
+      'image/jpeg';
+
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final now = DateTime.now();
+
+    _joiningCtrl.text =
+        '${now.day.toString().padLeft(2, '0')}/'
+        '${now.month.toString().padLeft(2, '0')}/'
+        '${now.year}';
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _designationCtrl.dispose();
+    _subjectCtrl.dispose();
+    _qualificationCtrl.dispose();
+    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    _dobCtrl.dispose();
+    _joiningCtrl.dispose();
+    _addressCtrl.dispose();
+    _classesCtrl.dispose();
+    super.dispose();
+  }
+
+  InputDecoration _field(
+    String label,
+    IconData icon,
+  ) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle:
+          const TextStyle(
+        color: Colors.white54,
+      ),
+      prefixIcon: Icon(
+        icon,
+        color:
+            Colors.purpleAccent,
+        size: 19,
+      ),
+      filled: true,
+      fillColor:
+          const Color(0xFF10191F),
+      border: OutlineInputBorder(
+        borderRadius:
+            BorderRadius.circular(12),
+        borderSide:
+            BorderSide.none,
+      ),
+    );
+  }
+
+  Future<String>
+      _getTeacherScriptUrl() async {
+    final configDoc =
+        await FirebaseFirestore
+            .instance
+            .collection(
+              'school_config',
+            )
+            .doc(
+              'google_drive_account',
+            )
+            .get();
+
+    final scriptUrl =
+        configDoc.data()?['scriptUrl']
+                ?.toString()
+                .trim() ??
+            '';
+
+    if (scriptUrl.isEmpty) {
+      throw Exception(
+        'Google Apps Script URL Settings me saved nahi hai.',
+      );
+    }
+
+    return scriptUrl;
+  }
+
+  Future<Map<String, dynamic>>
+      _callTeacherApi(
+    Map<String, dynamic> body,
+  ) async {
+    final scriptUrl =
+        await _getTeacherScriptUrl();
+
+    final response = await http
+        .post(
+          Uri.parse(scriptUrl),
+          headers: {
+            'Content-Type':
+                'text/plain;charset=utf-8',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(
+          const Duration(seconds: 30),
+        );
+
+    if (response.statusCode !=
+        200) {
+      throw Exception(
+        'Google API error: ${response.statusCode}',
+      );
+    }
+
+    final decoded =
+        jsonDecode(response.body);
+
+    if (decoded is! Map) {
+      throw Exception(
+        'Google API se invalid response mila.',
+      );
+    }
+
+    return Map<String, dynamic>.from(
+      decoded,
+    );
+  }
+
+  // ============================================================
+  // PICK PHOTO
+  // ============================================================
+
+  Future<void> _pickPhoto() async {
+    final picker = ImagePicker();
+
+    final image =
+        await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 700,
+      imageQuality: 65,
+    );
+
+    if (image == null) return;
+
+    final bytes =
+        await image.readAsBytes();
+
+    if (bytes.length > 700000) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Photo size zyada hai. Chhota photo select karein.',
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    setState(() {
+      _photoBytes = bytes;
+
+      final name =
+          image.name.toLowerCase();
+
+      if (name.endsWith('.png')) {
+        _photoMimeType =
+            'image/png';
+      } else if (
+          name.endsWith('.webp')) {
+        _photoMimeType =
+            'image/webp';
+      } else {
+        _photoMimeType =
+            'image/jpeg';
+      }
+    });
+  }
+
+  // ============================================================
+  // SAVE TEACHER
+  // ============================================================
+
+  Future<void> _saveTeacher() async {
+    final name =
+        _nameCtrl.text.trim();
+
+    final subject =
+        _subjectCtrl.text.trim();
+
+    final phone =
+        _phoneCtrl.text.trim();
+
+    if (name.isEmpty ||
+        subject.isEmpty ||
+        phone.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Name, Subject aur Mobile required hain.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!RegExp(
+      r'^[0-9]{10}$',
+    ).hasMatch(phone)) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Valid 10 digit Mobile Number daalein.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+    });
+
+    String createdTeacherId = '';
+
+    try {
+      // Firestore duplicate check
+      final existing =
+          await FirebaseFirestore
+              .instance
+              .collection(
+                'teachers_directory',
+              )
+              .where(
+                'phone',
+                isEqualTo: phone,
+              )
+              .limit(1)
+              .get();
+
+      if (existing.docs.isNotEmpty) {
+        throw Exception(
+          'Is Mobile Number se teacher already registered hai.',
+        );
+      }
+
+      final schedule =
+          <String, String>{
+        'Monday': '',
+        'Tuesday': '',
+        'Wednesday': '',
+        'Thursday': '',
+        'Friday': '',
+        'Saturday': '',
+      };
+
+      // FIRST:
+      // Google Sheet + Drive
+      final result =
+          await _callTeacherApi({
+        'action': 'add_teacher',
+        'name': name,
+        'designation':
+            _designationCtrl
+                .text
+                .trim(),
+        'subject': subject,
+        'qualification':
+            _qualificationCtrl
+                .text
+                .trim(),
+        'phone': phone,
+        'email':
+            _emailCtrl.text.trim(),
+        'dateOfBirth':
+            _dobCtrl.text.trim(),
+        'joiningDate':
+            _joiningCtrl
+                .text
+                .trim(),
+        'address':
+            _addressCtrl
+                .text
+                .trim(),
+        'assignedClasses':
+            _classesCtrl
+                .text
+                .trim(),
+        'employmentType':
+            _employmentType,
+        'status': _status,
+        'photoBase64':
+            _photoBytes == null
+                ? ''
+                : base64Encode(
+                    _photoBytes!,
+                  ),
+        'photoMimeType':
+            _photoMimeType,
+        'schedule': schedule,
+      });
+
+      if (result['success'] != true) {
+        throw Exception(
+          result['message'] ??
+              'Teacher Google Sheet save failed',
+        );
+      }
+
+      createdTeacherId =
+          result['teacherId']
+                  ?.toString()
+                  .trim() ??
+              '';
+
+      final photoUrl =
+          result['photoUrl']
+                  ?.toString()
+                  .trim() ??
+              '';
+
+      if (createdTeacherId.isEmpty) {
+        throw Exception(
+          'Teacher ID backend se nahi mila.',
+        );
+      }
+
+      // SECOND:
+      // Firestore
+      final ref =
+          FirebaseFirestore.instance
+              .collection(
+                'teachers_directory',
+              )
+              .doc();
+
+      await ref.set({
+        'teacherId':
+            createdTeacherId,
+        'name': name,
+        'designation':
+            _designationCtrl
+                .text
+                .trim(),
+        'subject': subject,
+        'qualification':
+            _qualificationCtrl
+                .text
+                .trim(),
+        'phone': phone,
+        'email':
+            _emailCtrl.text.trim(),
+        'dateOfBirth':
+            _dobCtrl.text.trim(),
+        'joiningDate':
+            _joiningCtrl
+                .text
+                .trim(),
+        'address':
+            _addressCtrl
+                .text
+                .trim(),
+        'assignedClasses':
+            _classesCtrl
+                .text
+                .trim(),
+        'employmentType':
+            _employmentType,
+        'status': _status,
+
+        // Base64 Firestore me save nahi hoga.
+        // Sirf Google Drive URL.
+        'photoUrl': photoUrl,
+
+        'schedule': schedule,
+
+        'createdAt':
+            FieldValue
+                .serverTimestamp(),
+
+        'updatedAt':
+            FieldValue
+                .serverTimestamp(),
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor:
+              Color(0xFF00A884),
+          content: Text(
+            'Teacher Google Sheet, Drive aur Firestore me save ho gaya!',
+          ),
+        ),
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      // Google me save ho gaya,
+      // lekin Firestore fail hua:
+      // Google record/photo rollback.
+      if (createdTeacherId.isNotEmpty) {
+        try {
+          await _callTeacherApi({
+            'action':
+                'delete_teacher',
+            'teacherId':
+                createdTeacherId,
+            'phone': phone,
+          });
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _saving = false;
+      });
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          backgroundColor:
+              Colors.redAccent,
+          content: Text(
+            'Teacher save error: $e',
+          ),
+        ),
+      );
+    }
+  }
+
+  // ============================================================
+  // ADD TEACHER UI
+  // ============================================================
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor:
+          const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor:
+            const Color(0xFF111B21),
+        title: const Text(
+          'Add New Teacher',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight:
+                FontWeight.w800,
+          ),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding:
+            const EdgeInsets.all(18),
+        child: Center(
+          child: ConstrainedBox(
+            constraints:
+                const BoxConstraints(
+              maxWidth: 850,
+            ),
+            child: Container(
+              padding:
+                  const EdgeInsets.all(
+                22,
+              ),
+              decoration:
+                  BoxDecoration(
+                color:
+                    const Color(
+                  0xFF172229,
+                ),
+                borderRadius:
+                    BorderRadius
+                        .circular(
+                  20,
+                ),
+                border: Border.all(
+                  color: Colors.white
+                      .withOpacity(
+                    0.06,
+                  ),
+                ),
+              ),
+              child: Column(
+                children: [
+                  GestureDetector(
+                    onTap: _saving
+                        ? null
+                        : _pickPhoto,
+                    child: Container(
+                      width: 115,
+                      height: 115,
+                      padding:
+                          const EdgeInsets
+                              .all(4),
+                      decoration:
+                          BoxDecoration(
+                        shape:
+                            BoxShape.circle,
+                        border:
+                            Border.all(
+                          color: Colors
+                              .purpleAccent,
+                          width: 2,
+                        ),
+                      ),
+                      child: ClipOval(
+                        child:
+                            _photoBytes !=
+                                    null
+                                ? Image
+                                    .memory(
+                                    base64Decode(
+                                      base64Encode(
+                                        _photoBytes!,
+                                      ),
+                                    ),
+                                    fit: BoxFit
+                                        .cover,
+                                  )
+                                : Container(
+                                    color:
+                                        const Color(
+                                      0xFF10191F,
+                                    ),
+                                    child:
+                                        const Icon(
+                                      Icons
+                                          .add_a_photo_rounded,
+                                      color: Colors
+                                          .purpleAccent,
+                                      size:
+                                          35,
+                                    ),
+                                  ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 8,
+                  ),
+
+                  const Text(
+                    'Upload Teacher Photo',
+                    style: TextStyle(
+                      color:
+                          Colors.white54,
+                      fontSize: 11,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 22,
+                  ),
+
+                  TextField(
+                    controller:
+                        _nameCtrl,
+                    style:
+                        const TextStyle(
+                      color:
+                          Colors.white,
+                    ),
+                    decoration:
+                        _field(
+                      'Teacher Full Name *',
+                      Icons
+                          .person_outline_rounded,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 11,
+                  ),
+
+                  // EMPLOYEE ID REMOVED
+                  TextField(
+                    controller:
+                        _designationCtrl,
+                    style:
+                        const TextStyle(
+                      color:
+                          Colors.white,
+                    ),
+                    decoration:
+                        _field(
+                      'Designation',
+                      Icons
+                          .work_outline_rounded,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 11,
+                  ),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child:
+                            TextField(
+                          controller:
+                              _subjectCtrl,
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _field(
+                            'Subject / Department *',
+                            Icons
+                                .menu_book_rounded,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(
+                        width: 11,
+                      ),
+                      Expanded(
+                        child:
+                            TextField(
+                          controller:
+                              _qualificationCtrl,
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _field(
+                            'Qualification',
+                            Icons
+                                .school_outlined,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(
+                    height: 11,
+                  ),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child:
+                            TextField(
+                          controller:
+                              _phoneCtrl,
+                          keyboardType:
+                              TextInputType
+                                  .phone,
+                          maxLength: 10,
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _field(
+                            'Mobile Number *',
+                            Icons
+                                .phone_outlined,
+                          ).copyWith(
+                            counterText: '',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(
+                        width: 11,
+                      ),
+                      Expanded(
+                        child:
+                            TextField(
+                          controller:
+                              _emailCtrl,
+                          keyboardType:
+                              TextInputType
+                                  .emailAddress,
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _field(
+                            'Email Address',
+                            Icons
+                                .email_outlined,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(
+                    height: 11,
+                  ),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child:
+                            TextField(
+                          controller:
+                              _dobCtrl,
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _field(
+                            'Date of Birth',
+                            Icons
+                                .cake_outlined,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(
+                        width: 11,
+                      ),
+                      Expanded(
+                        child:
+                            TextField(
+                          controller:
+                              _joiningCtrl,
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _field(
+                            'Joining Date',
+                            Icons
+                                .calendar_today_outlined,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(
+                    height: 11,
+                  ),
+
+                  TextField(
+                    controller:
+                        _classesCtrl,
+                    style:
+                        const TextStyle(
+                      color:
+                          Colors.white,
+                    ),
+                    decoration:
+                        _field(
+                      'Assigned Classes (Example: Class 5, Class 6)',
+                      Icons
+                          .class_outlined,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 11,
+                  ),
+
+                  TextField(
+                    controller:
+                        _addressCtrl,
+                    minLines: 2,
+                    maxLines: 3,
+                    style:
+                        const TextStyle(
+                      color:
+                          Colors.white,
+                    ),
+                    decoration:
+                        _field(
+                      'Address',
+                      Icons
+                          .location_on_outlined,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 11,
+                  ),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child:
+                            DropdownButtonFormField<
+                                String>(
+                          value:
+                              _employmentType,
+                          dropdownColor:
+                              const Color(
+                            0xFF172229,
+                          ),
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _field(
+                            'Employment Type',
+                            Icons
+                                .business_center_outlined,
+                          ),
+                          items:
+                              const [
+                            DropdownMenuItem(
+                              value:
+                                  'Permanent',
+                              child: Text(
+                                'Permanent',
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value:
+                                  'Contract',
+                              child: Text(
+                                'Contract',
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value:
+                                  'Guest',
+                              child: Text(
+                                'Guest',
+                              ),
+                            ),
+                          ],
+                          onChanged:
+                              (value) {
+                            if (value !=
+                                null) {
+                              setState(
+                                () {
+                                  _employmentType =
+                                      value;
+                                },
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(
+                        width: 11,
+                      ),
+                      Expanded(
+                        child:
+                            DropdownButtonFormField<
+                                String>(
+                          value:
+                              _status,
+                          dropdownColor:
+                              const Color(
+                            0xFF172229,
+                          ),
+                          style:
+                              const TextStyle(
+                            color:
+                                Colors.white,
+                          ),
+                          decoration:
+                              _field(
+                            'Status',
+                            Icons
+                                .verified_user_outlined,
+                          ),
+                          items:
+                              const [
+                            DropdownMenuItem(
+                              value:
+                                  'Active',
+                              child: Text(
+                                'Active',
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value:
+                                  'On Leave',
+                              child: Text(
+                                'On Leave',
+                              ),
+                            ),
+                            DropdownMenuItem(
+                              value:
+                                  'Inactive',
+                              child: Text(
+                                'Inactive',
+                              ),
+                            ),
+                          ],
+                          onChanged:
+                              (value) {
+                            if (value !=
+                                null) {
+                              setState(
+                                () {
+                                  _status =
+                                      value;
+                                },
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(
+                    height: 22,
+                  ),
+
+                  SizedBox(
+                    width:
+                        double.infinity,
+                    height: 50,
+                    child:
+                        ElevatedButton.icon(
+                      style:
+                          ElevatedButton
+                              .styleFrom(
+                        backgroundColor:
+                            Colors
+                                .purpleAccent,
+                        shape:
+                            RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius
+                                  .circular(
+                            13,
+                          ),
+                        ),
+                      ),
+                      onPressed:
+                          _saving
+                              ? null
+                              : _saveTeacher,
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 19,
+                              height: 19,
+                              child:
+                                  CircularProgressIndicator(
+                                strokeWidth:
+                                    2,
+                                color: Colors
+                                    .white,
+                              ),
+                            )
+                          : const Icon(
+                              Icons
+                                  .save_rounded,
+                              color:
+                                  Colors.white,
+                            ),
+                      label: Text(
+                        _saving
+                            ? 'Saving Teacher...'
+                            : 'SAVE TEACHER PROFILE',
+                        style:
+                            const TextStyle(
+                          color:
+                              Colors.white,
+                          fontWeight:
+                              FontWeight
+                                  .w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 // ============================================================
 // ADD TEACHER SCREEN
