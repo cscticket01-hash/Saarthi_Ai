@@ -2574,64 +2574,73 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Widget _buildOverviewCards() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxWidth = constraints.maxWidth;
-        final columns = maxWidth >= 1000 ? 4 : (maxWidth >= 620 ? 2 : 1);
-        final spacing = 12.0;
-        final itemWidth = columns == 1
-            ? maxWidth
-            : (maxWidth - (spacing * (columns - 1))) / columns;
+Widget _buildOverviewCards() {
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      final maxWidth = constraints.maxWidth;
+      final columns = maxWidth >= 1000 ? 4 : (maxWidth >= 620 ? 2 : 1);
+      final spacing = 12.0;
 
-        return Wrap(
-          spacing: spacing,
-          runSpacing: spacing,
-          children: [
-            _overviewCard(
-              width: itemWidth,
-              icon: Icons.people_alt_rounded,
-              title: 'Student Records',
-              subtitle: 'View all classes & student records',
-              accent: const Color(0xFF00A884),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const AllStudentsListScreen(),
-                  ),
-                );
-              },
-            ),
-            _overviewCard(
-              width: itemWidth,
-              icon: Icons.badge_rounded,
-              title: 'ID Card Center',
-              subtitle: 'Search, preview & download',
-              accent: Colors.blueAccent,
-            ),
-            _overviewCard(
-              width: itemWidth,
-              icon: Icons.campaign_rounded,
-              title: 'Notice Center',
-              subtitle: 'Publish & manage updates',
-              accent: Colors.orangeAccent,
-            ),
-_overviewCard(
-  width: itemWidth,
-  icon: Icons.school_rounded,
-  title: 'Teachers',
-  subtitle: 'Directory, profiles & schedules',
-  accent: Colors.purpleAccent,
-  onTap: () {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const TeachersDirectoryScreen(),
-      ),
-    );
-  },
-),
+      final itemWidth = columns == 1
+          ? maxWidth
+          : (maxWidth - (spacing * (columns - 1))) / columns;
+
+      return Wrap(
+        spacing: spacing,
+        runSpacing: spacing,
+        children: [
+          _overviewCard(
+            width: itemWidth,
+            icon: Icons.people_alt_rounded,
+            title: 'Student Records',
+            subtitle: 'View all classes & student records',
+            accent: const Color(0xFF00A884),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const AllStudentsListScreen(),
+                ),
+              );
+            },
+          ),
+
+          _overviewCard(
+            width: itemWidth,
+            icon: Icons.badge_rounded,
+            title: 'ID Card Center',
+            subtitle: 'Search, preview & download',
+            accent: Colors.blueAccent,
+          ),
+
+          _overviewCard(
+            width: itemWidth,
+            icon: Icons.campaign_rounded,
+            title: 'Notice Center',
+            subtitle: 'Publish & manage updates',
+            accent: Colors.orangeAccent,
+          ),
+
+          _overviewCard(
+            width: itemWidth,
+            icon: Icons.school_rounded,
+            title: 'Teachers',
+            subtitle: 'Directory, profiles & schedules',
+            accent: Colors.purpleAccent,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const TeachersDirectoryScreen(),
+                ),
+              );
+            },
+          ),
+        ],
+      );
+    },
+  );
+}
 
   Widget _overviewCard({
     required double width,
