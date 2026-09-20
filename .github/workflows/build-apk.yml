@@ -190,133 +190,168 @@ jobs:
           echo "mobile_scanner dependency found."
 
 
-            # ============================================================
-      # FIX AGORA RTC ENGINE COMPILE SDK
-      # Agora kisi bhi syntax me SDK 31 use kare,
-      # is step se compileSdk 34 force hoga.
+             # ============================================================
+      # FIX AGORA + IRIS METHOD CHANNEL COMPILE SDK
       # ============================================================
-      - name: Fix Agora Compile SDK
+      - name: Fix Agora And Iris Compile SDK
         shell: bash
         run: |
-          echo "Searching Agora RTC Engine..."
+          echo "Fixing Agora related Android compileSdk..."
 
-          AGORA_DIR=$(find "$HOME/.pub-cache/hosted/pub.dev" \
-            -maxdepth 1 \
-            -type d \
-            -name "agora_rtc_engine-*" \
-            | sort -V \
-            | tail -n 1)
-
-          if [ -z "$AGORA_DIR" ]; then
-            echo "::error::Agora RTC Engine package nahi mila!"
-            exit 1
-          fi
-
-          echo "Agora package:"
-          echo "$AGORA_DIR"
-
-          echo ""
-          echo "===== BEFORE PATCH ====="
-          grep -R -n "compileSdk" "$AGORA_DIR/android" || true
-
-          python3 - "$AGORA_DIR" <<'PY'
-          import sys
-          import re
+          python3 <<'PY'
           from pathlib import Path
+          import re
+          import os
 
-          agora_dir = Path(sys.argv[1])
-          android_dir = agora_dir / "android"
+          pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
 
-          files = list(android_dir.rglob("*.gradle"))
-          files += list(android_dir.rglob("*.gradle.kts"))
+          package_patterns = [
+              "agora_rtc_engine-*",
+              "iris_method_channel-*",
+          ]
 
-          changed_total = 0
+          found_packages = 0
+          patched_files = 0
 
-          for file in files:
-              text = file.read_text(
-                  encoding="utf-8",
-                  errors="ignore",
+          for package_pattern in package_patterns:
+
+              packages = list(
+                  pub_cache.glob(package_pattern)
               )
 
-              original = text
-
-              if file.name.endswith(".gradle.kts"):
-                  # Kotlin Gradle:
-                  # compileSdk = 31
-                  # compileSdk = flutter.compileSdkVersion
-                  text, count1 = re.subn(
-                      r'(?m)^(\s*)compileSdk\s*=.*$',
-                      r'\1compileSdk = 34',
-                      text,
-                  )
-
-                  # Rare compileSdkVersion syntax
-                  text, count2 = re.subn(
-                      r'(?m)^(\s*)compileSdkVersion\s*=.*$',
-                      r'\1compileSdk = 34',
-                      text,
-                  )
-
-              else:
-                  # Groovy Gradle:
-                  # compileSdkVersion 31
-                  # compileSdkVersion safeExtGet(...)
-                  # compileSdkVersion flutter.compileSdkVersion
-                  text, count1 = re.subn(
-                      r'(?m)^(\s*)compileSdkVersion\s+.*$',
-                      r'\1compileSdkVersion 34',
-                      text,
-                  )
-
-                  # New Groovy syntax:
-                  # compileSdk 31
-                  # compileSdk = 31
-                  text, count2 = re.subn(
-                      r'(?m)^(\s*)compileSdk\s*(?:=\s*)?.*$',
-                      r'\1compileSdkVersion 34',
-                      text,
-                  )
-
-              if text != original:
-                  file.write_text(
-                      text,
-                      encoding="utf-8",
-                  )
-
-                  changed_total += count1 + count2
-                  print(f"PATCHED: {file}")
-
-          print(
-              f"Total compileSdk replacements: {changed_total}"
-          )
-
-          if changed_total == 0:
-              print(
-                  "ERROR: Agora compileSdk line patch nahi hui."
-              )
-
-              for file in files:
+              if not packages:
                   print(
-                      "\n===== FILE:",
-                      file,
-                      "====="
+                      f"WARNING: {package_pattern} nahi mila"
                   )
+                  continue
+
+              for package in packages:
+                  found_packages += 1
+
+                  print("")
                   print(
-                      file.read_text(
+                      "===================================="
+                  )
+                  print("PACKAGE:", package)
+                  print(
+                      "===================================="
+                  )
+
+                  android_dir = package / "android"
+
+                  if not android_dir.exists():
+                      print("Android folder nahi hai - skip")
+                      continue
+
+                  gradle_files = list(
+                      android_dir.rglob("*.gradle")
+                  )
+
+                  gradle_files += list(
+                      android_dir.rglob("*.gradle.kts")
+                  )
+
+                  for file in gradle_files:
+
+                      text = file.read_text(
                           encoding="utf-8",
                           errors="ignore",
                       )
-                  )
 
-              raise SystemExit(1)
+                      original = text
+
+                      # Groovy:
+                      # compileSdkVersion 31
+                      text = re.sub(
+                          r'(?m)^(\s*)compileSdkVersion\s+[0-9]+\s*$',
+                          r'\1compileSdkVersion 34',
+                          text,
+                      )
+
+                      # Groovy with expression:
+                      # compileSdkVersion safeExtGet(...)
+                      text = re.sub(
+                          r'(?m)^(\s*)compileSdkVersion\s+.*$',
+                          r'\1compileSdkVersion 34',
+                          text,
+                      )
+
+                      # Groovy:
+                      # compileSdk 31
+                      text = re.sub(
+                          r'(?m)^(\s*)compileSdk\s+[0-9]+\s*$',
+                          r'\1compileSdk 34',
+                          text,
+                      )
+
+                      # Groovy/KTS:
+                      # compileSdk = 31
+                      text = re.sub(
+                          r'(?m)^(\s*)compileSdk\s*=\s*.*$',
+                          r'\1compileSdk = 34',
+                          text,
+                      )
+
+                      # compileSdkVersion = 31
+                      text = re.sub(
+                          r'(?m)^(\s*)compileSdkVersion\s*=\s*.*$',
+                          r'\1compileSdkVersion 34',
+                          text,
+                      )
+
+                      if text != original:
+
+                          file.write_text(
+                              text,
+                              encoding="utf-8",
+                          )
+
+                          patched_files += 1
+
+                          print(
+                              "PATCHED:",
+                              file,
+                          )
+
+          print("")
+          print(
+              "Found packages:",
+              found_packages,
+          )
+
+          print(
+              "Patched Gradle files:",
+              patched_files,
+          )
+
+          if found_packages == 0:
+              raise SystemExit(
+                  "ERROR: Agora/Iris packages nahi mile"
+              )
           PY
 
           echo ""
-          echo "===== AFTER PATCH ====="
-          grep -R -n "compileSdk" "$AGORA_DIR/android" || true
+          echo "===== AGORA AFTER PATCH ====="
+
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name "agora_rtc_engine-*" \
+            -exec grep -R -n "compileSdk" {}/android \; \
+            2>/dev/null || true
 
           echo ""
-          echo "Agora compileSdk patch completed."
+          echo "===== IRIS AFTER PATCH ====="
+
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name "iris_method_channel-*" \
+            -exec grep -R -n "compileSdk" {}/android \; \
+            2>/dev/null || true
+
+          echo ""
+          echo "Agora + Iris SDK patch completed."
           
       # ============================================================
       # 13. VERIFY ANDROID CONFIGURATION
