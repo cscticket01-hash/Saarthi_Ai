@@ -10,7 +10,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
-import 'package:printing/printing.dart'; 
+import 'package:printing/printing.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 // ============================================================
 // MAIN DASHBOARD
@@ -2093,338 +2094,1723 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Future<void> _showIdCardPreview() async {
-    final name = _nameController.text.trim().isEmpty ? 'Student Name' : _nameController.text.trim();
-    final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
-    final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
+// ============================================================
+// MODERN STUDENT ID CARD - FRONT SIDE
+// Preview + QR + Print + PDF Download
+// ============================================================
 
-    String parentName = 'N/A';
-    String address = 'N/A';
-    String district = '';
-    String state = '';
-    String pinCode = '';
-    String admissionDate = 'N/A';
-    String dob = 'N/A';
-    String? fetchedPhotoUrl = _studentPhotoUrl;
+Future<Map<String, dynamic>> _getIdCardStudentData() async {
+  final name = _nameController.text.trim().isEmpty
+      ? 'Student Name'
+      : _nameController.text.trim();
 
-    try {
-      final docId = '${_directoryClass}_Roll_$roll';
-      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
-      if (doc.exists) {
-        final data = doc.data()!;
-        parentName = data['parentName']?.toString() ?? 'N/A';
-        address = data['address']?.toString() ?? 'N/A';
-        district = data['district']?.toString() ?? '';
-        state = data['state']?.toString() ?? '';
-        pinCode = data['pinCode']?.toString() ?? '';
-        admissionDate = data['joiningDate']?.toString() ?? 'N/A';
-        dob = data['dateOfBirth']?.toString() ?? 'N/A';
-        final dbPhoto = data['photoUrl']?.toString();
-        if (dbPhoto != null && dbPhoto.isNotEmpty) fetchedPhotoUrl = dbPhoto;
+  final roll = _rollController.text.trim().isEmpty
+      ? '01'
+      : _rollController.text.trim();
+
+  final contact = _parentContactController.text.trim().isEmpty
+      ? 'Not Available'
+      : _parentContactController.text.trim();
+
+  String parentName = 'N/A';
+  String address = 'N/A';
+  String district = '';
+  String state = '';
+  String pinCode = '';
+  String admissionDate = 'N/A';
+  String dob = 'N/A';
+  String? photoUrl = _studentPhotoUrl;
+
+  try {
+    final docId = '${_directoryClass}_Roll_$roll';
+
+    final doc = await FirebaseFirestore.instance
+        .collection('students_directory')
+        .doc(docId)
+        .get();
+
+    if (doc.exists) {
+      final data = doc.data()!;
+
+      parentName =
+          data['parentName']?.toString().trim() ?? 'N/A';
+
+      address =
+          data['address']?.toString().trim() ?? 'N/A';
+
+      district =
+          data['district']?.toString().trim() ?? '';
+
+      state =
+          data['state']?.toString().trim() ?? '';
+
+      pinCode =
+          data['pinCode']?.toString().trim() ?? '';
+
+      admissionDate =
+          data['joiningDate']?.toString().trim() ?? 'N/A';
+
+      dob =
+          data['dateOfBirth']?.toString().trim() ?? 'N/A';
+
+      final dbPhoto =
+          data['photoUrl']?.toString().trim();
+
+      if (dbPhoto != null && dbPhoto.isNotEmpty) {
+        photoUrl = dbPhoto;
       }
-    } catch (e) {
-      debugPrint('ID card fetch error: $e');
     }
+  } catch (e) {
+    debugPrint('ID card data fetch error: $e');
+  }
 
-    if (!mounted) return;
+  String fullAddress = [
+    address,
+    district,
+    state,
+  ].where((e) {
+    final value = e.trim();
+    return value.isNotEmpty &&
+        value.toLowerCase() != 'n/a';
+  }).join(', ');
 
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
+  if (pinCode.isNotEmpty &&
+      pinCode.toLowerCase() != 'n/a') {
+    fullAddress = fullAddress.isEmpty
+        ? pinCode
+        : '$fullAddress - $pinCode';
+  }
+
+  if (fullAddress.isEmpty) {
+    fullAddress = 'Not Available';
+  }
+
+  final classNumber = _directoryClass
+      .replaceAll(RegExp(r'[^0-9]'), '');
+
+  final numericRoll = int.tryParse(roll);
+
+  final displayRoll = numericRoll != null
+      ? numericRoll.toString().padLeft(3, '0')
+      : roll.toUpperCase();
+
+  final studentId =
+      'SVN-${classNumber.isEmpty ? 'X' : classNumber}-$displayRoll';
+
+  final docId = '${_directoryClass}_Roll_$roll';
+
+  final qrData = '''
+SARASWATI VIDYA NIKETAN, MADHABDHAM
+STUDENT VERIFICATION
+Student ID: $studentId
+Record ID: $docId
+Name: $name
+Class: $_directoryClass
+Roll: $roll
+DOB: $dob
+''';
+
+  return {
+    'name': name,
+    'roll': roll,
+    'displayRoll': displayRoll,
+    'contact': contact,
+    'parentName': parentName,
+    'address': fullAddress,
+    'admissionDate': admissionDate,
+    'dob': dob,
+    'photoUrl': photoUrl,
+    'studentId': studentId,
+    'qrData': qrData,
+    'class': _directoryClass,
+  };
+}
+
+// ============================================================
+// ID CARD PREVIEW
+// ============================================================
+
+Future<void> _showIdCardPreview() async {
+  final data = await _getIdCardStudentData();
+
+  if (!mounted) return;
+
+  final name = data['name'].toString();
+  final roll = data['roll'].toString();
+  final parentName = data['parentName'].toString();
+  final contact = data['contact'].toString();
+  final dob = data['dob'].toString();
+  final address = data['address'].toString();
+  final studentId = data['studentId'].toString();
+  final qrData = data['qrData'].toString();
+  final photoUrl = data['photoUrl']?.toString() ?? '';
+
+  showDialog(
+    context: context,
+    builder: (dialogContext) {
+      return Dialog(
         backgroundColor: Colors.transparent,
-        child: Container(
-          width: 370,
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+        insetPadding: const EdgeInsets.all(20),
+        child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: const BoxDecoration(
-                  color: Color(0xFFC85A17),
-                  borderRadius: BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)),
+                width: 610,
+                constraints: const BoxConstraints(
+                  maxWidth: 610,
                 ),
-                child: const Row(
-                  children: [
-                    CircleAvatar(radius: 18, backgroundColor: Colors.white, child: Icon(Icons.school, color: Color(0xFFC85A17), size: 20)),
-                    SizedBox(width: 8),
-                    Expanded(child: Text('SARASWATI VIDYA NIKETAN, MADHABDHAM', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold))),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                width: 85,
-                height: 100,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFC85A17), width: 2),
-                  color: const Color(0xFFECEFF1),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: fetchedPhotoUrl != null && fetchedPhotoUrl!.isNotEmpty
-                      ? Image.network(
-                          fetchedPhotoUrl!,
-                          fit: BoxFit.cover,
-                          webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-                          errorBuilder: (context, error, stackTrace) => const Icon(Icons.person, size: 45, color: Colors.grey),
-                        )
-                      : const Icon(Icons.person, size: 45, color: Colors.grey),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-                decoration: BoxDecoration(color: const Color(0xFFC85A17), borderRadius: BorderRadius.circular(6)),
-                child: const Text('STUDENT ID CARD', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
-              ),
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Column(
-                  children: [
-                    _idCardField('Name', name),
-                    _idCardField('Father Name', parentName),
-                    _idCardField('Class', _directoryClass),
-                    _idCardField('Roll No', roll),
-                    _idCardField('Contact', contact),
-                    _idCardField('DOB', dob),
-                    _idCardField('Admission', admissionDate),
-                    _idCardField('Address', '$address, $district, $state - $pinCode'),
+                  color: const Color(0xFFEEF3F5),
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.30),
+                      blurRadius: 30,
+                      offset: const Offset(0, 12),
+                    ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(width: 70, child: Divider(color: Colors.black45)),
-                        Text('Principal Sign', style: TextStyle(fontSize: 8, color: Colors.black87)),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close', style: TextStyle(color: Colors.grey))),
-                        ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            _downloadIdCard();
-                          },
-                          icon: const Icon(Icons.download, color: Colors.white, size: 14),
-                          label: const Text('Download', style: TextStyle(color: Colors.white, fontSize: 11)),
+                padding: const EdgeInsets.all(18),
+                child: AspectRatio(
+                  aspectRatio: 85.60 / 53.98,
+                  child: Container(
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: const Color(0xFF0E7C67),
+                        width: 1.2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color:
+                              const Color(0xFF0B3558)
+                                  .withOpacity(0.12),
+                          blurRadius: 18,
+                          offset: const Offset(0, 8),
                         ),
                       ],
+                    ),
+                    child: Stack(
+                      children: [
+                        // BACKGROUND DECORATION
+                        Positioned(
+                          right: -65,
+                          top: -75,
+                          child: Container(
+                            width: 230,
+                            height: 230,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: const Color(0xFF00A884)
+                                  .withOpacity(0.07),
+                            ),
+                          ),
+                        ),
+
+                        Positioned(
+                          left: -55,
+                          bottom: -85,
+                          child: Container(
+                            width: 230,
+                            height: 180,
+                            decoration: BoxDecoration(
+                              borderRadius:
+                                  BorderRadius.circular(100),
+                              color: const Color(0xFF0B3558)
+                                  .withOpacity(0.04),
+                            ),
+                          ),
+                        ),
+
+                        Column(
+                          children: [
+                            // =================================
+                            // HEADER
+                            // =================================
+                            Container(
+                              height: 82,
+                              width: double.infinity,
+                              padding:
+                                  const EdgeInsets.symmetric(
+                                horizontal: 17,
+                                vertical: 10,
+                              ),
+                              decoration:
+                                  const BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Color(0xFF0B3558),
+                                    Color(0xFF07566A),
+                                    Color(0xFF008B75),
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end:
+                                      Alignment.bottomRight,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 58,
+                                    height: 58,
+                                    padding:
+                                        const EdgeInsets.all(3),
+                                    decoration:
+                                        BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Colors.white,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    child: ClipOval(
+                                      child: Image.asset(
+                                        'assets/school_logo.png',
+                                        fit: BoxFit.contain,
+                                      ),
+                                    ),
+                                  ),
+
+                                  const SizedBox(width: 12),
+
+                                  const Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment
+                                              .start,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment
+                                              .center,
+                                      children: [
+                                        Text(
+                                          'SARASWATI VIDYA NIKETAN',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                            fontWeight:
+                                                FontWeight.w800,
+                                            letterSpacing: .4,
+                                          ),
+                                        ),
+                                        SizedBox(height: 2),
+                                        Text(
+                                          'MADHABDHAM',
+                                          style: TextStyle(
+                                            color:
+                                                Color(0xFF98F3D6),
+                                            fontSize: 11,
+                                            fontWeight:
+                                                FontWeight.w700,
+                                            letterSpacing: 2,
+                                          ),
+                                        ),
+                                        SizedBox(height: 4),
+                                        Text(
+                                          'DISCIPLINE • KNOWLEDGE • VALUES',
+                                          style: TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 7.7,
+                                            fontWeight:
+                                                FontWeight.w600,
+                                            letterSpacing: .5,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  Container(
+                                    padding:
+                                        const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 5,
+                                    ),
+                                    decoration:
+                                        BoxDecoration(
+                                      color: Colors.white
+                                          .withOpacity(.13),
+                                      borderRadius:
+                                          BorderRadius.circular(
+                                              20),
+                                      border: Border.all(
+                                        color: Colors.white
+                                            .withOpacity(.20),
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      'STUDENT',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 8,
+                                        fontWeight:
+                                            FontWeight.w800,
+                                        letterSpacing: 1,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            // GREEN ACCENT BAR
+                            Container(
+                              height: 5,
+                              decoration:
+                                  const BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Color(0xFF00A884),
+                                    Color(0xFF00D9A5),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            // =================================
+                            // BODY
+                            // =================================
+                            Expanded(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(
+                                  16,
+                                  10,
+                                  15,
+                                  8,
+                                ),
+                                child: Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    // LEFT INFORMATION
+                                    Expanded(
+                                      flex: 7,
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment
+                                                .start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets
+                                                        .symmetric(
+                                                  horizontal: 10,
+                                                  vertical: 4,
+                                                ),
+                                                decoration:
+                                                    BoxDecoration(
+                                                  color:
+                                                      const Color(
+                                                          0xFF00A884),
+                                                  borderRadius:
+                                                      BorderRadius
+                                                          .circular(
+                                                              5),
+                                                ),
+                                                child:
+                                                    const Text(
+                                                  'STUDENT ID CARD',
+                                                  style:
+                                                      TextStyle(
+                                                    color:
+                                                        Colors.white,
+                                                    fontSize: 8.5,
+                                                    fontWeight:
+                                                        FontWeight
+                                                            .w800,
+                                                    letterSpacing:
+                                                        .6,
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(
+                                                  width: 8),
+                                              Expanded(
+                                                child:
+                                                    Container(
+                                                  height: 1,
+                                                  color:
+                                                      const Color(
+                                                              0xFF00A884)
+                                                          .withOpacity(
+                                                              .25),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+
+                                          const SizedBox(
+                                              height: 7),
+
+                                          _modernIdField(
+                                            'Name',
+                                            name,
+                                            important: true,
+                                          ),
+                                          _modernIdField(
+                                            'Father / Guardian',
+                                            parentName,
+                                          ),
+                                          _modernIdField(
+                                            'Class',
+                                            _directoryClass,
+                                          ),
+                                          _modernIdField(
+                                            'Roll No.',
+                                            roll,
+                                          ),
+                                          _modernIdField(
+                                            'Student ID',
+                                            studentId,
+                                          ),
+                                          _modernIdField(
+                                            'Date of Birth',
+                                            dob,
+                                          ),
+                                          _modernIdField(
+                                            'Contact',
+                                            contact,
+                                          ),
+                                          _modernIdField(
+                                            'Address',
+                                            address,
+                                            maxLines: 2,
+                                          ),
+
+                                          const Spacer(),
+
+                                          Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment
+                                                    .end,
+                                            children: [
+                                              // QR
+                                              Container(
+                                                width: 58,
+                                                height: 58,
+                                                padding:
+                                                    const EdgeInsets
+                                                        .all(3),
+                                                decoration:
+                                                    BoxDecoration(
+                                                  color:
+                                                      Colors.white,
+                                                  borderRadius:
+                                                      BorderRadius
+                                                          .circular(
+                                                              6),
+                                                  border:
+                                                      Border.all(
+                                                    color:
+                                                        const Color(
+                                                                0xFF0B3558)
+                                                            .withOpacity(
+                                                                .18),
+                                                  ),
+                                                ),
+                                                child:
+                                                    QrImageView(
+                                                  data: qrData,
+                                                  version:
+                                                      QrVersions
+                                                          .auto,
+                                                  padding:
+                                                      EdgeInsets
+                                                          .zero,
+                                                  backgroundColor:
+                                                      Colors.white,
+                                                  eyeStyle:
+                                                      const QrEyeStyle(
+                                                    eyeShape:
+                                                        QrEyeShape
+                                                            .square,
+                                                    color: Color(
+                                                        0xFF0B3558),
+                                                  ),
+                                                  dataModuleStyle:
+                                                      const QrDataModuleStyle(
+                                                    dataModuleShape:
+                                                        QrDataModuleShape
+                                                            .square,
+                                                    color: Color(
+                                                        0xFF0B3558),
+                                                  ),
+                                                ),
+                                              ),
+
+                                              const SizedBox(
+                                                  width: 8),
+
+                                              const Padding(
+                                                padding:
+                                                    EdgeInsets.only(
+                                                        bottom: 6),
+                                                child: Text(
+                                                  'SCAN FOR\nSTUDENT\nVERIFICATION',
+                                                  style:
+                                                      TextStyle(
+                                                    color: Color(
+                                                        0xFF0B3558),
+                                                    fontSize: 6.4,
+                                                    fontWeight:
+                                                        FontWeight
+                                                            .w800,
+                                                    height: 1.25,
+                                                    letterSpacing:
+                                                        .3,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+
+                                    const SizedBox(width: 13),
+
+                                    // RIGHT PHOTO + SIGNATURE
+                                    SizedBox(
+                                      width: 132,
+                                      child: Column(
+                                        children: [
+                                          Container(
+                                            width: 105,
+                                            height: 123,
+                                            padding:
+                                                const EdgeInsets
+                                                    .all(3),
+                                            decoration:
+                                                BoxDecoration(
+                                              color:
+                                                  Colors.white,
+                                              borderRadius:
+                                                  BorderRadius
+                                                      .circular(12),
+                                              border:
+                                                  Border.all(
+                                                color:
+                                                    const Color(
+                                                        0xFF00A884),
+                                                width: 2,
+                                              ),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: const Color(
+                                                          0xFF00A884)
+                                                      .withOpacity(
+                                                          .12),
+                                                  blurRadius: 8,
+                                                ),
+                                              ],
+                                            ),
+                                            child: ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius
+                                                      .circular(8),
+                                              child: photoUrl
+                                                      .isNotEmpty
+                                                  ? Image.network(
+                                                      photoUrl,
+                                                      fit: BoxFit
+                                                          .cover,
+                                                      webHtmlElementStrategy:
+                                                          WebHtmlElementStrategy
+                                                              .prefer,
+                                                      errorBuilder:
+                                                          (
+                                                        context,
+                                                        error,
+                                                        stackTrace,
+                                                      ) =>
+                                                              _studentPhotoFallback(
+                                                        name,
+                                                      ),
+                                                    )
+                                                  : _studentPhotoFallback(
+                                                      name,
+                                                    ),
+                                            ),
+                                          ),
+
+                                          const SizedBox(
+                                              height: 5),
+
+                                          Container(
+                                            padding:
+                                                const EdgeInsets
+                                                    .symmetric(
+                                              horizontal: 8,
+                                              vertical: 3,
+                                            ),
+                                            decoration:
+                                                BoxDecoration(
+                                              color:
+                                                  const Color(
+                                                      0xFFE6F8F2),
+                                              borderRadius:
+                                                  BorderRadius
+                                                      .circular(20),
+                                              border:
+                                                  Border.all(
+                                                color:
+                                                    const Color(
+                                                            0xFF00A884)
+                                                        .withOpacity(
+                                                            .25),
+                                              ),
+                                            ),
+                                            child: const Row(
+                                              mainAxisSize:
+                                                  MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  Icons
+                                                      .verified_rounded,
+                                                  color: Color(
+                                                      0xFF00A884),
+                                                  size: 11,
+                                                ),
+                                                SizedBox(width: 3),
+                                                Text(
+                                                  'ACTIVE',
+                                                  style:
+                                                      TextStyle(
+                                                    color: Color(
+                                                        0xFF00866C),
+                                                    fontWeight:
+                                                        FontWeight
+                                                            .w800,
+                                                    fontSize: 7,
+                                                    letterSpacing:
+                                                        .5,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+
+                                          const Spacer(),
+
+                                          SizedBox(
+                                            height: 43,
+                                            width: 100,
+                                            child: Image.asset(
+                                              'assets/principal_sign.png',
+                                              fit: BoxFit.contain,
+                                            ),
+                                          ),
+
+                                          Container(
+                                            width: 95,
+                                            height: 1,
+                                            color:
+                                                const Color(
+                                                    0xFF0B3558),
+                                          ),
+
+                                          const SizedBox(
+                                              height: 2),
+
+                                          const Text(
+                                            'PRINCIPAL',
+                                            style: TextStyle(
+                                              color:
+                                                  Color(0xFF0B3558),
+                                              fontSize: 6.7,
+                                              fontWeight:
+                                                  FontWeight.w800,
+                                              letterSpacing: .8,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            // =================================
+                            // BOTTOM STRIP
+                            // =================================
+                            Container(
+                              height: 24,
+                              width: double.infinity,
+                              padding:
+                                  const EdgeInsets.symmetric(
+                                horizontal: 15,
+                              ),
+                              decoration:
+                                  const BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Color(0xFF0B3558),
+                                    Color(0xFF086A70),
+                                  ],
+                                ),
+                              ),
+                              child: const Row(
+                                children: [
+                                  Icon(
+                                    Icons.school_rounded,
+                                    color: Color(0xFF6DE3BE),
+                                    size: 11,
+                                  ),
+                                  SizedBox(width: 5),
+                                  Text(
+                                    'Education for a Better Tomorrow',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 7,
+                                      fontWeight:
+                                          FontWeight.w600,
+                                      fontStyle:
+                                          FontStyle.italic,
+                                    ),
+                                  ),
+                                  Spacer(),
+                                  Text(
+                                    'LEARN • GROW • SUCCEED',
+                                    style: TextStyle(
+                                      color: Color(0xFF9EECD3),
+                                      fontSize: 6.5,
+                                      fontWeight:
+                                          FontWeight.w700,
+                                      letterSpacing: .7,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                alignment: WrapAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () =>
+                        Navigator.pop(dialogContext),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white70,
+                      side: const BorderSide(
+                        color: Colors.white38,
+                      ),
+                    ),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      size: 18,
+                    ),
+                    label: const Text('Close'),
+                  ),
+
+                  ElevatedButton.icon(
+                    onPressed: _printIdCard,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          const Color(0xFF0B3558),
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(
+                      Icons.print_rounded,
+                      size: 18,
+                    ),
+                    label: const Text('Print ID Card'),
+                  ),
+
+                  ElevatedButton.icon(
+                    onPressed: _downloadIdCard,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          const Color(0xFF00A884),
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(
+                      Icons.download_rounded,
+                      size: 18,
+                    ),
+                    label:
+                        const Text('Download PDF'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+// ============================================================
+// STUDENT PHOTO FALLBACK
+// ============================================================
+
+Widget _studentPhotoFallback(String name) {
+  String initial = 'S';
+
+  if (name.trim().isNotEmpty) {
+    initial =
+        name.trim().substring(0, 1).toUpperCase();
+  }
+
+  return Container(
+    color: const Color(0xFFE9EFF2),
+    child: Center(
+      child: Text(
+        initial,
+        style: const TextStyle(
+          color: Color(0xFF0B3558),
+          fontSize: 42,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    ),
+  );
+}
+
+// ============================================================
+// PREVIEW FIELD
+// ============================================================
+
+Widget _modernIdField(
+  String label,
+  String value, {
+  bool important = false,
+  int maxLines = 1,
+}) {
+  final displayValue =
+      value.trim().isEmpty ? 'N/A' : value.trim();
+
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 3.2),
+    child: Row(
+      crossAxisAlignment:
+          CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 88,
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF47707D),
+              fontSize: 7.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+
+        const Text(
+          ': ',
+          style: TextStyle(
+            color: Color(0xFF47707D),
+            fontSize: 7.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+
+        Expanded(
+          child: Text(
+            displayValue,
+            maxLines: maxLines,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: const Color(0xFF102A36),
+              fontSize: important ? 9.5 : 7.7,
+              fontWeight: important
+                  ? FontWeight.w800
+                  : FontWeight.w600,
+              height: 1.15,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+// ============================================================
+// BUILD ACTUAL ID CARD PDF
+// Standard CR80 Card: 85.60mm x 53.98mm
+// ============================================================
+
+Future<Uint8List> _buildIdCardPdf() async {
+  final data = await _getIdCardStudentData();
+
+  final name = data['name'].toString();
+  final roll = data['roll'].toString();
+  final parentName =
+      data['parentName'].toString();
+  final contact = data['contact'].toString();
+  final dob = data['dob'].toString();
+  final address = data['address'].toString();
+  final studentId =
+      data['studentId'].toString();
+  final qrData = data['qrData'].toString();
+  final photoUrl =
+      data['photoUrl']?.toString() ?? '';
+
+  // ==========================================
+  // LOAD SCHOOL LOGO
+  // ==========================================
+
+  final logoBytes = await rootBundle.load(
+    'assets/school_logo.png',
+  );
+
+  final logoImage = pw.MemoryImage(
+    logoBytes.buffer.asUint8List(
+      logoBytes.offsetInBytes,
+      logoBytes.lengthInBytes,
+    ),
+  );
+
+  // ==========================================
+  // LOAD PRINCIPAL SIGNATURE
+  // ==========================================
+
+  final signBytes = await rootBundle.load(
+    'assets/principal_sign.png',
+  );
+
+  final signImage = pw.MemoryImage(
+    signBytes.buffer.asUint8List(
+      signBytes.offsetInBytes,
+      signBytes.lengthInBytes,
+    ),
+  );
+
+  // ==========================================
+  // LOAD STUDENT PHOTO
+  // ==========================================
+
+  pw.MemoryImage? studentPhoto;
+
+  if (photoUrl.isNotEmpty) {
+    try {
+      final response =
+          await http.get(Uri.parse(photoUrl));
+
+      if (response.statusCode == 200 &&
+          response.bodyBytes.isNotEmpty) {
+        studentPhoto =
+            pw.MemoryImage(response.bodyBytes);
+      }
+    } catch (e) {
+      debugPrint(
+          'PDF student photo load error: $e');
+    }
+  }
+
+  const navy =
+      PdfColor(0.043, 0.208, 0.345);
+
+  const teal =
+      PdfColor(0.000, 0.659, 0.518);
+
+  const darkText =
+      PdfColor(0.063, 0.165, 0.212);
+
+  const muted =
+      PdfColor(0.278, 0.439, 0.490);
+
+  const paleGreen =
+      PdfColor(0.902, 0.973, 0.949);
+
+  final pdf = pw.Document();
+
+  pdf.addPage(
+    pw.Page(
+      pageFormat:
+          const PdfPageFormat(
+        243,
+        153,
+        marginAll: 0,
+      ),
+      build: (pw.Context context) {
+        return pw.Container(
+          width: 243,
+          height: 153,
+          decoration: pw.BoxDecoration(
+            color: PdfColors.white,
+            border: pw.Border.all(
+              color: teal,
+              width: 0.8,
+            ),
+            borderRadius:
+                pw.BorderRadius.circular(5),
+          ),
+          child: pw.Column(
+            children: [
+              // ==================================
+              // PDF HEADER
+              // ==================================
+              pw.Container(
+                height: 38,
+                width: double.infinity,
+                padding:
+                    const pw.EdgeInsets.symmetric(
+                  horizontal: 7,
+                  vertical: 4,
+                ),
+                decoration:
+                    const pw.BoxDecoration(
+                  color: navy,
+                  borderRadius:
+                      pw.BorderRadius.only(
+                    topLeft:
+                        pw.Radius.circular(4),
+                    topRight:
+                        pw.Radius.circular(4),
+                  ),
+                ),
+                child: pw.Row(
+                  children: [
+                    pw.Container(
+                      width: 29,
+                      height: 29,
+                      padding:
+                          const pw.EdgeInsets.all(1),
+                      decoration:
+                          const pw.BoxDecoration(
+                        color: PdfColors.white,
+                        shape: pw.BoxShape.circle,
+                      ),
+                      child: pw.ClipOval(
+                        child: pw.Image(
+                          logoImage,
+                          fit: pw.BoxFit.contain,
+                        ),
+                      ),
+                    ),
+
+                    pw.SizedBox(width: 6),
+
+                    pw.Expanded(
+                      child: pw.Column(
+                        mainAxisAlignment:
+                            pw.MainAxisAlignment
+                                .center,
+                        crossAxisAlignment:
+                            pw.CrossAxisAlignment
+                                .start,
+                        children: [
+                          pw.Text(
+                            'SARASWATI VIDYA NIKETAN',
+                            style: pw.TextStyle(
+                              color:
+                                  PdfColors.white,
+                              fontSize: 8.5,
+                              fontWeight:
+                                  pw.FontWeight.bold,
+                            ),
+                          ),
+
+                          pw.SizedBox(height: 1),
+
+                          pw.Text(
+                            'MADHABDHAM',
+                            style: pw.TextStyle(
+                              color: teal,
+                              fontSize: 6,
+                              fontWeight:
+                                  pw.FontWeight.bold,
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+
+                          pw.SizedBox(height: 1),
+
+                          pw.Text(
+                            'DISCIPLINE • KNOWLEDGE • VALUES',
+                            style:
+                                const pw.TextStyle(
+                              color:
+                                  PdfColors.grey300,
+                              fontSize: 3.8,
+                              letterSpacing: .25,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    pw.Container(
+                      padding:
+                          const pw.EdgeInsets
+                              .symmetric(
+                        horizontal: 5,
+                        vertical: 2,
+                      ),
+                      decoration:
+                          pw.BoxDecoration(
+                        color: PdfColors.white
+                            .shade(.15),
+                        borderRadius:
+                            pw.BorderRadius
+                                .circular(8),
+                      ),
+                      child: pw.Text(
+                        'STUDENT',
+                        style: pw.TextStyle(
+                          color: PdfColors.white,
+                          fontSize: 4.5,
+                          fontWeight:
+                              pw.FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              pw.Container(
+                height: 2.5,
+                color: teal,
+              ),
+
+              // ==================================
+              // PDF BODY
+              // ==================================
+              pw.Expanded(
+                child: pw.Padding(
+                  padding:
+                      const pw.EdgeInsets.fromLTRB(
+                    7,
+                    4,
+                    7,
+                    3,
+                  ),
+                  child: pw.Row(
+                    crossAxisAlignment:
+                        pw.CrossAxisAlignment.start,
+                    children: [
+                      // LEFT DETAILS
+                      pw.Expanded(
+                        flex: 7,
+                        child: pw.Column(
+                          crossAxisAlignment:
+                              pw.CrossAxisAlignment
+                                  .start,
+                          children: [
+                            pw.Row(
+                              children: [
+                                pw.Container(
+                                  padding:
+                                      const pw.EdgeInsets
+                                          .symmetric(
+                                    horizontal: 5,
+                                    vertical: 1.5,
+                                  ),
+                                  decoration:
+                                      pw.BoxDecoration(
+                                    color: teal,
+                                    borderRadius:
+                                        pw.BorderRadius
+                                            .circular(2),
+                                  ),
+                                  child: pw.Text(
+                                    'STUDENT ID CARD',
+                                    style:
+                                        pw.TextStyle(
+                                      color:
+                                          PdfColors.white,
+                                      fontSize: 4.7,
+                                      fontWeight:
+                                          pw.FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            pw.SizedBox(height: 3),
+
+                            _pdfModernField(
+                              'Name',
+                              name,
+                              darkText,
+                              muted,
+                              important: true,
+                            ),
+
+                            _pdfModernField(
+                              'Father / Guardian',
+                              parentName,
+                              darkText,
+                              muted,
+                            ),
+
+                            _pdfModernField(
+                              'Class',
+                              _directoryClass,
+                              darkText,
+                              muted,
+                            ),
+
+                            _pdfModernField(
+                              'Roll No.',
+                              roll,
+                              darkText,
+                              muted,
+                            ),
+
+                            _pdfModernField(
+                              'Student ID',
+                              studentId,
+                              darkText,
+                              muted,
+                            ),
+
+                            _pdfModernField(
+                              'DOB',
+                              dob,
+                              darkText,
+                              muted,
+                            ),
+
+                            _pdfModernField(
+                              'Contact',
+                              contact,
+                              darkText,
+                              muted,
+                            ),
+
+                            _pdfModernField(
+                              'Address',
+                              address,
+                              darkText,
+                              muted,
+                              maxLines: 2,
+                            ),
+
+                            pw.Spacer(),
+
+                            pw.Row(
+                              crossAxisAlignment:
+                                  pw.CrossAxisAlignment
+                                      .end,
+                              children: [
+                                pw.Container(
+                                  width: 30,
+                                  height: 30,
+                                  padding:
+                                      const pw.EdgeInsets
+                                          .all(1),
+                                  decoration:
+                                      pw.BoxDecoration(
+                                    border: pw.Border.all(
+                                      color:
+                                          PdfColors.grey400,
+                                      width: .3,
+                                    ),
+                                  ),
+                                  child:
+                                      pw.BarcodeWidget(
+                                    barcode:
+                                        pw.Barcode
+                                            .qrCode(),
+                                    data: qrData,
+                                    drawText: false,
+                                  ),
+                                ),
+
+                                pw.SizedBox(width: 4),
+
+                                pw.Text(
+                                  'SCAN FOR\nSTUDENT\nVERIFICATION',
+                                  style: pw.TextStyle(
+                                    color: navy,
+                                    fontSize: 3.3,
+                                    fontWeight:
+                                        pw.FontWeight.bold,
+                                    lineSpacing: 1,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      pw.SizedBox(width: 6),
+
+                      // RIGHT PHOTO/SIGN
+                      pw.SizedBox(
+                        width: 58,
+                        child: pw.Column(
+                          children: [
+                            pw.Container(
+                              width: 47,
+                              height: 57,
+                              padding:
+                                  const pw.EdgeInsets
+                                      .all(1.2),
+                              decoration:
+                                  pw.BoxDecoration(
+                                color:
+                                    PdfColors.white,
+                                border:
+                                    pw.Border.all(
+                                  color: teal,
+                                  width: 1,
+                                ),
+                                borderRadius:
+                                    pw.BorderRadius
+                                        .circular(4),
+                              ),
+                              child:
+                                  studentPhoto != null
+                                      ? pw.ClipRRect(
+                                          horizontalRadius:
+                                              3,
+                                          verticalRadius:
+                                              3,
+                                          child: pw.Image(
+                                            studentPhoto,
+                                            fit: pw
+                                                .BoxFit.cover,
+                                          ),
+                                        )
+                                      : pw.Container(
+                                          color:
+                                              PdfColors
+                                                  .grey200,
+                                          child:
+                                              pw.Center(
+                                            child:
+                                                pw.Text(
+                                              name
+                                                      .trim()
+                                                      .isNotEmpty
+                                                  ? name
+                                                      .trim()[0]
+                                                      .toUpperCase()
+                                                  : 'S',
+                                              style:
+                                                  pw.TextStyle(
+                                                color:
+                                                    navy,
+                                                fontSize:
+                                                    20,
+                                                fontWeight:
+                                                    pw.FontWeight
+                                                        .bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                            ),
+
+                            pw.SizedBox(height: 2),
+
+                            pw.Container(
+                              padding:
+                                  const pw.EdgeInsets
+                                      .symmetric(
+                                horizontal: 5,
+                                vertical: 1.5,
+                              ),
+                              decoration:
+                                  pw.BoxDecoration(
+                                color: paleGreen,
+                                borderRadius:
+                                    pw.BorderRadius
+                                        .circular(8),
+                              ),
+                              child: pw.Text(
+                                'ACTIVE',
+                                style: pw.TextStyle(
+                                  color: teal,
+                                  fontSize: 3.7,
+                                  fontWeight:
+                                      pw.FontWeight.bold,
+                                ),
+                              ),
+                            ),
+
+                            pw.Spacer(),
+
+                            pw.SizedBox(
+                              width: 44,
+                              height: 20,
+                              child: pw.Image(
+                                signImage,
+                                fit:
+                                    pw.BoxFit.contain,
+                              ),
+                            ),
+
+                            pw.Container(
+                              width: 43,
+                              height: .5,
+                              color: navy,
+                            ),
+
+                            pw.SizedBox(height: 1),
+
+                            pw.Text(
+                              'PRINCIPAL',
+                              style: pw.TextStyle(
+                                color: navy,
+                                fontSize: 3.6,
+                                fontWeight:
+                                    pw.FontWeight.bold,
+                                letterSpacing: .5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // ==================================
+              // PDF BOTTOM
+              // ==================================
+              pw.Container(
+                height: 12,
+                width: double.infinity,
+                padding:
+                    const pw.EdgeInsets.symmetric(
+                  horizontal: 7,
+                ),
+                color: navy,
+                child: pw.Row(
+                  children: [
+                    pw.Text(
+                      'Education for a Better Tomorrow',
+                      style:
+                          const pw.TextStyle(
+                        color: PdfColors.white,
+                        fontSize: 3.8,
+                      ),
+                    ),
+
+                    pw.Spacer(),
+
+                    pw.Text(
+                      'LEARN • GROW • SUCCEED',
+                      style: pw.TextStyle(
+                        color: teal,
+                        fontSize: 3.4,
+                        fontWeight:
+                            pw.FontWeight.bold,
+                      ),
                     ),
                   ],
                 ),
               ),
             ],
           ),
+        );
+      },
+    ),
+  );
+
+  return pdf.save();
+}
+
+// ============================================================
+// PDF FIELD
+// ============================================================
+
+pw.Widget _pdfModernField(
+  String label,
+  String value,
+  PdfColor darkText,
+  PdfColor muted, {
+  bool important = false,
+  int maxLines = 1,
+}) {
+  final displayValue =
+      value.trim().isEmpty ? 'N/A' : value.trim();
+
+  return pw.Padding(
+    padding:
+        const pw.EdgeInsets.only(bottom: 1.1),
+    child: pw.Row(
+      crossAxisAlignment:
+          pw.CrossAxisAlignment.start,
+      children: [
+        pw.SizedBox(
+          width: 43,
+          child: pw.Text(
+            label,
+            style: pw.TextStyle(
+              color: muted,
+              fontSize: 3.8,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+        ),
+
+        pw.Text(
+          ': ',
+          style: pw.TextStyle(
+            color: muted,
+            fontSize: 3.8,
+          ),
+        ),
+
+        pw.Expanded(
+          child: pw.Text(
+            displayValue,
+            maxLines: maxLines,
+            style: pw.TextStyle(
+              color: darkText,
+              fontSize: important ? 4.8 : 4,
+              fontWeight: important
+                  ? pw.FontWeight.bold
+                  : pw.FontWeight.normal,
+              lineSpacing: .5,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+// ============================================================
+// DOWNLOAD PDF
+// ============================================================
+
+Future<void> _downloadIdCard() async {
+  try {
+    final data =
+        await _getIdCardStudentData();
+
+    final pdfBytes =
+        await _buildIdCardPdf();
+
+    final name =
+        data['name'].toString();
+
+    final roll =
+        data['roll'].toString();
+
+    final safeName = name
+        .replaceAll(
+          RegExp(r'[\\/:*?"<>|]'),
+          '_',
+        )
+        .replaceAll(
+          RegExp(r'\s+'),
+          '_',
+        );
+
+    final blob = html.Blob(
+      [pdfBytes],
+      'application/pdf',
+    );
+
+    final url =
+        html.Url.createObjectUrlFromBlob(blob);
+
+    final anchor =
+        html.AnchorElement(href: url)
+          ..setAttribute(
+            'download',
+            'SVN_ID_Card_${safeName}_Roll_$roll.pdf',
+          )
+          ..style.display = 'none';
+
+    html.document.body?.children.add(anchor);
+
+    anchor.click();
+    anchor.remove();
+
+    html.Url.revokeObjectUrl(url);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(
+      const SnackBar(
+        backgroundColor:
+            Color(0xFF00A884),
+        content: Text(
+          'Student ID Card PDF download ho gaya.',
+        ),
+      ),
+    );
+  } catch (e) {
+    debugPrint(
+        'ID Card download error: $e');
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+        .showSnackBar(
+      SnackBar(
+        backgroundColor:
+            Colors.redAccent,
+        content: Text(
+          'ID Card download error: $e',
         ),
       ),
     );
   }
+}
 
-  Future<void> _downloadIdCard() async {
-    final name = _nameController.text.trim().isEmpty ? 'Student' : _nameController.text.trim();
-    final roll = _rollController.text.trim().isEmpty ? '01' : _rollController.text.trim();
-    final contact = _parentContactController.text.trim().isEmpty ? 'Not Available' : _parentContactController.text.trim();
+// ============================================================
+// PRINT ID CARD
+// ============================================================
 
-    String parentName = 'N/A';
-    String address = 'N/A';
-    String district = 'N/A';
-    String state = 'N/A';
-    String pinCode = 'N/A';
-    String admissionDate = 'N/A';
-    String dob = 'N/A';
-    String? photoUrl = _studentPhotoUrl;
+Future<void> _printIdCard() async {
+  try {
+    final pdfBytes =
+        await _buildIdCardPdf();
 
-    try {
-      final docId = '${_directoryClass}_Roll_$roll';
-      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
-      if (doc.exists) {
-        final data = doc.data()!;
-        parentName = data['parentName']?.toString() ?? 'N/A';
-        address = data['address']?.toString() ?? 'N/A';
-        district = data['district']?.toString() ?? 'N/A';
-        state = data['state']?.toString() ?? 'N/A';
-        pinCode = data['pinCode']?.toString() ?? 'N/A';
-        admissionDate = data['joiningDate']?.toString() ?? 'N/A';
-        dob = data['dateOfBirth']?.toString() ?? 'N/A';
-        final dbPhoto = data['photoUrl']?.toString();
-        if (dbPhoto != null && dbPhoto.isNotEmpty) photoUrl = dbPhoto;
-      }
-    } catch (e) {
-      debugPrint('ID Card data fetch error: $e');
-    }
-
-    pw.MemoryImage? studentPhoto;
-    if (photoUrl != null && photoUrl!.isNotEmpty) {
-      try {
-        final corsUrl = 'https://corsproxy.io/?${Uri.encodeComponent(photoUrl!)}';
-        final imageResponse = await http.get(Uri.parse(photoUrl!));
-        if (imageResponse.statusCode == 200 && imageResponse.bodyBytes.isNotEmpty) {
-          studentPhoto = pw.MemoryImage(imageResponse.bodyBytes);
-        }
-      } catch (e) {
-        debugPrint('ID Card photo load error: $e');
-      }
-    }
-
-    final pdf = pw.Document();
-    pdf.addPage(
-      pw.Page(
-        pageFormat: const PdfPageFormat(243, 153, marginAll: 0),
-        build: (pw.Context context) {
-          return pw.Container(
-            width: 243,
-            height: 153,
-            decoration: pw.BoxDecoration(
-              color: PdfColors.white,
-              border: pw.Border.all(color: PdfColors.orange800, width: 1.5),
-              borderRadius: pw.BorderRadius.circular(8),
-            ),
-            child: pw.Column(
-              children: [
-                pw.Container(
-                  width: double.infinity,
-                  padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                  decoration: pw.BoxDecoration(
-                    color: PdfColors.orange800,
-                    borderRadius: const pw.BorderRadius.only(topLeft: pw.Radius.circular(6), topRight: pw.Radius.circular(6)),
-                  ),
-                  child: pw.Row(
-                    children: [
-                      pw.Container(
-                        width: 25,
-                        height: 25,
-                        decoration: const pw.BoxDecoration(color: PdfColors.white, shape: pw.BoxShape.circle),
-                        child: pw.Center(child: pw.Text('S', style: pw.TextStyle(color: PdfColors.orange800, fontSize: 15, fontWeight: pw.FontWeight.bold))),
-                      ),
-                      pw.SizedBox(width: 6),
-                      pw.Expanded(
-                        child: pw.Text('SARASWATI VIDYA NIKETAN, MADHABDHAM', style: pw.TextStyle(color: PdfColors.white, fontSize: 8, fontWeight: pw.FontWeight.bold)),
-                      ),
-                    ],
-                  ),
-                ),
-                pw.SizedBox(height: 4),
-                pw.Container(
-                  padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                  decoration: pw.BoxDecoration(color: PdfColors.orange800, borderRadius: pw.BorderRadius.circular(4)),
-                  child: pw.Text('STUDENT ID CARD', style: pw.TextStyle(color: PdfColors.white, fontSize: 7, fontWeight: pw.FontWeight.bold)),
-                ),
-                pw.SizedBox(height: 5),
-                pw.Expanded(
-                  child: pw.Padding(
-                    padding: const pw.EdgeInsets.symmetric(horizontal: 8),
-                    child: pw.Row(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Container(
-                          width: 50,
-                          height: 62,
-                          decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.orange800, width: 1)),
-                          child: studentPhoto != null
-                              ? pw.Image(studentPhoto, fit: pw.BoxFit.cover)
-                              : pw.Center(child: pw.Text('PHOTO', style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey700))),
-                        ),
-                        pw.SizedBox(width: 7),
-                        pw.Expanded(
-                          child: pw.Column(
-                            crossAxisAlignment: pw.CrossAxisAlignment.start,
-                            children: [
-                              _pdfField('Name', name),
-                              _pdfField('Father', parentName),
-                              _pdfField('Class', _directoryClass),
-                              _pdfField('Roll', roll),
-                              _pdfField('Contact', contact),
-                              _pdfField('DOB', dob),
-                              _pdfField('Admission', admissionDate),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                pw.Container(
-                  width: double.infinity,
-                  padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: const pw.BoxDecoration(color: PdfColors.grey100),
-                  child: pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Text('$district, $state - $pinCode', style: const pw.TextStyle(fontSize: 6, color: PdfColors.grey700)),
-                      pw.Text('Principal Sign', style: pw.TextStyle(fontSize: 6, fontWeight: pw.FontWeight.bold, color: PdfColors.black)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+    await Printing.layoutPdf(
+      name: 'SVN Student ID Card',
+      format: const PdfPageFormat(
+        243,
+        153,
+        marginAll: 0,
       ),
+      onLayout:
+          (PdfPageFormat format) async {
+        return pdfBytes;
+      },
     );
+  } catch (e) {
+    debugPrint(
+        'ID Card print error: $e');
 
-    try {
-      final pdfBytes = await pdf.save();
-      final blob = html.Blob([pdfBytes], 'application/pdf');
-      final url = html.Url.createObjectUrlFromBlob(blob);
-      final safeName = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').replaceAll(RegExp(r'\s+'), '_');
-      
-      final anchor = html.AnchorElement(href: url)
-        ..setAttribute('download', 'Student_ID_Card_${safeName}_Roll_$roll.pdf')
-        ..style.display = 'none';
+    if (!mounted) return;
 
-      html.document.body?.children.add(anchor);
-      anchor.click();
-      anchor.remove();
-      html.Url.revokeObjectUrl(url);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Actual Student ID Card PDF download ho gaya.')));
-      }
-    } catch (e) {
-      debugPrint('PDF generation error: $e');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('ID Card PDF banane mein error: $e')));
-    }
-  }
-
-  pw.Widget _pdfField(String label, String value) {
-    return pw.Padding(
-      padding: const pw.EdgeInsets.only(bottom: 2),
-      child: pw.Row(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.SizedBox(width: 42, child: pw.Text(label, style: pw.TextStyle(fontSize: 6.5, fontWeight: pw.FontWeight.bold, color: PdfColors.orange800))),
-          pw.Text(': ', style: const pw.TextStyle(fontSize: 6.5)),
-          pw.Expanded(child: pw.Text(value, maxLines: 2, style: const pw.TextStyle(fontSize: 6.5))),
-        ],
+    ScaffoldMessenger.of(context)
+        .showSnackBar(
+      SnackBar(
+        backgroundColor:
+            Colors.redAccent,
+        content: Text(
+          'ID Card print error: $e',
+        ),
       ),
     );
   }
-
-  Widget _idCardField(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(width: 80, child: Text(label, style: const TextStyle(color: Color(0xFFC85A17), fontWeight: FontWeight.bold, fontSize: 10))),
-          const Text(': ', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 10)),
-          Expanded(child: Text(value, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 10))),
-        ],
-      ),
-    );
-  }
+}
 
   @override
   Widget build(BuildContext context) {
