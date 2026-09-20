@@ -3418,7 +3418,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 ),
                                 child: IconButton(
                                   tooltip: 'WhatsApp Parent',
-                                  icon: Image.asset('assets/whatsapp.png', width: 21, height: 21),
+                                  icon: Image.asset('assets/whatsapp.png', width: 21, height: 21,fit: BoxFit.contain,),
                                   onPressed: () {
                                     final contact = student['parentContact']?.toString() ?? '';
                                     final cleanNum = contact.replaceAll(RegExp(r'\D'), '');
