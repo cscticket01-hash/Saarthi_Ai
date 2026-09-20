@@ -3323,10 +3323,10 @@ Column(
       ),
       child: IconButton(
         tooltip: 'WhatsApp Parent',
-        icon: const Icon(
-          Icons.chat_rounded,
-          color: Color(0xFF25D366),
-          size: 19,
+        icon: Image.asset(
+          'assets/whatsapp.png',
+          width: 21,
+          height: 21,
         ),
         onPressed: () {
           final contact =
