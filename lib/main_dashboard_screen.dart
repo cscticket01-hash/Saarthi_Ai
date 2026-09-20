@@ -2380,6 +2380,69 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
           ],
         ),
+        actions: [
+          PopupMenuButton<String>(
+            color: const Color(0xFF1F2C34),
+            tooltip: 'Admin Menu',
+            icon: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.07)),
+              ),
+              child: const Icon(Icons.more_horiz_rounded, color: Colors.white70, size: 21),
+            ),
+            onSelected: (value) async {
+              if (value == 'profile') {
+                _showProfileDialog();
+              } else if (value == 'settings') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                );
+              } else if (value == 'logout') {
+                await FirebaseAuth.instance.signOut();
+                if (!mounted) return;
+                Navigator.popUntil(context, (route) => route.isFirst);
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem<String>(
+                value: 'profile',
+                child: Row(
+                  children: [
+                    Icon(Icons.person_outline_rounded, color: Color(0xFF00A884), size: 20),
+                    SizedBox(width: 12),
+                    Text('Profile', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings_outlined, color: Color(0xFF00A884), size: 20),
+                    SizedBox(width: 12),
+                    Text('Settings', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout_rounded, color: Colors.redAccent, size: 20),
+                    SizedBox(width: 12),
+                    Text('Logout', style: TextStyle(color: Colors.redAccent)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
