@@ -8853,7 +8853,7 @@ child: Row(
     ),
   ],
 ),
-                      
+),                      
                     const SizedBox(height: 12),
                     _mainPaymentPanel(activeStudentDoc, activeLedger),
                     const SizedBox(height: 12),
