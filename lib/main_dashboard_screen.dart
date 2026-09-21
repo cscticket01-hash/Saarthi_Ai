@@ -7482,10 +7482,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       return;
     }
 
-    final cachedSettings = _feeSettingsCache[studentClass];
+        final cachedSettings = _feeSettingsCache[studentClass];
     
-    if (mounted) {
-      setState(() {
         _activeStudentId = studentDoc.id;
         _selectedClass = studentClass;
         _nameSearchController.text = studentName;
@@ -7501,8 +7499,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         _activeLedger = ledger;
         _receivedAmountController.clear();
         _paymentMode = ledger?['paymentMode']?.toString() ?? 'Cash';
-      });
-    }
 
     try {
       final settings = await _getClassFeeSettings(studentClass);
