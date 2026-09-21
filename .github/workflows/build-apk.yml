@@ -483,8 +483,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Upgrading Android runner copy to mobile_scanner 7.4.2..."
-          flutter pub add "mobile_scanner:7.4.2"
+          echo "Upgrading Android runner copy to mobile_scanner 7.2.1..."
+          flutter pub add "mobile_scanner:7.2.1"
           flutter pub get
 
           echo ""
@@ -493,12 +493,12 @@ jobs:
           flutter pub deps > /tmp/saarthi-pub-deps.txt
           grep "mobile_scanner" /tmp/saarthi-pub-deps.txt || true
 
-          if ! grep -q "mobile_scanner 7.4.2" /tmp/saarthi-pub-deps.txt; then
-            echo "::error::mobile_scanner 7.4.2 resolve nahi hua."
+          if ! grep -q "mobile_scanner 7.2.1" /tmp/saarthi-pub-deps.txt; then
+            echo "::error::mobile_scanner 7.2.1 resolve nahi hua."
             exit 1
           fi
 
-          echo "OK - Android mobile_scanner 7.4.2 active."
+          echo "OK - Android mobile_scanner 7.2.1 active."
 
       # ============================================================
       # 12. FIX OLD PLUGIN COMPILE SDK
