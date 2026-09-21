@@ -96,6 +96,270 @@ jobs:
           fi
 
       # ============================================================
+      # 8. FIREBASE + PERMANENT RELEASE SIGNING
+      # Runner-only: repository source unchanged rahega
+      # ============================================================
+      - name: Configure Firebase and Permanent Signing
+        shell: bash
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          ANDROID_KEYSTORE_ENCRYPTED_BASE64: ${{ secrets.ANDROID_KEYSTORE_ENCRYPTED_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            echo "::error::GOOGLE_SERVICES_JSON_BASE64 secret missing."
+            exit 1
+          fi
+
+          if [ -z "$GOOGLE_WEB_CLIENT_ID" ]; then
+            echo "::error::GOOGLE_WEB_CLIENT_ID secret missing."
+            exit 1
+          fi
+
+          if [ -z "$ANDROID_KEYSTORE_ENCRYPTED_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_ENCRYPTED_BASE64 secret missing."
+            exit 1
+          fi
+
+          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+            echo "::error::ANDROID_KEYSTORE_PASSWORD secret missing."
+            exit 1
+          fi
+
+          echo "Restoring Firebase Android configuration..."
+          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" \
+            | base64 --decode \
+            > android/app/google-services.json
+
+          echo "Restoring permanent encrypted signing key..."
+          printf '%s' "$ANDROID_KEYSTORE_ENCRYPTED_BASE64" \
+            | base64 --decode \
+            > android/app/saarthi-release.jks.enc
+
+          openssl enc \
+            -d \
+            -aes-256-cbc \
+            -pbkdf2 \
+            -iter 200000 \
+            -in android/app/saarthi-release.jks.enc \
+            -out android/app/saarthi-release.jks \
+            -pass env:ANDROID_KEYSTORE_PASSWORD
+
+          rm -f android/app/saarthi-release.jks.enc
+          chmod 600 android/app/saarthi-release.jks
+
+          python3 <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import re
+
+          expected_package = "com.example.saarthi_ai"
+
+          google_json = Path("android/app/google-services.json")
+          settings = Path("android/settings.gradle.kts")
+          app_gradle = Path("android/app/build.gradle.kts")
+
+          for path in (google_json, settings, app_gradle):
+              if not path.exists():
+                  raise SystemExit(f"ERROR: Required file missing: {path}")
+
+          data = json.loads(google_json.read_text(encoding="utf-8"))
+
+          clients = data.get("client", [])
+          matched = [
+              client for client in clients
+              if client.get("client_info", {})
+                  .get("android_client_info", {})
+                  .get("package_name") == expected_package
+          ]
+
+          if not matched:
+              raise SystemExit(
+                  "ERROR: google-services.json package name "
+                  f"{expected_package} se match nahi karta"
+              )
+
+          android_client = matched[0]
+
+          oauth_clients = android_client.get("oauth_client", [])
+          expected_web_client = os.environ.get(
+              "GOOGLE_WEB_CLIENT_ID",
+              "",
+          )
+
+          has_web_client = any(
+              client.get("client_type") == 3
+              and client.get("client_id") == expected_web_client
+              for client in oauth_clients
+          )
+
+          if not has_web_client:
+              raise SystemExit(
+                  "ERROR: GOOGLE_WEB_CLIENT_ID google-services.json "
+                  "ke Web OAuth client se match nahi karta"
+              )
+
+          settings_text = settings.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          google_plugin_decl = (
+              '    id("com.google.gms.google-services") '
+              'version "4.5.0" apply false'
+          )
+
+          if 'id("com.google.gms.google-services")' not in settings_text:
+              settings_text, count = re.subn(
+                  r'(?m)^plugins\s*\{\s*$',
+                  "plugins {\n" + google_plugin_decl,
+                  settings_text,
+                  count=1,
+              )
+
+              if count != 1:
+                  raise SystemExit(
+                      "ERROR: settings.gradle.kts plugins block nahi mila"
+                  )
+
+              settings.write_text(
+                  settings_text,
+                  encoding="utf-8",
+              )
+
+          app_text = app_gradle.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          if 'id("com.google.gms.google-services")' not in app_text:
+              android_plugin = '    id("com.android.application")'
+              google_plugin = '    id("com.google.gms.google-services")'
+
+              if android_plugin in app_text:
+                  app_text = app_text.replace(
+                      android_plugin,
+                      android_plugin + "\n" + google_plugin,
+                      1,
+                  )
+              else:
+                  app_text, count = re.subn(
+                      r'(?m)^plugins\s*\{\s*$',
+                      'plugins {\n' + google_plugin,
+                      app_text,
+                      count=1,
+                  )
+
+                  if count != 1:
+                      raise SystemExit(
+                          "ERROR: app/build.gradle.kts plugins block nahi mila"
+                      )
+
+          if 'create("release")' not in app_text:
+              signing_block = """    signingConfigs {
+                  create("release") {
+                      storeFile = file("saarthi-release.jks")
+                      storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                      keyAlias = "saarthi"
+                      keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                  }
+              }
+
+          """
+
+              build_types_marker = "    buildTypes {\n"
+
+              if build_types_marker not in app_text:
+                  raise SystemExit(
+                      "ERROR: app/build.gradle.kts buildTypes block nahi mila"
+                  )
+
+              app_text = app_text.replace(
+                  build_types_marker,
+                  signing_block + build_types_marker,
+                  1,
+              )
+
+          release_signing = (
+              'signingConfig = signingConfigs.getByName("release")'
+          )
+
+          if release_signing not in app_text:
+              debug_signing = (
+                  'signingConfig = signingConfigs.getByName("debug")'
+              )
+
+              if debug_signing in app_text:
+                  app_text = app_text.replace(
+                      debug_signing,
+                      release_signing,
+                      1,
+                  )
+              else:
+                  app_text, count = re.subn(
+                      r'(?m)^(\s*)release\s*\{\s*$',
+                      lambda m: (
+                          f'{m.group(1)}release {{\n'
+                          f'{m.group(1)}    {release_signing}'
+                      ),
+                      app_text,
+                      count=1,
+                  )
+
+                  if count != 1:
+                      raise SystemExit(
+                          "ERROR: release buildType patch nahi hua"
+                      )
+
+          app_gradle.write_text(
+              app_text,
+              encoding="utf-8",
+          )
+
+          print("Firebase package verified:", expected_package)
+          print("Google Services Gradle plugin configured.")
+          print("Permanent release signing configured.")
+          PY
+
+          EXPECTED_SHA1="76:24:14:31:E2:A8:21:D7:56:64:A6:12:24:46:EB:50:6F:CA:D0:1B"
+
+          ACTUAL_SHA1="$(
+            keytool -list -v \
+              -keystore android/app/saarthi-release.jks \
+              -alias saarthi \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+              | sed -n 's/^[[:space:]]*SHA1: //p' \
+              | head -n 1
+          )"
+
+          if [ "$ACTUAL_SHA1" != "$EXPECTED_SHA1" ]; then
+            echo "::error::Signing key SHA-1 mismatch."
+            echo "Expected: $EXPECTED_SHA1"
+            echo "Actual:   $ACTUAL_SHA1"
+            exit 1
+          fi
+
+          echo "Permanent signing SHA-1 verified: $ACTUAL_SHA1"
+
+          echo ""
+          echo "===== FIREBASE / SIGNING CHECK ====="
+          grep -n \
+            'com.google.gms.google-services' \
+            android/settings.gradle.kts \
+            android/app/build.gradle.kts
+
+          grep -n \
+            'signingConfig = signingConfigs.getByName("release")' \
+            android/app/build.gradle.kts
+
+          test -s android/app/google-services.json
+          test -s android/app/saarthi-release.jks
+
+      # ============================================================
       # 8. ENSURE CAMERA + INTERNET PERMISSIONS
       # ============================================================
       - name: Ensure Android Permissions
@@ -721,6 +985,8 @@ jobs:
       # ============================================================
       - name: Build Saarthi AI Release APK
         shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           flutter build apk \
             --release \
@@ -789,6 +1055,9 @@ jobs:
           echo "- Java: **17**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Camera Scanner: **Enabled**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Build Type: **Release**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Firebase Android: **Configured**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Google Sign-In: **Native Android**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Signing: **Permanent release key**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
           echo "APK ko Artifacts section se download karein." \
@@ -805,3 +1074,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+
+      # ============================================================
+      # CLEANUP SENSITIVE RUNNER FILES
+      # ============================================================
+      - name: Cleanup Signing Files
+        if: always()
+        shell: bash
+        run: |
+          rm -f \
+            android/app/saarthi-release.jks \
+            android/app/saarthi-release.jks.enc \
+            android/app/google-services.json
+
