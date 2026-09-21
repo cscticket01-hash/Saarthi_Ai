@@ -7263,11 +7263,14 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   Set<String> _selectedFeeHeads = <String>{};
   Map<String, dynamic>? _activeLedger;
 
+  final Map<String, Map<String, dynamic>> _feeSettingsCache = {};
+
   @override
   void initState() {
     super.initState();
     final now = DateTime.now();
     _selectedMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+    _preloadFeeSettings();
   }
 
   @override
@@ -7279,6 +7282,22 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   }
 
   String _settingsDocId(String className) => className.replaceAll(' ', '_');
+
+  Future<void> _preloadFeeSettings() async {
+  try {
+    await Future.wait(
+      List.generate(10, (index) async {
+        final className = 'Class ${index + 1}';
+        final settings = await _getClassFeeSettings(className);
+        _feeSettingsCache[className] = settings;
+      }),
+    );
+
+    debugPrint('Fee settings cache ready');
+  } catch (e) {
+    debugPrint('Fee settings preload error: $e');
+  }
+}
 
   String _ledgerId(String studentId) => '${_selectedMonth}_$studentId';
 
@@ -7386,30 +7405,44 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
     );
   }
 
-  Future<Map<String, dynamic>> _getClassFeeSettings(String studentClass) async {
-    final doc = await FirebaseFirestore.instance
-        .collection('fee_settings')
-        .doc(_settingsDocId(studentClass))
-        .get();
+Future<Map<String, dynamic>> _getClassFeeSettings(
+  String studentClass,
+) async {
+  final cached = _feeSettingsCache[studentClass];
 
-    final data = doc.data() ?? <String, dynamic>{};
-    final rawFees = Map<String, dynamic>.from(data['fees'] ?? {});
-
-    final fees = <String, double>{};
-    for (final head in _feeHeads) {
-      fees[head] = _toDouble(rawFees[head]);
-    }
-
-    final configuredHeads = _feeHeads
-        .where((head) => (fees[head] ?? 0) > 0)
-        .toList();
-
-    return {
-      'fees': fees,
-      'configured': configuredHeads.isNotEmpty,
-      'configuredHeads': configuredHeads,
-    };
+  if (cached != null) {
+    return cached;
   }
+
+  final doc = await FirebaseFirestore.instance
+      .collection('fee_settings')
+      .doc(_settingsDocId(studentClass))
+      .get();
+
+  final data = doc.data() ?? <String, dynamic>{};
+  final rawFees =
+      Map<String, dynamic>.from(data['fees'] ?? {});
+
+  final fees = <String, double>{};
+
+  for (final head in _feeHeads) {
+    fees[head] = _toDouble(rawFees[head]);
+  }
+
+  final configuredHeads = _feeHeads
+      .where((head) => (fees[head] ?? 0) > 0)
+      .toList();
+
+  final result = <String, dynamic>{
+    'fees': fees,
+    'configured': configuredHeads.isNotEmpty,
+    'configuredHeads': configuredHeads,
+  };
+
+  _feeSettingsCache[studentClass] = result;
+
+  return result;
+}
 
   void _resetActiveSelection() {
     _activeStudentId = null;
@@ -8712,99 +8745,115 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: Colors.white10),
                       ),
-                      child: Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 205,
-                            child: DropdownButtonFormField<String>(
-                              value: _selectedMonth,
-                              dropdownColor: const Color(0xFF172229),
-                              style: const TextStyle(color: Colors.white),
-                              decoration: _inputDecoration('Month', Icons.calendar_month_rounded),
-                              items: _monthList()
-                                  .map((value) => DropdownMenuItem(
-                                        value: value,
-                                        child: Text(_monthName(value)),
-                                      ))
-                                  .toList(),
-                              onChanged: (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    _selectedMonth = value;
-                                    _resetActiveSelection();
-                                  });
-                                }
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: 190,
-                            child: DropdownButtonFormField<String>(
-                              value: _selectedClass,
-                              dropdownColor: const Color(0xFF172229),
-                              style: const TextStyle(color: Colors.white),
-                              decoration: _inputDecoration('Class', Icons.class_rounded),
-                              items: _classes
-                                  .map((value) => DropdownMenuItem(value: value, child: Text(value)))
-                                  .toList(),
-                              onChanged: (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    _selectedClass = value;
-                                    _resetActiveSelection();
-                                    _nameSearchController.clear();
-                                    _rollSearchController.clear();
-                                  });
-                                }
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: 260,
-                            child: TextField(
-                              controller: _nameSearchController,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: _inputDecoration('Student Name', Icons.person_search_rounded),
-                              onChanged: (_) {
-                                setState(() {
-                                  if (_activeStudentId != null) _resetActiveSelection();
-                                });
-                              },
-                            ),
-                          ),
-                          SizedBox(
-                            width: 180,
-                            child: TextField(
-                              controller: _rollSearchController,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: _inputDecoration('Roll No', Icons.numbers_rounded),
-                              onChanged: (_) {
-                                setState(() {
-                                  if (_activeStudentId != null) _resetActiveSelection();
-                                });
-                              },
-                            ),
-                          ),
-                          IconButton.filledTonal(
-                            tooltip: 'Payment Collection Settings',
-                            onPressed: () async {
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => const FeeCollectionSettingsScreen()),
-                              );
-                              if (!mounted) return;
-                              if (activeStudentDoc != null) {
-                                await _openInlineCollector(activeStudentDoc, activeLedger);
-                              }
-                            },
-                            icon: const Icon(Icons.settings_rounded, color: Color(0xFF00D9A5)),
-                          ),
-                        ],
-                      ),
-                    ),
+
+Row(
+  children: [
+    Expanded(
+      flex: 2,
+      child: DropdownButtonFormField<String>(
+        value: _selectedMonth,
+        dropdownColor: const Color(0xFF172229),
+        style: const TextStyle(color: Colors.white),
+        decoration: _inputDecoration(
+          'Month',
+          Icons.calendar_month_rounded,
+        ),
+        items: _monthList()
+            .map(
+              (value) => DropdownMenuItem(
+                value: value,
+                child: Text(_monthName(value)),
+              ),
+            )
+            .toList(),
+        onChanged: (value) {
+          if (value != null) {
+            setState(() {
+              _selectedMonth = value;
+              _resetActiveSelection();
+            });
+          }
+        },
+      ),
+    ),
+
+    const SizedBox(width: 10),
+
+    Expanded(
+      flex: 2,
+      child: DropdownButtonFormField<String>(
+        value: _selectedClass,
+        dropdownColor: const Color(0xFF172229),
+        style: const TextStyle(color: Colors.white),
+        decoration: _inputDecoration(
+          'Class',
+          Icons.class_rounded,
+        ),
+        items: _classes
+            .map(
+              (value) => DropdownMenuItem(
+                value: value,
+                child: Text(value),
+              ),
+            )
+            .toList(),
+        onChanged: (value) {
+          if (value != null) {
+            setState(() {
+              _selectedClass = value;
+              _resetActiveSelection();
+              _nameSearchController.clear();
+              _rollSearchController.clear();
+            });
+          }
+        },
+      ),
+    ),
+
+    const SizedBox(width: 10),
+
+    Expanded(
+      flex: 3,
+      child: TextField(
+        controller: _nameSearchController,
+        style: const TextStyle(color: Colors.white),
+        decoration: _inputDecoration(
+          'Student Name',
+          Icons.person_search_rounded,
+        ),
+        onChanged: (_) {
+          setState(() {
+            if (_activeStudentId != null) {
+              _resetActiveSelection();
+            }
+          });
+        },
+      ),
+    ),
+
+    const SizedBox(width: 10),
+
+    Expanded(
+      flex: 2,
+      child: TextField(
+        controller: _rollSearchController,
+        style: const TextStyle(color: Colors.white),
+        decoration: _inputDecoration(
+          'Roll No',
+          Icons.numbers_rounded,
+        ),
+        onChanged: (_) {
+          setState(() {
+            if (_activeStudentId != null) {
+              _resetActiveSelection();
+            }
+          });
+        },
+      ),
+    ),
+  ],
+),
+                      
                     const SizedBox(height: 12),
                     _mainPaymentPanel(activeStudentDoc, activeLedger),
                     const SizedBox(height: 12),
