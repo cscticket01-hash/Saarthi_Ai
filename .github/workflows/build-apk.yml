@@ -744,13 +744,76 @@ jobs:
               print(
                   "Scanner user-agent Android ke liye patched."
               )
-          else:
-              print(
-                  "Scanner html user-agent code present nahi hai - skip."
+          # ========================================================
+          # 4. ANDROID SCANNER CONTROLLER FIX
+          # Manual start + exact camera error reporting.
+          # Runner copy only; website source unchanged.
+          # ========================================================
+          scanner_field_old = '  bool _showInlineScanner = false;\n  bool _scanHandled = false;\n  bool _isQrVerifying = false;\n  String? _scanError;\n'
+          scanner_field_new = '  bool _showInlineScanner = false;\n  bool _scanHandled = false;\n  bool _isQrVerifying = false;\n\n  final MobileScannerController _qrScannerController =\n      MobileScannerController(\n    autoStart: false,\n    facing: CameraFacing.back,\n    formats: const [BarcodeFormat.qrCode],\n  );\n\n  String? _scanError;\n'
+          if scanner_field_old not in text:
+              raise SystemExit(
+                  "ERROR: Scanner state fields patch point nahi mila"
               )
+          text = text.replace(scanner_field_old, scanner_field_new, 1)
+          scanner_dispose_old = '  @override\n  void dispose() {\n    _usernameController.dispose();\n    _passwordController.dispose();\n    super.dispose();\n  }\n'
+          scanner_dispose_new = '  @override\n  void dispose() {\n    _qrScannerController.dispose();\n    _usernameController.dispose();\n    _passwordController.dispose();\n    super.dispose();\n  }\n'
+          if scanner_dispose_old not in text:
+              raise SystemExit(
+                  "ERROR: Scanner dispose patch point nahi mila"
+              )
+          text = text.replace(scanner_dispose_old, scanner_dispose_new, 1)
+          switch_role_old = '  void _switchRole(bool isAdmin) {\n    setState(() {\n'
+          switch_role_new = '  void _switchRole(bool isAdmin) {\n    _qrScannerController.stop();\n\n    setState(() {\n'
+          if switch_role_old not in text:
+              raise SystemExit(
+                  "ERROR: Scanner role switch patch point nahi mila"
+              )
+          text = text.replace(switch_role_old, switch_role_new, 1)
+          scanner_start_regex = 'void _startInlineScanner\\(\\) \\{\n  if \\(_isAdminMode\\) return;\n\n  setState\\(\\(\\) \\{\n    _showInlineScanner = true;\n    _scanHandled = false;\n    _isQrVerifying = false;\n    _scanError = null;\n    _scannedStudentData = null;\n    _passwordController\\.clear\\(\\);\n  \\}\\);\n\\}'
+          scanner_start_new = "Future<void> _startInlineScanner() async {\n  if (_isAdminMode) return;\n\n  setState(() {\n    _showInlineScanner = true;\n    _scanHandled = false;\n    _isQrVerifying = false;\n    _scanError = null;\n    _scannedStudentData = null;\n    _passwordController.clear();\n  });\n\n  await Future<void>.delayed(\n    const Duration(milliseconds: 300),\n  );\n\n  try {\n    await _qrScannerController.start();\n  } on MobileScannerException catch (e) {\n    if (!mounted) return;\n\n    final details = e.errorDetails?.message;\n    final code = e.errorCode.name;\n\n    setState(() {\n      _scanError = details == null || details.isEmpty\n          ? 'Scanner error: $code'\n          : 'Scanner error: $code - $details';\n    });\n  } catch (e) {\n    if (!mounted) return;\n\n    setState(() {\n      _scanError = 'Scanner start error: $e';\n    });\n  }\n}"
+          scanner_start_pattern = re.compile(scanner_start_regex)
+          text, scanner_start_count = scanner_start_pattern.subn(
+              scanner_start_new,
+              text,
+              count=1,
+          )
+          if scanner_start_count != 1:
+              raise SystemExit(
+                  "ERROR: Scanner start method patch nahi hua"
+              )
+          scanner_close_old = '  void _closeInlineScanner() {\n    setState(() {\n      _showInlineScanner = false;\n      _scanHandled = false;\n      _isQrVerifying = false;\n      _scanError = null;\n    });\n  }\n'
+          scanner_close_new = '  void _closeInlineScanner() {\n    _qrScannerController.stop();\n\n    setState(() {\n      _showInlineScanner = false;\n      _scanHandled = false;\n      _isQrVerifying = false;\n      _scanError = null;\n    });\n  }\n'
+          if scanner_close_old not in text:
+              raise SystemExit(
+                  "ERROR: Scanner close patch point nahi mila"
+              )
+          text = text.replace(scanner_close_old, scanner_close_new, 1)
+          scanner_clear_old = '  void _clearScannedStudent() {\n    setState(() {\n      _showInlineScanner = false;\n'
+          scanner_clear_new = '  void _clearScannedStudent() {\n    _qrScannerController.stop();\n\n    setState(() {\n      _showInlineScanner = false;\n'
+          if scanner_clear_old not in text:
+              raise SystemExit(
+                  "ERROR: Scanner clear patch point nahi mila"
+              )
+          text = text.replace(scanner_clear_old, scanner_clear_new, 1)
+          scanner_success_old = '      if (!mounted) return;\n\n      setState(() {\n        _selectedClass = studentClass;\n        _usernameController.text = roll;\n'
+          scanner_success_new = '      if (!mounted) return;\n\n      _qrScannerController.stop();\n\n      setState(() {\n        _selectedClass = studentClass;\n        _usernameController.text = roll;\n'
+          if scanner_success_old not in text:
+              raise SystemExit(
+                  "ERROR: Scanner success patch point nahi mila"
+              )
+          text = text.replace(scanner_success_old, scanner_success_new, 1)
+          scanner_widget_old = '                MobileScanner(\n                  fit: BoxFit.cover,\n                  onDetect: _onInlineQrDetected,\n                ),\n'
+          scanner_widget_new = "                MobileScanner(\n                  controller: _qrScannerController,\n                  fit: BoxFit.cover,\n                  onDetect: _onInlineQrDetected,\n                  errorBuilder: (context, error, child) {\n                    final details = error.errorDetails?.message;\n                    final code = error.errorCode.name;\n\n                    return Container(\n                      color: Colors.black,\n                      alignment: Alignment.center,\n                      padding: const EdgeInsets.all(18),\n                      child: Text(\n                        details == null || details.isEmpty\n                            ? 'Scanner error: $code'\n                            : 'Scanner error: $code\\n$details',\n                        textAlign: TextAlign.center,\n                        style: const TextStyle(\n                          color: Colors.redAccent,\n                          fontSize: 13,\n                          fontWeight: FontWeight.w700,\n                        ),\n                      ),\n                    );\n                  },\n                ),\n"
+          if scanner_widget_old not in text:
+              raise SystemExit(
+                  "ERROR: MobileScanner widget patch point nahi mila"
+              )
+          text = text.replace(scanner_widget_old, scanner_widget_new, 1)
+          print("Android scanner controller + detailed error patch applied.")
 
           # ========================================================
-          # 4. WEB PDF DOWNLOAD -> ANDROID PDF SHARE
+          # 5. WEB PDF DOWNLOAD -> ANDROID PDF SHARE
           # ========================================================
           pdf_start_marker = "final blob = html.Blob("
           pdf_end_marker = "html.Url.revokeObjectUrl(url);"
@@ -1057,6 +1120,13 @@ jobs:
           grep -n \
             "mobile_scanner" \
             lib/main_dashboard_screen.dart || true
+
+          echo ""
+          echo "Checking Android scanner controller patch..."
+          grep -n "_qrScannerController" \
+            lib/main_dashboard_screen.dart
+          grep -n "errorBuilder:" \
+            lib/main_dashboard_screen.dart
 
           echo ""
           echo "Checking url_launcher..."
