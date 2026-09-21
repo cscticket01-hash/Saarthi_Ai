@@ -367,6 +367,7 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
+          import re
 
           manifest = Path("android/app/src/main/AndroidManifest.xml")
 
@@ -409,18 +410,52 @@ jobs:
                   + text[manifest_end + 1:]
               )
 
-              manifest.write_text(
+          # mobile_scanner 5.1.1 + Android Impeller can show a
+          # black/error camera preview on some Android devices.
+          # Disable Impeller only for this Android APK build.
+          impeller_meta = (
+              '        <meta-data '
+              'android:name="io.flutter.embedding.android.EnableImpeller" '
+              'android:value="false" />'
+          )
+
+          if 'io.flutter.embedding.android.EnableImpeller' not in text:
+              app_match = re.search(
+                  r'<application\\b[^>]*>',
                   text,
-                  encoding="utf-8",
+                  flags=re.S,
               )
 
-          print("===== ANDROID MANIFEST =====")
-          print(
-              manifest.read_text(
-                  encoding="utf-8",
-                  errors="ignore",
+              if not app_match:
+                  raise SystemExit(
+                      "ERROR: AndroidManifest.xml me <application> tag nahi mila"
+                  )
+
+              insert_at = app_match.end()
+              text = (
+                  text[:insert_at]
+                  + "\n"
+                  + impeller_meta
+                  + text[insert_at:]
               )
+
+          manifest.write_text(
+              text,
+              encoding="utf-8",
           )
+
+          print("===== ANDROID MANIFEST =====")
+          final_manifest = manifest.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          print(final_manifest)
+
+          if 'io.flutter.embedding.android.EnableImpeller' not in final_manifest:
+              raise SystemExit("ERROR: Impeller disable flag missing")
+
+          print("Android scanner fix: Impeller disabled.")
           PY
 
       # ============================================================
