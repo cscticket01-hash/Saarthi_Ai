@@ -483,8 +483,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Upgrading Android runner copy to mobile_scanner 6.0.11..."
-          flutter pub add "mobile_scanner:6.0.11"
+          echo "Upgrading Android runner copy to mobile_scanner 7.4.2..."
+          flutter pub add "mobile_scanner:7.4.2"
           flutter pub get
 
           echo ""
@@ -493,12 +493,12 @@ jobs:
           flutter pub deps > /tmp/saarthi-pub-deps.txt
           grep "mobile_scanner" /tmp/saarthi-pub-deps.txt || true
 
-          if ! grep -q "mobile_scanner 6.0.11" /tmp/saarthi-pub-deps.txt; then
-            echo "::error::mobile_scanner 6.0.11 resolve nahi hua."
+          if ! grep -q "mobile_scanner 7.4.2" /tmp/saarthi-pub-deps.txt; then
+            echo "::error::mobile_scanner 7.4.2 resolve nahi hua."
             exit 1
           fi
 
-          echo "OK - Android mobile_scanner 6.0.11 active."
+          echo "OK - Android mobile_scanner 7.4.2 active."
 
       # ============================================================
       # 12. FIX OLD PLUGIN COMPILE SDK
@@ -804,7 +804,7 @@ jobs:
               )
           text = text.replace(scanner_success_old, scanner_success_new, 1)
           scanner_widget_old = '                MobileScanner(\n                  fit: BoxFit.cover,\n                  onDetect: _onInlineQrDetected,\n                ),\n'
-          scanner_widget_new = "                MobileScanner(\n                  controller: _qrScannerController,\n                  fit: BoxFit.cover,\n                  onDetect: _onInlineQrDetected,\n                  errorBuilder: (context, error, child) {\n                    final details = error.errorDetails?.message;\n                    final code = error.errorCode.name;\n\n                    return Container(\n                      color: Colors.black,\n                      alignment: Alignment.center,\n                      padding: const EdgeInsets.all(18),\n                      child: Text(\n                        details == null || details.isEmpty\n                            ? 'Scanner error: $code'\n                            : 'Scanner error: $code\\n$details',\n                        textAlign: TextAlign.center,\n                        style: const TextStyle(\n                          color: Colors.redAccent,\n                          fontSize: 13,\n                          fontWeight: FontWeight.w700,\n                        ),\n                      ),\n                    );\n                  },\n                ),\n"
+          scanner_widget_new = "                MobileScanner(\n                  controller: _qrScannerController,\n                  fit: BoxFit.cover,\n                  onDetect: _onInlineQrDetected,\n                  errorBuilder: (context, error) {\n                    final details = error.errorDetails?.message;\n                    final code = error.errorCode.name;\n\n                    return Container(\n                      color: Colors.black,\n                      alignment: Alignment.center,\n                      padding: const EdgeInsets.all(18),\n                      child: Text(\n                        details == null || details.isEmpty\n                            ? 'Scanner error: $code'\n                            : 'Scanner error: $code\\n$details',\n                        textAlign: TextAlign.center,\n                        style: const TextStyle(\n                          color: Colors.redAccent,\n                          fontSize: 13,\n                          fontWeight: FontWeight.w700,\n                        ),\n                      ),\n                    );\n                  },\n                ),\n"
           if scanner_widget_old not in text:
               raise SystemExit(
                   "ERROR: MobileScanner widget patch point nahi mila"
