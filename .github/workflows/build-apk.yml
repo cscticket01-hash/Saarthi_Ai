@@ -489,9 +489,11 @@ jobs:
 
           echo ""
           echo "===== MOBILE SCANNER VERSION ====="
-          flutter pub deps | grep "mobile_scanner"
 
-          if ! flutter pub deps | grep -q "mobile_scanner 6.0.11"; then
+          flutter pub deps > /tmp/saarthi-pub-deps.txt
+          grep "mobile_scanner" /tmp/saarthi-pub-deps.txt || true
+
+          if ! grep -q "mobile_scanner 6.0.11" /tmp/saarthi-pub-deps.txt; then
             echo "::error::mobile_scanner 6.0.11 resolve nahi hua."
             exit 1
           fi
