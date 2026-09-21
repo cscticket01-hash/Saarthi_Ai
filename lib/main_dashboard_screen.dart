@@ -7242,7 +7242,8 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
     'Vehicle Fees',
   ];
 
-  final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _nameSearchController = TextEditingController();
+  final TextEditingController _rollSearchController = TextEditingController();
   final TextEditingController _receivedAmountController = TextEditingController();
 
   final List<String> _classes = [
@@ -7255,6 +7256,8 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   String? _activeStudentId;
   String _paymentMode = 'Cash';
   bool _isSavingPayment = false;
+  bool _activeFeeSettingsReady = false;
+  String? _activeFeeSettingsMessage;
 
   Map<String, double> _activeFeeAmounts = {};
   Set<String> _selectedFeeHeads = <String>{};
@@ -7269,7 +7272,8 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
 
   @override
   void dispose() {
-    _searchController.dispose();
+    _nameSearchController.dispose();
+    _rollSearchController.dispose();
     _receivedAmountController.dispose();
     super.dispose();
   }
@@ -7390,19 +7394,20 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
 
     final data = doc.data() ?? <String, dynamic>{};
     final rawFees = Map<String, dynamic>.from(data['fees'] ?? {});
-    final rawDefaults = Map<String, dynamic>.from(data['defaultSelected'] ?? {});
 
     final fees = <String, double>{};
-    final defaults = <String, bool>{};
-
     for (final head in _feeHeads) {
       fees[head] = _toDouble(rawFees[head]);
-      defaults[head] = rawDefaults[head] == true || head == 'Tuition Fees';
     }
+
+    final configuredHeads = _feeHeads
+        .where((head) => (fees[head] ?? 0) > 0)
+        .toList();
 
     return {
       'fees': fees,
-      'defaultSelected': defaults,
+      'configured': configuredHeads.isNotEmpty,
+      'configuredHeads': configuredHeads,
     };
   }
 
@@ -7423,44 +7428,67 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
       return;
     }
 
+    if (mounted) {
+      setState(() {
+        _activeStudentId = studentDoc.id;
+        _activeFeeSettingsReady = false;
+        _activeFeeSettingsMessage = 'Fee structure load ho raha hai...';
+        _activeFeeAmounts = {};
+        _selectedFeeHeads = <String>{};
+        _activeLedger = ledger;
+        _receivedAmountController.clear();
+      });
+    }
+
     try {
       final settings = await _getClassFeeSettings(studentClass);
       final fees = Map<String, double>.from(settings['fees'] as Map);
-      final defaults = Map<String, bool>.from(settings['defaultSelected'] as Map);
+      final configured = settings['configured'] == true;
+
+      if (!configured) {
+        if (!mounted) return;
+        setState(() {
+          _activeFeeSettingsReady = false;
+          _activeFeeSettingsMessage =
+              '$studentClass ke liye fixed fee amount Settings me save nahi hai. Pehle Payment Collection Settings complete karein.';
+          _activeFeeAmounts = fees;
+          _selectedFeeHeads = <String>{};
+        });
+        return;
+      }
 
       final savedItems = Map<String, dynamic>.from(ledger?['feeItems'] ?? {});
       final selected = <String>{};
 
+      // Existing partial payment me same fee heads lock rahenge.
       if (savedItems.isNotEmpty) {
         for (final entry in savedItems.entries) {
           if (_toDouble(entry.value) > 0) selected.add(entry.key);
-        }
-      } else {
-        for (final head in _feeHeads) {
-          if ((defaults[head] ?? false) && (fees[head] ?? 0) > 0) {
-            selected.add(head);
-          }
         }
       }
 
       final expected = _toDouble(ledger?['expectedAmount']);
       final paid = _toDouble(ledger?['totalPaid']);
-      final selectedTotal = expected > 0
-          ? expected
-          : selected.fold<double>(0, (sum, head) => sum + (fees[head] ?? 0));
-      final remaining = (selectedTotal - paid).clamp(0, double.infinity).toDouble();
+      final remaining = (expected - paid).clamp(0, double.infinity).toDouble();
 
       if (!mounted) return;
       setState(() {
         _activeStudentId = studentDoc.id;
+        _activeFeeSettingsReady = true;
+        _activeFeeSettingsMessage = null;
         _activeFeeAmounts = fees;
         _selectedFeeHeads = selected;
         _activeLedger = ledger;
         _paymentMode = ledger?['paymentMode']?.toString() ?? 'Cash';
-        _receivedAmountController.text = remaining > 0 ? remaining.toStringAsFixed(0) : '';
+        _receivedAmountController.text =
+            remaining > 0 ? remaining.toStringAsFixed(0) : '';
       });
     } catch (e) {
       if (!mounted) return;
+      setState(() {
+        _activeFeeSettingsReady = false;
+        _activeFeeSettingsMessage = 'Fee settings load error: $e';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: Colors.redAccent,
@@ -7906,109 +7934,60 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
     }
   }
 
-  Widget _feeStructurePreview() {
-    if (_selectedClass == 'All Classes') {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: const Color(0xFF121F26),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white10),
-        ),
-        child: const Text(
-          'Fee Structure dekhne ke liye ek Class select karein.',
-          style: TextStyle(color: Colors.white54),
-        ),
-      );
-    }
-
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('fee_settings')
-          .doc(_settingsDocId(_selectedClass))
-          .snapshots(),
-      builder: (context, snapshot) {
-        final data = snapshot.data?.data() ?? <String, dynamic>{};
-        final fees = Map<String, dynamic>.from(data['fees'] ?? {});
-        final defaults = Map<String, dynamic>.from(data['defaultSelected'] ?? {});
-        final visible = _feeHeads.where((head) => _toDouble(fees[head]) > 0).toList();
-
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xFF121F26),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF00A884).withOpacity(0.22)),
+  Widget _emptyPaymentPanel() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF102129),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: const Column(
+        children: [
+          Icon(Icons.payments_outlined, color: Colors.white24, size: 34),
+          SizedBox(height: 8),
+          Text(
+            'Student select karein',
+            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w800),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.receipt_long_rounded, color: Color(0xFF00D9A5), size: 19),
-                  const SizedBox(width: 8),
-                  Text(
-                    '$_selectedClass Fee Structure',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              if (visible.isEmpty)
-                const Text('Fee settings abhi set nahi hai.', style: TextStyle(color: Colors.white54))
-              else
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: visible.map((head) {
-                    final checked = defaults[head] == true || head == 'Tuition Fees';
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF172229),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: checked ? const Color(0xFF00A884).withOpacity(0.35) : Colors.white10),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            checked ? Icons.check_circle_rounded : Icons.circle_outlined,
-                            color: checked ? const Color(0xFF00A884) : Colors.white24,
-                            size: 15,
-                          ),
-                          const SizedBox(width: 6),
-                          Text('$head  ${_money(_toDouble(fees[head]))}', style: const TextStyle(color: Colors.white70, fontSize: 11)),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
-            ],
+          SizedBox(height: 4),
+          Text(
+            'Neeche student row me Collect dabayein. Fee collection isi panel me hoga.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white38, fontSize: 11),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
-  Widget _inlinePaymentPanel(
-    QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
+  Widget _mainPaymentPanel(
+    QueryDocumentSnapshot<Map<String, dynamic>>? studentDoc,
     Map<String, dynamic>? ledger,
   ) {
+    if (studentDoc == null) return _emptyPaymentPanel();
+
     final student = studentDoc.data();
+    final name = student['name']?.toString() ?? 'Student';
+    final studentClass = student['class']?.toString() ?? '';
+    final roll = student['rollNo']?.toString() ?? '';
     final oldPaid = _toDouble(ledger?['totalPaid']);
     final oldExpected = _toDouble(ledger?['expectedAmount']);
     final expected = oldExpected > 0 ? oldExpected : _selectedFeesTotal;
     final remaining = (expected - oldPaid).clamp(0, double.infinity).toDouble();
+    final status = _feeStatus(oldExpected, oldPaid);
+    final alreadyPaid = status == 'PAID';
+    final feeHeadsWithAmount = _feeHeads
+        .where((head) => (_activeFeeAmounts[head] ?? 0) > 0)
+        .toList();
 
     return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(14),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF102129),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFF00A884).withOpacity(0.35)),
       ),
       child: Column(
@@ -8016,119 +7995,235 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.payments_rounded, color: Color(0xFF00D9A5)),
-              const SizedBox(width: 8),
+              const Icon(Icons.account_circle_rounded, color: Color(0xFF00D9A5), size: 28),
+              const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  'Collect Payment - ${student['name'] ?? ''}',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$studentClass • Roll $roll • ${_monthName(_selectedMonth)}',
+                      style: const TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                  ],
                 ),
               ),
+              if (ledger?['lastPaymentId'] != null) ...[
+                OutlinedButton.icon(
+                  onPressed: () => _printLastReceipt(ledger),
+                  icon: const Icon(Icons.print_rounded, size: 17),
+                  label: const Text('Print'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: () => _whatsappLastReceipt(ledger),
+                  icon: const Icon(Icons.send_rounded, size: 17, color: Color(0xFF25D366)),
+                  label: const Text('WhatsApp'),
+                ),
+              ],
               IconButton(
-                tooltip: 'Close',
-                onPressed: _isSavingPayment ? null : () => setState(() => _activeStudentId = null),
+                tooltip: 'Clear student',
+                onPressed: _isSavingPayment
+                    ? null
+                    : () {
+                        setState(() {
+                          _activeStudentId = null;
+                          _activeFeeSettingsReady = false;
+                          _activeFeeSettingsMessage = null;
+                          _activeFeeAmounts = {};
+                          _selectedFeeHeads = <String>{};
+                          _activeLedger = null;
+                          _receivedAmountController.clear();
+                        });
+                      },
                 icon: const Icon(Icons.close_rounded, color: Colors.white54),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _feeHeads.map((head) {
-              final fee = _activeFeeAmounts[head] ?? 0;
-              if (fee <= 0) return const SizedBox.shrink();
-              final selected = _selectedFeeHeads.contains(head);
-              final locked = oldExpected > 0;
-              return FilterChip(
-                selected: selected,
-                onSelected: locked
-                    ? null
-                    : (value) {
-                        setState(() {
-                          if (value) {
-                            _selectedFeeHeads.add(head);
-                          } else {
-                            _selectedFeeHeads.remove(head);
-                          }
-                          final newTotal = _selectedFeesTotal;
-                          _receivedAmountController.text = newTotal > 0 ? newTotal.toStringAsFixed(0) : '';
-                        });
+          const SizedBox(height: 14),
+
+          if (!_activeFeeSettingsReady) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent.withOpacity(0.09),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orangeAccent.withOpacity(0.35)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.settings_suggest_rounded, color: Colors.orangeAccent),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _activeFeeSettingsMessage ??
+                          'Is class ka fixed fee structure Settings me save nahi hai.',
+                      style: const TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const FeeCollectionSettingsScreen()),
+                      );
+                      if (!mounted) return;
+                      await _openInlineCollector(studentDoc, ledger);
+                    },
+                    icon: const Icon(Icons.settings_rounded),
+                    label: const Text('Open Settings'),
+                  ),
+                ],
+              ),
+            ),
+          ] else if (alreadyPaid) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00A884).withOpacity(0.10),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '✓ ${_monthName(_selectedMonth)} ka payment complete hai. Collect button next month automatically unlock hoga.',
+                style: const TextStyle(color: Color(0xFF00D9A5), fontWeight: FontWeight.w700),
+              ),
+            ),
+          ] else ...[
+            const Text(
+              'Fee Structure',
+              style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'Sirf Settings me fixed amount wale fee types yahan aayenge. Payment ke liye fee type tick karein.',
+              style: TextStyle(color: Colors.white38, fontSize: 10.5),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              constraints: const BoxConstraints(maxHeight: 260),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0B171D),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: feeHeadsWithAmount.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: Text('Fixed fee amount nahi mila.', style: TextStyle(color: Colors.white54)),
+                    )
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: feeHeadsWithAmount.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white10),
+                      itemBuilder: (context, index) {
+                        final head = feeHeadsWithAmount[index];
+                        final amount = _activeFeeAmounts[head] ?? 0.0;
+                        final checked = _selectedFeeHeads.contains(head);
+                        final locked = oldExpected > 0;
+
+                        return CheckboxListTile(
+                          dense: true,
+                          value: checked,
+                          activeColor: const Color(0xFF00A884),
+                          controlAffinity: ListTileControlAffinity.leading,
+                          title: Text(head, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                          secondary: Text(
+                            _money(amount),
+                            style: const TextStyle(color: Color(0xFF00D9A5), fontWeight: FontWeight.w800),
+                          ),
+                          onChanged: locked
+                              ? null
+                              : (value) {
+                                  setState(() {
+                                    if (value == true) {
+                                      _selectedFeeHeads.add(head);
+                                    } else {
+                                      _selectedFeeHeads.remove(head);
+                                    }
+                                    final total = _selectedFeesTotal;
+                                    _receivedAmountController.text =
+                                        total > 0 ? total.toStringAsFixed(0) : '';
+                                  });
+                                },
+                        );
                       },
-                selectedColor: const Color(0x3300A884),
-                backgroundColor: const Color(0xFF172229),
-                checkmarkColor: const Color(0xFF00D9A5),
-                label: Text(
-                  '$head ${_money(fee)}',
-                  style: TextStyle(color: selected ? const Color(0xFF00D9A5) : Colors.white70, fontSize: 11),
+                    ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF172229),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Text(
+                    'Total ${_money(expected)}   •   Paid ${_money(oldPaid)}   •   Due ${_money(remaining)}',
+                    style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w800),
+                  ),
                 ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              SizedBox(
-                width: 210,
-                child: TextField(
-                  controller: _receivedAmountController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _inputDecoration('Amount Received', Icons.currency_rupee_rounded),
+                SizedBox(
+                  width: 205,
+                  child: TextField(
+                    controller: _receivedAmountController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Amount Received', Icons.currency_rupee_rounded),
+                  ),
                 ),
-              ),
-              SizedBox(
-                width: 190,
-                child: DropdownButtonFormField<String>(
-                  value: _paymentMode,
-                  dropdownColor: const Color(0xFF172229),
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _inputDecoration('Payment Mode', Icons.account_balance_wallet_rounded),
-                  items: const [
-                    DropdownMenuItem(value: 'Cash', child: Text('Cash')),
-                    DropdownMenuItem(value: 'UPI', child: Text('UPI')),
-                    DropdownMenuItem(value: 'Bank Transfer', child: Text('Bank Transfer')),
-                    DropdownMenuItem(value: 'Cheque', child: Text('Cheque')),
-                  ],
-                  onChanged: _isSavingPayment ? null : (value) {
-                    if (value != null) setState(() => _paymentMode = value);
-                  },
+                SizedBox(
+                  width: 190,
+                  child: DropdownButtonFormField<String>(
+                    value: _paymentMode,
+                    dropdownColor: const Color(0xFF172229),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _inputDecoration('Payment Mode', Icons.account_balance_wallet_rounded),
+                    items: const [
+                      DropdownMenuItem(value: 'Cash', child: Text('Cash')),
+                      DropdownMenuItem(value: 'UPI', child: Text('UPI')),
+                      DropdownMenuItem(value: 'Bank Transfer', child: Text('Bank Transfer')),
+                      DropdownMenuItem(value: 'Cheque', child: Text('Cheque')),
+                    ],
+                    onChanged: _isSavingPayment
+                        ? null
+                        : (value) {
+                            if (value != null) setState(() => _paymentMode = value);
+                          },
+                  ),
                 ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF172229),
-                  borderRadius: BorderRadius.circular(10),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  ),
+                  onPressed: _isSavingPayment || _selectedFeeHeads.isEmpty
+                      ? null
+                      : () => _collectPayment(studentDoc, ledger),
+                  icon: _isSavingPayment
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.check_circle_rounded, color: Colors.white),
+                  label: Text(
+                    _isSavingPayment ? 'Saving...' : 'PAID / COLLECT',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                  ),
                 ),
-                child: Text(
-                  'Total ${_money(expected)}  •  Paid ${_money(oldPaid)}  •  Due ${_money(remaining)}',
-                  style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-                ),
-              ),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00A884),
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
-                ),
-                onPressed: _isSavingPayment ? null : () => _collectPayment(studentDoc, ledger),
-                icon: _isSavingPayment
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.check_circle_rounded, color: Colors.white),
-                label: Text(
-                  _isSavingPayment ? 'Saving...' : 'Confirm Collect',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -8144,103 +8239,89 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
     final roll = student['rollNo']?.toString() ?? '';
     final expected = _toDouble(ledger?['expectedAmount']);
     final paid = _toDouble(ledger?['totalPaid']);
-    final balance = expected > 0 ? (expected - paid).clamp(0, double.infinity).toDouble() : 0.0;
+    final balance = expected > 0
+        ? (expected - paid).clamp(0, double.infinity).toDouble()
+        : 0.0;
     final status = _feeStatus(expected, paid);
     final color = _statusColor(status);
     final isPaid = status == 'PAID';
     final isActive = _activeStudentId == studentDoc.id;
 
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xFF172229),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: const Color(0x2200A884),
-                child: Text(
-                  name.isNotEmpty ? name[0].toUpperCase() : 'S',
-                  style: const TextStyle(color: Color(0xFF00D9A5), fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    Text('$studentClass • Roll $roll', style: const TextStyle(color: Colors.white54, fontSize: 11)),
-                  ],
-                ),
-              ),
-              if (expected > 0) ...[
-                Text('Fee ${_money(expected)}', style: const TextStyle(color: Colors.white70, fontSize: 11)),
-                const SizedBox(width: 14),
-                Text('Paid ${_money(paid)}', style: const TextStyle(color: Color(0xFF00D9A5), fontSize: 11)),
-                const SizedBox(width: 14),
-                Text('Due ${_money(balance)}', style: const TextStyle(color: Colors.orangeAccent, fontSize: 11)),
-                const SizedBox(width: 14),
-              ] else ...[
-                const Text('Fee not set', style: TextStyle(color: Colors.white54, fontSize: 11)),
-                const SizedBox(width: 14),
-              ],
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  status,
-                  style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(width: 10),
-              if (ledger?['lastPaymentId'] != null) ...[
-                IconButton(
-                  tooltip: 'Print Receipt',
-                  onPressed: () => _printLastReceipt(ledger),
-                  icon: const Icon(Icons.print_rounded, color: Colors.white70),
-                ),
-                IconButton(
-                  tooltip: 'WhatsApp Receipt',
-                  onPressed: () => _whatsappLastReceipt(ledger),
-                  icon: const Icon(Icons.send_rounded, color: Color(0xFF25D366)),
-                ),
-              ],
-              const SizedBox(width: 4),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isPaid ? Colors.white12 : const Color(0xFF00A884),
-                ),
-                onPressed: isPaid
-                    ? null
-                    : () {
-                        if (isActive) {
-                          setState(() => _activeStudentId = null);
-                        } else {
-                          _openInlineCollector(studentDoc, ledger);
-                        }
-                      },
-                icon: Icon(
-                  isPaid ? Icons.lock_rounded : Icons.payments_rounded,
-                  color: isPaid ? Colors.white38 : Colors.white,
-                  size: 17,
-                ),
-                label: Text(
-                  isPaid ? 'Paid ✓' : (isActive ? 'Close' : 'Collect'),
-                  style: TextStyle(color: isPaid ? Colors.white38 : Colors.white),
-                ),
-              ),
-            ],
-          ),
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: isActive ? const Color(0xFF183139) : const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isActive ? const Color(0xFF00A884).withOpacity(0.45) : Colors.white.withOpacity(0.03),
         ),
-        if (isActive) _inlinePaymentPanel(studentDoc, ledger),
-      ],
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: const Color(0x2200A884),
+            child: Text(
+              name.isNotEmpty ? name[0].toUpperCase() : 'S',
+              style: const TextStyle(color: Color(0xFF00D9A5), fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                Text('$studentClass • Roll $roll', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              status,
+              style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+            ),
+          ),
+          if (expected > 0) ...[
+            const SizedBox(width: 10),
+            Text('Due ${_money(balance)}', style: const TextStyle(color: Colors.orangeAccent, fontSize: 11)),
+          ],
+          const SizedBox(width: 10),
+          if (ledger?['lastPaymentId'] != null) ...[
+            OutlinedButton.icon(
+              onPressed: () => _printLastReceipt(ledger),
+              icon: const Icon(Icons.print_rounded, size: 16),
+              label: const Text('Print'),
+            ),
+            const SizedBox(width: 6),
+            IconButton(
+              tooltip: 'WhatsApp Receipt',
+              onPressed: () => _whatsappLastReceipt(ledger),
+              icon: const Icon(Icons.send_rounded, color: Color(0xFF25D366)),
+            ),
+          ],
+          const SizedBox(width: 6),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isPaid ? Colors.white12 : const Color(0xFF00A884),
+            ),
+            onPressed: isPaid ? null : () => _openInlineCollector(studentDoc, ledger),
+            icon: Icon(
+              isPaid ? Icons.lock_rounded : (isActive ? Icons.check_rounded : Icons.payments_rounded),
+              color: isPaid ? Colors.white38 : Colors.white,
+              size: 17,
+            ),
+            label: Text(
+              isPaid ? 'Paid ✓' : (isActive ? 'Selected' : 'Collect'),
+              style: TextStyle(color: isPaid ? Colors.white38 : Colors.white),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -8251,24 +8332,6 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF1F2C34),
         title: const Text('Fees Collection'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: TextButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const FeeCollectionSettingsScreen()),
-                );
-              },
-              icon: const Icon(Icons.settings_rounded, color: Color(0xFF00D9A5)),
-              label: const Text(
-                'Payment Collection Settings',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ),
-        ],
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance.collection('students_directory').snapshots(),
@@ -8278,7 +8341,10 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
           }
           if (studentSnapshot.hasError) {
             return Center(
-              child: Text('Students load error: ${studentSnapshot.error}', style: const TextStyle(color: Colors.redAccent)),
+              child: Text(
+                'Students load error: ${studentSnapshot.error}',
+                style: const TextStyle(color: Colors.redAccent),
+              ),
             );
           }
 
@@ -8297,16 +8363,20 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
                 if (studentId.isNotEmpty) ledger[studentId] = data;
               }
 
-              final search = _searchController.text.trim().toLowerCase();
+              final nameQuery = _nameSearchController.text.trim().toLowerCase();
+              final rollQuery = _rollSearchController.text.trim().toLowerCase();
+
               final filtered = students.where((doc) {
                 final data = doc.data();
                 final cls = data['class']?.toString() ?? '';
                 final name = data['name']?.toString().toLowerCase() ?? '';
                 final roll = data['rollNo']?.toString().toLowerCase() ?? '';
-                final contact = data['parentContact']?.toString().toLowerCase() ?? '';
+
                 final classOk = _selectedClass == 'All Classes' || cls == _selectedClass;
-                final searchOk = search.isEmpty || name.contains(search) || roll.contains(search) || contact.contains(search);
-                return classOk && searchOk;
+                final nameOk = nameQuery.isEmpty || name.contains(nameQuery);
+                final rollOk = rollQuery.isEmpty || roll.contains(rollQuery);
+
+                return classOk && nameOk && rollOk;
               }).toList();
 
               filtered.sort((a, b) {
@@ -8339,6 +8409,20 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
                 }
               }
 
+              QueryDocumentSnapshot<Map<String, dynamic>>? activeStudentDoc;
+              if (_activeStudentId != null) {
+                for (final doc in students) {
+                  if (doc.id == _activeStudentId) {
+                    activeStudentDoc = doc;
+                    break;
+                  }
+                }
+              }
+
+              final activeLedger = activeStudentDoc == null
+                  ? null
+                  : ledger[activeStudentDoc.id];
+
               return Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -8347,66 +8431,136 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
                       spacing: 10,
                       runSpacing: 10,
                       children: [
-                        _summaryCard(title: 'Total Students', count: filtered.length, icon: Icons.groups_rounded, color: Colors.blueAccent),
-                        _summaryCard(title: 'Paid', count: paidCount, icon: Icons.check_circle_rounded, color: const Color(0xFF00A884)),
-                        _summaryCard(title: 'Partial Paid', count: partialCount, icon: Icons.timelapse_rounded, color: Colors.orangeAccent),
-                        _summaryCard(title: 'Due', count: dueCount, icon: Icons.warning_amber_rounded, color: Colors.redAccent),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        SizedBox(
-                          width: 190,
-                          child: DropdownButtonFormField<String>(
-                            value: _selectedClass,
-                            dropdownColor: const Color(0xFF172229),
-                            style: const TextStyle(color: Colors.white),
-                            decoration: _inputDecoration('Class', Icons.class_rounded),
-                            items: _classes.map((value) => DropdownMenuItem(value: value, child: Text(value))).toList(),
-                            onChanged: (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _selectedClass = value;
-                                  _activeStudentId = null;
-                                });
-                              }
-                            },
-                          ),
+                        _summaryCard(
+                          title: 'Total Students',
+                          count: filtered.length,
+                          icon: Icons.groups_rounded,
+                          color: Colors.blueAccent,
                         ),
-                        SizedBox(
-                          width: 210,
-                          child: DropdownButtonFormField<String>(
-                            value: _selectedMonth,
-                            dropdownColor: const Color(0xFF172229),
-                            style: const TextStyle(color: Colors.white),
-                            decoration: _inputDecoration('Month', Icons.calendar_month_rounded),
-                            items: _monthList().map((value) => DropdownMenuItem(value: value, child: Text(_monthName(value)))).toList(),
-                            onChanged: (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _selectedMonth = value;
-                                  _activeStudentId = null;
-                                });
-                              }
-                            },
-                          ),
+                        _summaryCard(
+                          title: 'Paid',
+                          count: paidCount,
+                          icon: Icons.check_circle_rounded,
+                          color: const Color(0xFF00A884),
                         ),
-                        SizedBox(
-                          width: 320,
-                          child: TextField(
-                            controller: _searchController,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: _inputDecoration('Search Student / Roll / Mobile', Icons.search_rounded),
-                            onChanged: (_) => setState(() {}),
-                          ),
+                        _summaryCard(
+                          title: 'Partial Paid',
+                          count: partialCount,
+                          icon: Icons.timelapse_rounded,
+                          color: Colors.orangeAccent,
+                        ),
+                        _summaryCard(
+                          title: 'Due',
+                          count: dueCount,
+                          icon: Icons.warning_amber_rounded,
+                          color: Colors.redAccent,
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    _feeStructurePreview(),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF121F26),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 205,
+                            child: DropdownButtonFormField<String>(
+                              value: _selectedMonth,
+                              dropdownColor: const Color(0xFF172229),
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('Month', Icons.calendar_month_rounded),
+                              items: _monthList()
+                                  .map((value) => DropdownMenuItem(
+                                        value: value,
+                                        child: Text(_monthName(value)),
+                                      ))
+                                  .toList(),
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() {
+                                    _selectedMonth = value;
+                                    _activeStudentId = null;
+                                    _activeFeeSettingsReady = false;
+                                    _activeFeeSettingsMessage = null;
+                                    _activeFeeAmounts = {};
+                                    _selectedFeeHeads = <String>{};
+                                    _receivedAmountController.clear();
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: 190,
+                            child: DropdownButtonFormField<String>(
+                              value: _selectedClass,
+                              dropdownColor: const Color(0xFF172229),
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('Class', Icons.class_rounded),
+                              items: _classes
+                                  .map((value) => DropdownMenuItem(value: value, child: Text(value)))
+                                  .toList(),
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() {
+                                    _selectedClass = value;
+                                    _activeStudentId = null;
+                                    _activeFeeSettingsReady = false;
+                                    _activeFeeSettingsMessage = null;
+                                    _activeFeeAmounts = {};
+                                    _selectedFeeHeads = <String>{};
+                                    _receivedAmountController.clear();
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: 260,
+                            child: TextField(
+                              controller: _nameSearchController,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('Student Name', Icons.person_search_rounded),
+                              onChanged: (_) => setState(() {}),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 180,
+                            child: TextField(
+                              controller: _rollSearchController,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _inputDecoration('Roll No', Icons.numbers_rounded),
+                              onChanged: (_) => setState(() {}),
+                            ),
+                          ),
+                          IconButton.filledTonal(
+                            tooltip: 'Payment Collection Settings',
+                            onPressed: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const FeeCollectionSettingsScreen()),
+                              );
+                              if (!mounted) return;
+                              if (activeStudentDoc != null) {
+                                await _openInlineCollector(activeStudentDoc, activeLedger);
+                              }
+                            },
+                            icon: const Icon(Icons.settings_rounded, color: Color(0xFF00D9A5)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _mainPaymentPanel(activeStudentDoc, activeLedger),
                     const SizedBox(height: 12),
                     Expanded(
                       child: filtered.isEmpty
@@ -8431,6 +8585,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
       ),
     );
   }
+
 }
 
 // ============================================================
@@ -8441,10 +8596,12 @@ class FeeCollectionSettingsScreen extends StatefulWidget {
   const FeeCollectionSettingsScreen({super.key});
 
   @override
-  State<FeeCollectionSettingsScreen> createState() => _FeeCollectionSettingsScreenState();
+  State<FeeCollectionSettingsScreen> createState() =>
+      _FeeCollectionSettingsScreenState();
 }
 
-class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScreen> {
+class _FeeCollectionSettingsScreenState
+    extends State<FeeCollectionSettingsScreen> {
   static const List<String> _feeHeads = [
     'Tuition Fees',
     'Admission Fees',
@@ -8468,9 +8625,9 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
     'Vehicle Fees',
   ];
 
-  final List<String> _classes = List.generate(10, (index) => 'Class ${index + 1}');
+  final List<String> _classes =
+      List.generate(10, (index) => 'Class ${index + 1}');
   final Map<String, TextEditingController> _controllers = {};
-  final Map<String, bool> _defaultSelected = {};
 
   String _selectedClass = 'Class 1';
   bool _loading = true;
@@ -8481,7 +8638,6 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
     super.initState();
     for (final head in _feeHeads) {
       _controllers[head] = TextEditingController();
-      _defaultSelected[head] = head == 'Tuition Fees';
     }
     _loadSettings();
   }
@@ -8501,22 +8657,34 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
     return double.tryParse(value?.toString() ?? '') ?? 0.0;
   }
 
+  int get _configuredCount {
+    var count = 0;
+    for (final head in _feeHeads) {
+      final amount = double.tryParse(_controllers[head]!.text.trim()) ?? 0.0;
+      if (amount > 0) count++;
+    }
+    return count;
+  }
+
   Future<void> _loadSettings() async {
     setState(() => _loading = true);
     try {
-      final doc = await FirebaseFirestore.instance.collection('fee_settings').doc(_docId(_selectedClass)).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('fee_settings')
+          .doc(_docId(_selectedClass))
+          .get();
       final data = doc.data() ?? <String, dynamic>{};
       final fees = Map<String, dynamic>.from(data['fees'] ?? {});
-      final defaults = Map<String, dynamic>.from(data['defaultSelected'] ?? {});
 
       for (final head in _feeHeads) {
         final amount = _toDouble(fees[head]);
         _controllers[head]!.text = amount > 0 ? amount.toStringAsFixed(0) : '';
-        _defaultSelected[head] = defaults[head] == true || head == 'Tuition Fees';
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Settings load error: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Settings load error: $e')),
+        );
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -8524,17 +8692,47 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
   }
 
   Future<void> _saveSettings() async {
+    if (_saving) return;
+
+    final fees = <String, double>{};
+    for (final head in _feeHeads) {
+      final raw = _controllers[head]!.text.trim();
+      final amount = raw.isEmpty ? 0.0 : double.tryParse(raw);
+      if (amount == null || amount < 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('$head ka amount valid nahi hai.'),
+          ),
+        );
+        return;
+      }
+      fees[head] = amount;
+    }
+
+    final configuredHeads = _feeHeads.where((head) => (fees[head] ?? 0) > 0).toList();
+    if (configuredHeads.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text(
+            'Kam se kam ek fee type ka fixed amount set karein. Tabhi collection panel active hoga.',
+          ),
+        ),
+      );
+      return;
+    }
+
     setState(() => _saving = true);
     try {
-      final fees = <String, double>{};
-      for (final head in _feeHeads) {
-        fees[head] = double.tryParse(_controllers[head]!.text.trim()) ?? 0.0;
-      }
-
-      await FirebaseFirestore.instance.collection('fee_settings').doc(_docId(_selectedClass)).set({
+      await FirebaseFirestore.instance
+          .collection('fee_settings')
+          .doc(_docId(_selectedClass))
+          .set({
         'className': _selectedClass,
         'fees': fees,
-        'defaultSelected': _defaultSelected,
+        'configured': true,
+        'configuredHeads': configuredHeads,
         'updatedAt': FieldValue.serverTimestamp(),
         'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
       }, SetOptions(merge: true));
@@ -8543,13 +8741,19 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF00A884),
-          content: Text('$_selectedClass fee structure saved.'),
+          content: Text(
+            '$_selectedClass fee structure saved. ${configuredHeads.length} fee types collection ke liye active hain.',
+          ),
         ),
       );
+      setState(() {});
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.redAccent, content: Text('Settings save error: $e')),
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Settings save error: $e'),
+        ),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -8580,11 +8784,19 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
                   child: ListTile(
                     selected: selected,
                     selectedTileColor: const Color(0x2200A884),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    leading: Icon(Icons.class_rounded, color: selected ? const Color(0xFF00D9A5) : Colors.white38),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    leading: Icon(
+                      Icons.class_rounded,
+                      color: selected ? const Color(0xFF00D9A5) : Colors.white38,
+                    ),
                     title: Text(
                       cls,
-                      style: TextStyle(color: selected ? Colors.white : Colors.white60, fontWeight: selected ? FontWeight.w700 : FontWeight.normal),
+                      style: TextStyle(
+                        color: selected ? Colors.white : Colors.white60,
+                        fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
+                      ),
                     ),
                     onTap: () async {
                       if (cls == _selectedClass || _saving) return;
@@ -8598,7 +8810,9 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
           ),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)))
+                ? const Center(
+                    child: CircularProgressIndicator(color: Color(0xFF00A884)),
+                  )
                 : Padding(
                     padding: const EdgeInsets.all(18),
                     child: Column(
@@ -8606,14 +8820,40 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
                       children: [
                         Text(
                           '$_selectedClass Fee Structure',
-                          style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 5),
                         const Text(
-                          'Amount set karein. Tick ka matlab fee collection me default selected rahega.',
+                          'Koi default amount nahi hai. School yahan fixed amount save karega. Jis fee type me amount 0/blank hai, wo collection panel me nahi aayega.',
                           style: TextStyle(color: Colors.white54),
                         ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                          decoration: BoxDecoration(
+                            color: _configuredCount > 0
+                                ? const Color(0xFF00A884).withOpacity(0.08)
+                                : Colors.orangeAccent.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            _configuredCount > 0
+                                ? '$_configuredCount fee types configured. Save karne ke baad Fees Collection panel automatic active hoga.'
+                                : 'Abhi fixed fee amount set nahi hai. Fees Collection disabled rahega.',
+                            style: TextStyle(
+                              color: _configuredCount > 0
+                                  ? const Color(0xFF00D9A5)
+                                  : Colors.orangeAccent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                         Expanded(
                           child: ListView.separated(
                             itemCount: _feeHeads.length,
@@ -8621,33 +8861,33 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
                             itemBuilder: (context, index) {
                               final head = _feeHeads[index];
                               return Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF172229),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Row(
                                   children: [
-                                    Checkbox(
-                                      value: _defaultSelected[head] ?? false,
-                                      activeColor: const Color(0xFF00A884),
-                                      onChanged: (value) {
-                                        setState(() => _defaultSelected[head] = value == true);
-                                      },
-                                    ),
                                     Expanded(
-                                      child: Text(head, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                                      child: Text(
+                                        head,
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
                                     ),
                                     SizedBox(
-                                      width: 170,
+                                      width: 190,
                                       child: TextField(
                                         controller: _controllers[head],
                                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                         style: const TextStyle(color: Colors.white),
+                                        onChanged: (_) => setState(() {}),
                                         decoration: InputDecoration(
                                           prefixText: '₹ ',
                                           prefixStyle: const TextStyle(color: Color(0xFF00D9A5)),
-                                          hintText: '0',
+                                          hintText: 'Fixed amount',
                                           hintStyle: const TextStyle(color: Colors.white24),
                                           filled: true,
                                           fillColor: const Color(0xFF0B141A),
@@ -8695,6 +8935,8 @@ class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScree
     );
   }
 }
+
+
 
 // ============================================================
 // TEACHERS DIRECTORY
