@@ -7218,6 +7218,1414 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 // ============================================================
+// FEES COLLECTION
+// ============================================================
+
+class FeesCollectionScreen extends StatefulWidget {
+  const FeesCollectionScreen({super.key});
+
+  @override
+  State<FeesCollectionScreen> createState() =>
+      _FeesCollectionScreenState();
+}
+
+class _FeesCollectionScreenState
+    extends State<FeesCollectionScreen> {
+  final TextEditingController _searchController =
+      TextEditingController();
+
+  String _selectedClass = 'All Classes';
+  late String _selectedMonth;
+
+  final List<String> _classes = [
+    'All Classes',
+    ...List.generate(
+      10,
+      (index) => 'Class ${index + 1}',
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+
+    final now = DateTime.now();
+
+    _selectedMonth =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+
+    return double.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        0;
+  }
+
+  String _money(double value) {
+    return '₹${value.toStringAsFixed(0)}';
+  }
+
+  String _monthName(String value) {
+    final parts = value.split('-');
+
+    if (parts.length != 2) return value;
+
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+
+    final month = int.tryParse(parts[1]) ?? 1;
+
+    return '${months[month - 1]} ${parts[0]}';
+  }
+
+  List<String> _monthList() {
+    final now = DateTime.now();
+
+    return List.generate(12, (index) {
+      final date = DateTime(
+        now.year,
+        now.month - index,
+      );
+
+      return '${date.year}-'
+          '${date.month.toString().padLeft(2, '0')}';
+    });
+  }
+
+  String _feeStatus(
+    double expected,
+    double paid,
+  ) {
+    if (expected > 0 && paid >= expected) {
+      return 'PAID';
+    }
+
+    if (paid > 0) {
+      return 'PARTIAL';
+    }
+
+    return 'DUE';
+  }
+
+  Color _statusColor(String status) {
+    if (status == 'PAID') {
+      return const Color(0xFF00A884);
+    }
+
+    if (status == 'PARTIAL') {
+      return Colors.orangeAccent;
+    }
+
+    return Colors.redAccent;
+  }
+
+  InputDecoration _inputDecoration(
+    String label,
+    IconData icon,
+  ) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle:
+          const TextStyle(color: Colors.white54),
+      prefixIcon: Icon(
+        icon,
+        color: const Color(0xFF00A884),
+      ),
+      filled: true,
+      fillColor: const Color(0xFF172229),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+    );
+  }
+
+  Widget _summaryCard({
+    required String title,
+    required int count,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      width: 185,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: color.withOpacity(0.30),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius:
+                  BorderRadius.circular(12),
+            ),
+            child: Icon(
+              icon,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$count',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _ledgerId(String studentId) {
+    return '${_selectedMonth}_$studentId';
+  }
+
+  String _whatsappNumber(String number) {
+    var value =
+        number.replaceAll(RegExp(r'[^0-9]'), '');
+
+    if (value.length == 10) {
+      value = '91$value';
+    }
+
+    return value;
+  }
+
+  Future<void> _collectFees(
+    String studentId,
+    Map<String, dynamic> student,
+    Map<String, dynamic>? ledger,
+  ) async {
+    final oldExpected =
+        _toDouble(ledger?['expectedAmount']);
+
+    final oldPaid =
+        _toDouble(ledger?['totalPaid']);
+
+    final expectedController =
+        TextEditingController(
+      text: oldExpected > 0
+          ? oldExpected.toStringAsFixed(0)
+          : '',
+    );
+
+    final amountController =
+        TextEditingController();
+
+    final noteController =
+        TextEditingController();
+
+    String paymentMode = 'Cash';
+    String feeType = 'Tuition Fee';
+
+    bool saving = false;
+
+    final studentName =
+        student['name']?.toString() ?? '';
+
+    final studentClass =
+        student['class']?.toString() ?? '';
+
+    final roll =
+        student['rollNo']?.toString() ?? '';
+
+    final parentContact =
+        student['parentContact']
+                ?.toString() ??
+            '';
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (
+            context,
+            setDialogState,
+          ) {
+            return AlertDialog(
+              backgroundColor:
+                  const Color(0xFF1F2C34),
+              title: Text(
+                'Collect Fees - $studentName',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              content: SizedBox(
+                width: 470,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize:
+                        MainAxisSize.min,
+                    children: [
+                      Text(
+                        '$studentClass • Roll $roll\n'
+                        '${_monthName(_selectedMonth)}\n'
+                        'Already Paid: ${_money(oldPaid)}',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 15),
+
+                      TextField(
+                        controller:
+                            expectedController,
+                        enabled:
+                            oldExpected <= 0,
+                        keyboardType:
+                            TextInputType.number,
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Monthly Fee Amount',
+                          Icons
+                              .currency_rupee_rounded,
+                        ),
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      TextField(
+                        controller:
+                            amountController,
+                        keyboardType:
+                            TextInputType.number,
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Amount Received',
+                          Icons.payments_rounded,
+                        ),
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      DropdownButtonFormField<
+                          String>(
+                        value: feeType,
+                        dropdownColor:
+                            const Color(
+                          0xFF172229,
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Fee Type',
+                          Icons
+                              .receipt_long_rounded,
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value:
+                                'Tuition Fee',
+                            child: Text(
+                              'Tuition Fee',
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value:
+                                'Admission Fee',
+                            child: Text(
+                              'Admission Fee',
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value:
+                                'Exam Fee',
+                            child: Text(
+                              'Exam Fee',
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value:
+                                'Transport Fee',
+                            child: Text(
+                              'Transport Fee',
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Other',
+                            child: Text('Other'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            setDialogState(
+                              () => feeType = value,
+                            );
+                          }
+                        },
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      DropdownButtonFormField<
+                          String>(
+                        value: paymentMode,
+                        dropdownColor:
+                            const Color(
+                          0xFF172229,
+                        ),
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Payment Mode',
+                          Icons
+                              .account_balance_wallet_rounded,
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'Cash',
+                            child: Text('Cash'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'UPI',
+                            child: Text('UPI'),
+                          ),
+                          DropdownMenuItem(
+                            value:
+                                'Bank Transfer',
+                            child: Text(
+                              'Bank Transfer',
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Cheque',
+                            child:
+                                Text('Cheque'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            setDialogState(
+                              () =>
+                                  paymentMode =
+                                      value,
+                            );
+                          }
+                        },
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      TextField(
+                        controller:
+                            noteController,
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration:
+                            _inputDecoration(
+                          'Note (Optional)',
+                          Icons.note_alt_rounded,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving
+                      ? null
+                      : () {
+                          Navigator.pop(
+                            dialogContext,
+                          );
+                        },
+                  child: const Text(
+                    'Cancel',
+                  ),
+                ),
+
+                ElevatedButton(
+                  style:
+                      ElevatedButton.styleFrom(
+                    backgroundColor:
+                        const Color(
+                      0xFF00A884,
+                    ),
+                  ),
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          final expected =
+                              oldExpected > 0
+                                  ? oldExpected
+                                  : double
+                                          .tryParse(
+                                        expectedController
+                                            .text
+                                            .trim(),
+                                      ) ??
+                                      0;
+
+                          final amount =
+                              double.tryParse(
+                                    amountController
+                                        .text
+                                        .trim(),
+                                  ) ??
+                                  0;
+
+                          if (expected <= 0 ||
+                              amount <= 0) {
+                            return;
+                          }
+
+                          if (oldPaid + amount >
+                              expected) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Remaining fee ${_money(expected - oldPaid)} hai.',
+                                ),
+                              ),
+                            );
+
+                            return;
+                          }
+
+                          setDialogState(
+                            () =>
+                                saving = true,
+                          );
+
+                          final totalPaid =
+                              oldPaid + amount;
+
+                          final balance =
+                              expected -
+                                  totalPaid;
+
+                          final status =
+                              _feeStatus(
+                            expected,
+                            totalPaid,
+                          );
+
+                          final receiptNo =
+                              'SVN-${DateTime.now().millisecondsSinceEpoch}';
+
+                          try {
+                            await FirebaseFirestore
+                                .instance
+                                .collection(
+                                  'fee_ledger',
+                                )
+                                .doc(
+                                  _ledgerId(
+                                    studentId,
+                                  ),
+                                )
+                                .set(
+                              {
+                                'studentId':
+                                    studentId,
+                                'studentName':
+                                    studentName,
+                                'class':
+                                    studentClass,
+                                'rollNo': roll,
+                                'parentContact':
+                                    parentContact,
+                                'month':
+                                    _selectedMonth,
+                                'expectedAmount':
+                                    expected,
+                                'totalPaid':
+                                    totalPaid,
+                                'balance':
+                                    balance,
+                                'status':
+                                    status,
+                                'updatedAt':
+                                    FieldValue
+                                        .serverTimestamp(),
+                              },
+                              SetOptions(
+                                merge: true,
+                              ),
+                            );
+
+                            await FirebaseFirestore
+                                .instance
+                                .collection(
+                                  'fee_payments',
+                                )
+                                .add({
+                              'receiptNo':
+                                  receiptNo,
+                              'studentId':
+                                  studentId,
+                              'studentName':
+                                  studentName,
+                              'class':
+                                  studentClass,
+                              'rollNo': roll,
+                              'month':
+                                  _selectedMonth,
+                              'feeType':
+                                  feeType,
+                              'amount':
+                                  amount,
+                              'paymentMode':
+                                  paymentMode,
+                              'parentContact':
+                                  parentContact,
+                              'note':
+                                  noteController
+                                      .text
+                                      .trim(),
+                              'collectedBy':
+                                  FirebaseAuth
+                                          .instance
+                                          .currentUser
+                                          ?.email ??
+                                      'Admin',
+                              'paidAt':
+                                  FieldValue
+                                      .serverTimestamp(),
+                            });
+
+                            if (!mounted) {
+                              return;
+                            }
+
+                            Navigator.pop(
+                              dialogContext,
+                            );
+
+                            _showReceipt(
+                              receiptNo:
+                                  receiptNo,
+                              studentName:
+                                  studentName,
+                              studentClass:
+                                  studentClass,
+                              roll: roll,
+                              expected:
+                                  expected,
+                              amount: amount,
+                              totalPaid:
+                                  totalPaid,
+                              balance:
+                                  balance,
+                              paymentMode:
+                                  paymentMode,
+                              parentContact:
+                                  parentContact,
+                            );
+                          } catch (e) {
+                            setDialogState(
+                              () => saving =
+                                  false,
+                            );
+
+                            if (!mounted) {
+                              return;
+                            }
+
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(
+                              SnackBar(
+                                backgroundColor:
+                                    Colors
+                                        .redAccent,
+                                content: Text(
+                                  'Fee save error: $e',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                  child: Text(
+                    saving
+                        ? 'Saving...'
+                        : 'Collect Fees',
+                    style: const TextStyle(
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showReceipt({
+    required String receiptNo,
+    required String studentName,
+    required String studentClass,
+    required String roll,
+    required double expected,
+    required double amount,
+    required double totalPaid,
+    required double balance,
+    required String paymentMode,
+    required String parentContact,
+  }) {
+    final receipt = '''
+SARASWATI VIDYA NIKETAN, MADHABDHAM
+
+FEES RECEIPT
+
+Receipt No: $receiptNo
+Student: $studentName
+Class: $studentClass
+Roll No: $roll
+Month: ${_monthName(_selectedMonth)}
+
+Amount Received: ${_money(amount)}
+Total Paid: ${_money(totalPaid)}
+Balance Due: ${_money(balance)}
+
+Payment Mode: $paymentMode
+
+Thank You
+''';
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor:
+              const Color(0xFF1F2C34),
+          title: const Text(
+            'Payment Successful',
+            style: TextStyle(
+              color: Colors.white,
+            ),
+          ),
+          content: SelectableText(
+            receipt,
+            style: const TextStyle(
+              color: Colors.white70,
+              height: 1.5,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(
+                  ClipboardData(
+                    text: receipt,
+                  ),
+                );
+              },
+              child: const Text(
+                'Copy Receipt',
+              ),
+            ),
+
+            if (parentContact.isNotEmpty)
+              ElevatedButton(
+                style:
+                    ElevatedButton.styleFrom(
+                  backgroundColor:
+                      const Color(
+                    0xFF25D366,
+                  ),
+                ),
+                onPressed: () {
+                  final number =
+                      _whatsappNumber(
+                    parentContact,
+                  );
+
+                  final message =
+                      Uri.encodeComponent(
+                    receipt,
+                  );
+
+                  html.window.open(
+                    'https://wa.me/$number?text=$message',
+                    '_blank',
+                  );
+                },
+                child: const Text(
+                  'Send WhatsApp',
+                  style: TextStyle(
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+              },
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _studentCard(
+    QueryDocumentSnapshot<
+            Map<String, dynamic>>
+        studentDoc,
+    Map<String, dynamic>? ledger,
+  ) {
+    final student = studentDoc.data();
+
+    final name =
+        student['name']?.toString() ??
+            'Student';
+
+    final studentClass =
+        student['class']?.toString() ??
+            '';
+
+    final roll =
+        student['rollNo']?.toString() ??
+            '';
+
+    final expected =
+        _toDouble(
+      ledger?['expectedAmount'],
+    );
+
+    final paid =
+        _toDouble(
+      ledger?['totalPaid'],
+    );
+
+    final balance = expected > 0
+        ? expected - paid
+        : 0;
+
+    final status =
+        _feeStatus(
+      expected,
+      paid,
+    );
+
+    final color =
+        _statusColor(status);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius:
+            BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor:
+                const Color(
+              0x2200A884,
+            ),
+            child: Text(
+              name.isNotEmpty
+                  ? name[0].toUpperCase()
+                  : 'S',
+              style: const TextStyle(
+                color:
+                    Color(0xFF00D9A5),
+                fontWeight:
+                    FontWeight.bold,
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 12),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight:
+                        FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  '$studentClass • Roll $roll',
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          Text(
+            expected > 0
+                ? 'Fee ${_money(expected)}'
+                : 'Fee not set',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 11,
+            ),
+          ),
+
+          const SizedBox(width: 15),
+
+          Text(
+            'Paid ${_money(paid)}',
+            style: const TextStyle(
+              color:
+                  Color(0xFF00D9A5),
+              fontSize: 11,
+            ),
+          ),
+
+          const SizedBox(width: 15),
+
+          if (expected > 0)
+            Text(
+              'Due ${_money(balance)}',
+              style: const TextStyle(
+                color:
+                    Colors.orangeAccent,
+                fontSize: 11,
+              ),
+            ),
+
+          const SizedBox(width: 15),
+
+          Container(
+            padding:
+                const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color:
+                  color.withOpacity(0.12),
+              borderRadius:
+                  BorderRadius.circular(20),
+            ),
+            child: Text(
+              status,
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight:
+                    FontWeight.bold,
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 10),
+
+          ElevatedButton(
+            style:
+                ElevatedButton.styleFrom(
+              backgroundColor:
+                  const Color(
+                0xFF00A884,
+              ),
+            ),
+            onPressed: () {
+              _collectFees(
+                studentDoc.id,
+                student,
+                ledger,
+              );
+            },
+            child: const Text(
+              'Collect',
+              style: TextStyle(
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor:
+          const Color(0xFF0B141A),
+
+      appBar: AppBar(
+        backgroundColor:
+            const Color(0xFF1F2C34),
+        title:
+            const Text(
+          'Fees Collection',
+        ),
+      ),
+
+      body: StreamBuilder<
+          QuerySnapshot<
+              Map<String, dynamic>>>(
+        stream: FirebaseFirestore
+            .instance
+            .collection(
+              'students_directory',
+            )
+            .snapshots(),
+
+        builder: (
+          context,
+          studentSnapshot,
+        ) {
+          if (!studentSnapshot.hasData) {
+            return const Center(
+              child:
+                  CircularProgressIndicator(
+                color:
+                    Color(0xFF00A884),
+              ),
+            );
+          }
+
+          final students =
+              studentSnapshot
+                  .data!.docs;
+
+          return StreamBuilder<
+              QuerySnapshot<
+                  Map<String,
+                      dynamic>>>(
+            stream: FirebaseFirestore
+                .instance
+                .collection(
+                  'fee_ledger',
+                )
+                .where(
+                  'month',
+                  isEqualTo:
+                      _selectedMonth,
+                )
+                .snapshots(),
+
+            builder: (
+              context,
+              ledgerSnapshot,
+            ) {
+              final ledger =
+                  <String,
+                      Map<String,
+                          dynamic>>{};
+
+              if (ledgerSnapshot.hasData) {
+                for (final doc
+                    in ledgerSnapshot
+                        .data!.docs) {
+                  final data =
+                      doc.data();
+
+                  final studentId =
+                      data['studentId']
+                              ?.toString() ??
+                          '';
+
+                  ledger[studentId] =
+                      data;
+                }
+              }
+
+              final search =
+                  _searchController
+                      .text
+                      .trim()
+                      .toLowerCase();
+
+              final filtered =
+                  students.where(
+                (doc) {
+                  final data =
+                      doc.data();
+
+                  final cls =
+                      data['class']
+                              ?.toString() ??
+                          '';
+
+                  final name =
+                      data['name']
+                              ?.toString()
+                              .toLowerCase() ??
+                          '';
+
+                  final roll =
+                      data['rollNo']
+                              ?.toString()
+                              .toLowerCase() ??
+                          '';
+
+                  final classOk =
+                      _selectedClass ==
+                              'All Classes' ||
+                          cls ==
+                              _selectedClass;
+
+                  final searchOk =
+                      search.isEmpty ||
+                          name.contains(
+                            search,
+                          ) ||
+                          roll.contains(
+                            search,
+                          );
+
+                  return classOk &&
+                      searchOk;
+                },
+              ).toList();
+
+              int paidCount = 0;
+              int partialCount = 0;
+              int dueCount = 0;
+
+              for (final doc in filtered) {
+                final data =
+                    ledger[doc.id];
+
+                final expected =
+                    _toDouble(
+                  data?[
+                      'expectedAmount'],
+                );
+
+                final paid =
+                    _toDouble(
+                  data?[
+                      'totalPaid'],
+                );
+
+                final status =
+                    _feeStatus(
+                  expected,
+                  paid,
+                );
+
+                if (status == 'PAID') {
+                  paidCount++;
+                } else if (status ==
+                    'PARTIAL') {
+                  partialCount++;
+                } else {
+                  dueCount++;
+                }
+              }
+
+              return Padding(
+                padding:
+                    const EdgeInsets.all(
+                  16,
+                ),
+                child: Column(
+                  children: [
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _summaryCard(
+                          title:
+                              'Total Students',
+                          count:
+                              filtered.length,
+                          icon:
+                              Icons.groups_rounded,
+                          color:
+                              Colors.blueAccent,
+                        ),
+                        _summaryCard(
+                          title: 'Paid',
+                          count:
+                              paidCount,
+                          icon: Icons
+                              .check_circle_rounded,
+                          color:
+                              const Color(
+                            0xFF00A884,
+                          ),
+                        ),
+                        _summaryCard(
+                          title:
+                              'Partial Paid',
+                          count:
+                              partialCount,
+                          icon: Icons
+                              .timelapse_rounded,
+                          color:
+                              Colors.orangeAccent,
+                        ),
+                        _summaryCard(
+                          title: 'Due',
+                          count:
+                              dueCount,
+                          icon: Icons
+                              .warning_amber_rounded,
+                          color:
+                              Colors.redAccent,
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(
+                      height: 15,
+                    ),
+
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        SizedBox(
+                          width: 190,
+                          child:
+                              DropdownButtonFormField<
+                                  String>(
+                            value:
+                                _selectedClass,
+                            dropdownColor:
+                                const Color(
+                              0xFF172229,
+                            ),
+                            style:
+                                const TextStyle(
+                              color:
+                                  Colors.white,
+                            ),
+                            decoration:
+                                _inputDecoration(
+                              'Class',
+                              Icons
+                                  .class_rounded,
+                            ),
+                            items: _classes
+                                .map(
+                                  (value) =>
+                                      DropdownMenuItem(
+                                    value:
+                                        value,
+                                    child:
+                                        Text(
+                                      value,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged:
+                                (value) {
+                              if (value !=
+                                  null) {
+                                setState(
+                                  () =>
+                                      _selectedClass =
+                                          value,
+                                );
+                              }
+                            },
+                          ),
+                        ),
+
+                        SizedBox(
+                          width: 210,
+                          child:
+                              DropdownButtonFormField<
+                                  String>(
+                            value:
+                                _selectedMonth,
+                            dropdownColor:
+                                const Color(
+                              0xFF172229,
+                            ),
+                            style:
+                                const TextStyle(
+                              color:
+                                  Colors.white,
+                            ),
+                            decoration:
+                                _inputDecoration(
+                              'Month',
+                              Icons
+                                  .calendar_month_rounded,
+                            ),
+                            items:
+                                _monthList()
+                                    .map(
+                              (value) {
+                                return DropdownMenuItem(
+                                  value:
+                                      value,
+                                  child: Text(
+                                    _monthName(
+                                      value,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ).toList(),
+                            onChanged:
+                                (value) {
+                              if (value !=
+                                  null) {
+                                setState(
+                                  () =>
+                                      _selectedMonth =
+                                          value,
+                                );
+                              }
+                            },
+                          ),
+                        ),
+
+                        SizedBox(
+                          width: 300,
+                          child:
+                              TextField(
+                            controller:
+                                _searchController,
+                            style:
+                                const TextStyle(
+                              color:
+                                  Colors.white,
+                            ),
+                            decoration:
+                                _inputDecoration(
+                              'Search Student / Roll',
+                              Icons
+                                  .search_rounded,
+                            ),
+                            onChanged:
+                                (_) {
+                              setState(
+                                () {},
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(
+                      height: 15,
+                    ),
+
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? const Center(
+                              child: Text(
+                                'No students found',
+                                style:
+                                    TextStyle(
+                                  color:
+                                      Colors.white54,
+                                ),
+                              ),
+                            )
+                          : ListView
+                              .separated(
+                              itemCount:
+                                  filtered
+                                      .length,
+                              separatorBuilder:
+                                  (
+                                context,
+                                index,
+                              ) =>
+                                      const SizedBox(
+                                height: 8,
+                              ),
+                              itemBuilder:
+                                  (
+                                context,
+                                index,
+                              ) {
+                                final student =
+                                    filtered[
+                                        index];
+
+                                return _studentCard(
+                                  student,
+                                  ledger[
+                                      student
+                                          .id],
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ============================================================
 // TEACHERS DIRECTORY
 // ============================================================
 class TeachersDirectoryScreen extends StatefulWidget {
