@@ -5060,22 +5060,12 @@ Widget _buildOverviewCards() {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => Scaffold(
-                    appBar: AppBar(
-                      title: const Text('Fees Collection'),
-                    ),
-                    body: const Center(
-                      child: Text(
-                        'Fees Collection Page',
-                        style: TextStyle(fontSize: 22),
-                      ),
-                    ),
-                  ),
+                  builder: (context) => const FeesCollectionScreen(),
                 ),
               );
             },
           ),
-            
+              
           _overviewCard(
             width: itemWidth,
             icon: Icons.campaign_rounded,
