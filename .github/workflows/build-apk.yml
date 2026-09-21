@@ -347,6 +347,10 @@ jobs:
           # Runner-only pubspec change; repository me commit nahi hota.
           flutter pub add "url_launcher:^6.3.2"
 
+          # Android native Google Sign-In ke liye.
+          # Runner-only change; website/repository source unchanged.
+          flutter pub add "google_sign_in:^6.2.1"
+
           python3 <<'PY'
           from pathlib import Path
           import re
@@ -533,6 +537,105 @@ jobs:
               )
 
           # ========================================================
+          # 7. WEB GOOGLE POPUP -> ANDROID NATIVE GOOGLE SIGN-IN
+          # Website source unchanged rahega; sirf runner copy patch hoga.
+          # ========================================================
+          google_import = (
+              "import 'package:google_sign_in/google_sign_in.dart';\n"
+          )
+
+          if google_import not in main_text:
+              firebase_auth_import = (
+                  "import 'package:firebase_auth/firebase_auth.dart';\n"
+              )
+
+              if firebase_auth_import in main_text:
+                  main_text = main_text.replace(
+                      firebase_auth_import,
+                      firebase_auth_import + google_import,
+                      1,
+                  )
+              else:
+                  raise SystemExit(
+                      "ERROR: main.dart me firebase_auth import nahi mila"
+                  )
+
+          google_method_pattern = re.compile(
+              r"  Future<void> _signInWithGoogle\(\) async \{"
+              r".*?"
+              r"\n  \}"
+              r"\n\n  Future<void> _submitAuth\(\) async \{",
+              re.S,
+          )
+
+          google_method_replacement = r"""  Future<void> _signInWithGoogle() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    try {
+      const webClientId =
+          String.fromEnvironment('GOOGLE_WEB_CLIENT_ID');
+
+      final googleSignIn = GoogleSignIn(
+        scopes: const ['email'],
+        serverClientId:
+            webClientId.isEmpty ? null : webClientId,
+      );
+
+      final GoogleSignInAccount? googleUser =
+          await googleSignIn.signIn();
+
+      if (googleUser == null) {
+        return;
+      }
+
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+
+      final credential =
+          GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      await FirebaseAuth.instance
+          .signInWithCredential(credential);
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => _errorMessage =
+              'Google Sign-In failed: $e',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _submitAuth() async {"""
+
+          main_text, google_method_count = (
+              google_method_pattern.subn(
+                  google_method_replacement,
+                  main_text,
+                  count=1,
+              )
+          )
+
+          if google_method_count != 1:
+              raise SystemExit(
+                  "ERROR: Android Google Sign-In method patch nahi hua"
+              )
+
+          print(
+              "Android: signInWithPopup native GoogleSignIn flow me patched."
+          )
+
+          # ========================================================
           # SAVE RUNNER-ONLY FILES
           # ========================================================
           dashboard_path.write_text(
@@ -565,6 +668,19 @@ jobs:
           else
             echo "OK - Android main.dart se web persistence removed."
           fi
+
+          echo ""
+          echo "Checking Android Google Sign-In..."
+
+          if grep -n "signInWithPopup" lib/main.dart; then
+            echo "::error::Android main.dart me signInWithPopup abhi bhi present hai!"
+            exit 1
+          else
+            echo "OK - Android native Google Sign-In enabled."
+          fi
+
+          grep -n "google_sign_in" lib/main.dart || true
+          grep -n "signInWithCredential" lib/main.dart || true
 
           echo ""
           echo "Checking dart:html / html.* ..."
@@ -609,7 +725,8 @@ jobs:
           flutter build apk \
             --release \
             --dart-define=GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}" \
-            --dart-define=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            --dart-define=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            --dart-define=GOOGLE_WEB_CLIENT_ID="${{ secrets.GOOGLE_WEB_CLIENT_ID }}"
 
       # ============================================================
       # 17. VERIFY APK EXISTS
