@@ -8746,7 +8746,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                         border: Border.all(color: Colors.white10),
                       ),
 
-Row(
+child: Row(
   children: [
     Expanded(
       flex: 2,
