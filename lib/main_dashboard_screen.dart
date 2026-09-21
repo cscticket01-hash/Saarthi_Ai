@@ -7482,15 +7482,21 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       return;
     }
 
+    final cachedSettings = _feeSettingsCache[studentClass];
+    
     if (mounted) {
       setState(() {
         _activeStudentId = studentDoc.id;
         _selectedClass = studentClass;
         _nameSearchController.text = studentName;
         _rollSearchController.text = roll;
-        _activeFeeSettingsReady = false;
-        _activeFeeSettingsMessage = 'Fee structure load ho raha hai...';
-        _activeFeeAmounts = {};
+        _activeFeeSettingsReady = cachedSettings != null;
+        _activeFeeSettingsMessage =
+            cachedSettings == null ? 'Fee structure load ho raha hai...' : null;
+
+        _activeFeeAmounts = cachedSettings != null
+            ? Map<String, double>.from(cachedSettings['fees'] as Map)
+            : {};
         _selectedFeeHeads = <String>{};
         _activeLedger = ledger;
         _receivedAmountController.clear();
