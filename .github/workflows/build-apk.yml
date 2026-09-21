@@ -801,7 +801,36 @@ jobs:
               )
 
           # ========================================================
-          # 7. WEB GOOGLE POPUP -> ANDROID NATIVE GOOGLE SIGN-IN
+          # 7. USE NATIVE ANDROID FIREBASE CONFIG
+          # Android APK must initialize Firebase from google-services.json.
+          # Original website source remains unchanged; runner copy only.
+          # ========================================================
+          firebase_init_pattern = re.compile(
+              r"await\s+Firebase\.initializeApp\(\s*"
+              r"options:\s*const\s+FirebaseOptions\("
+              r".*?"
+              r"\),\s*"
+              r"\);",
+              re.S,
+          )
+
+          main_text, firebase_init_count = firebase_init_pattern.subn(
+              "await Firebase.initializeApp();",
+              main_text,
+              count=1,
+          )
+
+          if firebase_init_count != 1:
+              raise SystemExit(
+                  "ERROR: Android Firebase.initializeApp native patch nahi hua"
+              )
+
+          print(
+              "Android: Firebase now uses google-services.json native config."
+          )
+
+          # ========================================================
+          # 8. WEB GOOGLE POPUP -> ANDROID NATIVE GOOGLE SIGN-IN
           # Website source unchanged rahega; sirf runner copy patch hoga.
           # ========================================================
           google_import = (
@@ -934,6 +963,16 @@ jobs:
           fi
 
           echo ""
+          echo "Checking native Android Firebase initialization..."
+
+          if grep -n "FirebaseOptions(" lib/main.dart; then
+            echo "::error::Android main.dart me web FirebaseOptions abhi bhi present hai!"
+            exit 1
+          fi
+
+          grep -n "Firebase.initializeApp();" lib/main.dart
+
+          echo ""
           echo "Checking Android Google Sign-In..."
 
           if grep -n "signInWithPopup" lib/main.dart; then
@@ -981,7 +1020,7 @@ jobs:
           echo "Android temporary source READY."
 
       # ============================================================
-      # 16. BUILD RELEASE APK
+      # 17. BUILD RELEASE APK
       # ============================================================
       - name: Build Saarthi AI Release APK
         shell: bash
