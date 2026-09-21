@@ -367,7 +367,6 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
-          import re
 
           manifest = Path("android/app/src/main/AndroidManifest.xml")
 
@@ -420,18 +419,21 @@ jobs:
           )
 
           if 'io.flutter.embedding.android.EnableImpeller' not in text:
-              app_match = re.search(
-                  r'<application\\b[^>]*>',
-                  text,
-                  flags=re.S,
-              )
+              app_start = text.find('<application')
 
-              if not app_match:
+              if app_start == -1:
                   raise SystemExit(
                       "ERROR: AndroidManifest.xml me <application> tag nahi mila"
                   )
 
-              insert_at = app_match.end()
+              app_tag_end = text.find('>', app_start)
+
+              if app_tag_end == -1:
+                  raise SystemExit(
+                      "ERROR: AndroidManifest.xml ka <application> tag invalid hai"
+                  )
+
+              insert_at = app_tag_end + 1
               text = (
                   text[:insert_at]
                   + "\n"
