@@ -5057,23 +5057,24 @@ Widget _buildOverviewCards() {
             subtitle: 'Collect fees, receipts & dues',
             accent: Colors.greenAccent,
             onTap: () {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => Scaffold(
-        appBar: AppBar(
-          title: const Text('Fees Collection'),
-        ),
-        body: const Center(
-          child: Text(
-            'Fees Collection Page',
-            style: TextStyle(fontSize: 22),
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => Scaffold(
+                    appBar: AppBar(
+                      title: const Text('Fees Collection'),
+                    ),
+                    body: const Center(
+                      child: Text(
+                        'Fees Collection Page',
+                        style: TextStyle(fontSize: 22),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
-        ),
-      ),
-    ),
-  );
-},
             
           _overviewCard(
             width: itemWidth,
