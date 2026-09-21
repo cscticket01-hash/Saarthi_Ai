@@ -569,54 +569,54 @@ jobs:
           )
 
           google_method_replacement = r"""  Future<void> _signInWithGoogle() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = '';
-    });
+              setState(() {
+                _isLoading = true;
+                _errorMessage = '';
+              });
 
-    try {
-      const webClientId =
-          String.fromEnvironment('GOOGLE_WEB_CLIENT_ID');
+              try {
+                const webClientId =
+                    String.fromEnvironment('GOOGLE_WEB_CLIENT_ID');
 
-      final googleSignIn = GoogleSignIn(
-        scopes: const ['email'],
-        serverClientId:
-            webClientId.isEmpty ? null : webClientId,
-      );
+                final googleSignIn = GoogleSignIn(
+                  scopes: const ['email'],
+                  serverClientId:
+                      webClientId.isEmpty ? null : webClientId,
+                );
 
-      final GoogleSignInAccount? googleUser =
-          await googleSignIn.signIn();
+                final GoogleSignInAccount? googleUser =
+                    await googleSignIn.signIn();
 
-      if (googleUser == null) {
-        return;
-      }
+                if (googleUser == null) {
+                  return;
+                }
 
-      final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
+                final GoogleSignInAuthentication googleAuth =
+                    await googleUser.authentication;
 
-      final credential =
-          GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
+                final credential =
+                    GoogleAuthProvider.credential(
+                  accessToken: googleAuth.accessToken,
+                  idToken: googleAuth.idToken,
+                );
 
-      await FirebaseAuth.instance
-          .signInWithCredential(credential);
-    } catch (e) {
-      if (mounted) {
-        setState(
-          () => _errorMessage =
-              'Google Sign-In failed: $e',
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
+                await FirebaseAuth.instance
+                    .signInWithCredential(credential);
+              } catch (e) {
+                if (mounted) {
+                  setState(
+                    () => _errorMessage =
+                        'Google Sign-In failed: $e',
+                  );
+                }
+              } finally {
+                if (mounted) {
+                  setState(() => _isLoading = false);
+                }
+              }
+            }
 
-  Future<void> _submitAuth() async {"""
+            Future<void> _submitAuth() async {"""
 
           main_text, google_method_count = (
               google_method_pattern.subn(
