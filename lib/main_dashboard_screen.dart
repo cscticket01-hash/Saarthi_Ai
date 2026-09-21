@@ -5052,12 +5052,12 @@ Widget _buildOverviewCards() {
 
           _overviewCard(
             width: itemWidth,
-            icon: Icons.badge_rounded,
-            title: 'ID Card Center',
-            subtitle: 'Search, preview & download',
-            accent: Colors.blueAccent,
+            icon: Icons.payments_rounded,
+            title: 'Fees Collection',
+            subtitle: 'Collect fees, receipts & dues',
+            accent: Colors.greenAccent,
           ),
-
+          
           _overviewCard(
             width: itemWidth,
             icon: Icons.campaign_rounded,
