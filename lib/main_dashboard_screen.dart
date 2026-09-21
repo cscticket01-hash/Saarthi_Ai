@@ -8056,7 +8056,7 @@ Thank You
 
     final balance = expected > 0
         ? expected - paid
-        : 0;
+        : 0;0;
 
     final status =
         _feeStatus(
