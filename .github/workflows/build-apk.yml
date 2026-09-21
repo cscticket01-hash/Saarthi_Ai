@@ -473,15 +473,30 @@ jobs:
         run: flutter pub get
 
       # ============================================================
-      # 11. VERIFY MOBILE SCANNER
+      # 11. ANDROID-ONLY MOBILE SCANNER UPGRADE
+      # Repository/web pubspec unchanged rahega. Runner copy only.
+      # mobile_scanner 5.1.1 me Android black-preview/init issues the.
+      # 6.0.8+ fixes controller initialization black-screen issues.
       # ============================================================
-      - name: Verify Mobile Scanner
+      - name: Upgrade Android Mobile Scanner
         shell: bash
         run: |
-          echo "Checking mobile_scanner dependency..."
-          flutter pub deps | grep "mobile_scanner"
+          set -euo pipefail
+
+          echo "Upgrading Android runner copy to mobile_scanner 6.0.11..."
+          flutter pub add "mobile_scanner:6.0.11"
+          flutter pub get
+
           echo ""
-          echo "mobile_scanner dependency found."
+          echo "===== MOBILE SCANNER VERSION ====="
+          flutter pub deps | grep "mobile_scanner"
+
+          if ! flutter pub deps | grep -q "mobile_scanner 6.0.11"; then
+            echo "::error::mobile_scanner 6.0.11 resolve nahi hua."
+            exit 1
+          fi
+
+          echo "OK - Android mobile_scanner 6.0.11 active."
 
       # ============================================================
       # 12. FIX OLD PLUGIN COMPILE SDK
