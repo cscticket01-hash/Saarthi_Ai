@@ -2148,7 +2148,7 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
       return const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator(color: Color(0xFF00A884))));
     }
     if (studentData == null) {
-      return Padding(
+      return SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
@@ -8669,7 +8669,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
                   ? null
                   : ledger[activeStudentDoc.id];
 
-              return Padding(
+              return SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
@@ -8838,12 +8838,14 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
                               ),
                             ),
                             const Divider(height: 1, color: Colors.white10),
-                            Expanded(
+                            Container(
                               child: filtered.isEmpty
                                   ? const Center(
                                       child: Text('No students found', style: TextStyle(color: Colors.white54)),
                                     )
                                   : ListView.separated(
+                                      shrinkWrap: true,
+                                      physics: const NeverScrollableScrollPhysics(),
                                       padding: const EdgeInsets.all(10),
                                       itemCount: filtered.length,
                                       separatorBuilder: (_, __) => const SizedBox(height: 7),
