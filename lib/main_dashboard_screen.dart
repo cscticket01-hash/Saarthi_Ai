@@ -7215,133 +7215,116 @@ class FeesCollectionScreen extends StatefulWidget {
   const FeesCollectionScreen({super.key});
 
   @override
-  State<FeesCollectionScreen> createState() =>
-      _FeesCollectionScreenState();
+  State<FeesCollectionScreen> createState() => _FeesCollectionScreenState();
 }
 
-class _FeesCollectionScreenState
-    extends State<FeesCollectionScreen> {
-  final TextEditingController _searchController =
-      TextEditingController();
+class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
+  static const List<String> _feeHeads = [
+    'Tuition Fees',
+    'Admission Fees',
+    'Registration Fees',
+    'Nobikaron Fees',
+    'Bidya Bharati Sahojog Rashi',
+    'Building Fees',
+    'Shishu Bharati Fees',
+    'Library Fees',
+    'Medical Fees',
+    'Game Fees',
+    'Development Fees',
+    'Electric Fees',
+    'Cultural Fees',
+    'Computer Fees',
+    'Computer Lab Fees',
+    'Educational Development Fees',
+    'Exam Fees',
+    'Miscellaneous Fees',
+    'Late Fees',
+    'Vehicle Fees',
+  ];
 
-  String _selectedClass = 'All Classes';
-  late String _selectedMonth;
+  final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _receivedAmountController = TextEditingController();
 
   final List<String> _classes = [
     'All Classes',
-    ...List.generate(
-      10,
-      (index) => 'Class ${index + 1}',
-    ),
+    ...List.generate(10, (index) => 'Class ${index + 1}'),
   ];
+
+  String _selectedClass = 'All Classes';
+  late String _selectedMonth;
+  String? _activeStudentId;
+  String _paymentMode = 'Cash';
+  bool _isSavingPayment = false;
+
+  Map<String, double> _activeFeeAmounts = {};
+  Set<String> _selectedFeeHeads = <String>{};
+  Map<String, dynamic>? _activeLedger;
 
   @override
   void initState() {
     super.initState();
-
     final now = DateTime.now();
-
-    _selectedMonth =
-        '${now.year}-${now.month.toString().padLeft(2, '0')}';
+    _selectedMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}';
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _receivedAmountController.dispose();
     super.dispose();
   }
 
+  String _settingsDocId(String className) => className.replaceAll(' ', '_');
+
+  String _ledgerId(String studentId) => '${_selectedMonth}_$studentId';
+
   double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
-
-    return double.tryParse(
-          value?.toString() ?? '',
-        ) ??
-        0;
+    return double.tryParse(value?.toString() ?? '') ?? 0.0;
   }
 
-  String _money(double value) {
-    return '₹${value.toStringAsFixed(0)}';
+  String _money(num value) {
+    final d = value.toDouble();
+    return '₹${d == d.roundToDouble() ? d.toStringAsFixed(0) : d.toStringAsFixed(2)}';
   }
 
   String _monthName(String value) {
     final parts = value.split('-');
-
     if (parts.length != 2) return value;
-
     const months = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
     ];
-
     final month = int.tryParse(parts[1]) ?? 1;
-
+    if (month < 1 || month > 12) return value;
     return '${months[month - 1]} ${parts[0]}';
   }
 
   List<String> _monthList() {
     final now = DateTime.now();
-
     return List.generate(12, (index) {
-      final date = DateTime(
-        now.year,
-        now.month - index,
-      );
-
-      return '${date.year}-'
-          '${date.month.toString().padLeft(2, '0')}';
+      final d = DateTime(now.year, now.month - index, 1);
+      return '${d.year}-${d.month.toString().padLeft(2, '0')}';
     });
   }
 
-  String _feeStatus(
-    double expected,
-    double paid,
-  ) {
-    if (expected > 0 && paid >= expected) {
-      return 'PAID';
-    }
-
-    if (paid > 0) {
-      return 'PARTIAL';
-    }
-
+  String _feeStatus(double expected, double paid) {
+    if (expected > 0 && paid >= expected) return 'PAID';
+    if (paid > 0) return 'PARTIAL';
     return 'DUE';
   }
 
   Color _statusColor(String status) {
-    if (status == 'PAID') {
-      return const Color(0xFF00A884);
-    }
-
-    if (status == 'PARTIAL') {
-      return Colors.orangeAccent;
-    }
-
+    if (status == 'PAID') return const Color(0xFF00A884);
+    if (status == 'PARTIAL') return Colors.orangeAccent;
     return Colors.redAccent;
   }
 
-  InputDecoration _inputDecoration(
-    String label,
-    IconData icon,
-  ) {
+  InputDecoration _inputDecoration(String label, IconData icon) {
     return InputDecoration(
       labelText: label,
-      labelStyle:
-          const TextStyle(color: Colors.white54),
-      prefixIcon: Icon(
-        icon,
-        color: const Color(0xFF00A884),
-      ),
+      labelStyle: const TextStyle(color: Colors.white54),
+      prefixIcon: Icon(icon, color: const Color(0xFF00A884)),
       filled: true,
       fillColor: const Color(0xFF172229),
       border: OutlineInputBorder(
@@ -7363,9 +7346,7 @@ class _FeesCollectionScreenState
       decoration: BoxDecoration(
         color: const Color(0xFF172229),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: color.withOpacity(0.30),
-        ),
+        border: Border.all(color: color.withOpacity(0.30)),
       ),
       child: Row(
         children: [
@@ -7374,18 +7355,13 @@ class _FeesCollectionScreenState
             height: 42,
             decoration: BoxDecoration(
               color: color.withOpacity(0.12),
-              borderRadius:
-                  BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(
-              icon,
-              color: color,
-            ),
+            child: Icon(icon, color: color),
           ),
           const SizedBox(width: 11),
           Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 '$count',
@@ -7397,9 +7373,758 @@ class _FeesCollectionScreenState
               ),
               Text(
                 title,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 11,
+                style: const TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<Map<String, dynamic>> _getClassFeeSettings(String studentClass) async {
+    final doc = await FirebaseFirestore.instance
+        .collection('fee_settings')
+        .doc(_settingsDocId(studentClass))
+        .get();
+
+    final data = doc.data() ?? <String, dynamic>{};
+    final rawFees = Map<String, dynamic>.from(data['fees'] ?? {});
+    final rawDefaults = Map<String, dynamic>.from(data['defaultSelected'] ?? {});
+
+    final fees = <String, double>{};
+    final defaults = <String, bool>{};
+
+    for (final head in _feeHeads) {
+      fees[head] = _toDouble(rawFees[head]);
+      defaults[head] = rawDefaults[head] == true || head == 'Tuition Fees';
+    }
+
+    return {
+      'fees': fees,
+      'defaultSelected': defaults,
+    };
+  }
+
+  Future<void> _openInlineCollector(
+    QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
+    Map<String, dynamic>? ledger,
+  ) async {
+    final student = studentDoc.data();
+    final studentClass = student['class']?.toString().trim() ?? '';
+
+    if (studentClass.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Student class missing hai.'),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final settings = await _getClassFeeSettings(studentClass);
+      final fees = Map<String, double>.from(settings['fees'] as Map);
+      final defaults = Map<String, bool>.from(settings['defaultSelected'] as Map);
+
+      final savedItems = Map<String, dynamic>.from(ledger?['feeItems'] ?? {});
+      final selected = <String>{};
+
+      if (savedItems.isNotEmpty) {
+        for (final entry in savedItems.entries) {
+          if (_toDouble(entry.value) > 0) selected.add(entry.key);
+        }
+      } else {
+        for (final head in _feeHeads) {
+          if ((defaults[head] ?? false) && (fees[head] ?? 0) > 0) {
+            selected.add(head);
+          }
+        }
+      }
+
+      final expected = _toDouble(ledger?['expectedAmount']);
+      final paid = _toDouble(ledger?['totalPaid']);
+      final selectedTotal = expected > 0
+          ? expected
+          : selected.fold<double>(0, (sum, head) => sum + (fees[head] ?? 0));
+      final remaining = (selectedTotal - paid).clamp(0, double.infinity).toDouble();
+
+      if (!mounted) return;
+      setState(() {
+        _activeStudentId = studentDoc.id;
+        _activeFeeAmounts = fees;
+        _selectedFeeHeads = selected;
+        _activeLedger = ledger;
+        _paymentMode = ledger?['paymentMode']?.toString() ?? 'Cash';
+        _receivedAmountController.text = remaining > 0 ? remaining.toStringAsFixed(0) : '';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Fee settings load error: $e'),
+        ),
+      );
+    }
+  }
+
+  double get _selectedFeesTotal {
+    return _selectedFeeHeads.fold<double>(
+      0,
+      (sum, head) => sum + (_activeFeeAmounts[head] ?? 0),
+    );
+  }
+
+  Future<bool> _confirmPayment({
+    required String studentName,
+    required String studentClass,
+    required String roll,
+    required double amount,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Row(
+          children: [
+            Icon(Icons.help_outline_rounded, color: Colors.orangeAccent),
+            SizedBox(width: 10),
+            Text('Are you sure?', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Text(
+          '$studentName\n$studentClass • Roll $roll\n${_monthName(_selectedMonth)}\n\nCollect ${_money(amount)} via $_paymentMode?',
+          style: const TextStyle(color: Colors.white70, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes, Collect', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    return result == true;
+  }
+
+  Future<String> _getGoogleScriptUrl() async {
+    final configDoc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+    final scriptUrl = configDoc.data()?['scriptUrl']?.toString().trim() ?? '';
+    if (scriptUrl.isEmpty) {
+      throw Exception('Google Apps Script URL Settings me saved nahi hai.');
+    }
+    return scriptUrl;
+  }
+
+  Future<Map<String, dynamic>> _saveFeeToGoogleDrive({
+    required Map<String, dynamic> paymentData,
+    required Uint8List pdfBytes,
+  }) async {
+    final scriptUrl = await _getGoogleScriptUrl();
+
+    final response = await http.post(
+      Uri.parse(scriptUrl),
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: jsonEncode({
+        'action': 'save_fee_payment',
+        ...paymentData,
+        'pdfBase64': base64Encode(pdfBytes),
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Google Drive save failed: ${response.statusCode}');
+    }
+
+    final result = Map<String, dynamic>.from(jsonDecode(response.body));
+    if (result['success'] != true) {
+      throw Exception(result['message'] ?? 'Google Drive fee save failed');
+    }
+    return result;
+  }
+
+  Future<void> _collectPayment(
+    QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
+    Map<String, dynamic>? ledger,
+  ) async {
+    if (_isSavingPayment) return;
+
+    final student = studentDoc.data();
+    final studentName = student['name']?.toString().trim() ?? 'Student';
+    final studentClass = student['class']?.toString().trim() ?? '';
+    final roll = student['rollNo']?.toString().trim() ?? '';
+    final parentContact = student['parentContact']?.toString().trim() ?? '';
+
+    final oldExpected = _toDouble(ledger?['expectedAmount']);
+    final oldPaid = _toDouble(ledger?['totalPaid']);
+    final expected = oldExpected > 0 ? oldExpected : _selectedFeesTotal;
+    final amount = double.tryParse(_receivedAmountController.text.trim()) ?? 0.0;
+    final remainingBefore = (expected - oldPaid).clamp(0, double.infinity).toDouble();
+
+    if (_selectedFeeHeads.isEmpty || expected <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text('Kam se kam ek fee item tick karein aur fee amount set karein.'),
+        ),
+      );
+      return;
+    }
+
+    if (amount <= 0 || amount > remainingBefore) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text('Amount 1 se ${_money(remainingBefore)} ke beech hona chahiye.'),
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await _confirmPayment(
+      studentName: studentName,
+      studentClass: studentClass,
+      roll: roll,
+      amount: amount,
+    );
+    if (!confirmed) return;
+
+    setState(() => _isSavingPayment = true);
+
+    final now = DateTime.now();
+    final receiptNo = 'SVN-${now.year}${now.month.toString().padLeft(2, '0')}-${now.millisecondsSinceEpoch}';
+    final totalPaid = oldPaid + amount;
+    final balance = (expected - totalPaid).clamp(0, double.infinity).toDouble();
+    final status = _feeStatus(expected, totalPaid);
+
+    final feeItems = <String, double>{};
+    if (oldExpected > 0 && ledger?['feeItems'] is Map) {
+      final oldItems = Map<String, dynamic>.from(ledger!['feeItems']);
+      for (final entry in oldItems.entries) {
+        feeItems[entry.key] = _toDouble(entry.value);
+      }
+    } else {
+      for (final head in _selectedFeeHeads) {
+        feeItems[head] = _activeFeeAmounts[head] ?? 0.0;
+      }
+    }
+
+    final paymentRef = FirebaseFirestore.instance.collection('fee_payments').doc();
+    final paymentData = <String, dynamic>{
+      'paymentId': paymentRef.id,
+      'receiptNo': receiptNo,
+      'studentId': studentDoc.id,
+      'studentName': studentName,
+      'class': studentClass,
+      'rollNo': roll,
+      'parentContact': parentContact,
+      'month': _selectedMonth,
+      'feeItems': feeItems,
+      'expectedAmount': expected,
+      'installmentAmount': amount,
+      'totalPaid': totalPaid,
+      'balance': balance,
+      'status': status,
+      'paymentMode': _paymentMode,
+      'collectedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      'dateText': '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}',
+      'timeText': '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
+    };
+
+    try {
+      final pdfBytes = await _buildReceiptPdf(paymentData);
+      final googleResult = await _saveFeeToGoogleDrive(
+        paymentData: paymentData,
+        pdfBytes: pdfBytes,
+      );
+
+      final driveUrl = googleResult['fileUrl']?.toString() ?? '';
+      final sheetUrl = googleResult['sheetUrl']?.toString() ?? '';
+
+      final batch = FirebaseFirestore.instance.batch();
+      batch.set(paymentRef, {
+        ...paymentData,
+        'driveUrl': driveUrl,
+        'sheetUrl': sheetUrl,
+        'paidAt': FieldValue.serverTimestamp(),
+      });
+
+      final ledgerRef = FirebaseFirestore.instance
+          .collection('fee_ledger')
+          .doc(_ledgerId(studentDoc.id));
+
+      batch.set(
+        ledgerRef,
+        {
+          'studentId': studentDoc.id,
+          'studentName': studentName,
+          'class': studentClass,
+          'rollNo': roll,
+          'parentContact': parentContact,
+          'month': _selectedMonth,
+          'feeItems': feeItems,
+          'expectedAmount': expected,
+          'totalPaid': totalPaid,
+          'balance': balance,
+          'status': status,
+          'paymentMode': _paymentMode,
+          'lastPaymentId': paymentRef.id,
+          'lastReceiptNo': receiptNo,
+          'lastDriveUrl': driveUrl,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      await batch.commit();
+
+      if (!mounted) return;
+      setState(() {
+        _activeStudentId = status == 'PAID' ? null : studentDoc.id;
+        _activeLedger = {
+          ...?ledger,
+          'expectedAmount': expected,
+          'totalPaid': totalPaid,
+          'balance': balance,
+          'status': status,
+          'feeItems': feeItems,
+        };
+        _isSavingPayment = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text(
+            status == 'PAID'
+                ? 'Payment complete. Current month Collect button lock ho gaya.'
+                : 'Partial payment saved. Balance ${_money(balance)}.',
+          ),
+        ),
+      );
+
+      _openWhatsAppFromPayment({
+        ...paymentData,
+        'driveUrl': driveUrl,
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSavingPayment = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Payment save error: $e'),
+        ),
+      );
+    }
+  }
+
+  String _whatsappNumber(String raw) {
+    var digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.startsWith('0') && digits.length > 10) {
+      digits = digits.substring(1);
+    }
+    if (digits.length == 10) digits = '91$digits';
+    return digits;
+  }
+
+  String _receiptText(Map<String, dynamic> data) {
+    final items = Map<String, dynamic>.from(data['feeItems'] ?? {});
+    final itemLines = items.entries
+        .where((e) => _toDouble(e.value) > 0)
+        .map((e) => '${e.key}: ${_money(_toDouble(e.value))}')
+        .join('\n');
+
+    final driveUrl = data['driveUrl']?.toString() ?? '';
+
+    return 'SARASWATI VIDYA NIKETAN\n'
+        'MADHABDHAM, SRIGOURI\n\n'
+        'FEES RECEIPT\n'
+        'Receipt No: ${data['receiptNo'] ?? ''}\n'
+        'Date: ${data['dateText'] ?? ''} ${data['timeText'] ?? ''}\n'
+        'Student: ${data['studentName'] ?? ''}\n'
+        'Class: ${data['class'] ?? ''} | Roll: ${data['rollNo'] ?? ''}\n'
+        'Month: ${_monthName(data['month']?.toString() ?? _selectedMonth)}\n\n'
+        '$itemLines\n\n'
+        'Received: ${_money(_toDouble(data['installmentAmount']))}\n'
+        'Total Paid: ${_money(_toDouble(data['totalPaid']))}\n'
+        'Balance: ${_money(_toDouble(data['balance']))}\n'
+        'Mode: ${data['paymentMode'] ?? ''}\n'
+        '${driveUrl.isNotEmpty ? '\nPDF Receipt: $driveUrl\n' : ''}'
+        '\nThank you.';
+  }
+
+  void _openWhatsAppFromPayment(Map<String, dynamic> data) {
+    final contact = data['parentContact']?.toString() ?? '';
+    final number = _whatsappNumber(contact);
+    if (number.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Parent WhatsApp number missing hai.')),
+      );
+      return;
+    }
+
+    final message = Uri.encodeComponent(_receiptText(data));
+    html.window.open('https://wa.me/$number?text=$message', '_blank');
+  }
+
+  Future<Uint8List> _buildReceiptPdf(Map<String, dynamic> data) async {
+    final pdf = pw.Document();
+    final items = Map<String, dynamic>.from(data['feeItems'] ?? {});
+    final itemEntries = items.entries.where((e) => _toDouble(e.value) > 0).toList();
+
+    pw.TableRow row(String left, String right, {bool bold = false}) {
+      final style = pw.TextStyle(fontSize: 9, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal);
+      return pw.TableRow(
+        children: [
+          pw.Padding(
+            padding: const pw.EdgeInsets.all(5),
+            child: pw.Text(left, style: style),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.all(5),
+            child: pw.Text(right, style: style, textAlign: pw.TextAlign.right),
+          ),
+        ],
+      );
+    }
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(34),
+        build: (context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              pw.Text(
+                'SARASWATI VIDYA NIKETAN',
+                textAlign: pw.TextAlign.center,
+                style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 3),
+              pw.Text(
+                'MADHABDHAM, SRIGOURI',
+                textAlign: pw.TextAlign.center,
+                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 14),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Receipt No: ${data['receiptNo'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
+                  pw.Text('Date: ${data['dateText'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
+                ],
+              ),
+              pw.SizedBox(height: 6),
+              pw.Text('Name: ${data['studentName'] ?? ''}', style: const pw.TextStyle(fontSize: 10)),
+              pw.SizedBox(height: 4),
+              pw.Text(
+                'Class: ${data['class'] ?? ''}    Roll No: ${data['rollNo'] ?? ''}    Month: ${_monthName(data['month']?.toString() ?? _selectedMonth)}',
+                style: const pw.TextStyle(fontSize: 10),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Table(
+                border: pw.TableBorder.all(width: 0.5),
+                columnWidths: const {
+                  0: pw.FlexColumnWidth(3),
+                  1: pw.FlexColumnWidth(1),
+                },
+                children: [
+                  row('Description', 'Rs.', bold: true),
+                  ...itemEntries.map((e) => row(e.key, _toDouble(e.value).toStringAsFixed(0))),
+                  row('Amount Received', _toDouble(data['installmentAmount']).toStringAsFixed(0), bold: true),
+                  row('Total Paid', _toDouble(data['totalPaid']).toStringAsFixed(0), bold: true),
+                  row('Balance Due', _toDouble(data['balance']).toStringAsFixed(0), bold: true),
+                ],
+              ),
+              pw.SizedBox(height: 10),
+              pw.Text('Payment Mode: ${data['paymentMode'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
+              pw.Spacer(),
+              pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Column(
+                  children: [
+                    pw.SizedBox(height: 25),
+                    pw.Container(width: 110, height: 0.5, color: PdfColors.black),
+                    pw.SizedBox(height: 4),
+                    pw.Text('Signature', style: const pw.TextStyle(fontSize: 9)),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    return pdf.save();
+  }
+
+  Future<Map<String, dynamic>?> _loadLastPayment(Map<String, dynamic>? ledger) async {
+    final paymentId = ledger?['lastPaymentId']?.toString() ?? '';
+    if (paymentId.isEmpty) return null;
+    final doc = await FirebaseFirestore.instance.collection('fee_payments').doc(paymentId).get();
+    return doc.data();
+  }
+
+  Future<void> _printLastReceipt(Map<String, dynamic>? ledger) async {
+    try {
+      final data = await _loadLastPayment(ledger);
+      if (data == null) throw Exception('Receipt record nahi mila.');
+      final bytes = await _buildReceiptPdf(data);
+      await Printing.layoutPdf(onLayout: (_) async => bytes);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Receipt print error: $e')),
+      );
+    }
+  }
+
+  Future<void> _whatsappLastReceipt(Map<String, dynamic>? ledger) async {
+    try {
+      final data = await _loadLastPayment(ledger);
+      if (data == null) throw Exception('Receipt record nahi mila.');
+      _openWhatsAppFromPayment(data);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('WhatsApp receipt error: $e')),
+      );
+    }
+  }
+
+  Widget _feeStructurePreview() {
+    if (_selectedClass == 'All Classes') {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF121F26),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: const Text(
+          'Fee Structure dekhne ke liye ek Class select karein.',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('fee_settings')
+          .doc(_settingsDocId(_selectedClass))
+          .snapshots(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data() ?? <String, dynamic>{};
+        final fees = Map<String, dynamic>.from(data['fees'] ?? {});
+        final defaults = Map<String, dynamic>.from(data['defaultSelected'] ?? {});
+        final visible = _feeHeads.where((head) => _toDouble(fees[head]) > 0).toList();
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFF121F26),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFF00A884).withOpacity(0.22)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.receipt_long_rounded, color: Color(0xFF00D9A5), size: 19),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$_selectedClass Fee Structure',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (visible.isEmpty)
+                const Text('Fee settings abhi set nahi hai.', style: TextStyle(color: Colors.white54))
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: visible.map((head) {
+                    final checked = defaults[head] == true || head == 'Tuition Fees';
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF172229),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: checked ? const Color(0xFF00A884).withOpacity(0.35) : Colors.white10),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            checked ? Icons.check_circle_rounded : Icons.circle_outlined,
+                            color: checked ? const Color(0xFF00A884) : Colors.white24,
+                            size: 15,
+                          ),
+                          const SizedBox(width: 6),
+                          Text('$head  ${_money(_toDouble(fees[head]))}', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _inlinePaymentPanel(
+    QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
+    Map<String, dynamic>? ledger,
+  ) {
+    final student = studentDoc.data();
+    final oldPaid = _toDouble(ledger?['totalPaid']);
+    final oldExpected = _toDouble(ledger?['expectedAmount']);
+    final expected = oldExpected > 0 ? oldExpected : _selectedFeesTotal;
+    final remaining = (expected - oldPaid).clamp(0, double.infinity).toDouble();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF102129),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF00A884).withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.payments_rounded, color: Color(0xFF00D9A5)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Collect Payment - ${student['name'] ?? ''}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Close',
+                onPressed: _isSavingPayment ? null : () => setState(() => _activeStudentId = null),
+                icon: const Icon(Icons.close_rounded, color: Colors.white54),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _feeHeads.map((head) {
+              final fee = _activeFeeAmounts[head] ?? 0;
+              if (fee <= 0) return const SizedBox.shrink();
+              final selected = _selectedFeeHeads.contains(head);
+              final locked = oldExpected > 0;
+              return FilterChip(
+                selected: selected,
+                onSelected: locked
+                    ? null
+                    : (value) {
+                        setState(() {
+                          if (value) {
+                            _selectedFeeHeads.add(head);
+                          } else {
+                            _selectedFeeHeads.remove(head);
+                          }
+                          final newTotal = _selectedFeesTotal;
+                          _receivedAmountController.text = newTotal > 0 ? newTotal.toStringAsFixed(0) : '';
+                        });
+                      },
+                selectedColor: const Color(0x3300A884),
+                backgroundColor: const Color(0xFF172229),
+                checkmarkColor: const Color(0xFF00D9A5),
+                label: Text(
+                  '$head ${_money(fee)}',
+                  style: TextStyle(color: selected ? const Color(0xFF00D9A5) : Colors.white70, fontSize: 11),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: 210,
+                child: TextField(
+                  controller: _receivedAmountController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration('Amount Received', Icons.currency_rupee_rounded),
+                ),
+              ),
+              SizedBox(
+                width: 190,
+                child: DropdownButtonFormField<String>(
+                  value: _paymentMode,
+                  dropdownColor: const Color(0xFF172229),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: _inputDecoration('Payment Mode', Icons.account_balance_wallet_rounded),
+                  items: const [
+                    DropdownMenuItem(value: 'Cash', child: Text('Cash')),
+                    DropdownMenuItem(value: 'UPI', child: Text('UPI')),
+                    DropdownMenuItem(value: 'Bank Transfer', child: Text('Bank Transfer')),
+                    DropdownMenuItem(value: 'Cheque', child: Text('Cheque')),
+                  ],
+                  onChanged: _isSavingPayment ? null : (value) {
+                    if (value != null) setState(() => _paymentMode = value);
+                  },
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF172229),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  'Total ${_money(expected)}  •  Paid ${_money(oldPaid)}  •  Due ${_money(remaining)}',
+                  style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
+                ),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00A884),
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+                ),
+                onPressed: _isSavingPayment ? null : () => _collectPayment(studentDoc, ledger),
+                icon: _isSavingPayment
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.check_circle_rounded, color: Colors.white),
+                label: Text(
+                  _isSavingPayment ? 'Saving...' : 'Confirm Collect',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
                 ),
               ),
             ],
@@ -7409,958 +8134,205 @@ class _FeesCollectionScreenState
     );
   }
 
-  String _ledgerId(String studentId) {
-    return '${_selectedMonth}_$studentId';
-  }
-
-  String _whatsappNumber(String number) {
-    var value =
-        number.replaceAll(RegExp(r'[^0-9]'), '');
-
-    if (value.length == 10) {
-      value = '91$value';
-    }
-
-    return value;
-  }
-
-  Future<void> _collectFees(
-    String studentId,
-    Map<String, dynamic> student,
-    Map<String, dynamic>? ledger,
-  ) async {
-    final oldExpected =
-        _toDouble(ledger?['expectedAmount']);
-
-    final oldPaid =
-        _toDouble(ledger?['totalPaid']);
-
-    final expectedController =
-        TextEditingController(
-      text: oldExpected > 0
-          ? oldExpected.toStringAsFixed(0)
-          : '',
-    );
-
-    final amountController =
-        TextEditingController();
-
-    final noteController =
-        TextEditingController();
-
-    String paymentMode = 'Cash';
-    String feeType = 'Tuition Fee';
-
-    bool saving = false;
-
-    final studentName =
-        student['name']?.toString() ?? '';
-
-    final studentClass =
-        student['class']?.toString() ?? '';
-
-    final roll =
-        student['rollNo']?.toString() ?? '';
-
-    final parentContact =
-        student['parentContact']
-                ?.toString() ??
-            '';
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (
-            context,
-            setDialogState,
-          ) {
-            return AlertDialog(
-              backgroundColor:
-                  const Color(0xFF1F2C34),
-              title: Text(
-                'Collect Fees - $studentName',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              content: SizedBox(
-                width: 470,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize:
-                        MainAxisSize.min,
-                    children: [
-                      Text(
-                        '$studentClass • Roll $roll\n'
-                        '${_monthName(_selectedMonth)}\n'
-                        'Already Paid: ${_money(oldPaid)}',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          height: 1.5,
-                        ),
-                      ),
-                      const SizedBox(height: 15),
-
-                      TextField(
-                        controller:
-                            expectedController,
-                        enabled:
-                            oldExpected <= 0,
-                        keyboardType:
-                            TextInputType.number,
-                        style: const TextStyle(
-                          color: Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Monthly Fee Amount',
-                          Icons
-                              .currency_rupee_rounded,
-                        ),
-                      ),
-
-                      const SizedBox(height: 10),
-
-                      TextField(
-                        controller:
-                            amountController,
-                        keyboardType:
-                            TextInputType.number,
-                        style: const TextStyle(
-                          color: Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Amount Received',
-                          Icons.payments_rounded,
-                        ),
-                      ),
-
-                      const SizedBox(height: 10),
-
-                      DropdownButtonFormField<
-                          String>(
-                        value: feeType,
-                        dropdownColor:
-                            const Color(
-                          0xFF172229,
-                        ),
-                        style: const TextStyle(
-                          color: Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Fee Type',
-                          Icons
-                              .receipt_long_rounded,
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value:
-                                'Tuition Fee',
-                            child: Text(
-                              'Tuition Fee',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value:
-                                'Admission Fee',
-                            child: Text(
-                              'Admission Fee',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value:
-                                'Exam Fee',
-                            child: Text(
-                              'Exam Fee',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value:
-                                'Transport Fee',
-                            child: Text(
-                              'Transport Fee',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'Other',
-                            child: Text('Other'),
-                          ),
-                        ],
-                        onChanged: (value) {
-                          if (value != null) {
-                            setDialogState(
-                              () => feeType = value,
-                            );
-                          }
-                        },
-                      ),
-
-                      const SizedBox(height: 10),
-
-                      DropdownButtonFormField<
-                          String>(
-                        value: paymentMode,
-                        dropdownColor:
-                            const Color(
-                          0xFF172229,
-                        ),
-                        style: const TextStyle(
-                          color: Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Payment Mode',
-                          Icons
-                              .account_balance_wallet_rounded,
-                        ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'Cash',
-                            child: Text('Cash'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'UPI',
-                            child: Text('UPI'),
-                          ),
-                          DropdownMenuItem(
-                            value:
-                                'Bank Transfer',
-                            child: Text(
-                              'Bank Transfer',
-                            ),
-                          ),
-                          DropdownMenuItem(
-                            value: 'Cheque',
-                            child:
-                                Text('Cheque'),
-                          ),
-                        ],
-                        onChanged: (value) {
-                          if (value != null) {
-                            setDialogState(
-                              () =>
-                                  paymentMode =
-                                      value,
-                            );
-                          }
-                        },
-                      ),
-
-                      const SizedBox(height: 10),
-
-                      TextField(
-                        controller:
-                            noteController,
-                        style: const TextStyle(
-                          color: Colors.white,
-                        ),
-                        decoration:
-                            _inputDecoration(
-                          'Note (Optional)',
-                          Icons.note_alt_rounded,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: saving
-                      ? null
-                      : () {
-                          Navigator.pop(
-                            dialogContext,
-                          );
-                        },
-                  child: const Text(
-                    'Cancel',
-                  ),
-                ),
-
-                ElevatedButton(
-                  style:
-                      ElevatedButton.styleFrom(
-                    backgroundColor:
-                        const Color(
-                      0xFF00A884,
-                    ),
-                  ),
-                  onPressed: saving
-                      ? null
-                      : () async {
-                          final expected =
-                              oldExpected > 0
-                                  ? oldExpected
-                                  : double
-                                          .tryParse(
-                                        expectedController
-                                            .text
-                                            .trim(),
-                                      ) ??
-                                      0;
-
-                          final amount =
-                              double.tryParse(
-                                    amountController
-                                        .text
-                                        .trim(),
-                                  ) ??
-                                  0;
-
-                          if (expected <= 0 ||
-                              amount <= 0) {
-                            return;
-                          }
-
-                          if (oldPaid + amount >
-                              expected) {
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'Remaining fee ${_money(expected - oldPaid)} hai.',
-                                ),
-                              ),
-                            );
-
-                            return;
-                          }
-
-                          setDialogState(
-                            () =>
-                                saving = true,
-                          );
-
-                          final totalPaid =
-                              oldPaid + amount;
-
-                          final balance =
-                              expected -
-                                  totalPaid;
-
-                          final status =
-                              _feeStatus(
-                            expected,
-                            totalPaid,
-                          );
-
-                          final receiptNo =
-                              'SVN-${DateTime.now().millisecondsSinceEpoch}';
-
-                          try {
-                            await FirebaseFirestore
-                                .instance
-                                .collection(
-                                  'fee_ledger',
-                                )
-                                .doc(
-                                  _ledgerId(
-                                    studentId,
-                                  ),
-                                )
-                                .set(
-                              {
-                                'studentId':
-                                    studentId,
-                                'studentName':
-                                    studentName,
-                                'class':
-                                    studentClass,
-                                'rollNo': roll,
-                                'parentContact':
-                                    parentContact,
-                                'month':
-                                    _selectedMonth,
-                                'expectedAmount':
-                                    expected,
-                                'totalPaid':
-                                    totalPaid,
-                                'balance':
-                                    balance,
-                                'status':
-                                    status,
-                                'updatedAt':
-                                    FieldValue
-                                        .serverTimestamp(),
-                              },
-                              SetOptions(
-                                merge: true,
-                              ),
-                            );
-
-                            await FirebaseFirestore
-                                .instance
-                                .collection(
-                                  'fee_payments',
-                                )
-                                .add({
-                              'receiptNo':
-                                  receiptNo,
-                              'studentId':
-                                  studentId,
-                              'studentName':
-                                  studentName,
-                              'class':
-                                  studentClass,
-                              'rollNo': roll,
-                              'month':
-                                  _selectedMonth,
-                              'feeType':
-                                  feeType,
-                              'amount':
-                                  amount,
-                              'paymentMode':
-                                  paymentMode,
-                              'parentContact':
-                                  parentContact,
-                              'note':
-                                  noteController
-                                      .text
-                                      .trim(),
-                              'collectedBy':
-                                  FirebaseAuth
-                                          .instance
-                                          .currentUser
-                                          ?.email ??
-                                      'Admin',
-                              'paidAt':
-                                  FieldValue
-                                      .serverTimestamp(),
-                            });
-
-                            if (!mounted) {
-                              return;
-                            }
-
-                            Navigator.pop(
-                              dialogContext,
-                            );
-
-                            _showReceipt(
-                              receiptNo:
-                                  receiptNo,
-                              studentName:
-                                  studentName,
-                              studentClass:
-                                  studentClass,
-                              roll: roll,
-                              expected:
-                                  expected,
-                              amount: amount,
-                              totalPaid:
-                                  totalPaid,
-                              balance:
-                                  balance,
-                              paymentMode:
-                                  paymentMode,
-                              parentContact:
-                                  parentContact,
-                            );
-                          } catch (e) {
-                            setDialogState(
-                              () => saving =
-                                  false,
-                            );
-
-                            if (!mounted) {
-                              return;
-                            }
-
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(
-                              SnackBar(
-                                backgroundColor:
-                                    Colors
-                                        .redAccent,
-                                content: Text(
-                                  'Fee save error: $e',
-                                ),
-                              ),
-                            );
-                          }
-                        },
-                  child: Text(
-                    saving
-                        ? 'Saving...'
-                        : 'Collect Fees',
-                    style: const TextStyle(
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _showReceipt({
-    required String receiptNo,
-    required String studentName,
-    required String studentClass,
-    required String roll,
-    required double expected,
-    required double amount,
-    required double totalPaid,
-    required double balance,
-    required String paymentMode,
-    required String parentContact,
-  }) {
-    final receipt = '''
-SARASWATI VIDYA NIKETAN, MADHABDHAM
-
-FEES RECEIPT
-
-Receipt No: $receiptNo
-Student: $studentName
-Class: $studentClass
-Roll No: $roll
-Month: ${_monthName(_selectedMonth)}
-
-Amount Received: ${_money(amount)}
-Total Paid: ${_money(totalPaid)}
-Balance Due: ${_money(balance)}
-
-Payment Mode: $paymentMode
-
-Thank You
-''';
-
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor:
-              const Color(0xFF1F2C34),
-          title: const Text(
-            'Payment Successful',
-            style: TextStyle(
-              color: Colors.white,
-            ),
-          ),
-          content: SelectableText(
-            receipt,
-            style: const TextStyle(
-              color: Colors.white70,
-              height: 1.5,
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Clipboard.setData(
-                  ClipboardData(
-                    text: receipt,
-                  ),
-                );
-              },
-              child: const Text(
-                'Copy Receipt',
-              ),
-            ),
-
-            if (parentContact.isNotEmpty)
-              ElevatedButton(
-                style:
-                    ElevatedButton.styleFrom(
-                  backgroundColor:
-                      const Color(
-                    0xFF25D366,
-                  ),
-                ),
-                onPressed: () {
-                  final number =
-                      _whatsappNumber(
-                    parentContact,
-                  );
-
-                  final message =
-                      Uri.encodeComponent(
-                    receipt,
-                  );
-
-                  html.window.open(
-                    'https://wa.me/$number?text=$message',
-                    '_blank',
-                  );
-                },
-                child: const Text(
-                  'Send WhatsApp',
-                  style: TextStyle(
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-
-            TextButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-              },
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Widget _studentCard(
-    QueryDocumentSnapshot<
-            Map<String, dynamic>>
-        studentDoc,
+    QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
     Map<String, dynamic>? ledger,
   ) {
     final student = studentDoc.data();
+    final name = student['name']?.toString() ?? 'Student';
+    final studentClass = student['class']?.toString() ?? '';
+    final roll = student['rollNo']?.toString() ?? '';
+    final expected = _toDouble(ledger?['expectedAmount']);
+    final paid = _toDouble(ledger?['totalPaid']);
+    final balance = expected > 0 ? (expected - paid).clamp(0, double.infinity).toDouble() : 0.0;
+    final status = _feeStatus(expected, paid);
+    final color = _statusColor(status);
+    final isPaid = status == 'PAID';
+    final isActive = _activeStudentId == studentDoc.id;
 
-    final name =
-        student['name']?.toString() ??
-            'Student';
-
-    final studentClass =
-        student['class']?.toString() ??
-            '';
-
-    final roll =
-        student['rollNo']?.toString() ??
-            '';
-
-    final expected =
-        _toDouble(
-      ledger?['expectedAmount'],
-    );
-
-    final paid =
-        _toDouble(
-      ledger?['totalPaid'],
-    );
-
-    final double balance = expected > 0
-        ? expected - paid
-        : 0;0;
-
-    final status =
-        _feeStatus(
-      expected,
-      paid,
-    );
-
-    final color =
-        _statusColor(status);
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF172229),
-        borderRadius:
-            BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor:
-                const Color(
-              0x2200A884,
-            ),
-            child: Text(
-              name.isNotEmpty
-                  ? name[0].toUpperCase()
-                  : 'S',
-              style: const TextStyle(
-                color:
-                    Color(0xFF00D9A5),
-                fontWeight:
-                    FontWeight.bold,
-              ),
-            ),
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFF172229),
+            borderRadius: BorderRadius.circular(14),
           ),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight:
-                        FontWeight.bold,
-                  ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: const Color(0x2200A884),
+                child: Text(
+                  name.isNotEmpty ? name[0].toUpperCase() : 'S',
+                  style: const TextStyle(color: Color(0xFF00D9A5), fontWeight: FontWeight.bold),
                 ),
-                Text(
-                  '$studentClass • Roll $roll',
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11,
-                  ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    Text('$studentClass • Roll $roll', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  ],
+                ),
+              ),
+              if (expected > 0) ...[
+                Text('Fee ${_money(expected)}', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                const SizedBox(width: 14),
+                Text('Paid ${_money(paid)}', style: const TextStyle(color: Color(0xFF00D9A5), fontSize: 11)),
+                const SizedBox(width: 14),
+                Text('Due ${_money(balance)}', style: const TextStyle(color: Colors.orangeAccent, fontSize: 11)),
+                const SizedBox(width: 14),
+              ] else ...[
+                const Text('Fee not set', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                const SizedBox(width: 14),
+              ],
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  status,
+                  style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(width: 10),
+              if (ledger?['lastPaymentId'] != null) ...[
+                IconButton(
+                  tooltip: 'Print Receipt',
+                  onPressed: () => _printLastReceipt(ledger),
+                  icon: const Icon(Icons.print_rounded, color: Colors.white70),
+                ),
+                IconButton(
+                  tooltip: 'WhatsApp Receipt',
+                  onPressed: () => _whatsappLastReceipt(ledger),
+                  icon: const Icon(Icons.send_rounded, color: Color(0xFF25D366)),
                 ),
               ],
-            ),
-          ),
-
-          Text(
-            expected > 0
-                ? 'Fee ${_money(expected)}'
-                : 'Fee not set',
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 11,
-            ),
-          ),
-
-          const SizedBox(width: 15),
-
-          Text(
-            'Paid ${_money(paid)}',
-            style: const TextStyle(
-              color:
-                  Color(0xFF00D9A5),
-              fontSize: 11,
-            ),
-          ),
-
-          const SizedBox(width: 15),
-
-          if (expected > 0)
-            Text(
-              'Due ${_money(balance)}',
-              style: const TextStyle(
-                color:
-                    Colors.orangeAccent,
-                fontSize: 11,
+              const SizedBox(width: 4),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isPaid ? Colors.white12 : const Color(0xFF00A884),
+                ),
+                onPressed: isPaid
+                    ? null
+                    : () {
+                        if (isActive) {
+                          setState(() => _activeStudentId = null);
+                        } else {
+                          _openInlineCollector(studentDoc, ledger);
+                        }
+                      },
+                icon: Icon(
+                  isPaid ? Icons.lock_rounded : Icons.payments_rounded,
+                  color: isPaid ? Colors.white38 : Colors.white,
+                  size: 17,
+                ),
+                label: Text(
+                  isPaid ? 'Paid ✓' : (isActive ? 'Close' : 'Collect'),
+                  style: TextStyle(color: isPaid ? Colors.white38 : Colors.white),
+                ),
               ),
-            ),
-
-          const SizedBox(width: 15),
-
-          Container(
-            padding:
-                const EdgeInsets.symmetric(
-              horizontal: 10,
-              vertical: 6,
-            ),
-            decoration: BoxDecoration(
-              color:
-                  color.withOpacity(0.12),
-              borderRadius:
-                  BorderRadius.circular(20),
-            ),
-            child: Text(
-              status,
-              style: TextStyle(
-                color: color,
-                fontSize: 10,
-                fontWeight:
-                    FontWeight.bold,
-              ),
-            ),
+            ],
           ),
-
-          const SizedBox(width: 10),
-
-          ElevatedButton(
-            style:
-                ElevatedButton.styleFrom(
-              backgroundColor:
-                  const Color(
-                0xFF00A884,
-              ),
-            ),
-            onPressed: () {
-              _collectFees(
-                studentDoc.id,
-                student,
-                ledger,
-              );
-            },
-            child: const Text(
-              'Collect',
-              style: TextStyle(
-                color: Colors.white,
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+        if (isActive) _inlinePaymentPanel(studentDoc, ledger),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF0B141A),
-
+      backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF1F2C34),
-        title:
-            const Text(
-          'Fees Collection',
-        ),
-      ),
-
-      body: StreamBuilder<
-          QuerySnapshot<
-              Map<String, dynamic>>>(
-        stream: FirebaseFirestore
-            .instance
-            .collection(
-              'students_directory',
-            )
-            .snapshots(),
-
-        builder: (
-          context,
-          studentSnapshot,
-        ) {
-          if (!studentSnapshot.hasData) {
-            return const Center(
-              child:
-                  CircularProgressIndicator(
-                color:
-                    Color(0xFF00A884),
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Fees Collection'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: TextButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const FeeCollectionSettingsScreen()),
+                );
+              },
+              icon: const Icon(Icons.settings_rounded, color: Color(0xFF00D9A5)),
+              label: const Text(
+                'Payment Collection Settings',
+                style: TextStyle(color: Colors.white),
               ),
+            ),
+          ),
+        ],
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance.collection('students_directory').snapshots(),
+        builder: (context, studentSnapshot) {
+          if (studentSnapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+          }
+          if (studentSnapshot.hasError) {
+            return Center(
+              child: Text('Students load error: ${studentSnapshot.error}', style: const TextStyle(color: Colors.redAccent)),
             );
           }
 
-          final students =
-              studentSnapshot
-                  .data!.docs;
+          final students = studentSnapshot.data?.docs ?? [];
 
-          return StreamBuilder<
-              QuerySnapshot<
-                  Map<String,
-                      dynamic>>>(
-            stream: FirebaseFirestore
-                .instance
-                .collection(
-                  'fee_ledger',
-                )
-                .where(
-                  'month',
-                  isEqualTo:
-                      _selectedMonth,
-                )
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance
+                .collection('fee_ledger')
+                .where('month', isEqualTo: _selectedMonth)
                 .snapshots(),
-
-            builder: (
-              context,
-              ledgerSnapshot,
-            ) {
-              final ledger =
-                  <String,
-                      Map<String,
-                          dynamic>>{};
-
-              if (ledgerSnapshot.hasData) {
-                for (final doc
-                    in ledgerSnapshot
-                        .data!.docs) {
-                  final data =
-                      doc.data();
-
-                  final studentId =
-                      data['studentId']
-                              ?.toString() ??
-                          '';
-
-                  ledger[studentId] =
-                      data;
-                }
+            builder: (context, ledgerSnapshot) {
+              final ledger = <String, Map<String, dynamic>>{};
+              for (final doc in ledgerSnapshot.data?.docs ?? []) {
+                final data = doc.data();
+                final studentId = data['studentId']?.toString() ?? '';
+                if (studentId.isNotEmpty) ledger[studentId] = data;
               }
 
-              final search =
-                  _searchController
-                      .text
-                      .trim()
-                      .toLowerCase();
+              final search = _searchController.text.trim().toLowerCase();
+              final filtered = students.where((doc) {
+                final data = doc.data();
+                final cls = data['class']?.toString() ?? '';
+                final name = data['name']?.toString().toLowerCase() ?? '';
+                final roll = data['rollNo']?.toString().toLowerCase() ?? '';
+                final contact = data['parentContact']?.toString().toLowerCase() ?? '';
+                final classOk = _selectedClass == 'All Classes' || cls == _selectedClass;
+                final searchOk = search.isEmpty || name.contains(search) || roll.contains(search) || contact.contains(search);
+                return classOk && searchOk;
+              }).toList();
 
-              final filtered =
-                  students.where(
-                (doc) {
-                  final data =
-                      doc.data();
-
-                  final cls =
-                      data['class']
-                              ?.toString() ??
-                          '';
-
-                  final name =
-                      data['name']
-                              ?.toString()
-                              .toLowerCase() ??
-                          '';
-
-                  final roll =
-                      data['rollNo']
-                              ?.toString()
-                              .toLowerCase() ??
-                          '';
-
-                  final classOk =
-                      _selectedClass ==
-                              'All Classes' ||
-                          cls ==
-                              _selectedClass;
-
-                  final searchOk =
-                      search.isEmpty ||
-                          name.contains(
-                            search,
-                          ) ||
-                          roll.contains(
-                            search,
-                          );
-
-                  return classOk &&
-                      searchOk;
-                },
-              ).toList();
+              filtered.sort((a, b) {
+                final ad = a.data();
+                final bd = b.data();
+                final ac = ad['class']?.toString() ?? '';
+                final bc = bd['class']?.toString() ?? '';
+                final classCompare = ac.compareTo(bc);
+                if (classCompare != 0) return classCompare;
+                final ar = int.tryParse(ad['rollNo']?.toString() ?? '') ?? 99999;
+                final br = int.tryParse(bd['rollNo']?.toString() ?? '') ?? 99999;
+                return ar.compareTo(br);
+              });
 
               int paidCount = 0;
               int partialCount = 0;
               int dueCount = 0;
 
               for (final doc in filtered) {
-                final data =
-                    ledger[doc.id];
-
-                final expected =
-                    _toDouble(
-                  data?[
-                      'expectedAmount'],
-                );
-
-                final paid =
-                    _toDouble(
-                  data?[
-                      'totalPaid'],
-                );
-
-                final status =
-                    _feeStatus(
-                  expected,
-                  paid,
-                );
-
+                final data = ledger[doc.id];
+                final expected = _toDouble(data?['expectedAmount']);
+                final paid = _toDouble(data?['totalPaid']);
+                final status = _feeStatus(expected, paid);
                 if (status == 'PAID') {
                   paidCount++;
-                } else if (status ==
-                    'PARTIAL') {
+                } else if (status == 'PARTIAL') {
                   partialCount++;
                 } else {
                   dueCount++;
@@ -8368,239 +8340,85 @@ Thank You
               }
 
               return Padding(
-                padding:
-                    const EdgeInsets.all(
-                  16,
-                ),
+                padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
                     Wrap(
                       spacing: 10,
                       runSpacing: 10,
                       children: [
-                        _summaryCard(
-                          title:
-                              'Total Students',
-                          count:
-                              filtered.length,
-                          icon:
-                              Icons.groups_rounded,
-                          color:
-                              Colors.blueAccent,
-                        ),
-                        _summaryCard(
-                          title: 'Paid',
-                          count:
-                              paidCount,
-                          icon: Icons
-                              .check_circle_rounded,
-                          color:
-                              const Color(
-                            0xFF00A884,
-                          ),
-                        ),
-                        _summaryCard(
-                          title:
-                              'Partial Paid',
-                          count:
-                              partialCount,
-                          icon: Icons
-                              .timelapse_rounded,
-                          color:
-                              Colors.orangeAccent,
-                        ),
-                        _summaryCard(
-                          title: 'Due',
-                          count:
-                              dueCount,
-                          icon: Icons
-                              .warning_amber_rounded,
-                          color:
-                              Colors.redAccent,
-                        ),
+                        _summaryCard(title: 'Total Students', count: filtered.length, icon: Icons.groups_rounded, color: Colors.blueAccent),
+                        _summaryCard(title: 'Paid', count: paidCount, icon: Icons.check_circle_rounded, color: const Color(0xFF00A884)),
+                        _summaryCard(title: 'Partial Paid', count: partialCount, icon: Icons.timelapse_rounded, color: Colors.orangeAccent),
+                        _summaryCard(title: 'Due', count: dueCount, icon: Icons.warning_amber_rounded, color: Colors.redAccent),
                       ],
                     ),
-
-                    const SizedBox(
-                      height: 15,
-                    ),
-
+                    const SizedBox(height: 14),
                     Wrap(
                       spacing: 10,
                       runSpacing: 10,
                       children: [
                         SizedBox(
                           width: 190,
-                          child:
-                              DropdownButtonFormField<
-                                  String>(
-                            value:
-                                _selectedClass,
-                            dropdownColor:
-                                const Color(
-                              0xFF172229,
-                            ),
-                            style:
-                                const TextStyle(
-                              color:
-                                  Colors.white,
-                            ),
-                            decoration:
-                                _inputDecoration(
-                              'Class',
-                              Icons
-                                  .class_rounded,
-                            ),
-                            items: _classes
-                                .map(
-                                  (value) =>
-                                      DropdownMenuItem(
-                                    value:
-                                        value,
-                                    child:
-                                        Text(
-                                      value,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged:
-                                (value) {
-                              if (value !=
-                                  null) {
-                                setState(
-                                  () =>
-                                      _selectedClass =
-                                          value,
-                                );
+                          child: DropdownButtonFormField<String>(
+                            value: _selectedClass,
+                            dropdownColor: const Color(0xFF172229),
+                            style: const TextStyle(color: Colors.white),
+                            decoration: _inputDecoration('Class', Icons.class_rounded),
+                            items: _classes.map((value) => DropdownMenuItem(value: value, child: Text(value))).toList(),
+                            onChanged: (value) {
+                              if (value != null) {
+                                setState(() {
+                                  _selectedClass = value;
+                                  _activeStudentId = null;
+                                });
                               }
                             },
                           ),
                         ),
-
                         SizedBox(
                           width: 210,
-                          child:
-                              DropdownButtonFormField<
-                                  String>(
-                            value:
-                                _selectedMonth,
-                            dropdownColor:
-                                const Color(
-                              0xFF172229,
-                            ),
-                            style:
-                                const TextStyle(
-                              color:
-                                  Colors.white,
-                            ),
-                            decoration:
-                                _inputDecoration(
-                              'Month',
-                              Icons
-                                  .calendar_month_rounded,
-                            ),
-                            items:
-                                _monthList()
-                                    .map(
-                              (value) {
-                                return DropdownMenuItem(
-                                  value:
-                                      value,
-                                  child: Text(
-                                    _monthName(
-                                      value,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ).toList(),
-                            onChanged:
-                                (value) {
-                              if (value !=
-                                  null) {
-                                setState(
-                                  () =>
-                                      _selectedMonth =
-                                          value,
-                                );
+                          child: DropdownButtonFormField<String>(
+                            value: _selectedMonth,
+                            dropdownColor: const Color(0xFF172229),
+                            style: const TextStyle(color: Colors.white),
+                            decoration: _inputDecoration('Month', Icons.calendar_month_rounded),
+                            items: _monthList().map((value) => DropdownMenuItem(value: value, child: Text(_monthName(value)))).toList(),
+                            onChanged: (value) {
+                              if (value != null) {
+                                setState(() {
+                                  _selectedMonth = value;
+                                  _activeStudentId = null;
+                                });
                               }
                             },
                           ),
                         ),
-
                         SizedBox(
-                          width: 300,
-                          child:
-                              TextField(
-                            controller:
-                                _searchController,
-                            style:
-                                const TextStyle(
-                              color:
-                                  Colors.white,
-                            ),
-                            decoration:
-                                _inputDecoration(
-                              'Search Student / Roll',
-                              Icons
-                                  .search_rounded,
-                            ),
-                            onChanged:
-                                (_) {
-                              setState(
-                                () {},
-                              );
-                            },
+                          width: 320,
+                          child: TextField(
+                            controller: _searchController,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: _inputDecoration('Search Student / Roll / Mobile', Icons.search_rounded),
+                            onChanged: (_) => setState(() {}),
                           ),
                         ),
                       ],
                     ),
-
-                    const SizedBox(
-                      height: 15,
-                    ),
-
+                    const SizedBox(height: 12),
+                    _feeStructurePreview(),
+                    const SizedBox(height: 12),
                     Expanded(
                       child: filtered.isEmpty
                           ? const Center(
-                              child: Text(
-                                'No students found',
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.white54,
-                                ),
-                              ),
+                              child: Text('No students found', style: TextStyle(color: Colors.white54)),
                             )
-                          : ListView
-                              .separated(
-                              itemCount:
-                                  filtered
-                                      .length,
-                              separatorBuilder:
-                                  (
-                                context,
-                                index,
-                              ) =>
-                                      const SizedBox(
-                                height: 8,
-                              ),
-                              itemBuilder:
-                                  (
-                                context,
-                                index,
-                              ) {
-                                final student =
-                                    filtered[
-                                        index];
-
-                                return _studentCard(
-                                  student,
-                                  ledger[
-                                      student
-                                          .id],
-                                );
+                          : ListView.separated(
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) => const SizedBox(height: 8),
+                              itemBuilder: (context, index) {
+                                final student = filtered[index];
+                                return _studentCard(student, ledger[student.id]);
                               },
                             ),
                     ),
@@ -8610,6 +8428,269 @@ Thank You
             },
           );
         },
+      ),
+    );
+  }
+}
+
+// ============================================================
+// PAYMENT COLLECTION SETTINGS
+// ============================================================
+
+class FeeCollectionSettingsScreen extends StatefulWidget {
+  const FeeCollectionSettingsScreen({super.key});
+
+  @override
+  State<FeeCollectionSettingsScreen> createState() => _FeeCollectionSettingsScreenState();
+}
+
+class _FeeCollectionSettingsScreenState extends State<FeeCollectionSettingsScreen> {
+  static const List<String> _feeHeads = [
+    'Tuition Fees',
+    'Admission Fees',
+    'Registration Fees',
+    'Nobikaron Fees',
+    'Bidya Bharati Sahojog Rashi',
+    'Building Fees',
+    'Shishu Bharati Fees',
+    'Library Fees',
+    'Medical Fees',
+    'Game Fees',
+    'Development Fees',
+    'Electric Fees',
+    'Cultural Fees',
+    'Computer Fees',
+    'Computer Lab Fees',
+    'Educational Development Fees',
+    'Exam Fees',
+    'Miscellaneous Fees',
+    'Late Fees',
+    'Vehicle Fees',
+  ];
+
+  final List<String> _classes = List.generate(10, (index) => 'Class ${index + 1}');
+  final Map<String, TextEditingController> _controllers = {};
+  final Map<String, bool> _defaultSelected = {};
+
+  String _selectedClass = 'Class 1';
+  bool _loading = true;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    for (final head in _feeHeads) {
+      _controllers[head] = TextEditingController();
+      _defaultSelected[head] = head == 'Tuition Fees';
+    }
+    _loadSettings();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  String _docId(String className) => className.replaceAll(' ', '_');
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0.0;
+  }
+
+  Future<void> _loadSettings() async {
+    setState(() => _loading = true);
+    try {
+      final doc = await FirebaseFirestore.instance.collection('fee_settings').doc(_docId(_selectedClass)).get();
+      final data = doc.data() ?? <String, dynamic>{};
+      final fees = Map<String, dynamic>.from(data['fees'] ?? {});
+      final defaults = Map<String, dynamic>.from(data['defaultSelected'] ?? {});
+
+      for (final head in _feeHeads) {
+        final amount = _toDouble(fees[head]);
+        _controllers[head]!.text = amount > 0 ? amount.toStringAsFixed(0) : '';
+        _defaultSelected[head] = defaults[head] == true || head == 'Tuition Fees';
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Settings load error: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    setState(() => _saving = true);
+    try {
+      final fees = <String, double>{};
+      for (final head in _feeHeads) {
+        fees[head] = double.tryParse(_controllers[head]!.text.trim()) ?? 0.0;
+      }
+
+      await FirebaseFirestore.instance.collection('fee_settings').doc(_docId(_selectedClass)).set({
+        'className': _selectedClass,
+        'fees': fees,
+        'defaultSelected': _defaultSelected,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text('$_selectedClass fee structure saved.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: Colors.redAccent, content: Text('Settings save error: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Payment Collection Settings'),
+      ),
+      body: Row(
+        children: [
+          Container(
+            width: 190,
+            color: const Color(0xFF121B22),
+            child: ListView.builder(
+              padding: const EdgeInsets.all(10),
+              itemCount: _classes.length,
+              itemBuilder: (context, index) {
+                final cls = _classes[index];
+                final selected = cls == _selectedClass;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: ListTile(
+                    selected: selected,
+                    selectedTileColor: const Color(0x2200A884),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    leading: Icon(Icons.class_rounded, color: selected ? const Color(0xFF00D9A5) : Colors.white38),
+                    title: Text(
+                      cls,
+                      style: TextStyle(color: selected ? Colors.white : Colors.white60, fontWeight: selected ? FontWeight.w700 : FontWeight.normal),
+                    ),
+                    onTap: () async {
+                      if (cls == _selectedClass || _saving) return;
+                      setState(() => _selectedClass = cls);
+                      await _loadSettings();
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)))
+                : Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$_selectedClass Fee Structure',
+                          style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Amount set karein. Tick ka matlab fee collection me default selected rahega.',
+                          style: TextStyle(color: Colors.white54),
+                        ),
+                        const SizedBox(height: 14),
+                        Expanded(
+                          child: ListView.separated(
+                            itemCount: _feeHeads.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 8),
+                            itemBuilder: (context, index) {
+                              final head = _feeHeads[index];
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF172229),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Checkbox(
+                                      value: _defaultSelected[head] ?? false,
+                                      activeColor: const Color(0xFF00A884),
+                                      onChanged: (value) {
+                                        setState(() => _defaultSelected[head] = value == true);
+                                      },
+                                    ),
+                                    Expanded(
+                                      child: Text(head, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                                    ),
+                                    SizedBox(
+                                      width: 170,
+                                      child: TextField(
+                                        controller: _controllers[head],
+                                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                        style: const TextStyle(color: Colors.white),
+                                        decoration: InputDecoration(
+                                          prefixText: '₹ ',
+                                          prefixStyle: const TextStyle(color: Color(0xFF00D9A5)),
+                                          hintText: '0',
+                                          hintStyle: const TextStyle(color: Colors.white24),
+                                          filled: true,
+                                          fillColor: const Color(0xFF0B141A),
+                                          border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(9),
+                                            borderSide: BorderSide.none,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF00A884),
+                              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 15),
+                            ),
+                            onPressed: _saving ? null : _saveSettings,
+                            icon: _saving
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                  )
+                                : const Icon(Icons.save_rounded, color: Colors.white),
+                            label: Text(
+                              _saving ? 'Saving...' : 'Save / Update Fee Structure',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+        ],
       ),
     );
   }
