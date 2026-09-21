@@ -8054,7 +8054,7 @@ Thank You
       ledger?['totalPaid'],
     );
 
-    final balance = expected > 0
+    final double balance = expected > 0
         ? expected - paid
         : 0;0;
 
