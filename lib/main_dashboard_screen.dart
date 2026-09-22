@@ -1259,6 +1259,48 @@ class StudentPortalScreen extends StatefulWidget {
 }
 
 class _StudentPortalScreenState extends State<StudentPortalScreen> {
+  int _loginBackPressCount = 0;
+int _loginBackResetToken = 0;
+
+void _handleLoginBack(bool didPop) {
+  if (didPop) {
+    _loginBackPressCount = 0;
+    _loginBackResetToken++;
+    return;
+  }
+
+  setState(() {
+    _loginBackPressCount++;
+  });
+
+  final remaining = 3 - _loginBackPressCount;
+
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        backgroundColor: const Color(0xFF1F2C34),
+        content: Text(
+          remaining == 1
+              ? 'Login page par jaane ke liye Back 1 baar aur dabayein.'
+              : 'Login page par jaane ke liye Back $remaining baar aur dabayein.',
+        ),
+      ),
+    );
+
+  final token = ++_loginBackResetToken;
+
+  Future<void>.delayed(const Duration(seconds: 4), () {
+    if (!mounted || token != _loginBackResetToken) return;
+
+    if (_loginBackPressCount != 0) {
+      setState(() {
+        _loginBackPressCount = 0;
+      });
+    }
+  });
+}
   Map<String, dynamic>? studentData;
   bool isLoadingProfile = true;
   String? profileError;
@@ -1839,7 +1881,12 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: LayoutBuilder(
+body: PopScope(
+  canPop: _loginBackPressCount >= 2,
+  onPopInvokedWithResult: (didPop, result) {
+    _handleLoginBack(didPop);
+  },
+  child: LayoutBuilder(
         builder: (context, constraints) {
           final isMobile = constraints.maxWidth < 800;
           if (isMobile) {
@@ -1867,8 +1914,9 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
           );
         },
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildDesktopProfileCard() {
     return Container(
@@ -1917,6 +1965,50 @@ class AdminDashboardScreen extends StatefulWidget {
 }
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+int _loginBackPressCount = 0;
+int _loginBackResetToken = 0;
+
+void _handleLoginBack(bool didPop) {
+  if (didPop) {
+    _loginBackPressCount = 0;
+    _loginBackResetToken++;
+
+    FirebaseAuth.instance.signOut();
+    return;
+  }
+
+  setState(() {
+    _loginBackPressCount++;
+  });
+
+  final remaining = 3 - _loginBackPressCount;
+
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 1),
+        backgroundColor: const Color(0xFF1F2C34),
+        content: Text(
+          remaining == 1
+              ? 'Login page par jaane ke liye Back 1 baar aur dabayein.'
+              : 'Login page par jaane ke liye Back $remaining baar aur dabayein.',
+        ),
+      ),
+    );
+
+  final token = ++_loginBackResetToken;
+
+  Future<void>.delayed(const Duration(seconds: 4), () {
+    if (!mounted || token != _loginBackResetToken) return;
+
+    if (_loginBackPressCount != 0) {
+      setState(() {
+        _loginBackPressCount = 0;
+      });
+    }
+  });
+}  
   final TextEditingController _noticeTitleController = TextEditingController();
   final TextEditingController _noticeDescController = TextEditingController();
   String _noticeCategory = 'Holiday';
@@ -4225,7 +4317,12 @@ Future<void> _printIdCard() async {
           const SizedBox(width: 10),
         ],
       ),
-      body: LayoutBuilder(
+      body: PopScope(
+        canPop: _loginBackPressCount >= 2,
+        onPopInvokedWithResult: (didPop, result) {
+          _handleLoginBack(didPop);
+        },
+        child: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth >= 1080;
 
@@ -4276,8 +4373,9 @@ Future<void> _printIdCard() async {
           );
         },
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildAdminHero(String adminEmail) {
     final now = DateTime.now();
