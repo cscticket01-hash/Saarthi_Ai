@@ -4201,7 +4201,7 @@ Future<Uint8List> _buildIdCardPdf() async {
                       ),
                       decoration:
                           pw.BoxDecoration(
-                        color: PdfColors.white
+                        color: color: paleGreen,
                             .shade(.15),
                         borderRadius:
                             pw.BorderRadius
@@ -4210,8 +4210,8 @@ Future<Uint8List> _buildIdCardPdf() async {
                       child: pw.Text(
                         'STUDENT',
                         style: pw.TextStyle(
-                          color: PdfColors.white,
-                          fontSize: 4.5,
+                          color: color: teal,
+                          fontSize: 5.2,
                           fontWeight:
                               pw.FontWeight.bold,
                         ),
