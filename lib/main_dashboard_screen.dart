@@ -4202,7 +4202,6 @@ Future<Uint8List> _buildIdCardPdf() async {
                       decoration:
                           pw.BoxDecoration(
                         color: paleGreen,
-                            .shade(.15),
                         borderRadius:
                             pw.BorderRadius
                                 .circular(8),
