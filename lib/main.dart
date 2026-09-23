@@ -24,7 +24,7 @@ class SaarthiApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Saarthi AI',
+      title: 'Vidya Saarthi',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
