@@ -162,6 +162,107 @@ Widget _buildPortalSessionTimer(ValueNotifier<int> secondsListenable) {
 
 
 // ============================================================
+// STUDENT NOTICE NOTIFICATION (WEB / PWA)
+// Student portal requires notification permission before access.
+// New Firestore notices show as browser/device notifications while
+// the site/PWA session is available. Existing notices are not re-spammed.
+// ============================================================
+bool _browserNotificationSupported() {
+  try {
+    return html.Notification.supported;
+  } catch (_) {
+    return false;
+  }
+}
+
+bool _browserNotificationGranted() {
+  try {
+    return html.Notification.supported &&
+        html.Notification.permission == 'granted';
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> _requestBrowserNotificationPermission() async {
+  try {
+    if (!html.Notification.supported) return false;
+
+    final current = html.Notification.permission ?? 'default';
+    if (current == 'granted') return true;
+    if (current == 'denied') return false;
+
+    final result = await html.Notification.requestPermission();
+    return result == 'granted';
+  } catch (e) {
+    debugPrint('Notification permission error: $e');
+    return false;
+  }
+}
+
+String _studentNoticeStorageKey(String studentClass, String studentId) {
+  final raw = '${studentClass}_$studentId'
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+  return 'vidya_saarthi_notice_last_$raw';
+}
+
+int _readLastStudentNoticeTimestamp(String studentClass, String studentId) {
+  try {
+    final raw = html.window.localStorage[
+          _studentNoticeStorageKey(studentClass, studentId),
+        ] ??
+        '';
+    return int.tryParse(raw) ?? 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+void _writeLastStudentNoticeTimestamp(
+  String studentClass,
+  String studentId,
+  int timestamp,
+) {
+  try {
+    html.window.localStorage[
+      _studentNoticeStorageKey(studentClass, studentId)
+    ] = timestamp.toString();
+  } catch (e) {
+    debugPrint('Notice timestamp save error: $e');
+  }
+}
+
+void _showStudentBrowserNotification({
+  required String noticeId,
+  required String title,
+  required String description,
+  required String category,
+}) {
+  try {
+    if (!_browserNotificationGranted()) return;
+
+    final body = description.trim().isEmpty
+        ? 'School notice open karke details dekhein.'
+        : description.trim();
+
+    final notification = html.Notification(
+      'Vidya Saarthi • ${category.trim().isEmpty ? 'Notice' : category.trim()}',
+      body: '$title\n$body',
+      tag: 'vidya_saarthi_notice_$noticeId',
+    );
+
+    notification.onClick.listen((_) {
+      html.window.focus();
+      notification.close();
+    });
+  } catch (e) {
+    debugPrint('Browser notification show error: $e');
+  }
+}
+
+
+// ============================================================
 // TEST STUDENT UID HELPERS
 // Test-only fields/config. Final production UID can be promoted later.
 // ============================================================
@@ -373,15 +474,19 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
       }
 
       if (!mounted) return;
-      setState(() => _isRestoringSession = false);
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        Navigator.of(context).push(
+
+        await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => const AdminDashboardScreen(),
           ),
         );
+
+        if (mounted) {
+          setState(() => _isRestoringSession = false);
+        }
       });
       return;
     }
@@ -399,11 +504,11 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
       }
 
       if (!mounted) return;
-      setState(() => _isRestoringSession = false);
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        Navigator.of(context).push(
+
+        await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => StudentPortalScreen(
               studentId: studentId,
@@ -411,6 +516,10 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
             ),
           ),
         );
+
+        if (mounted) {
+          setState(() => _isRestoringSession = false);
+        }
       });
       return;
     }
@@ -1130,6 +1239,26 @@ void _startInlineScanner() {
       return;
     }
 
+    if (!_isAdminMode) {
+      final notificationAllowed =
+          await _requestBrowserNotificationPermission();
+
+      if (!notificationAllowed) {
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 5),
+            backgroundColor: Colors.orangeAccent,
+            content: Text(
+              'Student Portal use karne ke liye Notifications Allow karna zaroori hai. Browser/site settings me Notifications Allow karke dobara Login karein.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
     setState(() => _isLoggingIn = true);
 
     try {
@@ -1649,6 +1778,11 @@ int _loginBackResetToken = 0;
       ValueNotifier<int>(_portalInactivityLimit.inSeconds);
   bool _autoLogoutInProgress = false;
 
+  bool _notificationPermissionGranted = false;
+  bool _requestingNotificationPermission = false;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+      _noticeNotificationSubscription;
+
 void _handleLoginBack(bool didPop) {
   if (didPop) {
     _loginBackPressCount = 0;
@@ -1732,6 +1866,252 @@ void _handleLoginBack(bool didPop) {
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
+  void _initializeStudentNotifications() {
+    _notificationPermissionGranted = _browserNotificationGranted();
+
+    if (_notificationPermissionGranted) {
+      _startStudentNoticeNotifications();
+    }
+  }
+
+  Future<void> _requestNotificationFromGate() async {
+    if (_requestingNotificationPermission) return;
+
+    setState(() => _requestingNotificationPermission = true);
+
+    final granted = await _requestBrowserNotificationPermission();
+
+    if (!mounted) return;
+
+    setState(() {
+      _requestingNotificationPermission = false;
+      _notificationPermissionGranted = granted;
+    });
+
+    if (granted) {
+      _startStudentNoticeNotifications();
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        duration: Duration(seconds: 5),
+        backgroundColor: Colors.orangeAccent,
+        content: Text(
+          'Notification permission blocked hai. Browser ke Site Settings / App Settings me Notifications Allow karein.',
+        ),
+      ),
+    );
+  }
+
+  void _startStudentNoticeNotifications() {
+    _noticeNotificationSubscription?.cancel();
+
+    final storageTimestamp = _readLastStudentNoticeTimestamp(
+      widget.studentClass,
+      widget.studentId,
+    );
+
+    var lastTimestamp = storageTimestamp;
+    var firstSnapshot = true;
+
+    _noticeNotificationSubscription = FirebaseFirestore.instance
+        .collection('school_notices')
+        .orderBy('timestamp', descending: true)
+        .limit(25)
+        .snapshots()
+        .listen(
+      (snapshot) {
+        if (!mounted || !_notificationPermissionGranted) return;
+
+        final docs = snapshot.docs.toList()
+          ..sort((a, b) {
+            final at = (a.data()['timestamp'] as num?)?.toInt() ?? 0;
+            final bt = (b.data()['timestamp'] as num?)?.toInt() ?? 0;
+            return at.compareTo(bt);
+          });
+
+        if (docs.isEmpty) {
+          firstSnapshot = false;
+          return;
+        }
+
+        final newestTimestamp = docs.fold<int>(0, (current, doc) {
+          final ts = (doc.data()['timestamp'] as num?)?.toInt() ?? 0;
+          return ts > current ? ts : current;
+        });
+
+        // First ever notification setup: old notices ko spam nahi karna.
+        if (firstSnapshot && lastTimestamp <= 0) {
+          firstSnapshot = false;
+          lastTimestamp = newestTimestamp;
+          if (newestTimestamp > 0) {
+            _writeLastStudentNoticeTimestamp(
+              widget.studentClass,
+              widget.studentId,
+              newestTimestamp,
+            );
+          }
+          return;
+        }
+
+        firstSnapshot = false;
+
+        for (final doc in docs) {
+          final data = doc.data();
+          final ts = (data['timestamp'] as num?)?.toInt() ?? 0;
+
+          if (ts <= lastTimestamp) continue;
+
+          _showStudentBrowserNotification(
+            noticeId: doc.id,
+            title: data['title']?.toString().trim().isNotEmpty == true
+                ? data['title'].toString().trim()
+                : 'New School Notice',
+            description: data['description']?.toString() ?? '',
+            category: data['category']?.toString() ?? 'Notice',
+          );
+        }
+
+        if (newestTimestamp > lastTimestamp) {
+          lastTimestamp = newestTimestamp;
+          _writeLastStudentNoticeTimestamp(
+            widget.studentClass,
+            widget.studentId,
+            newestTimestamp,
+          );
+        }
+      },
+      onError: (error) {
+        debugPrint('Student notice notification stream error: $error');
+      },
+    );
+  }
+
+  Widget _buildNotificationPermissionGate() {
+    final supported = _browserNotificationSupported();
+    final denied = supported && html.Notification.permission == 'denied';
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0F171D),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(22),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 470),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: const Color(0xFF172229),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                  color: const Color(0xFF00A884).withOpacity(0.28),
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00A884).withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.notifications_active_rounded,
+                      color: Color(0xFF00D9A5),
+                      size: 31,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Notifications Required',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 9),
+                  Text(
+                    !supported
+                        ? 'Is browser/device me web notifications supported nahi hain. Student Portal ke liye notification-supported browser use karein.'
+                        : denied
+                            ? 'Notifications browser/site settings se blocked hain. Pehle Site Settings me Notifications ko Allow karein, phir neeche button dabayein.'
+                            : 'School ke notices mobile/browser par paane ke liye Notifications Allow karna zaroori hai. Permission ke bina Student Portal open nahi hoga.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 12.5,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 46,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00A884),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: !supported || _requestingNotificationPermission
+                          ? null
+                          : _requestNotificationFromGate,
+                      icon: _requestingNotificationPermission
+                          ? const SizedBox(
+                              width: 17,
+                              height: 17,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.notifications_rounded,
+                              color: Colors.white,
+                              size: 19,
+                            ),
+                      label: Text(
+                        _requestingNotificationPermission
+                            ? 'Checking...'
+                            : denied
+                                ? 'I Enabled It — Check Again'
+                                : 'Allow Notifications',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextButton.icon(
+                    onPressed: _logoutStudent,
+                    icon: const Icon(
+                      Icons.logout_rounded,
+                      color: Colors.redAccent,
+                      size: 17,
+                    ),
+                    label: const Text(
+                      'Logout',
+                      style: TextStyle(color: Colors.redAccent),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Map<String, dynamic>? studentData;
   bool isLoadingProfile = true;
   String? profileError;
@@ -1739,6 +2119,7 @@ void _handleLoginBack(bool didPop) {
   @override
   void initState() {
     super.initState();
+    _initializeStudentNotifications();
     _fetchStudentProfile();
     _startPortalInactivityTimer();
   }
@@ -1747,6 +2128,7 @@ void _handleLoginBack(bool didPop) {
   void dispose() {
     _sessionTimer?.cancel();
     _sessionClickSubscription?.cancel();
+    _noticeNotificationSubscription?.cancel();
     _sessionSecondsRemaining.dispose();
     super.dispose();
   }
@@ -2283,6 +2665,10 @@ void _handleLoginBack(bool didPop) {
 
   @override
   Widget build(BuildContext context) {
+    if (!_notificationPermissionGranted) {
+      return _buildNotificationPermissionGate();
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF0F171D),
       appBar: AppBar(
@@ -4852,7 +5238,7 @@ Future<void> _printIdCard() async {
                   ),
                   SizedBox(height: 2),
                   Text(
-                    'Saarthi AI • School Management',
+                    'Vidya Saarthi • School Management',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -5083,18 +5469,31 @@ Widget _buildOverviewCards() {
         spacing: spacing,
         runSpacing: spacing,
         children: [
-          _overviewCard(
-            width: itemWidth,
-            icon: Icons.people_alt_rounded,
-            title: 'Student Records',
-            subtitle: 'View all classes & student records',
-            accent: const Color(0xFF00A884),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const AllStudentsListScreen(),
-                ),
+          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance
+                .collection('students_directory')
+                .snapshots(),
+            builder: (context, snapshot) {
+              final count = snapshot.data?.docs.length;
+
+              return _overviewCard(
+                width: itemWidth,
+                icon: Icons.people_alt_rounded,
+                title: count == null
+                    ? 'Student Records'
+                    : 'Student Records • $count',
+                subtitle: count == null
+                    ? 'Loading student count...'
+                    : 'Total Students: $count',
+                accent: const Color(0xFF00A884),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const AllStudentsListScreen(),
+                    ),
+                  );
+                },
               );
             },
           ),
@@ -10762,6 +11161,11 @@ class _TeachersDirectoryScreenState
         : 'Active';
 
     bool saving = false;
+    Uint8List? selectedPhotoBytes;
+    String selectedPhotoMimeType = 'image/jpeg';
+    final existingPhotoUrl = data['photoUrl']?.toString().trim() ?? '';
+    final existingPhotoBase64 =
+        data['photoBase64']?.toString().trim() ?? '';
 
     await showDialog(
       context: context,
@@ -10797,6 +11201,45 @@ class _TeachersDirectoryScreenState
               );
             }
 
+            Widget teacherEditPhotoPreview() {
+              if (selectedPhotoBytes != null) {
+                return Image.memory(
+                  selectedPhotoBytes!,
+                  width: double.infinity,
+                  height: double.infinity,
+                  fit: BoxFit.cover,
+                );
+              }
+
+              if (existingPhotoUrl.isNotEmpty) {
+                return Image.network(
+                  existingPhotoUrl,
+                  width: double.infinity,
+                  height: double.infinity,
+                  fit: BoxFit.cover,
+                  webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                  errorBuilder: (_, __, ___) => _teacherFallback(
+                    nameCtrl.text.trim().isEmpty ? 'Teacher' : nameCtrl.text.trim(),
+                  ),
+                );
+              }
+
+              if (existingPhotoBase64.isNotEmpty) {
+                try {
+                  return Image.memory(
+                    base64Decode(existingPhotoBase64),
+                    width: double.infinity,
+                    height: double.infinity,
+                    fit: BoxFit.cover,
+                  );
+                } catch (_) {}
+              }
+
+              return _teacherFallback(
+                nameCtrl.text.trim().isEmpty ? 'Teacher' : nameCtrl.text.trim(),
+              );
+            }
+
             return AlertDialog(
               backgroundColor:
                   const Color(0xFF172229),
@@ -10827,6 +11270,101 @@ class _TeachersDirectoryScreenState
                 child: SingleChildScrollView(
                   child: Column(
                     children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 82,
+                            height: 82,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: selectedPhotoBytes != null
+                                    ? const Color(0xFF00A884)
+                                    : Colors.purpleAccent.withOpacity(0.55),
+                                width: 2,
+                              ),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: teacherEditPhotoPreview(),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(
+                                  color: selectedPhotoBytes != null
+                                      ? const Color(0xFF00A884)
+                                      : Colors.white24,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 13,
+                                ),
+                              ),
+                              onPressed: saving
+                                  ? null
+                                  : () async {
+                                      final picker = ImagePicker();
+                                      final image = await picker.pickImage(
+                                        source: ImageSource.gallery,
+                                        maxWidth: 700,
+                                        imageQuality: 65,
+                                      );
+
+                                      if (image == null) return;
+
+                                      final bytes = await image.readAsBytes();
+
+                                      if (bytes.length > 700000) {
+                                        if (!mounted) return;
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            backgroundColor: Colors.redAccent,
+                                            content: Text(
+                                              'Photo size zyada hai. Chhota photo select karein.',
+                                            ),
+                                          ),
+                                        );
+                                        return;
+                                      }
+
+                                      final fileName = image.name.toLowerCase();
+                                      setDialogState(() {
+                                        selectedPhotoBytes = bytes;
+                                        if (fileName.endsWith('.png')) {
+                                          selectedPhotoMimeType = 'image/png';
+                                        } else if (fileName.endsWith('.webp')) {
+                                          selectedPhotoMimeType = 'image/webp';
+                                        } else {
+                                          selectedPhotoMimeType = 'image/jpeg';
+                                        }
+                                      });
+                                    },
+                              icon: Icon(
+                                selectedPhotoBytes != null
+                                    ? Icons.check_circle_rounded
+                                    : Icons.add_a_photo_outlined,
+                                color: selectedPhotoBytes != null
+                                    ? const Color(0xFF00A884)
+                                    : Colors.white70,
+                              ),
+                              label: Text(
+                                selectedPhotoBytes != null
+                                    ? 'New Photo Ready'
+                                    : 'Change Teacher Photo',
+                                style: TextStyle(
+                                  color: selectedPhotoBytes != null
+                                      ? const Color(0xFF00A884)
+                                      : Colors.white70,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
                       TextField(
                         controller: nameCtrl,
                         style: const TextStyle(
@@ -11266,6 +11804,10 @@ class _TeachersDirectoryScreenState
                               'employmentType':
                                   employmentType,
                               'status': status,
+                              'photoBase64': selectedPhotoBytes == null
+                                  ? ''
+                                  : base64Encode(selectedPhotoBytes!),
+                              'photoMimeType': selectedPhotoMimeType,
                               'schedule':
                                   data['schedule'] ??
                                       {},
@@ -11315,14 +11857,15 @@ class _TeachersDirectoryScreenState
                                 'employmentType':
                                     employmentType,
                                 'status': status,
-                                'photoBase64':
-                                    data['photoBase64']
-                                            ?.toString() ??
-                                        '',
-                                'photoUrl':
-                                    data['photoUrl']
-                                            ?.toString() ??
-                                        '',
+                                'photoBase64': selectedPhotoBytes == null
+                                    ? (data['photoBase64']?.toString() ?? '')
+                                    : base64Encode(selectedPhotoBytes!),
+                                'photoMimeType': selectedPhotoBytes == null
+                                    ? (data['photoMimeType']?.toString() ?? 'image/jpeg')
+                                    : selectedPhotoMimeType,
+                                'photoUrl': selectedPhotoBytes == null
+                                    ? (data['photoUrl']?.toString() ?? '')
+                                    : '',
                                 'schedule':
                                     data['schedule'] ??
                                         {},
@@ -13789,147 +14332,437 @@ if (result['success'] != true) {
     final nameCtrl = TextEditingController(text: data['name']?.toString() ?? '');
     final parentCtrl = TextEditingController(text: data['parentName']?.toString() ?? '');
     final contactCtrl = TextEditingController(text: data['parentContact']?.toString() ?? '');
-    final photoCtrl = TextEditingController(text: data['photoUrl']?.toString() ?? '');
     final addressCtrl = TextEditingController(text: data['address']?.toString() ?? '');
     final pinCtrl = TextEditingController(text: data['pinCode']?.toString() ?? '');
     final districtCtrl = TextEditingController(text: data['district']?.toString() ?? '');
     final stateCtrl = TextEditingController(text: data['state']?.toString() ?? '');
     final admissionCtrl = TextEditingController(text: data['joiningDate']?.toString() ?? '');
     final dobCtrl = TextEditingController(text: data['dateOfBirth']?.toString() ?? '');
+
+    final existingPhotoUrl = data['photoUrl']?.toString().trim() ?? '';
+    Uint8List? selectedPhotoBytes;
+    String selectedPhotoMimeType = 'image/jpeg';
     String hostelFacility = data['hostelFacility']?.toString() ?? 'No';
+    bool saving = false;
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: Text('Edit Student (${data['class'] ?? ''} - Roll ${data['rollNo'] ?? ''})', style: const TextStyle(color: Colors.white, fontSize: 16)),
-        content: SizedBox(
-          width: 500,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: nameCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Full Name')),
-                const SizedBox(height: 8),
-                TextField(controller: parentCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput("Parent's Name")),
-                const SizedBox(height: 8),
-                TextField(controller: contactCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Contact No')),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: hostelFacility,
-                  dropdownColor: const Color(0xFF1F2C34),
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _dialogInput('Hostel Facility'),
-                  items: const [
-                    DropdownMenuItem(value: 'No', child: Text('Hostel Facility: No')),
-                    DropdownMenuItem(value: 'Yes', child: Text('Hostel Facility: Yes')),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) hostelFacility = value;
-                  },
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Widget studentEditPhotoPreview() {
+              if (selectedPhotoBytes != null) {
+                return Image.memory(
+                  selectedPhotoBytes!,
+                  width: double.infinity,
+                  height: double.infinity,
+                  fit: BoxFit.cover,
+                );
+              }
+
+              if (existingPhotoUrl.isNotEmpty) {
+                return Image.network(
+                  existingPhotoUrl,
+                  width: double.infinity,
+                  height: double.infinity,
+                  fit: BoxFit.cover,
+                  webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                  errorBuilder: (_, __, ___) => const ColoredBox(
+                    color: Color(0xFF121B22),
+                    child: Icon(
+                      Icons.person_rounded,
+                      size: 38,
+                      color: Color(0xFF00A884),
+                    ),
+                  ),
+                );
+              }
+
+              return const ColoredBox(
+                color: Color(0xFF121B22),
+                child: Icon(
+                  Icons.person_rounded,
+                  size: 38,
+                  color: Color(0xFF00A884),
                 ),
-                const SizedBox(height: 8),
-                TextField(controller: addressCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Address')),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(child: TextField(controller: districtCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('District'))),
-                    const SizedBox(width: 8),
-                    Expanded(child: TextField(controller: stateCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('State'))),
-                  ],
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1F2C34),
+              title: Text(
+                'Edit Student (${data['class'] ?? ''} - Roll ${data['rollNo'] ?? ''})',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
                 ),
-                const SizedBox(height: 8),
-                TextField(controller: pinCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('PIN Code')),
-                const SizedBox(height: 8),
-                TextField(controller: admissionCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Admission Date')),
-                const SizedBox(height: 8),
-                TextField(controller: dobCtrl, style: const TextStyle(color: Colors.white), decoration: _dialogInput('Date of Birth')),
-              ],
-            ),
-          ),
-        ),
-        actionsAlignment: MainAxisAlignment.spaceBetween,
-        actions: [
-          TextButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _deleteStudent(docId);
-            },
-            icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-            label: const Text('Delete Student', style: TextStyle(color: Colors.redAccent)),
-          ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
-                onPressed: () async {
-                  try {
-                    final configDoc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
-                    final scriptUrl = configDoc.data()?['scriptUrl']?.toString();
-
-                    if (scriptUrl == null || scriptUrl.isEmpty) throw Exception('Google Apps Script URL Settings me saved nahi hai.');
-
-                    final studentClass = data['class']?.toString() ?? '';
-                    final rollNo = data['rollNo']?.toString() ?? '';
-
-                    final response = await http.post(
-                      Uri.parse(scriptUrl),
-                      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-                      body: jsonEncode({
-                        'action': 'edit_student',
-                        'name': nameCtrl.text.trim(),
-                        'parentName': parentCtrl.text.trim(),
-                        'studentClass': studentClass,
-                        'roll': rollNo,
-                        'contact': contactCtrl.text.trim(),
-                        'photoUrl': photoCtrl.text.trim(),
-                        'hostelFacility': hostelFacility,
-                        'address': addressCtrl.text.trim(),
-                        'district': districtCtrl.text.trim(),
-                        'state': stateCtrl.text.trim(),
-                        'pinCode': pinCtrl.text.trim(),
-                        'joiningDate': admissionCtrl.text.trim(),
-                        'dateOfBirth': dobCtrl.text.trim(),
-                      }),
-                    );
-
-                    if (response.statusCode != 200) throw Exception('Google update failed: ${response.statusCode}');
-
-                    final result = jsonDecode(response.body);
-                    if (result['success'] != true) throw Exception(result['message'] ?? 'Google update failed');
-
-                    await FirebaseFirestore.instance.collection('students_directory').doc(docId).update({
-                      'name': nameCtrl.text.trim(),
-                      'parentName': parentCtrl.text.trim(),
-                      'parentContact': contactCtrl.text.trim(),
-                      'photoUrl': photoCtrl.text.trim(),
-                      'hostelFacility': hostelFacility,
-                      'address': addressCtrl.text.trim(),
-                      'district': districtCtrl.text.trim(),
-                      'state': stateCtrl.text.trim(),
-                      'pinCode': pinCtrl.text.trim(),
-                      'joiningDate': admissionCtrl.text.trim(),
-                      'dateOfBirth': dobCtrl.text.trim(),
-                      'updatedAt': FieldValue.serverTimestamp(),
-                    });
-
-                    if (mounted) {
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student Firestore aur Google Sheet dono me update ho gaya!')));
-                    }
-                  } catch (e) {
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Update error: $e')));
-                  }
-                },
-                child: const Text('Save Changes', style: TextStyle(color: Colors.white)),
               ),
-            ],
-          ),
-        ],
-      ),
+              content: SizedBox(
+                width: 500,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 82,
+                            height: 82,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: selectedPhotoBytes != null
+                                    ? const Color(0xFF00A884)
+                                    : Colors.white24,
+                                width: 2,
+                              ),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: studentEditPhotoPreview(),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(
+                                  color: selectedPhotoBytes != null
+                                      ? const Color(0xFF00A884)
+                                      : Colors.white24,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 13,
+                                ),
+                              ),
+                              onPressed: saving
+                                  ? null
+                                  : () async {
+                                      final picker = ImagePicker();
+                                      final image = await picker.pickImage(
+                                        source: ImageSource.gallery,
+                                        maxWidth: 700,
+                                        imageQuality: 65,
+                                      );
+                                      if (image == null) return;
+
+                                      final bytes = await image.readAsBytes();
+                                      if (bytes.length > 700000) {
+                                        if (!mounted) return;
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            backgroundColor: Colors.redAccent,
+                                            content: Text(
+                                              'Photo size zyada hai. Chhota photo select karein.',
+                                            ),
+                                          ),
+                                        );
+                                        return;
+                                      }
+
+                                      final fileName = image.name.toLowerCase();
+                                      setDialogState(() {
+                                        selectedPhotoBytes = bytes;
+                                        if (fileName.endsWith('.png')) {
+                                          selectedPhotoMimeType = 'image/png';
+                                        } else if (fileName.endsWith('.webp')) {
+                                          selectedPhotoMimeType = 'image/webp';
+                                        } else {
+                                          selectedPhotoMimeType = 'image/jpeg';
+                                        }
+                                      });
+                                    },
+                              icon: Icon(
+                                selectedPhotoBytes != null
+                                    ? Icons.check_circle_rounded
+                                    : Icons.add_a_photo_outlined,
+                                color: selectedPhotoBytes != null
+                                    ? const Color(0xFF00A884)
+                                    : Colors.white70,
+                              ),
+                              label: Text(
+                                selectedPhotoBytes != null
+                                    ? 'New Photo Ready'
+                                    : 'Change Student Photo',
+                                style: TextStyle(
+                                  color: selectedPhotoBytes != null
+                                      ? const Color(0xFF00A884)
+                                      : Colors.white70,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: nameCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput('Full Name'),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: parentCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput("Parent's Name"),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: contactCtrl,
+                        keyboardType: TextInputType.phone,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput('Contact No'),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        value: hostelFacility,
+                        dropdownColor: const Color(0xFF1F2C34),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput('Hostel Facility'),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'No',
+                            child: Text('Hostel Facility: No'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Yes',
+                            child: Text('Hostel Facility: Yes'),
+                          ),
+                        ],
+                        onChanged: saving
+                            ? null
+                            : (value) {
+                                if (value != null) {
+                                  setDialogState(() => hostelFacility = value);
+                                }
+                              },
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: addressCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput('Address'),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: districtCtrl,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _dialogInput('District'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: stateCtrl,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _dialogInput('State'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: pinCtrl,
+                        keyboardType: TextInputType.number,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput('PIN Code'),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: admissionCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput('Admission Date'),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: dobCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _dialogInput('Date of Birth'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actionsAlignment: MainAxisAlignment.spaceBetween,
+              actions: [
+                TextButton.icon(
+                  onPressed: saving
+                      ? null
+                      : () {
+                          Navigator.pop(ctx);
+                          _deleteStudent(docId);
+                        },
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.redAccent,
+                    size: 18,
+                  ),
+                  label: const Text(
+                    'Delete Student',
+                    style: TextStyle(color: Colors.redAccent),
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      onPressed: saving ? null : () => Navigator.pop(ctx),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00A884),
+                      ),
+                      onPressed: saving
+                          ? null
+                          : () async {
+                              setDialogState(() => saving = true);
+
+                              try {
+                                final configDoc = await FirebaseFirestore.instance
+                                    .collection('school_config')
+                                    .doc('google_drive_account')
+                                    .get();
+
+                                final scriptUrl = configDoc.data()?['scriptUrl']
+                                    ?.toString()
+                                    .trim();
+
+                                if (scriptUrl == null || scriptUrl.isEmpty) {
+                                  throw Exception(
+                                    'Google Apps Script URL Settings me saved nahi hai.',
+                                  );
+                                }
+
+                                final studentClass =
+                                    data['class']?.toString() ?? '';
+                                final rollNo =
+                                    data['rollNo']?.toString() ?? '';
+
+                                final response = await http.post(
+                                  Uri.parse(scriptUrl),
+                                  headers: {
+                                    'Content-Type':
+                                        'text/plain;charset=utf-8',
+                                  },
+                                  body: jsonEncode({
+                                    'action': 'edit_student',
+                                    'name': nameCtrl.text.trim(),
+                                    'parentName': parentCtrl.text.trim(),
+                                    'studentClass': studentClass,
+                                    'roll': rollNo,
+                                    'contact': contactCtrl.text.trim(),
+                                    'photoBase64': selectedPhotoBytes == null
+                                        ? ''
+                                        : base64Encode(selectedPhotoBytes!),
+                                    'photoMimeType': selectedPhotoMimeType,
+                                    'hostelFacility': hostelFacility,
+                                    'address': addressCtrl.text.trim(),
+                                    'district': districtCtrl.text.trim(),
+                                    'state': stateCtrl.text.trim(),
+                                    'pinCode': pinCtrl.text.trim(),
+                                    'joiningDate': admissionCtrl.text.trim(),
+                                    'dateOfBirth': dobCtrl.text.trim(),
+                                  }),
+                                );
+
+                                if (response.statusCode != 200) {
+                                  throw Exception(
+                                    'Google update failed: ${response.statusCode}',
+                                  );
+                                }
+
+                                final decoded = jsonDecode(response.body);
+                                if (decoded is! Map) {
+                                  throw Exception('Google update response invalid hai.');
+                                }
+
+                                final result = Map<String, dynamic>.from(decoded);
+                                if (result['success'] != true) {
+                                  throw Exception(
+                                    result['message'] ?? 'Google update failed',
+                                  );
+                                }
+
+                                final returnedPhotoUrl =
+                                    result['photoUrl']?.toString().trim() ?? '';
+
+                                final updateData = <String, dynamic>{
+                                  'name': nameCtrl.text.trim(),
+                                  'parentName': parentCtrl.text.trim(),
+                                  'parentContact': contactCtrl.text.trim(),
+                                  'hostelFacility': hostelFacility,
+                                  'address': addressCtrl.text.trim(),
+                                  'district': districtCtrl.text.trim(),
+                                  'state': stateCtrl.text.trim(),
+                                  'pinCode': pinCtrl.text.trim(),
+                                  'joiningDate': admissionCtrl.text.trim(),
+                                  'dateOfBirth': dobCtrl.text.trim(),
+                                  'updatedAt': FieldValue.serverTimestamp(),
+                                };
+
+                                if (returnedPhotoUrl.isNotEmpty) {
+                                  updateData['photoUrl'] = returnedPhotoUrl;
+                                }
+
+                                await FirebaseFirestore.instance
+                                    .collection('students_directory')
+                                    .doc(docId)
+                                    .update(updateData);
+
+                                if (!mounted) return;
+
+                                Navigator.pop(ctx);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: const Color(0xFF00A884),
+                                    content: Text(
+                                      selectedPhotoBytes == null
+                                          ? 'Student Firestore aur Google Sheet dono me update ho gaya!'
+                                          : 'Student details aur photo successfully update ho gaye!',
+                                    ),
+                                  ),
+                                );
+                              } catch (e) {
+                                if (!mounted) return;
+                                setDialogState(() => saving = false);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: Colors.redAccent,
+                                    content: Text('Update error: $e'),
+                                  ),
+                                );
+                              }
+                            },
+                      child: saving
+                          ? const SizedBox(
+                              width: 17,
+                              height: 17,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text(
+                              'Save Changes',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
