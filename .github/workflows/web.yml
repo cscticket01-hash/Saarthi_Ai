@@ -1,4 +1,4 @@
-name: Deploy Saarthi Web Preview
+name: Deploy Vidya Saarthi to Firebase Hosting
 
 on:
   push:
@@ -8,15 +8,9 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -39,43 +33,27 @@ jobs:
         run: flutter --version
 
       # =========================================================
-      # CHECK SOURCE ASSETS BEFORE BUILD
+      # NODE FOR FIREBASE CLI
+      # =========================================================
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # =========================================================
+      # CHECK SOURCE ASSETS
       # =========================================================
       - name: Verify Source Assets
         run: |
           echo "===== SOURCE ASSETS FOLDER ====="
           find assets -maxdepth 2 -type f -print | sort
 
-          echo ""
-          echo "===== CHECK SCHOOL LOGO ====="
           test -f assets/school_logo.png
-          ls -lh assets/school_logo.png
-
-          echo ""
-          echo "===== CHECK PRINCIPAL SIGNATURE ====="
           test -f assets/principal_sign.png
-          ls -lh assets/principal_sign.png
-
-          echo ""
-          echo "===== CHECK WHATSAPP ICON ====="
           test -f assets/whatsapp.png
-          ls -lh assets/whatsapp.png
-
-      # =========================================================
-      # SHOW PUBSPEC
-      # =========================================================
-      - name: Check Pubspec
-        run: |
-          echo "===== PUBSPEC.YAML ====="
-          cat pubspec.yaml
-
-          echo ""
-          echo "===== FLUTTER ASSET SECTION ====="
-          grep -A10 "^flutter:" pubspec.yaml || true
 
       # =========================================================
       # CONFIGURE WEB
-      # --no-pub avoids flutter create running pub get itself
       # =========================================================
       - name: Configure Flutter Web
         run: flutter create --platforms=web --no-pub .
@@ -91,64 +69,46 @@ jobs:
 
       # =========================================================
       # BUILD WEB
+      # IMPORTANT: Firebase site runs from /
       # =========================================================
       - name: Build Web
         run: |
           flutter build web \
             --release \
-            --base-href "/Saarthi_Ai/" \
+            --base-href "/" \
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
       # =========================================================
-      # VERIFY BUILT ASSETS
+      # VERIFY BUILD
       # =========================================================
       - name: Verify Built Assets
         run: |
-          echo "===== ALL BUILD ASSETS ====="
-          find build/web/assets -type f -print | sort
-
-          echo ""
-          echo "===== ASSET MANIFEST ====="
-          cat build/web/assets/AssetManifest.bin.json || true
-
-          echo ""
-          echo "===== CHECK SCHOOL LOGO IN BUILD ====="
+          test -f build/web/index.html
           test -f build/web/assets/assets/school_logo.png
-          ls -lh build/web/assets/assets/school_logo.png
-
-          echo ""
-          echo "===== CHECK PRINCIPAL SIGNATURE IN BUILD ====="
           test -f build/web/assets/assets/principal_sign.png
-          ls -lh build/web/assets/assets/principal_sign.png
-
-          echo ""
-          echo "===== CHECK WHATSAPP IN BUILD ====="
           test -f build/web/assets/assets/whatsapp.png
-          ls -lh build/web/assets/assets/whatsapp.png
 
-          echo ""
-          echo "===== ALL REQUIRED ASSETS FOUND ====="
+          echo "===== BUILD READY ====="
 
       # =========================================================
-      # UPLOAD GITHUB PAGES
+      # CREATE FIREBASE SERVICE ACCOUNT FILE
       # =========================================================
-      - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: build/web
+      - name: Configure Firebase Credentials
+        run: |
+          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/firebase-service-account.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
 
-  # ===========================================================
-  # DEPLOY
-  # ===========================================================
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      # =========================================================
+      # INSTALL FIREBASE CLI
+      # =========================================================
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
 
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      # =========================================================
+      # DEPLOY ONLY VIDYASAARTHI HOSTING SITE
+      # =========================================================
+      - name: Deploy to Firebase Hosting
+        run: |
+          firebase deploy \
+            --project saarthi-ai-df12b \
+            --only hosting:vidyasaarthi
