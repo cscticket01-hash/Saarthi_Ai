@@ -2,24 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'main_dashboard_screen.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   await Firebase.initializeApp(
     options: const FirebaseOptions(
-      apiKey: "AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A",
-      appId: "1:751405981184:web:f1240e05c084bac7b242e5",
-      messagingSenderId: "751405981184",
-      projectId: "saarthi-ai-df12b",
-      authDomain: "saarthi-ai-df12b.firebaseapp.com",
-      storageBucket: "saarthi-ai-df12b.firebasestorage.app",
+      apiKey: 'AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A',
+      appId: '1:751405981184:web:f1240e05c084bac7b242e5',
+      messagingSenderId: '751405981184',
+      projectId: 'saarthi-ai-df12b',
+      authDomain: 'saarthi-ai-df12b.firebaseapp.com',
+      storageBucket: 'saarthi-ai-df12b.firebasestorage.app',
     ),
   );
 
-  runApp(const SaarthiApp());
+  runApp(const VidyaSaarthiApp());
 }
 
-class SaarthiApp extends StatelessWidget {
-  const SaarthiApp({super.key});
+class VidyaSaarthiApp extends StatelessWidget {
+  const VidyaSaarthiApp({super.key});
 
   @override
   Widget build(BuildContext context) {
