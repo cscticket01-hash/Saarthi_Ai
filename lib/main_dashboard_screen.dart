@@ -210,7 +210,7 @@ String _studentNoticeStorageKey(String studentClass, String studentId) {
 int _readLastStudentNoticeTimestamp(String studentClass, String studentId) {
   try {
     final raw = html.window.localStorage[
-          _studentNoticeStorageKey(studentClass, studentId),
+          _studentNoticeStorageKey(studentClass, studentId)
         ] ??
         '';
     return int.tryParse(raw) ?? 0;
@@ -253,7 +253,6 @@ void _showStudentBrowserNotification({
     );
 
     notification.onClick.listen((_) {
-      html.window.focus();
       notification.close();
     });
   } catch (e) {
