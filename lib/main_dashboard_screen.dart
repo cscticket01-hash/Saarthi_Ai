@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
 import 'package:pdf/widgets.dart' as pw;
@@ -13,6 +14,151 @@ import 'package:flutter/services.dart';
 import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+
+// ============================================================
+// PORTAL SESSION + 30 MINUTE INACTIVITY
+// Keeps login across browser reload. Any click/tap refreshes 30 minutes.
+// ============================================================
+const Duration _portalInactivityLimit = Duration(minutes: 30);
+const String _portalSessionRoleKey = 'saarthi_portal_role_v1';
+const String _portalSessionStudentIdKey = 'saarthi_portal_student_id_v1';
+const String _portalSessionStudentClassKey = 'saarthi_portal_student_class_v1';
+const String _portalSessionExpiryKey = 'saarthi_portal_expiry_v1';
+
+void _savePortalSession({
+  required String role,
+  String? studentId,
+  String? studentClass,
+}) {
+  try {
+    final storage = html.window.localStorage;
+    storage[_portalSessionRoleKey] = role;
+
+    if (role == 'student') {
+      storage[_portalSessionStudentIdKey] = studentId?.trim() ?? '';
+      storage[_portalSessionStudentClassKey] = studentClass?.trim() ?? '';
+    } else {
+      storage.remove(_portalSessionStudentIdKey);
+      storage.remove(_portalSessionStudentClassKey);
+    }
+
+    storage[_portalSessionExpiryKey] =
+        DateTime.now().add(_portalInactivityLimit).millisecondsSinceEpoch.toString();
+  } catch (e) {
+    debugPrint('Portal session save error: $e');
+  }
+}
+
+void _touchPortalSession() {
+  try {
+    final storage = html.window.localStorage;
+    final role = storage[_portalSessionRoleKey]?.trim() ?? '';
+    if (role.isEmpty) return;
+
+    storage[_portalSessionExpiryKey] =
+        DateTime.now().add(_portalInactivityLimit).millisecondsSinceEpoch.toString();
+  } catch (e) {
+    debugPrint('Portal session refresh error: $e');
+  }
+}
+
+void _clearPortalSession() {
+  try {
+    final storage = html.window.localStorage;
+    storage.remove(_portalSessionRoleKey);
+    storage.remove(_portalSessionStudentIdKey);
+    storage.remove(_portalSessionStudentClassKey);
+    storage.remove(_portalSessionExpiryKey);
+  } catch (e) {
+    debugPrint('Portal session clear error: $e');
+  }
+}
+
+String _savedPortalRole() {
+  try {
+    return html.window.localStorage[_portalSessionRoleKey]?.trim() ?? '';
+  } catch (_) {
+    return '';
+  }
+}
+
+String _savedPortalStudentId() {
+  try {
+    return html.window.localStorage[_portalSessionStudentIdKey]?.trim() ?? '';
+  } catch (_) {
+    return '';
+  }
+}
+
+String _savedPortalStudentClass() {
+  try {
+    return html.window.localStorage[_portalSessionStudentClassKey]?.trim() ?? '';
+  } catch (_) {
+    return '';
+  }
+}
+
+int _portalSessionRemainingSeconds() {
+  try {
+    final raw = html.window.localStorage[_portalSessionExpiryKey]?.trim() ?? '';
+    final expiryMs = int.tryParse(raw);
+    if (expiryMs == null) return 0;
+
+    final remainingMs =
+        expiryMs - DateTime.now().millisecondsSinceEpoch;
+    if (remainingMs <= 0) return 0;
+
+    final seconds = (remainingMs / 1000).ceil();
+    return seconds.clamp(0, _portalInactivityLimit.inSeconds).toInt();
+  } catch (_) {
+    return 0;
+  }
+}
+
+String _formatPortalTimer(int totalSeconds) {
+  final safe = totalSeconds.clamp(0, _portalInactivityLimit.inSeconds).toInt();
+  final minutes = safe ~/ 60;
+  final seconds = safe % 60;
+  return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+}
+
+Widget _buildPortalSessionTimer(ValueListenable<int> secondsListenable) {
+  return Tooltip(
+    message: 'Auto logout after 30 minutes of inactivity',
+    child: ValueListenableBuilder<int>(
+      valueListenable: secondsListenable,
+      builder: (context, seconds, _) {
+        final isLow = seconds <= 300;
+        final color = isLow ? Colors.orangeAccent : const Color(0xFF00D9A5);
+
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: color.withOpacity(0.24)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.timer_outlined, size: 12, color: color),
+              const SizedBox(width: 4),
+              Text(
+                _formatPortalTimer(seconds),
+                style: TextStyle(
+                  color: color,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+}
 
 
 // ============================================================
@@ -167,7 +313,8 @@ class SchoolAdminLoginScreen extends StatefulWidget {
 }
 
 class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
-  bool _isAdminMode = true;
+  bool _isAdminMode = false;
+  bool _isRestoringSession = true;
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
@@ -184,6 +331,95 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
 
   final List<String> _classList =
       List.generate(10, (index) => 'Class ${index + 1}');
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreSavedPortalSession();
+  }
+
+  Future<void> _restoreSavedPortalSession() async {
+    final role = _savedPortalRole();
+    final remaining = _portalSessionRemainingSeconds();
+
+    if (role.isEmpty || remaining <= 0) {
+      _clearPortalSession();
+      if (mounted) {
+        setState(() => _isRestoringSession = false);
+      }
+      return;
+    }
+
+    if (role == 'admin') {
+      User? user = FirebaseAuth.instance.currentUser;
+
+      if (user == null) {
+        try {
+          user = await FirebaseAuth.instance
+              .authStateChanges()
+              .firstWhere((value) => value != null)
+              .timeout(const Duration(seconds: 3));
+        } catch (_) {
+          user = FirebaseAuth.instance.currentUser;
+        }
+      }
+
+      if (user == null) {
+        _clearPortalSession();
+        if (mounted) {
+          setState(() => _isRestoringSession = false);
+        }
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() => _isRestoringSession = false);
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const AdminDashboardScreen(),
+          ),
+        );
+      });
+      return;
+    }
+
+    if (role == 'student') {
+      final studentId = _savedPortalStudentId();
+      final studentClass = _savedPortalStudentClass();
+
+      if (studentId.isEmpty || studentClass.isEmpty) {
+        _clearPortalSession();
+        if (mounted) {
+          setState(() => _isRestoringSession = false);
+        }
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() => _isRestoringSession = false);
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => StudentPortalScreen(
+              studentId: studentId,
+              studentClass: studentClass,
+            ),
+          ),
+        );
+      });
+      return;
+    }
+
+    _clearPortalSession();
+    if (mounted) {
+      setState(() => _isRestoringSession = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -903,6 +1139,8 @@ void _startInlineScanner() {
           password: password,
         );
 
+        _savePortalSession(role: 'admin');
+
         if (!mounted) return;
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -998,6 +1236,12 @@ if (!passwordMatched) {
   return;
 }
 
+      _savePortalSession(
+        role: 'student',
+        studentId: studentRoll,
+        studentClass: _selectedClass,
+      );
+
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1064,6 +1308,15 @@ if (!passwordMatched) {
 
   @override
   Widget build(BuildContext context) {
+    if (_isRestoringSession) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF121B22),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF00A884)),
+        ),
+      );
+    }
+
 final screenWidth = MediaQuery.of(context).size.width;
 
 final showMobileScanner =
@@ -1390,10 +1643,17 @@ class _StudentPortalScreenState extends State<StudentPortalScreen> {
   int _loginBackPressCount = 0;
 int _loginBackResetToken = 0;
 
+  Timer? _sessionTimer;
+  StreamSubscription<html.MouseEvent>? _sessionClickSubscription;
+  final ValueNotifier<int> _sessionSecondsRemaining =
+      ValueNotifier<int>(_portalInactivityLimit.inSeconds);
+  bool _autoLogoutInProgress = false;
+
 void _handleLoginBack(bool didPop) {
   if (didPop) {
     _loginBackPressCount = 0;
     _loginBackResetToken++;
+    _clearPortalSession();
     return;
   }
 
@@ -1429,6 +1689,49 @@ void _handleLoginBack(bool didPop) {
     }
   });
 }
+
+  void _startPortalInactivityTimer() {
+    final initialRemaining = _portalSessionRemainingSeconds();
+    _sessionSecondsRemaining.value = initialRemaining;
+
+    _sessionClickSubscription = html.document.onClick.listen((_) {
+      if (!mounted || _autoLogoutInProgress) return;
+      _touchPortalSession();
+      _sessionSecondsRemaining.value = _portalInactivityLimit.inSeconds;
+    });
+
+    _sessionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _autoLogoutInProgress) return;
+
+      final remaining = _portalSessionRemainingSeconds();
+      _sessionSecondsRemaining.value = remaining;
+
+      if (remaining <= 0) {
+        _autoLogoutStudent();
+      }
+    });
+
+    if (initialRemaining <= 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _autoLogoutStudent();
+      });
+    }
+  }
+
+  Future<void> _autoLogoutStudent() async {
+    if (_autoLogoutInProgress) return;
+    _autoLogoutInProgress = true;
+    _clearPortalSession();
+
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  void _logoutStudent() {
+    _clearPortalSession();
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
   Map<String, dynamic>? studentData;
   bool isLoadingProfile = true;
   String? profileError;
@@ -1437,6 +1740,15 @@ void _handleLoginBack(bool didPop) {
   void initState() {
     super.initState();
     _fetchStudentProfile();
+    _startPortalInactivityTimer();
+  }
+
+  @override
+  void dispose() {
+    _sessionTimer?.cancel();
+    _sessionClickSubscription?.cancel();
+    _sessionSecondsRemaining.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchStudentProfile() async {
@@ -1996,6 +2308,8 @@ void _handleLoginBack(bool didPop) {
           ],
         ),
         actions: [
+          _buildPortalSessionTimer(_sessionSecondsRemaining),
+          const SizedBox(width: 7),
           IconButton(
             tooltip: 'Logout',
             icon: Container(
@@ -2004,7 +2318,7 @@ void _handleLoginBack(bool didPop) {
               decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.10), borderRadius: BorderRadius.circular(11)),
               child: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 19),
             ),
-            onPressed: () => Navigator.pop(context),
+            onPressed: _logoutStudent,
           ),
           const SizedBox(width: 8),
         ],
@@ -2101,6 +2415,7 @@ void _handleLoginBack(bool didPop) {
     _loginBackPressCount = 0;
     _loginBackResetToken++;
 
+    _clearPortalSession();
     FirebaseAuth.instance.signOut();
     return;
   }
@@ -2136,7 +2451,57 @@ void _handleLoginBack(bool didPop) {
       });
     }
   });
-}  
+}
+
+  Timer? _sessionTimer;
+  StreamSubscription<html.MouseEvent>? _sessionClickSubscription;
+  final ValueNotifier<int> _sessionSecondsRemaining =
+      ValueNotifier<int>(_portalInactivityLimit.inSeconds);
+  bool _autoLogoutInProgress = false;
+
+  void _startPortalInactivityTimer() {
+    final initialRemaining = _portalSessionRemainingSeconds();
+    _sessionSecondsRemaining.value = initialRemaining;
+
+    _sessionClickSubscription = html.document.onClick.listen((_) {
+      if (!mounted || _autoLogoutInProgress) return;
+      _touchPortalSession();
+      _sessionSecondsRemaining.value = _portalInactivityLimit.inSeconds;
+    });
+
+    _sessionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _autoLogoutInProgress) return;
+
+      final remaining = _portalSessionRemainingSeconds();
+      _sessionSecondsRemaining.value = remaining;
+
+      if (remaining <= 0) {
+        _autoLogoutAdmin();
+      }
+    });
+
+    if (initialRemaining <= 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _autoLogoutAdmin();
+      });
+    }
+  }
+
+  Future<void> _autoLogoutAdmin() async {
+    if (_autoLogoutInProgress) return;
+    _autoLogoutInProgress = true;
+    _clearPortalSession();
+
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (e) {
+      debugPrint('Auto logout sign-out error: $e');
+    }
+
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
   final TextEditingController _noticeTitleController = TextEditingController();
   final TextEditingController _noticeDescController = TextEditingController();
   String _noticeCategory = 'Holiday';
@@ -2160,7 +2525,16 @@ void _handleLoginBack(bool didPop) {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _startPortalInactivityTimer();
+  }
+
+  @override
   void dispose() {
+    _sessionTimer?.cancel();
+    _sessionClickSubscription?.cancel();
+    _sessionSecondsRemaining.dispose();
     _noticeTitleController.dispose();
     _noticeDescController.dispose();
     _nameController.dispose();
@@ -4493,6 +4867,8 @@ Future<void> _printIdCard() async {
           ],
         ),
         actions: [
+          _buildPortalSessionTimer(_sessionSecondsRemaining),
+          const SizedBox(width: 8),
 
           // Visible Settings button at top-right
           Tooltip(
@@ -6617,6 +6993,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (shouldLogout != true) return;
 
+    _clearPortalSession();
+
     try {
       await FirebaseAuth.instance.signOut();
       if (!mounted) return;
@@ -7547,11 +7925,28 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
 
   final Map<String, Map<String, dynamic>> _feeSettingsCache = {};
 
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _studentsStream;
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _ledgerStream;
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _ledgerStreamForMonth(
+    String month,
+  ) {
+    return FirebaseFirestore.instance
+        .collection('fee_ledger')
+        .where('month', isEqualTo: month)
+        .snapshots();
+  }
+
   @override
   void initState() {
     super.initState();
     final now = DateTime.now();
     _selectedMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+
+    _studentsStream =
+        FirebaseFirestore.instance.collection('students_directory').snapshots();
+    _ledgerStream = _ledgerStreamForMonth(_selectedMonth);
+
     _preloadFeeSettings();
     _loadStudentUidConfigForFees();
   }
@@ -8399,6 +8794,20 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     required bool alreadyPaid,
     required double oldExpected,
   }) {
+    final configuredHeads = _feeHeads
+        .where((head) => (_activeFeeAmounts[head] ?? 0) > 0)
+        .toSet();
+
+    final canSelectAll = studentSelected &&
+        settingsReady &&
+        configuredHeads.isNotEmpty &&
+        !alreadyPaid &&
+        oldExpected <= 0 &&
+        !_isSavingPayment;
+
+    final allSelected = configuredHeads.isNotEmpty &&
+        configuredHeads.every(_selectedFeeHeads.contains);
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -8434,6 +8843,46 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   ),
                 ),
               ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 30,
+                    height: 30,
+                    child: Checkbox(
+                      value: allSelected,
+                      activeColor: const Color(0xFF00A884),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onChanged: canSelectAll
+                          ? (value) {
+                              setState(() {
+                                if (value == true) {
+                                  _selectedFeeHeads =
+                                      Set<String>.from(configuredHeads);
+                                } else {
+                                  _selectedFeeHeads.clear();
+                                }
+
+                                final total = _selectedFeesTotal;
+                                _receivedAmountController.text =
+                                    total > 0 ? total.toStringAsFixed(0) : '';
+                              });
+                            }
+                          : null,
+                    ),
+                  ),
+                  Text(
+                    'Select All',
+                    style: TextStyle(
+                      color: canSelectAll ? Colors.white70 : Colors.white30,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 8),
               TextButton.icon(
                 onPressed: () async {
                   await Navigator.push(
@@ -8993,9 +9442,10 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         title: const Text('Fees Collection'),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance.collection('students_directory').snapshots(),
+        stream: _studentsStream,
         builder: (context, studentSnapshot) {
-          if (studentSnapshot.connectionState == ConnectionState.waiting) {
+          if (studentSnapshot.connectionState == ConnectionState.waiting &&
+              !studentSnapshot.hasData) {
             return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
           }
           if (studentSnapshot.hasError) {
@@ -9010,10 +9460,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           final students = studentSnapshot.data?.docs ?? [];
 
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: FirebaseFirestore.instance
-                .collection('fee_ledger')
-                .where('month', isEqualTo: _selectedMonth)
-                .snapshots(),
+            stream: _ledgerStream,
             builder: (context, ledgerSnapshot) {
               final ledgerByIdentity = <String, Map<String, dynamic>>{};
               final legacyLedgerByStudentId = <String, Map<String, dynamic>>{};
@@ -9184,6 +9631,7 @@ child: Row(
           if (value != null) {
             setState(() {
               _selectedMonth = value;
+              _ledgerStream = _ledgerStreamForMonth(value);
               _resetActiveSelection();
             });
           }
