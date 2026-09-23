@@ -14,6 +14,134 @@ import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+
+// ============================================================
+// TEST STUDENT UID HELPERS
+// Test-only fields/config. Final production UID can be promoted later.
+// ============================================================
+const String _testStudentUidField = 'studentUidTest';
+const String _testStudentUidConfigDocId = 'student_uid_test_config';
+
+DocumentReference<Map<String, dynamic>> _testStudentUidConfigRef() {
+  return FirebaseFirestore.instance
+      .collection('fee_settings')
+      .doc(_testStudentUidConfigDocId);
+}
+
+String _normalizeIdentityPart(dynamic value) {
+  return (value?.toString() ?? '')
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'\s+'), ' ');
+}
+
+Map<String, dynamic> _parseTestUidPattern(String input) {
+  final value = input.trim();
+  final match = RegExp(r'^(.*?)(\d+)$').firstMatch(value);
+
+  if (match == null) {
+    throw const FormatException(
+      'UID format ke end me number hona chahiye. Example: TEST-000001',
+    );
+  }
+
+  final prefix = match.group(1) ?? '';
+  final numberText = match.group(2) ?? '';
+
+  if (prefix.trim().isEmpty || numberText.isEmpty) {
+    throw const FormatException(
+      'UID format sahi nahi hai. Example: TEST-000001',
+    );
+  }
+
+  final startNumber = int.tryParse(numberText);
+  if (startNumber == null || startNumber < 0) {
+    throw const FormatException('UID starting number invalid hai.');
+  }
+
+  return {
+    'prefix': prefix,
+    'padding': numberText.length,
+    'startNumber': startNumber,
+  };
+}
+
+String _formatTestStudentUid(String prefix, int padding, int number) {
+  return '$prefix${number.toString().padLeft(padding, '0')}';
+}
+
+Future<Map<String, dynamic>> _loadTestStudentUidConfig() async {
+  final doc = await _testStudentUidConfigRef().get();
+  return doc.data() ?? <String, dynamic>{};
+}
+
+Future<String?> _ensureTestStudentUid(
+  DocumentReference<Map<String, dynamic>> studentRef,
+) async {
+  return FirebaseFirestore.instance.runTransaction<String?>((transaction) async {
+    final configRef = _testStudentUidConfigRef();
+    final configSnap = await transaction.get(configRef);
+    final config = configSnap.data() ?? <String, dynamic>{};
+
+    if (config['masterEnabled'] != true) return null;
+
+    final studentSnap = await transaction.get(studentRef);
+    if (!studentSnap.exists) return null;
+
+    final student = studentSnap.data() ?? <String, dynamic>{};
+    final existing = student[_testStudentUidField]?.toString().trim() ?? '';
+    if (existing.isNotEmpty) return existing;
+
+    final prefix = config['prefix']?.toString() ?? 'TEST-';
+    final padding = (config['padding'] as num?)?.toInt() ?? 6;
+    final nextNumber = (config['nextNumber'] as num?)?.toInt() ?? 1;
+    final uid = _formatTestStudentUid(prefix, padding, nextNumber);
+
+    transaction.update(studentRef, {
+      _testStudentUidField: uid,
+      'studentUidTestAssignedAt': FieldValue.serverTimestamp(),
+    });
+
+    transaction.set(
+      configRef,
+      {
+        'nextNumber': nextNumber + 1,
+        'lastIssuedUid': uid,
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+
+    return uid;
+  });
+}
+
+String _compositeStudentFeeIdentity(Map<String, dynamic> student) {
+  final raw = [
+    _normalizeIdentityPart(student['name']),
+    _normalizeIdentityPart(student['parentName']),
+    _normalizeIdentityPart(student['dateOfBirth']),
+    _normalizeIdentityPart(student['rollNo']),
+    _normalizeIdentityPart(student['parentContact']),
+  ].join('|');
+
+  final encoded = base64UrlEncode(utf8.encode(raw)).replaceAll('=', '');
+  return 'CMP-$encoded';
+}
+
+String _feeIdentityForStudent(
+  Map<String, dynamic> student,
+  Map<String, dynamic> uidConfig,
+) {
+  final uid = student[_testStudentUidField]?.toString().trim() ?? '';
+  final useUid = uidConfig['masterEnabled'] == true &&
+      uidConfig['feesEnabled'] == true &&
+      uid.isNotEmpty;
+
+  if (useUid) return 'UID-$uid';
+  return _compositeStudentFeeIdentity(student);
+}
+
 // ============================================================
 // MAIN DASHBOARD
 // Opens directly to School Portal.
@@ -2310,10 +2438,11 @@ void _handleLoginBack(bool didPop) {
                               }
                             }
 
-                            await FirebaseFirestore.instance
+                            final studentRef = FirebaseFirestore.instance
                                 .collection('students_directory')
-                                .doc(docId)
-                                .set({
+                                .doc(docId);
+
+                            await studentRef.set({
                               'name': name,
                               'parentName': parent,
                               'class': selectedClass,
@@ -2332,6 +2461,9 @@ void _handleLoginBack(bool didPop) {
                               'updatedAt': FieldValue.serverTimestamp(),
                             });
 
+                            final assignedTestUid =
+                                await _ensureTestStudentUid(studentRef);
+
                             if (!mounted) return;
 
                             Navigator.pop(dialogContext);
@@ -2342,9 +2474,12 @@ void _handleLoginBack(bool didPop) {
                                     ? const Color(0xFF00A884)
                                     : Colors.orangeAccent,
                                 content: Text(
-                                  driveSaved
-                                      ? 'Student Google Sheet, Drive aur Firestore me save ho gaya.'
-                                      : 'Student Firestore me save hua.',
+                                  (driveSaved
+                                          ? 'Student Google Sheet, Drive aur Firestore me save ho gaya.'
+                                          : 'Student Firestore me save hua.') +
+                                      (assignedTestUid != null
+                                          ? ' Test UID: $assignedTestUid'
+                                          : ''),
                                 ),
                               ),
                             );
@@ -2519,6 +2654,8 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   String pinCode = '';
   String admissionDate = 'N/A';
   String dob = 'N/A';
+  String studentUid = '';
+  bool showStudentUid = false;
   String? photoUrl = _studentPhotoUrl;
 
   try {
@@ -2558,6 +2695,18 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
 
       if (dbPhoto != null && dbPhoto.isNotEmpty) {
         photoUrl = dbPhoto;
+      }
+
+      final uidConfig = await _loadTestStudentUidConfig();
+      showStudentUid = uidConfig['masterEnabled'] == true &&
+          uidConfig['idCardEnabled'] == true;
+
+      if (showStudentUid) {
+        studentUid = data[_testStudentUidField]?.toString().trim() ?? '';
+
+        if (studentUid.isEmpty) {
+          studentUid = await _ensureTestStudentUid(doc.reference) ?? '';
+        }
       }
     }
   } catch (e) {
@@ -2599,11 +2748,13 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
 
   final docId = '${_directoryClass}_Roll_$roll';
 
+  final uidQrLine = studentUid.isNotEmpty ? 'Student UID: $studentUid\n' : '';
+
   final qrData = '''
 SVN_STUDENT_CARD
 Record ID: $docId
 Student ID: $studentId
-''';
+$uidQrLine''';
 
   return {
     'name': name,
@@ -2616,6 +2767,8 @@ Student ID: $studentId
     'dob': dob,
     'photoUrl': photoUrl,
     'studentId': studentId,
+    'studentUid': studentUid,
+    'showStudentUid': showStudentUid,
     'qrData': qrData,
     'class': _directoryClass,
   };
@@ -2637,6 +2790,8 @@ Future<void> _showIdCardPreview() async {
   final dob = data['dob'].toString();
   final address = data['address'].toString();
   final studentId = data['studentId'].toString();
+  final studentUid = data['studentUid']?.toString() ?? '';
+  final showStudentUid = data['showStudentUid'] == true;
   final qrData = data['qrData'].toString();
   final photoUrl = data['photoUrl']?.toString() ?? '';
 
@@ -3041,25 +3196,51 @@ Future<void> _showIdCardPreview() async {
 
                                               const SizedBox(
                                                   width: 8),
-
-                                              const Padding(
+                                              Padding(
                                                 padding:
-                                                    EdgeInsets.only(
-                                                        bottom: 6),
-                                                child: Text(
-                                                  'SCAN FOR\nSTUDENT\nVERIFICATION',
-                                                  style:
-                                                      TextStyle(
-                                                    color: Color(
-                                                        0xFF0B3558),
-                                                    fontSize: 6.4,
-                                                    fontWeight:
-                                                        FontWeight
-                                                            .w800,
-                                                    height: 1.25,
-                                                    letterSpacing:
-                                                        .3,
-                                                  ),
+                                                    const EdgeInsets.only(
+                                                        bottom: 3),
+                                                child: Column(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    const Text(
+                                                      'SCAN FOR\nSTUDENT\nVERIFICATION',
+                                                      style: TextStyle(
+                                                        color: Color(0xFF0B3558),
+                                                        fontSize: 6.4,
+                                                        fontWeight: FontWeight.w800,
+                                                        height: 1.25,
+                                                        letterSpacing: .3,
+                                                      ),
+                                                    ),
+                                                    if (showStudentUid &&
+                                                        studentUid.isNotEmpty) ...[
+                                                      const SizedBox(height: 4),
+                                                      Container(
+                                                        padding: const EdgeInsets.symmetric(
+                                                          horizontal: 5,
+                                                          vertical: 2,
+                                                        ),
+                                                        decoration: BoxDecoration(
+                                                          color: const Color(0xFF00A884)
+                                                              .withOpacity(0.10),
+                                                          borderRadius:
+                                                              BorderRadius.circular(5),
+                                                        ),
+                                                        child: Text(
+                                                          'UID: $studentUid',
+                                                          style: const TextStyle(
+                                                            color: Color(0xFF0B6A5B),
+                                                            fontSize: 6.2,
+                                                            fontWeight: FontWeight.w900,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ],
                                                 ),
                                               ),
                                             ],
@@ -3457,6 +3638,10 @@ Future<Uint8List> _buildIdCardPdf() async {
   final address = data['address'].toString();
   final studentId =
       data['studentId'].toString();
+  final studentUid =
+      data['studentUid']?.toString() ?? '';
+  final showStudentUid =
+      data['showStudentUid'] == true;
   final qrData = data['qrData'].toString();
   final photoUrl =
       data['photoUrl']?.toString() ?? '';
@@ -3827,15 +4012,44 @@ Future<Uint8List> _buildIdCardPdf() async {
 
                                 pw.SizedBox(width: 4),
 
-                                pw.Text(
-                                  'SCAN FOR\nSTUDENT\nVERIFICATION',
-                                  style: pw.TextStyle(
-                                    color: navy,
-                                    fontSize: 3.3,
-                                    fontWeight:
-                                        pw.FontWeight.bold,
-                                    lineSpacing: 1,
-                                  ),
+                                pw.Column(
+                                  crossAxisAlignment:
+                                      pw.CrossAxisAlignment.start,
+                                  children: [
+                                    pw.Text(
+                                      'SCAN FOR\nSTUDENT\nVERIFICATION',
+                                      style: pw.TextStyle(
+                                        color: navy,
+                                        fontSize: 3.3,
+                                        fontWeight:
+                                            pw.FontWeight.bold,
+                                        lineSpacing: 1,
+                                      ),
+                                    ),
+                                    if (showStudentUid &&
+                                        studentUid.isNotEmpty) ...[
+                                      pw.SizedBox(height: 2),
+                                      pw.Container(
+                                        padding: const pw.EdgeInsets.symmetric(
+                                          horizontal: 2.5,
+                                          vertical: 1,
+                                        ),
+                                        decoration: pw.BoxDecoration(
+                                          color: paleGreen,
+                                          borderRadius:
+                                              pw.BorderRadius.circular(2),
+                                        ),
+                                        child: pw.Text(
+                                          'UID: $studentUid',
+                                          style: pw.TextStyle(
+                                            color: teal,
+                                            fontSize: 3.1,
+                                            fontWeight: pw.FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ],
                             ),
@@ -5738,21 +5952,35 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _gmailController = TextEditingController();
   final TextEditingController _scriptUrlController = TextEditingController();
+  final TextEditingController _uidStartController =
+      TextEditingController(text: 'TEST-000001');
 
   String? _linkedGmail;
   String? _linkedScriptUrl;
   bool _isLoading = false;
 
+  bool _uidSettingsLoading = true;
+  bool _uidMasterEnabled = false;
+  bool _uidFeesEnabled = false;
+  bool _uidIdCardEnabled = false;
+  bool _uidEverActivated = false;
+  String _uidPrefix = 'TEST-';
+  int _uidPadding = 6;
+  int _uidNextNumber = 1;
+  String _uidLastIssued = '';
+
   @override
   void initState() {
     super.initState();
     _fetchLinkedAccount();
+    _fetchUidTestSettings();
   }
 
   @override
   void dispose() {
     _gmailController.dispose();
     _scriptUrlController.dispose();
+    _uidStartController.dispose();
     super.dispose();
   }
 
@@ -5918,6 +6146,432 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SnackBar(
           backgroundColor: Colors.redAccent,
           content: Text('Error: $e'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _fetchUidTestSettings() async {
+    try {
+      final data = await _loadTestStudentUidConfig();
+      if (!mounted) return;
+
+      final prefix = data['prefix']?.toString() ?? 'TEST-';
+      final padding = (data['padding'] as num?)?.toInt() ?? 6;
+      final nextNumber = (data['nextNumber'] as num?)?.toInt() ?? 1;
+      final everActivated = data['everActivated'] == true;
+
+      setState(() {
+        _uidMasterEnabled = data['masterEnabled'] == true;
+        _uidFeesEnabled = data['feesEnabled'] == true;
+        _uidIdCardEnabled = data['idCardEnabled'] == true;
+        _uidEverActivated = everActivated;
+        _uidPrefix = prefix;
+        _uidPadding = padding;
+        _uidNextNumber = nextNumber;
+        _uidLastIssued = data['lastIssuedUid']?.toString() ?? '';
+        _uidSettingsLoading = false;
+
+        if (everActivated) {
+          _uidStartController.text =
+              _formatTestStudentUid(prefix, padding, nextNumber);
+        } else {
+          _uidStartController.text =
+              data['startPattern']?.toString() ?? 'TEST-000001';
+        }
+      });
+    } catch (e) {
+      debugPrint('Test UID settings load error: $e');
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+    }
+  }
+
+  int _classSortNumber(String value) {
+    return int.tryParse(value.replaceAll(RegExp(r'[^0-9]'), '')) ?? 999999;
+  }
+
+  int _rollSortNumber(String value) {
+    return int.tryParse(value.trim()) ?? 999999;
+  }
+
+  Future<String?> _showUidActivationPasswordDialog() async {
+    final passwordController = TextEditingController();
+    int secondsLeft = 20;
+    bool countdownStarted = false;
+
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            if (!countdownStarted) {
+              countdownStarted = true;
+
+              Future<void>(() async {
+                while (secondsLeft > 0) {
+                  await Future<void>.delayed(const Duration(seconds: 1));
+                  if (!dialogContext.mounted) return;
+                  setDialogState(() => secondsLeft--);
+                }
+              });
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF172229),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.badge_rounded, color: Color(0xFF00D9A5)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Activate TEST Student UID?',
+                      style: TextStyle(color: Colors.white, fontSize: 17),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 470,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Kya school ke sabhi existing students Student Directory me add ho chuke hain?\n\n'
+                      'TEST UID activate hone par existing students ko Class 1 → Class 10 aur Roll No order me permanent TEST UID assign hoga. '
+                      'Delete hone ke baad purana UID dobara issue nahi hoga. Final production UID baad me alag se activate kiya jayega.',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orangeAccent.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.orangeAccent.withOpacity(0.25),
+                        ),
+                      ),
+                      child: Text(
+                        secondsLeft > 0
+                            ? 'Student Directory verify karein... Password option $secondsLeft sec baad unlock hoga.'
+                            : 'Verification time complete. Ab Admin Password enter karein.',
+                        style: TextStyle(
+                          color: secondsLeft > 0
+                              ? Colors.orangeAccent
+                              : const Color(0xFF00D9A5),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: passwordController,
+                      enabled: secondsLeft == 0,
+                      obscureText: true,
+                      style: const TextStyle(color: Colors.white),
+                      onChanged: (_) => setDialogState(() {}),
+                      decoration: InputDecoration(
+                        labelText: 'Admin Password',
+                        labelStyle: const TextStyle(color: Colors.white54),
+                        prefixIcon: const Icon(
+                          Icons.lock_outline_rounded,
+                          color: Color(0xFF00A884),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF0F191F),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: secondsLeft == 0 &&
+                          passwordController.text.trim().isNotEmpty
+                      ? () => Navigator.pop(
+                            dialogContext,
+                            passwordController.text,
+                          )
+                      : null,
+                  icon: const Icon(Icons.verified_user_rounded, size: 18),
+                  label: const Text('Verify & Activate'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+    return result;
+  }
+
+  Future<void> _verifyCurrentAdminPassword(String password) async {
+    final user = FirebaseAuth.instance.currentUser;
+    final email = user?.email?.trim() ?? '';
+
+    if (user == null || email.isEmpty) {
+      throw Exception('Admin login session nahi mila.');
+    }
+
+    final credential = EmailAuthProvider.credential(
+      email: email,
+      password: password,
+    );
+
+    await user.reauthenticateWithCredential(credential);
+  }
+
+  Future<void> _activateUidTestMode() async {
+    if (_uidSettingsLoading) return;
+
+    Map<String, dynamic>? parsedPattern;
+
+    if (!_uidEverActivated) {
+      try {
+        parsedPattern = _parseTestUidPattern(_uidStartController.text);
+      } on FormatException catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(e.message.toString()),
+          ),
+        );
+        return;
+      }
+    }
+
+    final password = await _showUidActivationPasswordDialog();
+    if (password == null || password.isEmpty || !mounted) return;
+
+    setState(() => _uidSettingsLoading = true);
+
+    try {
+      await _verifyCurrentAdminPassword(password);
+
+      final freshConfig = await _loadTestStudentUidConfig();
+      final everActivated = freshConfig['everActivated'] == true;
+
+      final prefix = everActivated
+          ? (freshConfig['prefix']?.toString() ?? _uidPrefix)
+          : parsedPattern!['prefix'].toString();
+      final padding = everActivated
+          ? ((freshConfig['padding'] as num?)?.toInt() ?? _uidPadding)
+          : parsedPattern!['padding'] as int;
+      var nextNumber = everActivated
+          ? ((freshConfig['nextNumber'] as num?)?.toInt() ?? _uidNextNumber)
+          : parsedPattern!['startNumber'] as int;
+
+      final students = await FirebaseFirestore.instance
+          .collection('students_directory')
+          .get();
+
+      final docs = [...students.docs];
+      docs.sort((a, b) {
+        final ad = a.data();
+        final bd = b.data();
+
+        final classCompare = _classSortNumber(
+          ad['class']?.toString() ?? '',
+        ).compareTo(
+          _classSortNumber(bd['class']?.toString() ?? ''),
+        );
+        if (classCompare != 0) return classCompare;
+
+        final rollCompare = _rollSortNumber(
+          ad['rollNo']?.toString() ?? '',
+        ).compareTo(
+          _rollSortNumber(bd['rollNo']?.toString() ?? ''),
+        );
+        if (rollCompare != 0) return rollCompare;
+
+        return (ad['name']?.toString() ?? '')
+            .toLowerCase()
+            .compareTo((bd['name']?.toString() ?? '').toLowerCase());
+      });
+
+      final missing = docs.where((doc) {
+        return (doc.data()[_testStudentUidField]?.toString().trim() ?? '')
+            .isEmpty;
+      }).toList();
+
+      final assignments = <MapEntry<
+          DocumentReference<Map<String, dynamic>>, String>>[];
+      var reservedNextNumber = nextNumber;
+      String lastIssued = freshConfig['lastIssuedUid']?.toString() ?? '';
+
+      for (final doc in missing) {
+        final uid =
+            _formatTestStudentUid(prefix, padding, reservedNextNumber);
+        assignments.add(MapEntry(doc.reference, uid));
+        lastIssued = uid;
+        reservedNextNumber++;
+      }
+
+      // Counter pehle reserve hota hai. Agar network/batch beech me fail bhi ho,
+      // reserved UID dobara reuse nahi hoga; sirf gap aa sakta hai.
+      await _testStudentUidConfigRef().set(
+        {
+          'testMode': true,
+          'masterEnabled': false,
+          'everActivated': true,
+          'prefix': prefix,
+          'padding': padding,
+          'startPattern': everActivated
+              ? freshConfig['startPattern']?.toString()
+              : _uidStartController.text.trim(),
+          'nextNumber': reservedNextNumber,
+          'lastIssuedUid': lastIssued,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      for (var start = 0; start < assignments.length; start += 400) {
+        final batch = FirebaseFirestore.instance.batch();
+        final end = (start + 400 < assignments.length)
+            ? start + 400
+            : assignments.length;
+
+        for (var i = start; i < end; i++) {
+          final assignment = assignments[i];
+          batch.update(assignment.key, {
+            _testStudentUidField: assignment.value,
+            'studentUidTestAssignedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        await batch.commit();
+      }
+
+      await _testStudentUidConfigRef().set(
+        {
+          'masterEnabled': true,
+          'feesEnabled': freshConfig['feesEnabled'] == true,
+          'idCardEnabled': freshConfig['idCardEnabled'] == true,
+          'activatedAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      await _fetchUidTestSettings();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text(
+            missing.isEmpty
+                ? 'TEST Student UID ON ho gaya. Sab existing students ke UID pehle se assigned hain.'
+                : 'TEST Student UID ON. ${missing.length} existing students ko UID assign hua.',
+          ),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            e.code == 'wrong-password' || e.code == 'invalid-credential'
+                ? 'Admin Password galat hai.'
+                : 'Admin verification failed: ${e.message ?? e.code}',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('TEST UID activation error: $e'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _setUidMasterEnabled(bool value) async {
+    if (value) {
+      await _activateUidTestMode();
+      return;
+    }
+
+    setState(() => _uidSettingsLoading = true);
+
+    try {
+      await _testStudentUidConfigRef().set(
+        {
+          'masterEnabled': false,
+          'feesEnabled': false,
+          'idCardEnabled': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      await _fetchUidTestSettings();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('TEST UID OFF error: $e'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _setUidFeatureFlag(String field, bool value) async {
+    if (!_uidMasterEnabled) return;
+
+    setState(() => _uidSettingsLoading = true);
+    try {
+      await _testStudentUidConfigRef().set(
+        {
+          field: value,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      await _fetchUidTestSettings();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('TEST UID setting save error: $e'),
         ),
       );
     }
@@ -6467,6 +7121,120 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
                 ),
+
+                const SizedBox(height: 16),
+
+                // =====================================================
+                // TEST STUDENT UID SETTINGS
+                // =====================================================
+                _settingsCard(
+                  icon: Icons.badge_rounded,
+                  iconColor: const Color(0xFF00D9A5),
+                  title: 'Student UID — TEST MODE',
+                  subtitle: 'Fees identity + optional ID Card UID preview',
+                  trailing: _statusPill(
+                    _uidMasterEnabled ? 'TEST ON' : 'TEST OFF',
+                    _uidMasterEnabled
+                        ? const Color(0xFF00D9A5)
+                        : Colors.grey,
+                  ),
+                  child: _uidSettingsLoading
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(12),
+                            child: CircularProgressIndicator(
+                              color: Color(0xFF00A884),
+                            ),
+                          ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(13),
+                              decoration: BoxDecoration(
+                                color: Colors.orangeAccent.withOpacity(0.07),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.orangeAccent.withOpacity(0.18),
+                                ),
+                              ),
+                              child: const Text(
+                                'Abhi TEST mode hai. Default example TEST-000001 hai. Final version me school SVN-000001 jaisa production format rakh sakta hai. Assigned TEST UID delete hone ke baad reuse nahi hoga.',
+                                style: TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 11,
+                                  height: 1.45,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            TextField(
+                              controller: _uidStartController,
+                              enabled: !_uidEverActivated && !_uidMasterEnabled,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _modernInputDecoration(
+                                'Starting UID — Example: TEST-000001',
+                                Icons.tag_rounded,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _uidEverActivated
+                                  ? 'Sequence locked for this TEST run. Next UID: ${_formatTestStudentUid(_uidPrefix, _uidPadding, _uidNextNumber)}'
+                                  : 'Class 1 Roll 1 se numbering start hogi, phir Class/Roll order me aage badegi.',
+                              style: const TextStyle(
+                                color: Colors.white38,
+                                fontSize: 10.5,
+                                height: 1.4,
+                              ),
+                            ),
+                            if (_uidLastIssued.isNotEmpty) ...[
+                              const SizedBox(height: 5),
+                              Text(
+                                'Last issued TEST UID: $_uidLastIssued',
+                                style: const TextStyle(
+                                  color: Color(0xFF00D9A5),
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 14),
+                            _uidToggleTile(
+                              title: 'Enable Student UID',
+                              subtitle: _uidMasterEnabled
+                                  ? 'TEST UID assignment active hai.'
+                                  : 'ON karne par 20 sec warning + Admin Password verification hoga.',
+                              value: _uidMasterEnabled,
+                              onChanged: _setUidMasterEnabled,
+                            ),
+                            const SizedBox(height: 10),
+                            _uidToggleTile(
+                              title: 'Use Student UID for Fees',
+                              subtitle: _uidMasterEnabled
+                                  ? 'ON: fee ledger TEST UID se link hoga. OFF: Name + Father + DOB + Roll + Mobile identity use hogi.'
+                                  : 'Pehle master Student UID ON karein.',
+                              value: _uidFeesEnabled,
+                              enabled: _uidMasterEnabled,
+                              onChanged: (value) =>
+                                  _setUidFeatureFlag('feesEnabled', value),
+                            ),
+                            const SizedBox(height: 10),
+                            _uidToggleTile(
+                              title: 'Show Student UID on ID Card',
+                              subtitle: _uidMasterEnabled
+                                  ? 'ON: QR/scanner ke paas same TEST UID dikhai dega.'
+                                  : 'Pehle master Student UID ON karein.',
+                              value: _uidIdCardEnabled,
+                              enabled: _uidMasterEnabled,
+                              onChanged: (value) =>
+                                  _setUidFeatureFlag('idCardEnabled', value),
+                            ),
+                          ],
+                        ),
+                ),
               ],
             ),
           ),
@@ -6547,6 +7315,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Container(height: 1, color: Colors.white.withOpacity(0.055)),
           const SizedBox(height: 15),
           child,
+        ],
+      ),
+    );
+  }
+
+  Widget _uidToggleTile({
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+    bool enabled = true,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F191F),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.055)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: enabled ? Colors.white : Colors.white30,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: enabled ? Colors.white38 : Colors.white24,
+                    fontSize: 10,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Switch(
+            value: value,
+            activeColor: const Color(0xFF00D9A5),
+            onChanged: enabled ? onChanged : null,
+          ),
         ],
       ),
     );
@@ -6722,6 +7542,9 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   Set<String> _selectedFeeHeads = <String>{};
   Map<String, dynamic>? _activeLedger;
 
+  Map<String, dynamic> _studentUidConfig = <String, dynamic>{};
+  bool _studentUidConfigLoaded = false;
+
   final Map<String, Map<String, dynamic>> _feeSettingsCache = {};
 
   @override
@@ -6730,6 +7553,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
     final now = DateTime.now();
     _selectedMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}';
     _preloadFeeSettings();
+    _loadStudentUidConfigForFees();
   }
 
   @override
@@ -6758,7 +7582,42 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   }
 }
 
-  String _ledgerId(String studentId) => '${_selectedMonth}_$studentId';
+  Future<void> _loadStudentUidConfigForFees() async {
+    try {
+      final data = await _loadTestStudentUidConfig();
+      if (!mounted) return;
+      setState(() {
+        _studentUidConfig = data;
+        _studentUidConfigLoaded = true;
+      });
+    } catch (e) {
+      debugPrint('Fees TEST UID config load error: $e');
+      if (!mounted) return;
+      setState(() => _studentUidConfigLoaded = true);
+    }
+  }
+
+  String _ledgerId(String feeIdentity) {
+    final safe = base64UrlEncode(utf8.encode(feeIdentity)).replaceAll('=', '');
+    return '${_selectedMonth}_$safe';
+  }
+
+  bool _legacyLedgerMatchesStudent(
+    Map<String, dynamic> ledger,
+    Map<String, dynamic> student,
+  ) {
+    final oldName = _normalizeIdentityPart(ledger['studentName']);
+    final newName = _normalizeIdentityPart(student['name']);
+    final oldRoll = _normalizeIdentityPart(ledger['rollNo']);
+    final newRoll = _normalizeIdentityPart(student['rollNo']);
+    final oldMobile = _normalizeIdentityPart(ledger['parentContact']);
+    final newMobile = _normalizeIdentityPart(student['parentContact']);
+
+    return oldName.isNotEmpty &&
+        oldName == newName &&
+        oldRoll == newRoll &&
+        oldMobile == newMobile;
+  }
 
   double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
@@ -7116,6 +7975,15 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     final studentClass = student['class']?.toString().trim() ?? '';
     final roll = student['rollNo']?.toString().trim() ?? '';
     final parentContact = student['parentContact']?.toString().trim() ?? '';
+    final parentName = student['parentName']?.toString().trim() ?? '';
+    final dateOfBirth = student['dateOfBirth']?.toString().trim() ?? '';
+    final rawStudentUid =
+        student[_testStudentUidField]?.toString().trim() ?? '';
+    final studentUid = _studentUidConfig['masterEnabled'] == true &&
+            _studentUidConfig['feesEnabled'] == true
+        ? rawStudentUid
+        : '';
+    final feeIdentity = _feeIdentityForStudent(student, _studentUidConfig);
 
     final oldExpected = _toDouble(ledger?['expectedAmount']);
     final oldPaid = _toDouble(ledger?['totalPaid']);
@@ -7176,7 +8044,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'paymentId': paymentRef.id,
       'receiptNo': receiptNo,
       'studentId': studentDoc.id,
+      'feeIdentity': feeIdentity,
+      'studentUid': studentUid,
       'studentName': studentName,
+      'parentName': parentName,
+      'dateOfBirth': dateOfBirth,
       'class': studentClass,
       'rollNo': roll,
       'parentContact': parentContact,
@@ -7211,15 +8083,24 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         'paidAt': FieldValue.serverTimestamp(),
       });
 
+      final existingLedgerDocId =
+          ledger?['__docId']?.toString().trim() ?? '';
+
       final ledgerRef = FirebaseFirestore.instance
           .collection('fee_ledger')
-          .doc(_ledgerId(studentDoc.id));
+          .doc(existingLedgerDocId.isNotEmpty
+              ? existingLedgerDocId
+              : _ledgerId(feeIdentity));
 
       batch.set(
         ledgerRef,
         {
           'studentId': studentDoc.id,
+          'feeIdentity': feeIdentity,
+          'studentUid': studentUid,
           'studentName': studentName,
+          'parentName': parentName,
+          'dateOfBirth': dateOfBirth,
           'class': studentClass,
           'rollNo': roll,
           'parentContact': parentContact,
@@ -7252,6 +8133,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           'balance': balance,
           'status': status,
           'feeItems': feeItems,
+          'feeIdentity': feeIdentity,
+          'studentUid': studentUid,
+          '__docId': ledgerRef.id,
           'lastPaymentId': paymentRef.id,
           'lastReceiptNo': receiptNo,
           'lastDriveUrl': driveUrl,
@@ -7312,6 +8196,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         'Receipt No: ${data['receiptNo'] ?? ''}\n'
         'Date: ${data['dateText'] ?? ''} ${data['timeText'] ?? ''}\n'
         'Student: ${data['studentName'] ?? ''}\n'
+        '${(data['studentUid']?.toString().trim().isNotEmpty ?? false) ? 'Student UID: ${data['studentUid']}\n' : ''}'
         'Class: ${data['class'] ?? ''} | Roll: ${data['rollNo'] ?? ''}\n'
         'Month: ${_monthName(data['month']?.toString() ?? _selectedMonth)}\n\n'
         '$itemLines\n\n'
@@ -7387,6 +8272,16 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               ),
               pw.SizedBox(height: 6),
               pw.Text('Name: ${data['studentName'] ?? ''}', style: const pw.TextStyle(fontSize: 10)),
+              if (data['studentUid']?.toString().trim().isNotEmpty == true) ...[
+                pw.SizedBox(height: 3),
+                pw.Text(
+                  'Student UID: ${data['studentUid']}',
+                  style: pw.TextStyle(
+                    fontSize: 9,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ],
               pw.SizedBox(height: 4),
               pw.Text(
                 'Class: ${data['class'] ?? ''}    Roll No: ${data['rollNo'] ?? ''}    Month: ${_monthName(data['month']?.toString() ?? _selectedMonth)}',
@@ -7844,6 +8739,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     final name = student['name']?.toString().trim() ?? '';
     final studentClass = student['class']?.toString().trim() ?? '';
     final roll = student['rollNo']?.toString().trim() ?? '';
+    final feeStudentUid = studentSelected &&
+            _studentUidConfig['masterEnabled'] == true &&
+            _studentUidConfig['feesEnabled'] == true
+        ? (student[_testStudentUidField]?.toString().trim() ?? '')
+        : '';
 
     final oldPaid = studentSelected ? _toDouble(ledger?['totalPaid']) : 0.0;
     final oldExpected = studentSelected ? _toDouble(ledger?['expectedAmount']) : 0.0;
@@ -7898,6 +8798,17 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                           : 'Name ya Roll No search karein, phir neeche matching student select karein.',
                       style: const TextStyle(color: Colors.white38, fontSize: 10.5),
                     ),
+                    if (feeStudentUid.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        'Student UID: $feeStudentUid',
+                        style: const TextStyle(
+                          color: Color(0xFF00D9A5),
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -8066,6 +8977,15 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
   @override
   Widget build(BuildContext context) {
+    if (!_studentUidConfigLoaded) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0B141A),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF00A884)),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(
@@ -8095,11 +9015,44 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                 .where('month', isEqualTo: _selectedMonth)
                 .snapshots(),
             builder: (context, ledgerSnapshot) {
-              final ledger = <String, Map<String, dynamic>>{};
+              final ledgerByIdentity = <String, Map<String, dynamic>>{};
+              final legacyLedgerByStudentId = <String, Map<String, dynamic>>{};
+
               for (final doc in ledgerSnapshot.data?.docs ?? []) {
-                final data = doc.data();
+                final raw = doc.data();
+                final data = <String, dynamic>{
+                  ...raw,
+                  '__docId': doc.id,
+                };
+
+                final feeIdentity = data['feeIdentity']?.toString() ?? '';
+                if (feeIdentity.isNotEmpty) {
+                  ledgerByIdentity[feeIdentity] = data;
+                }
+
                 final studentId = data['studentId']?.toString() ?? '';
-                if (studentId.isNotEmpty) ledger[studentId] = data;
+                if (studentId.isNotEmpty) {
+                  legacyLedgerByStudentId[studentId] = data;
+                }
+              }
+
+              Map<String, dynamic>? ledgerForStudent(
+                QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
+              ) {
+                final student = studentDoc.data();
+                final identity =
+                    _feeIdentityForStudent(student, _studentUidConfig);
+
+                final byIdentity = ledgerByIdentity[identity];
+                if (byIdentity != null) return byIdentity;
+
+                final legacy = legacyLedgerByStudentId[studentDoc.id];
+                if (legacy != null &&
+                    _legacyLedgerMatchesStudent(legacy, student)) {
+                  return legacy;
+                }
+
+                return null;
               }
 
               final nameQuery = _nameSearchController.text.trim().toLowerCase();
@@ -8136,7 +9089,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
               // Summary selected class/search ke visible students ko reflect karega.
               for (final doc in filtered) {
-                final data = ledger[doc.id];
+                final data = ledgerForStudent(doc);
                 final expected = _toDouble(data?['expectedAmount']);
                 final paid = _toDouble(data?['totalPaid']);
                 final status = _feeStatus(expected, paid);
@@ -8161,7 +9114,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
               final activeLedger = activeStudentDoc == null
                   ? null
-                  : ledger[activeStudentDoc.id];
+                  : ledgerForStudent(activeStudentDoc);
 
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
@@ -8363,7 +9316,7 @@ child: Row(
                                         final student = filtered[index];
                                         return _studentCard(
                                           student,
-                                          ledger[student.id],
+                                          ledgerForStudent(student),
                                           canSelect: searchStarted,
                                         );
                                       },
