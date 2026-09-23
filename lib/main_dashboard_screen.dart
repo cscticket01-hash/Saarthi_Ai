@@ -122,7 +122,7 @@ String _formatPortalTimer(int totalSeconds) {
   return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 }
 
-Widget _buildPortalSessionTimer(ValueListenable<int> secondsListenable) {
+Widget _buildPortalSessionTimer(ValueNotifier<int> secondsListenable) {
   return Tooltip(
     message: 'Auto logout after 30 minutes of inactivity',
     child: ValueListenableBuilder<int>(
