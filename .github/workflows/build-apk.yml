@@ -51,17 +51,17 @@ jobs:
         uses: android-actions/setup-android@v4
 
       # ============================================================
-      # 5. INSTALL ANDROID SDK 34
+      # 5. INSTALL ANDROID SDK 36
       # ============================================================
-      - name: Install Android SDK 34
+      - name: Install Android SDK 36
         shell: bash
         run: |
           yes | sdkmanager --licenses >/dev/null || true
 
           sdkmanager \
             "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0"
+            "platforms;android-36" \
+            "build-tools;36.0.0"
 
       # ============================================================
       # 6. SHOW BUILD ENVIRONMENT
@@ -474,6 +474,17 @@ jobs:
               >> android/gradle.properties
           fi
 
+          # GitHub Actions/Gradle file watcher can occasionally throw
+          # "Already watching path: .../android". Disable VFS watching
+          # only for the CI runner; repository source is unchanged.
+          if grep -q '^org\.gradle\.vfs\.watch=' android/gradle.properties; then
+            sed -i \
+              's/^org\.gradle\.vfs\.watch=.*/org.gradle.vfs.watch=false/' \
+              android/gradle.properties
+          else
+            echo 'org.gradle.vfs.watch=false' >> android/gradle.properties
+          fi
+
           echo ""
           echo "===== MOBILE SCANNER VERSION ====="
 
@@ -494,12 +505,12 @@ jobs:
 
       # ============================================================
       # 12. FIX OLD PLUGIN COMPILE SDK
-      # Agora + Iris + Printing runner-only patch
+      # Existing Android plugins runner-only patch to API 36
       # ============================================================
       - name: Fix Plugin Compile SDK
         shell: bash
         run: |
-          echo "Fixing Android plugin compileSdk..."
+          echo "Fixing existing Android plugin compileSdk to 36..."
 
           python3 <<'PY'
           from pathlib import Path
@@ -511,6 +522,11 @@ jobs:
               "agora_rtc_engine-*",
               "iris_method_channel-*",
               "printing-*",
+              "mobile_scanner-*",
+              "flutter_contacts-*",
+              "permission_handler_android-*",
+              "url_launcher_android-*",
+              "flutter_plugin_android_lifecycle-*",
           ]
 
           found_packages = 0
@@ -551,23 +567,23 @@ jobs:
                       if file.name.endswith(".gradle.kts"):
                           text = re.sub(
                               r'(?m)^(\s*)compileSdk\s*=.*$',
-                              r'\1compileSdk = 34',
+                              r'\1compileSdk = 36',
                               text,
                           )
                           text = re.sub(
                               r'(?m)^(\s*)compileSdkVersion\s*=.*$',
-                              r'\1compileSdk = 34',
+                              r'\1compileSdk = 36',
                               text,
                           )
                       else:
                           text = re.sub(
                               r'(?m)^(\s*)compileSdkVersion\s+.*$',
-                              r'\1compileSdkVersion 34',
+                              r'\1compileSdkVersion 36',
                               text,
                           )
                           text = re.sub(
                               r'(?m)^(\s*)compileSdk\s*(?:=\s*)?.*$',
-                              r'\1compileSdkVersion 34',
+                              r'\1compileSdkVersion 36',
                               text,
                           )
 
@@ -585,7 +601,7 @@ jobs:
 
           if found_packages == 0:
               raise SystemExit(
-                  "ERROR: Agora/Iris/Printing packages nahi mile"
+                  "ERROR: Android plugin packages nahi mile"
               )
           PY
 
@@ -617,7 +633,7 @@ jobs:
             2>/dev/null || true
 
           echo ""
-          echo "Plugin compileSdk patch completed."
+          echo "Existing plugin compileSdk 36 patch completed."
 
       # ============================================================
       # 13. VERIFY ANDROID CONFIGURATION
@@ -1435,6 +1451,147 @@ jobs:
           echo "Android temporary source READY."
 
       # ============================================================
+      # 16. FORCE APP + ALL REQUIRED PLUGINS TO COMPILE SDK 36
+      # file_picker 8.0.7 is kept for old Firebase/web compatibility,
+      # but its Android module defaults to API 34. Newer lifecycle AARs
+      # now require every consuming Android module to compile with API 36.
+      # Runner-only patch; repository files are not committed.
+      # ============================================================
+      - name: Force Android Compile SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Patching app + Android plugin modules to compileSdk 36..."
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          APP_SDK = "36"
+
+          def patch_gradle_file(path: Path) -> bool:
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              original = text
+
+              if path.name.endswith(".gradle.kts"):
+                  text = re.sub(
+                      r'(?m)^(\s*)compileSdk\s*=.*$',
+                      rf'\1compileSdk = {APP_SDK}',
+                      text,
+                  )
+                  text = re.sub(
+                      r'(?m)^(\s*)compileSdkVersion\s*=.*$',
+                      rf'\1compileSdk = {APP_SDK}',
+                      text,
+                  )
+              else:
+                  text = re.sub(
+                      r'(?m)^(\s*)compileSdkVersion\s+.*$',
+                      rf'\1compileSdkVersion {APP_SDK}',
+                      text,
+                  )
+                  text = re.sub(
+                      r'(?m)^(\s*)compileSdk\s*(?:=\s*)?.*$',
+                      rf'\1compileSdkVersion {APP_SDK}',
+                      text,
+                  )
+
+              if text != original:
+                  path.write_text(text, encoding="utf-8")
+                  return True
+
+              return False
+
+          # Main Android app must compile against 36 too.
+          app_candidates = [
+              Path("android/app/build.gradle.kts"),
+              Path("android/app/build.gradle"),
+          ]
+
+          app_patched = False
+          for app_file in app_candidates:
+              if app_file.exists():
+                  changed = patch_gradle_file(app_file)
+                  app_patched = app_patched or changed
+                  print("APP:", app_file, "patched=", changed)
+
+          pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+
+          # These are the Android plugins used by this project or pulled in
+          # by the Android-only helper packages. file_picker is the module
+          # that triggered the current AAR metadata failure.
+          patterns = [
+              "file_picker-*",
+              "flutter_plugin_android_lifecycle-*",
+              "mobile_scanner-*",
+              "flutter_contacts-*",
+              "permission_handler_android-*",
+              "url_launcher_android-*",
+              "agora_rtc_engine-*",
+              "iris_method_channel-*",
+              "printing-*",
+          ]
+
+          seen = set()
+          patched = []
+
+          for pattern in patterns:
+              for package in pub_cache.glob(pattern):
+                  if package in seen:
+                      continue
+                  seen.add(package)
+
+                  android_dir = package / "android"
+                  if not android_dir.exists():
+                      continue
+
+                  for gradle_file in list(android_dir.rglob("*.gradle")) + \
+                          list(android_dir.rglob("*.gradle.kts")):
+                      if patch_gradle_file(gradle_file):
+                          patched.append(str(gradle_file))
+
+          print("Patched plugin Gradle files:", len(patched))
+          for item in patched:
+              print("PATCHED:", item)
+
+          # file_picker must exist because Android source uses it.
+          file_picker_dirs = list(pub_cache.glob("file_picker-8.0.7"))
+          if not file_picker_dirs:
+              raise SystemExit("ERROR: file_picker 8.0.7 package not found")
+          PY
+
+          # Keep Gradle VFS watcher off in CI to avoid the intermittent
+          # "Already watching path" exception seen in the previous run.
+          touch android/gradle.properties
+          if grep -q '^org\.gradle\.vfs\.watch=' android/gradle.properties; then
+            sed -i \
+              's/^org\.gradle\.vfs\.watch=.*/org.gradle.vfs.watch=false/' \
+              android/gradle.properties
+          else
+            echo 'org.gradle.vfs.watch=false' >> android/gradle.properties
+          fi
+
+          echo ""
+          echo "===== FINAL APP COMPILE SDK ====="
+          grep -R -n "compileSdk" android/app 2>/dev/null || true
+
+          echo ""
+          echo "===== FINAL FILE_PICKER COMPILE SDK ====="
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name "file_picker-8.0.7" \
+            -exec grep -R -n "compileSdk" {}/android \; \
+            2>/dev/null || true
+
+          echo ""
+          echo "===== GRADLE CI PROPERTIES ====="
+          grep -E \
+            'org.gradle.vfs.watch|dev.steenbakker.mobile_scanner.useUnbundled' \
+            android/gradle.properties || true
+
+      # ============================================================
       # 17. BUILD RELEASE APK
       # Every run gets a higher Android versionCode so the newest APK
       # actually replaces the older installed build.
@@ -1443,6 +1600,7 @@ jobs:
         shell: bash
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          GRADLE_OPTS: -Dorg.gradle.vfs.watch=false
         run: |
           flutter build apk \
             --release \
