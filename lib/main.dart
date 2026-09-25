@@ -11,7 +11,7 @@ Future<void> main() async {
       appId: '1:751405981184:web:f1240e05c084bac7b242e5',
       messagingSenderId: '751405981184',
       projectId: 'saarthi-ai-df12b',
-      authDomain: 'saarthi-ai-df12b.firebaseapp.com',
+      authDomain: 'vidyasaarthi.web.app',
       storageBucket: 'saarthi-ai-df12b.firebasestorage.app',
     ),
   );
