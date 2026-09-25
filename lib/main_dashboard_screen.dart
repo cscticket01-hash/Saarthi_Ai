@@ -5354,102 +5354,215 @@ Future<void> _printIdCard() async {
 
   Widget _buildAdminHero(String adminEmail) {
     final now = DateTime.now();
+
     final months = const [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
+
     final dateText = '${now.day} ${months[now.month - 1]} ${now.year}';
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [
-            Color(0xFF173A36),
-            Color(0xFF13262A),
-            Color(0xFF111B21),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: const Color(0xFF00A884).withOpacity(0.16),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.22),
-            blurRadius: 28,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF00A884).withOpacity(0.13),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: const Color(0xFF00A884).withOpacity(0.20),
+    Widget adminInfo() {
+      return Padding(
+        padding: const EdgeInsets.all(22),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00A884).withOpacity(0.13),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: const Color(0xFF00D9A5).withOpacity(0.25),
+                ),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.verified_user_rounded,
+                    color: Color(0xFF00D9A5),
+                    size: 14,
+                  ),
+                  SizedBox(width: 6),
+                  Text(
+                    'ADMIN ACCESS',
+                    style: TextStyle(
+                      color: Color(0xFF00D9A5),
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.7,
+                    ),
+                  ),
+                ],
               ),
             ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.verified_user_rounded,
-                  color: Color(0xFF00D9A5),
-                  size: 14,
+            const SizedBox(height: 13),
+            const Text(
+              'Welcome to SARASWATI VIDYA NIKETAN, MADHABDHAM',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                height: 1.2,
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              adminEmail,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 12,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              dateText,
+              style: const TextStyle(
+                color: Colors.white38,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget brandingImage() {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Image.asset(
+          'assets/vidya_saarthi_brand_art.png',
+          width: double.infinity,
+          height: double.infinity,
+          fit: BoxFit.cover,
+          alignment: Alignment.centerRight,
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Color(0xFF073D37),
+                    Color(0xFF071A20),
+                  ],
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
                 ),
-                SizedBox(width: 6),
-                Text(
-                  'ADMIN ACCESS',
-                  style: TextStyle(
+              ),
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.school_rounded,
                     color: Color(0xFF00D9A5),
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.7,
+                    size: 38,
                   ),
-                ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Vidya Saarthi',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  SizedBox(height: 3),
+                  Text(
+                    'Smart School Management Suite',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isMobile = constraints.maxWidth < 760;
+
+        return Container(
+          width: double.infinity,
+          constraints: BoxConstraints(
+            minHeight: isMobile ? 330 : 165,
+          ),
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [
+                Color(0xFF073D37),
+                Color(0xFF092C2E),
+                Color(0xFF071A20),
               ],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
             ),
-          ),
-          const SizedBox(height: 13),
-          const Text(
-            'Welcome to SARASWATI VIDYA NIKETAN, MADHABDHAM',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              height: 1.2,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: const Color(0xFF00D9A5).withOpacity(0.24),
             ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF00A884).withOpacity(0.08),
+                blurRadius: 30,
+                offset: const Offset(0, 10),
+              ),
+            ],
           ),
-          const SizedBox(height: 7),
-          Text(
-            adminEmail,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white60,
-              fontSize: 12,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            dateText,
-            style: const TextStyle(
-              color: Colors.white38,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
+          child: isMobile
+              ? Column(
+                  children: [
+                    adminInfo(),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 165,
+                      child: brandingImage(),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      flex: 5,
+                      child: adminInfo(),
+                    ),
+                    Expanded(
+                      flex: 6,
+                      child: SizedBox(
+                        height: 165,
+                        child: brandingImage(),
+                      ),
+                    ),
+                  ],
+                ),
+        );
+      },
     );
   }
 
