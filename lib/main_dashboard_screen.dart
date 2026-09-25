@@ -2781,6 +2781,161 @@ body: PopScope(
   }
 }
 
+
+// ============================================================
+// VIDYA SAARTHI BRAND HEADER BACKGROUND
+// Decorative only. No existing dashboard logic depends on this painter.
+// ============================================================
+class _VidyaSaarthiWavePainter extends CustomPainter {
+  const _VidyaSaarthiWavePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final teal = const Color(0xFF00E6C0);
+    final cyan = const Color(0xFF39D7FF);
+
+    final softGlow = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 1.15
+      ..color = teal.withOpacity(0.20);
+
+    final brightGlow = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 1.8
+      ..color = cyan.withOpacity(0.30);
+
+    final wave1 = Path()
+      ..moveTo(-30, size.height * 0.70)
+      ..cubicTo(
+        size.width * 0.14,
+        size.height * 0.48,
+        size.width * 0.25,
+        size.height * 0.92,
+        size.width * 0.40,
+        size.height * 0.72,
+      )
+      ..cubicTo(
+        size.width * 0.55,
+        size.height * 0.52,
+        size.width * 0.69,
+        size.height * 0.88,
+        size.width * 0.82,
+        size.height * 0.64,
+      )
+      ..cubicTo(
+        size.width * 0.90,
+        size.height * 0.50,
+        size.width * 0.97,
+        size.height * 0.72,
+        size.width + 30,
+        size.height * 0.58,
+      );
+
+    final wave2 = Path()
+      ..moveTo(-20, size.height * 0.82)
+      ..cubicTo(
+        size.width * 0.18,
+        size.height * 0.62,
+        size.width * 0.30,
+        size.height * 1.02,
+        size.width * 0.47,
+        size.height * 0.74,
+      )
+      ..cubicTo(
+        size.width * 0.61,
+        size.height * 0.52,
+        size.width * 0.76,
+        size.height * 0.92,
+        size.width + 20,
+        size.height * 0.69,
+      );
+
+    final wave3 = Path()
+      ..moveTo(size.width * 0.58, size.height * 0.18)
+      ..cubicTo(
+        size.width * 0.69,
+        size.height * 0.02,
+        size.width * 0.79,
+        size.height * 0.30,
+        size.width * 0.88,
+        size.height * 0.17,
+      )
+      ..cubicTo(
+        size.width * 0.93,
+        size.height * 0.09,
+        size.width * 0.97,
+        size.height * 0.26,
+        size.width + 10,
+        size.height * 0.13,
+      );
+
+    canvas.drawPath(wave1, brightGlow);
+    canvas.drawPath(wave2, softGlow);
+    canvas.drawPath(wave3, softGlow);
+
+    // Extra faint wave layers make the header feel deeper without using images.
+    for (var i = 0; i < 4; i++) {
+      final yShift = i * 6.0;
+      final p = Path()
+        ..moveTo(-20, size.height * 0.73 + yShift)
+        ..cubicTo(
+          size.width * 0.20,
+          size.height * 0.55 + yShift,
+          size.width * 0.33,
+          size.height * 0.88 + yShift,
+          size.width * 0.50,
+          size.height * 0.70 + yShift,
+        )
+        ..cubicTo(
+          size.width * 0.67,
+          size.height * 0.53 + yShift,
+          size.width * 0.81,
+          size.height * 0.82 + yShift,
+          size.width + 20,
+          size.height * 0.62 + yShift,
+        );
+
+      canvas.drawPath(
+        p,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.7
+          ..color = teal.withOpacity(0.08),
+      );
+    }
+
+    final particlePaint = Paint()..color = const Color(0xFF7DF9E7).withOpacity(0.60);
+    const particles = <Offset>[
+      Offset(0.08, 0.39),
+      Offset(0.13, 0.24),
+      Offset(0.19, 0.48),
+      Offset(0.29, 0.30),
+      Offset(0.36, 0.18),
+      Offset(0.43, 0.40),
+      Offset(0.53, 0.20),
+      Offset(0.64, 0.32),
+      Offset(0.72, 0.17),
+      Offset(0.82, 0.37),
+      Offset(0.90, 0.23),
+      Offset(0.96, 0.45),
+    ];
+
+    for (var i = 0; i < particles.length; i++) {
+      final p = particles[i];
+      canvas.drawCircle(
+        Offset(size.width * p.dx, size.height * p.dy),
+        i % 3 == 0 ? 1.8 : 1.1,
+        particlePaint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _VidyaSaarthiWavePainter oldDelegate) => false;
+}
+
 // ============================================================
 // ADMIN DASHBOARD
 // ============================================================
@@ -5314,6 +5469,8 @@ Future<void> _printIdCard() async {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    _buildVidyaSaarthiBrandHeader(),
+                    const SizedBox(height: 16),
                     _buildAdminHero(adminEmail),
                     const SizedBox(height: 16),
                     _buildOverviewCards(),
@@ -5352,217 +5509,380 @@ Future<void> _printIdCard() async {
   );
 }
 
-  Widget _buildAdminHero(String adminEmail) {
-    final now = DateTime.now();
 
-    final months = const [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-
-    final dateText = '${now.day} ${months[now.month - 1]} ${now.year}';
-
-    Widget adminInfo() {
-      return Padding(
-        padding: const EdgeInsets.all(22),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 6,
-              ),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00A884).withOpacity(0.13),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: const Color(0xFF00D9A5).withOpacity(0.25),
-                ),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.verified_user_rounded,
-                    color: Color(0xFF00D9A5),
-                    size: 14,
-                  ),
-                  SizedBox(width: 6),
-                  Text(
-                    'ADMIN ACCESS',
-                    style: TextStyle(
-                      color: Color(0xFF00D9A5),
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.7,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 13),
-            const Text(
-              'Welcome to SARASWATI VIDYA NIKETAN, MADHABDHAM',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                height: 1.2,
-              ),
-            ),
-            const SizedBox(height: 7),
-            Text(
-              adminEmail,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white60,
-                fontSize: 12,
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              dateText,
-              style: const TextStyle(
-                color: Colors.white38,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    Widget brandingImage() {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: Image.asset(
-          'assets/vidya_saarthi_brand_art.png',
-          width: double.infinity,
-          height: double.infinity,
-          fit: BoxFit.cover,
-          alignment: Alignment.centerRight,
-          errorBuilder: (context, error, stackTrace) {
-            return Container(
-              alignment: Alignment.center,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Color(0xFF073D37),
-                    Color(0xFF071A20),
-                  ],
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                ),
-              ),
-              child: const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.school_rounded,
-                    color: Color(0xFF00D9A5),
-                    size: 38,
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    'Vidya Saarthi',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 30,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  SizedBox(height: 3),
-                  Text(
-                    'Smart School Management Suite',
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: 11,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-      );
-    }
-
+  Widget _buildVidyaSaarthiBrandHeader() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isMobile = constraints.maxWidth < 760;
+        final width = constraints.maxWidth;
+        final isPhone = width < 600;
+        final isTablet = width >= 600 && width < 900;
+
+        final headerHeight = isPhone ? 148.0 : (isTablet ? 165.0 : 178.0);
+        final panelWidth = isPhone
+            ? width * 0.92
+            : (isTablet ? width * 0.72 : 560.0);
+
+        final brandFontSize = isPhone ? 25.0 : (isTablet ? 31.0 : 39.0);
+        final subtitleFontSize = isPhone ? 8.5 : (isTablet ? 10.0 : 11.5);
+        final logoSize = isPhone ? 54.0 : (isTablet ? 66.0 : 76.0);
 
         return Container(
           width: double.infinity,
-          constraints: BoxConstraints(
-            minHeight: isMobile ? 330 : 165,
-          ),
+          height: headerHeight,
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             gradient: const LinearGradient(
               colors: [
-                Color(0xFF073D37),
-                Color(0xFF092C2E),
-                Color(0xFF071A20),
+                Color(0xFF071820),
+                Color(0xFF08262B),
+                Color(0xFF07171E),
               ],
               begin: Alignment.centerLeft,
               end: Alignment.centerRight,
             ),
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(24),
             border: Border.all(
-              color: const Color(0xFF00D9A5).withOpacity(0.24),
+              color: const Color(0xFF00A884).withOpacity(0.16),
             ),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF00A884).withOpacity(0.08),
-                blurRadius: 30,
-                offset: const Offset(0, 10),
+                color: Colors.black.withOpacity(0.22),
+                blurRadius: 28,
+                offset: const Offset(0, 12),
               ),
             ],
           ),
-          child: isMobile
-              ? Column(
-                  children: [
-                    adminInfo(),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 165,
-                      child: brandingImage(),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              const CustomPaint(
+                painter: _VidyaSaarthiWavePainter(),
+              ),
+
+              // Very subtle center glow behind the floating brand card.
+              Center(
+                child: Container(
+                  width: isPhone ? width * 0.72 : 500,
+                  height: headerHeight * 0.86,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    gradient: RadialGradient(
+                      colors: [
+                        const Color(0xFF00D9A5).withOpacity(0.13),
+                        Colors.transparent,
+                      ],
                     ),
-                  ],
-                )
-              : Row(
-                  children: [
-                    Expanded(
-                      flex: 5,
-                      child: adminInfo(),
-                    ),
-                    Expanded(
-                      flex: 6,
-                      child: SizedBox(
-                        height: 165,
-                        child: brandingImage(),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
+              ),
+
+              Center(
+                child: Container(
+                  width: panelWidth,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isPhone ? 15 : 24,
+                    vertical: isPhone ? 13 : 17,
+                  ),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        const Color(0xFF123D3A).withOpacity(0.88),
+                        const Color(0xFF123238).withOpacity(0.82),
+                        const Color(0xFF0E242C).withOpacity(0.88),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(21),
+                    border: Border.all(
+                      color: const Color(0xFF23E4BD).withOpacity(0.66),
+                      width: 1.2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00D9A5).withOpacity(0.16),
+                        blurRadius: 28,
+                        spreadRadius: 1,
+                      ),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 18,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildVidyaSaarthiBrandMark(size: logoSize),
+                      SizedBox(width: isPhone ? 12 : 18),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: RichText(
+                                text: TextSpan(
+                                  style: TextStyle(
+                                    fontSize: brandFontSize,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: -0.8,
+                                    height: 1,
+                                  ),
+                                  children: const [
+                                    TextSpan(
+                                      text: 'Vidya ',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                    TextSpan(
+                                      text: 'Saarthi',
+                                      style: TextStyle(
+                                        color: Color(0xFF17DFC0),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            SizedBox(height: isPhone ? 6 : 8),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'D I G I T A L   S C H O O L   C O N T R O L   H U B',
+                                maxLines: 1,
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: subtitleFontSize,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: isPhone ? 0.6 : 1.25,
+                                ),
+                              ),
+                            ),
+                            SizedBox(height: isPhone ? 9 : 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    height: 1.2,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(10),
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          const Color(0xFF3EA6FF).withOpacity(0.85),
+                                          const Color(0xFF00E6B8).withOpacity(0.15),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 11),
+                                  child: Icon(
+                                    Icons.school_rounded,
+                                    size: 17,
+                                    color: Color(0xFF00E6B8),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Container(
+                                    height: 1.2,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(10),
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          const Color(0xFF00E6B8).withOpacity(0.15),
+                                          const Color(0xFF00E6B8).withOpacity(0.85),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         );
       },
+    );
+  }
+
+  Widget _buildVidyaSaarthiBrandMark({required double size}) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(
+                colors: [
+                  const Color(0xFF00D9A5).withOpacity(0.22),
+                  const Color(0xFF00A884).withOpacity(0.07),
+                  Colors.transparent,
+                ],
+              ),
+              border: Border.all(
+                color: const Color(0xFF00E6C0).withOpacity(0.35),
+              ),
+            ),
+          ),
+          Transform.translate(
+            offset: Offset(0, size * 0.08),
+            child: Icon(
+              Icons.auto_stories_rounded,
+              size: size * 0.66,
+              color: const Color(0xFF2BDCC1),
+            ),
+          ),
+          Positioned(
+            top: size * 0.08,
+            child: Container(
+              width: size * 0.18,
+              height: size * 0.18,
+              decoration: const BoxDecoration(
+                color: Color(0xFFFFC857),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Positioned(
+            right: 0,
+            top: size * 0.17,
+            child: Container(
+              width: size * 0.34,
+              height: size * 0.34,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0A2429),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFF00E6C0).withOpacity(0.60),
+                ),
+              ),
+              child: Icon(
+                Icons.school_rounded,
+                size: size * 0.20,
+                color: const Color(0xFF00E6C0),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdminHero(String adminEmail) {
+    final now = DateTime.now();
+    final months = const [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final dateText = '${now.day} ${months[now.month - 1]} ${now.year}';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF173A36),
+            Color(0xFF13262A),
+            Color(0xFF111B21),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: const Color(0xFF00A884).withOpacity(0.16),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.22),
+            blurRadius: 28,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF00A884).withOpacity(0.13),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: const Color(0xFF00A884).withOpacity(0.20),
+              ),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.verified_user_rounded,
+                  color: Color(0xFF00D9A5),
+                  size: 14,
+                ),
+                SizedBox(width: 6),
+                Text(
+                  'ADMIN ACCESS',
+                  style: TextStyle(
+                    color: Color(0xFF00D9A5),
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.7,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 13),
+          const Text(
+            'Welcome to SARASWATI VIDYA NIKETAN, MADHABDHAM',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            adminEmail,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white60,
+              fontSize: 12,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            dateText,
+            style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
