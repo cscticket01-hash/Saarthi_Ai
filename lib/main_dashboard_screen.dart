@@ -5515,10 +5515,18 @@ Widget _buildOverviewCards() {
               
           _overviewCard(
             width: itemWidth,
-            icon: Icons.campaign_rounded,
-            title: 'Notice Center',
-            subtitle: 'Publish & manage updates',
+            icon: Icons.fact_check_rounded,
+            title: 'Exam Center',
+            subtitle: 'Marks, results & report cards',
             accent: Colors.orangeAccent,
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ExamCenterScreen(),
+                ),
+              );
+            },
           ),
 
           _overviewCard(
@@ -7717,184 +7725,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 16),
 
                 // =====================================================
-                // GOOGLE DRIVE INTEGRATION
+                // ADVANCED SETTINGS
+                // Google Drive integration is intentionally kept inside
+                // the protected Advanced Settings screen only.
                 // =====================================================
                 _settingsCard(
-                  icon: Icons.add_to_drive_rounded,
-                  iconColor: const Color(0xFF4DA3FF),
-                  title: 'Google Drive Integration',
-                  subtitle: 'Student Sheet + photo storage connection',
-                  trailing: _statusPill(
-                    _isDriveLinked ? 'CONNECTED' : 'NOT CONNECTED',
-                    _isDriveLinked
-                        ? const Color(0xFF00D9A5)
-                        : Colors.orangeAccent,
+                  icon: Icons.admin_panel_settings_rounded,
+                  iconColor: Colors.orangeAccent,
+                  title: 'Advanced Settings',
+                  subtitle: 'Protected integrations & system controls',
+                  trailing: const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.white38,
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(13),
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdvancedSettingsScreen(),
+                          ),
+                        );
+                        if (mounted) {
+                          _fetchLinkedAccount();
+                        }
+                      },
+                      child: Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
                           color: const Color(0xFF0F191F),
                           borderRadius: BorderRadius.circular(13),
                           border: Border.all(
-                            color: Colors.white.withOpacity(0.05),
+                            color: Colors.orangeAccent.withOpacity(0.16),
                           ),
                         ),
                         child: const Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Icon(
-                              Icons.info_outline_rounded,
-                              color: Color(0xFF4DA3FF),
-                              size: 18,
+                              Icons.security_rounded,
+                              color: Colors.orangeAccent,
+                              size: 21,
                             ),
-                            SizedBox(width: 9),
+                            SizedBox(width: 11),
                             Expanded(
-                              child: Text(
-                                'Student records Google Sheet me aur photos Google Drive par save karne ke liye School Gmail aur Google Apps Script Web App URL use hota hai.',
-                                style: TextStyle(
-                                  color: Colors.white54,
-                                  fontSize: 11.5,
-                                  height: 1.45,
-                                ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Open Advanced Settings',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  SizedBox(height: 3),
+                                  Text(
+                                    'Google Drive connection aur protected unlink/change controls yahan manage honge.',
+                                    style: TextStyle(
+                                      color: Colors.white38,
+                                      fontSize: 10.5,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
                               ),
+                            ),
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              color: Colors.orangeAccent,
+                              size: 19,
                             ),
                           ],
                         ),
                       ),
-
-                      const SizedBox(height: 16),
-
-                      if (_isDriveLinked) ...[
-                        _connectionInfoTile(
-                          icon: Icons.mail_outline_rounded,
-                          label: 'Linked Gmail ID',
-                          value: _linkedGmail ?? '',
-                        ),
-                        const SizedBox(height: 10),
-                        _connectionInfoTile(
-                          icon: Icons.link_rounded,
-                          label: 'Google Apps Script URL',
-                          value: _linkedScriptUrl ?? '',
-                          selectable: true,
-                        ),
-                        const SizedBox(height: 14),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 11,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF00A884).withOpacity(0.08),
-                                  borderRadius: BorderRadius.circular(11),
-                                  border: Border.all(
-                                    color: const Color(0xFF00A884).withOpacity(0.17),
-                                  ),
-                                ),
-                                child: const Row(
-                                  children: [
-                                    Icon(
-                                      Icons.cloud_done_rounded,
-                                      color: Color(0xFF00D9A5),
-                                      size: 18,
-                                    ),
-                                    SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        'Cloud configuration active hai',
-                                        style: TextStyle(
-                                          color: Color(0xFF00D9A5),
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.orangeAccent,
-                              side: BorderSide(
-                                color: Colors.orangeAccent.withOpacity(0.50),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 13),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            onPressed: _isLoading ? null : _unlinkGmail,
-                            icon: const Icon(Icons.sync_alt_rounded, size: 18),
-                            label: const Text(
-                              'Unlink / Change Google Drive Account',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                        ),
-                      ] else ...[
-                        TextField(
-                          controller: _gmailController,
-                          keyboardType: TextInputType.emailAddress,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _modernInputDecoration(
-                            'School Gmail ID',
-                            Icons.mail_outline_rounded,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _scriptUrlController,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _modernInputDecoration(
-                            'Google Apps Script /exec URL',
-                            Icons.link_rounded,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF00A884),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            onPressed: _isLoading ? null : _linkGmail,
-                            icon: _isLoading
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      color: Colors.white,
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.cloud_done_rounded, size: 19),
-                            label: Text(
-                              _isLoading
-                                  ? 'Saving Configuration...'
-                                  : 'Connect Google Drive',
-                              style: const TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
                 ),
 
@@ -9992,6 +9901,74 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                           count: dueCount,
                           icon: Icons.warning_amber_rounded,
                           color: Colors.redAccent,
+                        ),
+                        Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      const FeeTransactionHistoryScreen(),
+                                ),
+                              );
+                            },
+                            child: Container(
+                              width: 185,
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF172229),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: const Color(0xFFB388FF)
+                                      .withOpacity(0.32),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 42,
+                                    height: 42,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFB388FF)
+                                          .withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Icon(
+                                      Icons.history_rounded,
+                                      color: Color(0xFFB388FF),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 11),
+                                  const Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'History',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        Text(
+                                          'Transactions',
+                                          style: TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -14953,6 +14930,47 @@ if (result['success'] != true) {
                                 Text('Address: ${student['address'] ?? ''}, ${student['district'] ?? ''}, ${student['state'] ?? ''} - ${student['pinCode'] ?? ''}', style: const TextStyle(color: Colors.white60, fontSize: 11)),
                                 const SizedBox(height: 3),
                                 Text('Hostel: ${student['hostelFacility'] ?? 'No'} • Admission: ${student['joiningDate'] ?? 'N/A'} • DOB: ${student['dateOfBirth'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                                const SizedBox(height: 8),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: const Color(0xFF7CB9FF),
+                                      side: BorderSide(
+                                        color: const Color(0xFF7CB9FF).withOpacity(0.32),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 8,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(9),
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => StudentDocumentsScreen(
+                                            studentId: doc.id,
+                                            studentData: Map<String, dynamic>.from(student),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    icon: const Icon(
+                                      Icons.folder_copy_rounded,
+                                      size: 16,
+                                    ),
+                                    label: const Text(
+                                      'Student All Documents',
+                                      style: TextStyle(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -15021,6 +15039,2603 @@ if (result['success'] != true) {
       fillColor: const Color(0xFF121B22),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+    );
+  }
+}
+
+// ============================================================
+// ADVANCED SETTINGS
+// ============================================================
+class AdvancedSettingsScreen extends StatefulWidget {
+  const AdvancedSettingsScreen({super.key});
+
+  @override
+  State<AdvancedSettingsScreen> createState() => _AdvancedSettingsScreenState();
+}
+
+class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
+  final _gmail = TextEditingController();
+  final _script = TextEditingController();
+  String? _linkedGmail;
+  String? _linkedScript;
+  bool _loading = true;
+  bool _saving = false;
+
+  bool get _linked =>
+      (_linkedGmail?.trim().isNotEmpty ?? false) &&
+      (_linkedScript?.trim().isNotEmpty ?? false);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _gmail.dispose();
+    _script.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .get();
+      final data = doc.data() ?? <String, dynamic>{};
+      if (!mounted) return;
+      setState(() {
+        _linkedGmail = data['email']?.toString().trim();
+        _linkedScript = data['scriptUrl']?.toString().trim();
+        _gmail.text = _linkedGmail ?? '';
+        _script.text = _linkedScript ?? '';
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Advanced Settings load error: $e')),
+      );
+    }
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final email = _gmail.text.trim();
+    final url = _script.text.trim();
+
+    if (email.isEmpty || !email.toLowerCase().endsWith('@gmail.com')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Valid School Gmail ID daalein.'),
+        ),
+      );
+      return;
+    }
+    if (!url.startsWith('https://script.google.com/')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Valid Google Apps Script /exec URL daalein.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .set({
+        'email': email,
+        'scriptUrl': url,
+        'status': 'connected',
+        'linkedAt': DateTime.now().millisecondsSinceEpoch,
+      });
+      if (!mounted) return;
+      setState(() {
+        _linkedGmail = email;
+        _linkedScript = url;
+        _saving = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text('Google Drive configuration save ho gayi.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Save error: $e'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _unlink() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF172229),
+        title: const Text(
+          'Are you sure?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'Google Drive / Apps Script connection remove hoga. Existing Drive files delete nahi honge.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orangeAccent,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+
+    final verified = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _DriveUnlinkSecurityDialog(),
+    );
+    if (verified != true || !mounted) return;
+
+    setState(() => _saving = true);
+    try {
+      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .delete();
+      if (!mounted) return;
+      setState(() {
+        _linkedGmail = null;
+        _linkedScript = null;
+        _gmail.clear();
+        _script.clear();
+        _saving = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text('Google Drive configuration unlink ho gayi.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Unlink error: $e'),
+        ),
+      );
+    }
+  }
+
+  InputDecoration _input(String text, IconData icon) => InputDecoration(
+        hintText: text,
+        hintStyle: const TextStyle(color: Colors.white30),
+        prefixIcon: Icon(icon, color: Colors.orangeAccent),
+        filled: true,
+        fillColor: const Color(0xFF0F191F),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+      );
+
+  Widget _info(String label, String value, IconData icon) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F191F),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: const Color(0xFF4DA3FF)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 10)),
+                  const SizedBox(height: 3),
+                  SelectableText(
+                    value,
+                    style: const TextStyle(
+                        color: Colors.white70, fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF172229),
+        title: const Text('Advanced Settings'),
+      ),
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00A884)))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(18),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 900),
+                  child: Column(
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF2A2417), Color(0xFF172229)],
+                          ),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                              color: Colors.orangeAccent.withOpacity(0.20)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.security_rounded,
+                                color: Colors.orangeAccent, size: 30),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Protected settings: Google Drive unlink/change ke liye 30-second wait + current Admin password verification mandatory hai.',
+                                style: TextStyle(
+                                    color: Colors.white70, height: 1.4),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF172229),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.add_to_drive_rounded,
+                                    color: Color(0xFF4DA3FF)),
+                                const SizedBox(width: 10),
+                                const Expanded(
+                                  child: Text(
+                                    'Google Drive Integration',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  _linked ? 'CONNECTED' : 'NOT CONNECTED',
+                                  style: TextStyle(
+                                    color: _linked
+                                        ? const Color(0xFF00D9A5)
+                                        : Colors.orangeAccent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            if (_linked) ...[
+                              _info('Linked Gmail ID', _linkedGmail ?? '',
+                                  Icons.mail_outline_rounded),
+                              const SizedBox(height: 10),
+                              _info('Google Apps Script URL',
+                                  _linkedScript ?? '', Icons.link_rounded),
+                              const SizedBox(height: 14),
+                              const Text(
+                                'Student documents, fee history, exam data aur report cards linked Google backend me save honge.',
+                                style: TextStyle(
+                                    color: Color(0xFF00D9A5),
+                                    fontSize: 11,
+                                    height: 1.4),
+                              ),
+                              const SizedBox(height: 14),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: _saving ? null : _unlink,
+                                  icon: const Icon(Icons.sync_alt_rounded),
+                                  label: const Text(
+                                      'Unlink / Change Google Drive Account'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.orangeAccent,
+                                    side: BorderSide(
+                                        color: Colors.orangeAccent
+                                            .withOpacity(0.5)),
+                                  ),
+                                ),
+                              ),
+                            ] else ...[
+                              TextField(
+                                controller: _gmail,
+                                style: const TextStyle(color: Colors.white),
+                                decoration:
+                                    _input('School Gmail ID', Icons.mail_outline),
+                              ),
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: _script,
+                                style: const TextStyle(color: Colors.white),
+                                decoration: _input(
+                                    'Google Apps Script /exec URL',
+                                    Icons.link_rounded),
+                              ),
+                              const SizedBox(height: 14),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: _saving ? null : _save,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor:
+                                        const Color(0xFF00A884),
+                                  ),
+                                  icon: _saving
+                                      ? const SizedBox(
+                                          width: 17,
+                                          height: 17,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white),
+                                        )
+                                      : const Icon(Icons.cloud_done_rounded,
+                                          color: Colors.white),
+                                  label: Text(
+                                    _saving ? 'Saving...' : 'Connect Google Drive',
+                                    style:
+                                        const TextStyle(color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+class _DriveUnlinkSecurityDialog extends StatefulWidget {
+  const _DriveUnlinkSecurityDialog();
+
+  @override
+  State<_DriveUnlinkSecurityDialog> createState() =>
+      _DriveUnlinkSecurityDialogState();
+}
+
+class _DriveUnlinkSecurityDialogState
+    extends State<_DriveUnlinkSecurityDialog> {
+  final _password = TextEditingController();
+  Timer? _timer;
+  int _seconds = 30;
+  bool _busy = false;
+  bool _obscure = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_seconds <= 1) {
+        timer.cancel();
+        setState(() => _seconds = 0);
+      } else {
+        setState(() => _seconds--);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _verify() async {
+    if (_seconds > 0 || _busy) return;
+    final pass = _password.text.trim();
+    if (pass.isEmpty) {
+      setState(() => _error = 'Admin Password daalein.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final email = user?.email?.trim() ?? '';
+      if (user == null || email.isEmpty) {
+        throw Exception('Admin unavailable');
+      }
+      await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(email: email, password: pass),
+      );
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = 'Galat Admin Password.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final waiting = _seconds > 0;
+    return AlertDialog(
+      backgroundColor: const Color(0xFF172229),
+      title: Text(
+        waiting ? 'Security Waiting Period' : 'Admin Verification',
+        style: const TextStyle(color: Colors.white),
+      ),
+      content: SizedBox(
+        width: 420,
+        child: waiting
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '$_seconds',
+                    style: const TextStyle(
+                      color: Colors.orangeAccent,
+                      fontSize: 52,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const Text(
+                    'seconds remaining',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Countdown complete hone ke baad Admin Password maanga jayega.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white60),
+                  ),
+                ],
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: _password,
+                    autofocus: true,
+                    obscureText: _obscure,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Admin Password',
+                      hintStyle: const TextStyle(color: Colors.white30),
+                      filled: true,
+                      fillColor: const Color(0xFF0F191F),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(11),
+                        borderSide: BorderSide.none,
+                      ),
+                      suffixIcon: IconButton(
+                        onPressed: () =>
+                            setState(() => _obscure = !_obscure),
+                        icon: Icon(
+                          _obscure ? Icons.visibility_off : Icons.visibility,
+                          color: Colors.white38,
+                        ),
+                      ),
+                    ),
+                    onSubmitted: (_) => _verify(),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(_error!,
+                          style: const TextStyle(
+                              color: Colors.redAccent, fontSize: 11)),
+                    ),
+                  ],
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        if (!waiting)
+          ElevatedButton(
+            onPressed: _busy ? null : _verify,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00A884),
+            ),
+            child: Text(
+              _busy ? 'Verifying...' : 'Verify & Continue',
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+
+// ============================================================
+// STUDENT ALL DOCUMENTS
+// PDF/JPG/JPEG only. Combined per-student limit = 2 MB.
+// ============================================================
+class StudentDocumentsScreen extends StatefulWidget {
+  final String studentId;
+  final Map<String, dynamic> studentData;
+
+  const StudentDocumentsScreen({
+    super.key,
+    required this.studentId,
+    required this.studentData,
+  });
+
+  @override
+  State<StudentDocumentsScreen> createState() =>
+      _StudentDocumentsScreenState();
+}
+
+class _StudentDocumentsScreenState
+    extends State<StudentDocumentsScreen> {
+  static const int _maxBytes = 2 * 1024 * 1024;
+  bool _loading = true;
+  bool _uploading = false;
+  String? _error;
+  List<Map<String, dynamic>> _documents = [];
+
+  String get _name =>
+      widget.studentData['name']?.toString().trim() ?? 'Student';
+  String get _studentClass =>
+      widget.studentData['class']?.toString().trim() ?? '';
+  String get _roll =>
+      widget.studentData['rollNo']?.toString().trim() ?? '';
+
+  int get _totalBytes => _documents.fold<int>(
+        0,
+        (sum, item) =>
+            sum + ((item['sizeBytes'] as num?)?.toInt() ?? 0),
+      );
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<String> _scriptUrl() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+    final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
+    if (url.isEmpty) {
+      throw Exception(
+          'Google Drive backend Advanced Settings me connected nahi hai.');
+    }
+    return url;
+  }
+
+  Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
+    final response = await http.post(
+      Uri.parse(await _scriptUrl()),
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Google backend error: ${response.statusCode}');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw Exception('Google backend response invalid hai.');
+    }
+    final result = Map<String, dynamic>.from(decoded);
+    if (result['success'] != true) {
+      throw Exception(result['message'] ?? 'Google backend operation failed');
+    }
+    return result;
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await _post({
+        'action': 'list_student_documents',
+        'studentId': widget.studentId,
+        'studentName': _name,
+        'studentClass': _studentClass,
+        'rollNo': _roll,
+      });
+      final raw = result['documents'];
+      final docs = raw is List
+          ? raw
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : <Map<String, dynamic>>[];
+      if (!mounted) return;
+      setState(() {
+        _documents = docs;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  Future<String?> _askName(String? current) async {
+    final controller = TextEditingController(text: current ?? '');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF172229),
+        title: const Text('Document Name',
+            style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Aadhaar Card / Birth Certificate / Marksheet',
+            hintStyle: const TextStyle(color: Colors.white30),
+            filled: true,
+            fillColor: const Color(0xFF0F191F),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              if (value.isNotEmpty) Navigator.pop(ctx, value);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00A884),
+            ),
+            child: const Text('Continue',
+                style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<void> _upload({Map<String, dynamic>? replace}) async {
+    if (_uploading) return;
+    final docName = await _askName(replace?['documentName']?.toString());
+    if (docName == null || !mounted) return;
+
+    final input = html.FileUploadInputElement()
+      ..accept = '.pdf,.jpg,.jpeg,application/pdf,image/jpeg';
+    input.click();
+    await input.onChange.first;
+
+    final files = input.files;
+    if (files == null || files.isEmpty || !mounted) return;
+
+    final file = files.first;
+    var mime = file.type.toLowerCase().trim();
+    final lower = file.name.toLowerCase();
+
+    if (mime.isEmpty) {
+      if (lower.endsWith('.pdf')) {
+        mime = 'application/pdf';
+      } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+        mime = 'image/jpeg';
+      }
+    }
+
+    if (mime != 'application/pdf' &&
+        mime != 'image/jpeg' &&
+        mime != 'image/jpg') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Sirf PDF/JPG/JPEG document allowed hai.'),
+        ),
+      );
+      return;
+    }
+
+    final oldSize = (replace?['sizeBytes'] as num?)?.toInt() ?? 0;
+    if (_totalBytes - oldSize + file.size > _maxBytes) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+              '2 MB total limit exceed hoga. Used ${_formatBytes(_totalBytes)}.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _uploading = true);
+    try {
+      final reader = html.FileReader();
+      reader.readAsDataUrl(file);
+      await reader.onLoad.first;
+      final dataUrl = reader.result?.toString() ?? '';
+      if (dataUrl.isEmpty) throw Exception('File read nahi ho paya.');
+
+      await _post({
+        'action': 'upload_student_document',
+        'studentId': widget.studentId,
+        'studentName': _name,
+        'studentClass': _studentClass,
+        'rollNo': _roll,
+        'documentName': docName,
+        'fileName': file.name,
+        'mimeType': mime,
+        'fileBase64': dataUrl,
+        'replaceDocumentId': replace?['documentId']?.toString() ?? '',
+        'uploadedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      });
+
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text(replace == null
+              ? 'Document Google Drive me upload ho gaya.'
+              : 'Document Google Drive me replace ho gaya.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Document upload error: $e'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<void> _delete(Map<String, dynamic> document) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF172229),
+        title: const Text('Delete Document?',
+            style: TextStyle(color: Colors.white)),
+        content: Text(
+          '${document['documentName'] ?? 'Document'} Google Drive se delete hoga.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('Delete',
+                style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await _post({
+        'action': 'delete_student_document',
+        'studentId': widget.studentId,
+        'documentId': document['documentId']?.toString() ?? '',
+      });
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Delete error: $e'),
+        ),
+      );
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+    }
+    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    return '$bytes B';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = (_totalBytes / _maxBytes).clamp(0.0, 1.0).toDouble();
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Student All Documents'),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _uploading ? null : () => _upload(),
+        backgroundColor: const Color(0xFF00A884),
+        foregroundColor: Colors.white,
+        icon: _uploading
+            ? const SizedBox(
+                width: 17,
+                height: 17,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              )
+            : const Icon(Icons.upload_file_rounded),
+        label: Text(_uploading ? 'Uploading...' : 'Upload Document'),
+      ),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 95),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF123D38), Color(0xFF172229)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.folder_copy_rounded,
+                      color: Color(0xFF00D9A5), size: 32),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_name,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800)),
+                        Text('$_studentClass • Roll $_roll',
+                            style: const TextStyle(
+                                color: Colors.white54, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                color: const Color(0xFF172229),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      const Text('Storage',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800)),
+                      const Spacer(),
+                      Text('${_formatBytes(_totalBytes)} / 2.00 MB',
+                          style: const TextStyle(
+                              color: Colors.white54, fontSize: 10.5)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(
+                    value: ratio,
+                    minHeight: 7,
+                    backgroundColor: Colors.white10,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      ratio >= .9
+                          ? Colors.redAccent
+                          : ratio >= .7
+                              ? Colors.orangeAccent
+                              : const Color(0xFF00A884),
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'PDF/JPG/JPEG only • sab documents mila kar maximum 2 MB.',
+                      style: TextStyle(color: Colors.white38, fontSize: 10),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (_loading)
+              const Center(
+                  child:
+                      CircularProgressIndicator(color: Color(0xFF00A884)))
+            else if (_error != null)
+              Text(_error!,
+                  style: const TextStyle(color: Colors.redAccent))
+            else if (_documents.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(28),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF172229),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: const Text(
+                  'Abhi koi document upload nahi hai.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white54),
+                ),
+              )
+            else
+              ..._documents.map((document) {
+                final mime = document['mimeType']?.toString() ?? '';
+                final isPdf = mime.contains('pdf');
+                final size = (document['sizeBytes'] as num?)?.toInt() ?? 0;
+                final url = document['fileUrl']?.toString() ?? '';
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 9),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF172229),
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(color: Colors.white10),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isPdf
+                            ? Icons.picture_as_pdf_rounded
+                            : Icons.image_rounded,
+                        color: isPdf
+                            ? Colors.redAccent
+                            : const Color(0xFF4DA3FF),
+                        size: 28,
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(document['documentName']?.toString() ??
+                                'Document',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800)),
+                            Text(
+                              '${document['fileName'] ?? ''} • ${_formatBytes(size)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white38, fontSize: 9.5),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: url.isEmpty
+                            ? null
+                            : () => html.window.open(url, '_blank'),
+                        icon: const Icon(Icons.visibility_rounded, size: 16),
+                        label: const Text('View'),
+                      ),
+                      TextButton.icon(
+                        onPressed:
+                            _uploading ? null : () => _upload(replace: document),
+                        icon: const Icon(Icons.edit_document, size: 16),
+                        label: const Text('Edit'),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete',
+                        onPressed:
+                            _uploading ? null : () => _delete(document),
+                        icon: const Icon(Icons.delete_outline_rounded,
+                            color: Colors.redAccent, size: 19),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+// ============================================================
+// FEE TRANSACTION HISTORY
+// ============================================================
+class FeeTransactionHistoryScreen extends StatefulWidget {
+  const FeeTransactionHistoryScreen({super.key});
+
+  @override
+  State<FeeTransactionHistoryScreen> createState() =>
+      _FeeTransactionHistoryScreenState();
+}
+
+class _FeeTransactionHistoryScreenState
+    extends State<FeeTransactionHistoryScreen> {
+  final _search = TextEditingController();
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _payments = [];
+  String _classFilter = 'All Classes';
+  String _monthFilter = 'All Months';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<String> _scriptUrl() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+    final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
+    if (url.isEmpty) {
+      throw Exception(
+          'Google Drive backend Advanced Settings me connected nahi hai.');
+    }
+    return url;
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await http.post(
+        Uri.parse(await _scriptUrl()),
+        headers: {'Content-Type': 'text/plain;charset=utf-8'},
+        body: jsonEncode({'action': 'list_fee_payments'}),
+      );
+      if (response.statusCode != 200) {
+        throw Exception('History load failed: ${response.statusCode}');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map) throw Exception('History response invalid hai.');
+      final result = Map<String, dynamic>.from(decoded);
+      if (result['success'] != true) {
+        throw Exception(result['message'] ?? 'History load failed');
+      }
+      final raw = result['payments'];
+      final payments = raw is List
+          ? raw
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : <Map<String, dynamic>>[];
+      if (!mounted) return;
+      setState(() {
+        _payments = payments;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  double _n(dynamic value) =>
+      (value as num?)?.toDouble() ??
+      double.tryParse(value?.toString() ?? '') ??
+      0;
+
+  String _money(dynamic value) => '₹${_n(value).toStringAsFixed(0)}';
+
+  List<String> get _months {
+    final values = _payments
+        .map((e) => e['month']?.toString() ?? '')
+        .where((e) => e.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => b.compareTo(a));
+    return ['All Months', ...values];
+  }
+
+  List<Map<String, dynamic>> get _filtered {
+    final q = _search.text.trim().toLowerCase();
+    return _payments.where((p) {
+      if (_classFilter != 'All Classes' &&
+          p['studentClass']?.toString() != _classFilter) {
+        return false;
+      }
+      if (_monthFilter != 'All Months' &&
+          p['month']?.toString() != _monthFilter) {
+        return false;
+      }
+      if (q.isEmpty) return true;
+      final haystack = [
+        p['receiptNo'],
+        p['studentName'],
+        p['rollNo'],
+        p['studentClass'],
+        p['paymentMode'],
+        p['status'],
+      ].join(' ').toLowerCase();
+      return haystack.contains(q);
+    }).toList();
+  }
+
+  Widget _metric(
+      String title, String value, IconData icon, Color color) {
+    return Container(
+      width: 190,
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withOpacity(.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(value,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900)),
+                Text(title,
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 9.5)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = _filtered;
+    final total = data.fold<double>(
+        0, (sum, p) => sum + _n(p['installmentAmount']));
+
+    double byMode(String mode) => data
+        .where((p) =>
+            p['paymentMode']?.toString().toLowerCase() ==
+            mode.toLowerCase())
+        .fold<double>(
+            0, (sum, p) => sum + _n(p['installmentAmount']));
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Transaction History'),
+        actions: [
+          IconButton(
+            onPressed: _loading ? null : _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00A884)))
+          : _error != null
+              ? Center(
+                  child: Text(_error!,
+                      style: const TextStyle(color: Colors.redAccent)))
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          _metric('Transactions', '${data.length}',
+                              Icons.receipt_long_rounded,
+                              const Color(0xFFB388FF)),
+                          _metric('Total Collected', _money(total),
+                              Icons.account_balance_wallet_rounded,
+                              const Color(0xFF00D9A5)),
+                          _metric('Cash', _money(byMode('Cash')),
+                              Icons.payments_rounded, Colors.greenAccent),
+                          _metric('UPI', _money(byMode('UPI')),
+                              Icons.qr_code_2_rounded,
+                              const Color(0xFF38A8FF)),
+                          _metric('Bank Transfer',
+                              _money(byMode('Bank Transfer')),
+                              Icons.account_balance_rounded,
+                              Colors.orangeAccent),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      LayoutBuilder(
+                        builder: (context, c) {
+                          final compact = c.maxWidth < 760;
+                          final search = TextField(
+                            controller: _search,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: InputDecoration(
+                              hintText:
+                                  'Search student / receipt / roll / mode',
+                              hintStyle:
+                                  const TextStyle(color: Colors.white30),
+                              prefixIcon: const Icon(Icons.search_rounded,
+                                  color: Color(0xFF00A884)),
+                              filled: true,
+                              fillColor: const Color(0xFF172229),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(11),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          );
+                          final cls = DropdownButtonFormField<String>(
+                            value: _classFilter,
+                            dropdownColor: const Color(0xFF172229),
+                            style: const TextStyle(color: Colors.white),
+                            decoration: const InputDecoration(
+                              labelText: 'Class',
+                              labelStyle: TextStyle(color: Colors.white54),
+                              filled: true,
+                              fillColor: Color(0xFF172229),
+                              border: OutlineInputBorder(
+                                  borderSide: BorderSide.none),
+                            ),
+                            items: [
+                              'All Classes',
+                              ...List.generate(
+                                  10, (i) => 'Class ${i + 1}')
+                            ]
+                                .map((v) =>
+                                    DropdownMenuItem(value: v, child: Text(v)))
+                                .toList(),
+                            onChanged: (v) {
+                              if (v != null) {
+                                setState(() => _classFilter = v);
+                              }
+                            },
+                          );
+                          final month = DropdownButtonFormField<String>(
+                            value: _months.contains(_monthFilter)
+                                ? _monthFilter
+                                : 'All Months',
+                            dropdownColor: const Color(0xFF172229),
+                            style: const TextStyle(color: Colors.white),
+                            decoration: const InputDecoration(
+                              labelText: 'Month',
+                              labelStyle: TextStyle(color: Colors.white54),
+                              filled: true,
+                              fillColor: Color(0xFF172229),
+                              border: OutlineInputBorder(
+                                  borderSide: BorderSide.none),
+                            ),
+                            items: _months
+                                .map((v) =>
+                                    DropdownMenuItem(value: v, child: Text(v)))
+                                .toList(),
+                            onChanged: (v) {
+                              if (v != null) {
+                                setState(() => _monthFilter = v);
+                              }
+                            },
+                          );
+                          if (compact) {
+                            return Column(
+                              children: [
+                                search,
+                                const SizedBox(height: 10),
+                                cls,
+                                const SizedBox(height: 10),
+                                month,
+                              ],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(flex: 3, child: search),
+                              const SizedBox(width: 10),
+                              Expanded(flex: 2, child: cls),
+                              const SizedBox(width: 10),
+                              Expanded(flex: 2, child: month),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      if (data.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(30),
+                          child: Text('Matching transaction nahi mila.',
+                              style: TextStyle(color: Colors.white54)),
+                        )
+                      else
+                        ...data.map((p) {
+                          final status = p['status']?.toString() ?? '';
+                          final paid = status == 'PAID';
+                          final url = p['fileUrl']?.toString().trim() ?? '';
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 9),
+                            padding: const EdgeInsets.all(13),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF172229),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: Colors.white10),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.receipt_rounded,
+                                    color: Color(0xFFB388FF), size: 28),
+                                const SizedBox(width: 11),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        p['studentName']?.toString() ??
+                                            'Student',
+                                        style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w800),
+                                      ),
+                                      Text(
+                                        '${p['studentClass'] ?? ''} • Roll ${p['rollNo'] ?? ''} • ${p['month'] ?? ''}',
+                                        style: const TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 10),
+                                      ),
+                                      Text(
+                                        'Receipt ${p['receiptNo'] ?? ''} • ${p['dateText'] ?? ''} ${p['timeText'] ?? ''} • ${p['paymentMode'] ?? ''}',
+                                        style: const TextStyle(
+                                            color: Colors.white30,
+                                            fontSize: 9.5),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: (paid
+                                            ? const Color(0xFF00A884)
+                                            : Colors.orangeAccent)
+                                        .withOpacity(.1),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    status.isEmpty ? 'PAYMENT' : status,
+                                    style: TextStyle(
+                                      color: paid
+                                          ? const Color(0xFF00D9A5)
+                                          : Colors.orangeAccent,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      _money(p['installmentAmount']),
+                                      style: const TextStyle(
+                                          color: Color(0xFF00D9A5),
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900),
+                                    ),
+                                    TextButton.icon(
+                                      onPressed: url.isEmpty
+                                          ? null
+                                          : () =>
+                                              html.window.open(url, '_blank'),
+                                      icon: const Icon(
+                                          Icons.picture_as_pdf_rounded,
+                                          size: 15),
+                                      label: const Text('Receipt'),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+    );
+  }
+}
+
+
+// ============================================================
+// EXAM CENTER
+// ============================================================
+class ExamCenterScreen extends StatefulWidget {
+  const ExamCenterScreen({super.key});
+
+  @override
+  State<ExamCenterScreen> createState() => _ExamCenterScreenState();
+}
+
+class _ExamCenterScreenState extends State<ExamCenterScreen> {
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+  List<Map<String, dynamic>> _exams = [];
+  List<Map<String, dynamic>> _results = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<String> _scriptUrl() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+    final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
+    if (url.isEmpty) {
+      throw Exception(
+          'Google Drive backend Advanced Settings me connected nahi hai.');
+    }
+    return url;
+  }
+
+  Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
+    final response = await http.post(
+      Uri.parse(await _scriptUrl()),
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Google backend error: ${response.statusCode}');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw Exception('Google backend response invalid hai.');
+    }
+    final result = Map<String, dynamic>.from(decoded);
+    if (result['success'] != true) {
+      throw Exception(result['message'] ?? 'Google backend operation failed');
+    }
+    return result;
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await _post({'action': 'list_exam_center'});
+
+      List<Map<String, dynamic>> convert(dynamic raw) => raw is List
+          ? raw
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : <Map<String, dynamic>>[];
+
+      if (!mounted) return;
+      setState(() {
+        _exams = convert(result['exams']);
+        _results = convert(result['results']);
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  List<Map<String, dynamic>> _forExam(String id) =>
+      _results.where((e) => e['examId']?.toString() == id).toList();
+
+  Future<void> _createExam() async {
+    final name = TextEditingController();
+    final subjects =
+        TextEditingController(text: 'English, Mathematics, Science');
+    final full = TextEditingController(text: '100');
+    final pass = TextEditingController(text: '33');
+    var selectedClass = 'Class 1';
+    String? dialogError;
+
+    final payload = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF172229),
+          title: const Text('Create Exam',
+              style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: name,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _dialogInput(
+                        'Exam Name', Icons.edit_note_rounded),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    value: selectedClass,
+                    dropdownColor: const Color(0xFF172229),
+                    style: const TextStyle(color: Colors.white),
+                    decoration:
+                        _dialogInput('Class', Icons.class_rounded),
+                    items: List.generate(10, (i) => 'Class ${i + 1}')
+                        .map((v) =>
+                            DropdownMenuItem(value: v, child: Text(v)))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) {
+                        setDialogState(() => selectedClass = v);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: subjects,
+                    minLines: 2,
+                    maxLines: 3,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: _dialogInput(
+                        'Subjects — comma separated',
+                        Icons.menu_book_rounded),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: full,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _dialogInput(
+                              'Full Marks / Subject',
+                              Icons.score_rounded),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: pass,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: _dialogInput(
+                              'Pass Marks / Subject',
+                              Icons.task_alt_rounded),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (dialogError != null) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(dialogError!,
+                          style: const TextStyle(
+                              color: Colors.redAccent, fontSize: 11)),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00A884)),
+              onPressed: () {
+                final examName = name.text.trim();
+                final subjectList = subjects.text
+                    .split(',')
+                    .map((e) => e.trim())
+                    .where((e) => e.isNotEmpty)
+                    .toList();
+                final fullMarks = double.tryParse(full.text.trim());
+                final passMarks = double.tryParse(pass.text.trim());
+
+                if (examName.isEmpty ||
+                    subjectList.isEmpty ||
+                    fullMarks == null ||
+                    fullMarks <= 0 ||
+                    passMarks == null ||
+                    passMarks < 0 ||
+                    passMarks > fullMarks) {
+                  setDialogState(() => dialogError =
+                      'Exam name, subjects aur marks sahi bharein.');
+                  return;
+                }
+
+                Navigator.pop(ctx, {
+                  'examName': examName,
+                  'studentClass': selectedClass,
+                  'subjects': subjectList,
+                  'fullMarks': fullMarks,
+                  'passMarks': passMarks,
+                });
+              },
+              child: const Text('Create Exam',
+                  style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    name.dispose();
+    subjects.dispose();
+    full.dispose();
+    pass.dispose();
+
+    if (payload == null || !mounted) return;
+
+    setState(() => _saving = true);
+    try {
+      await _post({
+        'action': 'save_exam',
+        ...payload,
+        'createdBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      });
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text('Exam Google Drive database me create ho gaya.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Exam create error: $e'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  InputDecoration _dialogInput(String label, IconData icon) =>
+      InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white54),
+        prefixIcon: Icon(icon, color: Colors.orangeAccent),
+        filled: true,
+        fillColor: const Color(0xFF0F191F),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: BorderSide.none,
+        ),
+      );
+
+  Widget _metric(
+      String label, String value, Color color, IconData icon) {
+    return Container(
+      width: 175,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: color.withOpacity(.22)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(value,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16)),
+                Text(label,
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 9.5)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pill(String text, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withOpacity(.09),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(text,
+            style: TextStyle(
+                color: color, fontSize: 9, fontWeight: FontWeight.w800)),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final passTotal =
+        _results.where((e) => e['result'] == 'PASS').length;
+    final failTotal =
+        _results.where((e) => e['result'] == 'FAIL').length;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: const Text('Exam Center'),
+        actions: [
+          IconButton(
+              onPressed: _loading ? null : _load,
+              icon: const Icon(Icons.refresh_rounded)),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _saving ? null : _createExam,
+        backgroundColor: Colors.orangeAccent,
+        foregroundColor: Colors.black,
+        icon: _saving
+            ? const SizedBox(
+                width: 17,
+                height: 17,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.black),
+              )
+            : const Icon(Icons.add_task_rounded),
+        label: Text(_saving ? 'Creating...' : 'Create Exam'),
+      ),
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00A884)))
+          : _error != null
+              ? Center(
+                  child: Text(_error!,
+                      style: const TextStyle(color: Colors.redAccent)))
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 95),
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF3B2A13), Color(0xFF172229)],
+                          ),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                              color: Colors.orangeAccent.withOpacity(.2)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.fact_check_rounded,
+                                color: Colors.orangeAccent, size: 34),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Marks entry → automatic total, percentage, grade, PASS/FAIL → Google Drive report card PDF.',
+                                style: TextStyle(
+                                    color: Colors.white70, height: 1.4),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          _metric('Exams', '${_exams.length}',
+                              Colors.orangeAccent,
+                              Icons.assignment_rounded),
+                          _metric('Results', '${_results.length}',
+                              const Color(0xFF38A8FF),
+                              Icons.edit_note_rounded),
+                          _metric('Passed', '$passTotal',
+                              const Color(0xFF00D9A5),
+                              Icons.check_circle_rounded),
+                          _metric('Failed', '$failTotal',
+                              Colors.redAccent, Icons.cancel_rounded),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      if (_exams.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(30),
+                          child: Text(
+                            'Abhi koi exam create nahi hua.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                        )
+                      else
+                        ..._exams.map((exam) {
+                          final id = exam['examId']?.toString() ?? '';
+                          final results = _forExam(id);
+                          final pass = results
+                              .where((e) => e['result'] == 'PASS')
+                              .length;
+                          final fail = results
+                              .where((e) => e['result'] == 'FAIL')
+                              .length;
+                          Map<String, dynamic>? topper;
+                          for (final r in results) {
+                            if (topper == null ||
+                                ((r['percentage'] as num?)?.toDouble() ?? 0) >
+                                    ((topper['percentage'] as num?)
+                                            ?.toDouble() ??
+                                        0)) {
+                              topper = r;
+                            }
+                          }
+                          final subjectList = exam['subjects'] is List
+                              ? List<dynamic>.from(exam['subjects'] as List)
+                              : <dynamic>[];
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF172229),
+                              borderRadius: BorderRadius.circular(15),
+                              border: Border.all(
+                                  color:
+                                      Colors.orangeAccent.withOpacity(.14)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.school_rounded,
+                                        color: Colors.orangeAccent,
+                                        size: 28),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            exam['examName']?.toString() ??
+                                                'Exam',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                          Text(
+                                            '${exam['studentClass'] ?? ''} • ${subjectList.length} subjects • Full ${exam['fullMarks'] ?? 0} • Pass ${exam['passMarks'] ?? 0}',
+                                            style: const TextStyle(
+                                                color: Colors.white38,
+                                                fontSize: 10),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              const Color(0xFF00A884)),
+                                      onPressed: () async {
+                                        await Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                ExamMarksEntryScreen(
+                                              exam: Map<String, dynamic>.from(
+                                                  exam),
+                                            ),
+                                          ),
+                                        );
+                                        if (mounted) _load();
+                                      },
+                                      icon: const Icon(
+                                          Icons.edit_note_rounded,
+                                          color: Colors.white,
+                                          size: 17),
+                                      label: const Text('Manage Marks',
+                                          style:
+                                              TextStyle(color: Colors.white)),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    _pill('Results ${results.length}',
+                                        const Color(0xFF38A8FF)),
+                                    _pill('Pass $pass',
+                                        const Color(0xFF00D9A5)),
+                                    _pill('Fail $fail', Colors.redAccent),
+                                    if (topper != null)
+                                      _pill(
+                                        'Top: ${topper['studentName'] ?? ''} • ${((topper['percentage'] as num?)?.toDouble() ?? 0).toStringAsFixed(1)}%',
+                                        Colors.amberAccent,
+                                      ),
+                                  ],
+                                ),
+                                if (subjectList.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Subjects: ${subjectList.join(' • ')}',
+                                    style: const TextStyle(
+                                        color: Colors.white30,
+                                        fontSize: 9.5),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+    );
+  }
+}
+
+
+class ExamMarksEntryScreen extends StatefulWidget {
+  final Map<String, dynamic> exam;
+
+  const ExamMarksEntryScreen({
+    super.key,
+    required this.exam,
+  });
+
+  @override
+  State<ExamMarksEntryScreen> createState() =>
+      _ExamMarksEntryScreenState();
+}
+
+class _ExamMarksEntryScreenState
+    extends State<ExamMarksEntryScreen> {
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _results = [];
+
+  String get _examId =>
+      widget.exam['examId']?.toString() ?? '';
+  String get _examName =>
+      widget.exam['examName']?.toString() ?? 'Exam';
+  String get _studentClass =>
+      widget.exam['studentClass']?.toString() ?? '';
+
+  double get _fullMarks =>
+      (widget.exam['fullMarks'] as num?)?.toDouble() ??
+      double.tryParse(widget.exam['fullMarks']?.toString() ?? '') ??
+      0;
+
+  double get _passMarks =>
+      (widget.exam['passMarks'] as num?)?.toDouble() ??
+      double.tryParse(widget.exam['passMarks']?.toString() ?? '') ??
+      0;
+
+  List<String> get _subjects {
+    final raw = widget.exam['subjects'];
+    return raw is List
+        ? raw
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList()
+        : <String>[];
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<String> _scriptUrl() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+    final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
+    if (url.isEmpty) {
+      throw Exception(
+          'Google Drive backend Advanced Settings me connected nahi hai.');
+    }
+    return url;
+  }
+
+  Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
+    final response = await http.post(
+      Uri.parse(await _scriptUrl()),
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Google backend error: ${response.statusCode}');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw Exception('Google backend response invalid hai.');
+    }
+    final result = Map<String, dynamic>.from(decoded);
+    if (result['success'] != true) {
+      throw Exception(result['message'] ?? 'Google backend operation failed');
+    }
+    return result;
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await _post({'action': 'list_exam_center'});
+      final raw = result['results'];
+      final all = raw is List
+          ? raw
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : <Map<String, dynamic>>[];
+      if (!mounted) return;
+      setState(() {
+        _results = all
+            .where((e) => e['examId']?.toString() == _examId)
+            .toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  Map<String, dynamic>? _resultFor(String studentId) {
+    for (final result in _results) {
+      if (result['studentId']?.toString() == studentId) return result;
+    }
+    return null;
+  }
+
+  Future<void> _enterMarks(
+      QueryDocumentSnapshot<Map<String, dynamic>> doc) async {
+    final student = doc.data();
+    final existing = _resultFor(doc.id);
+    final existingMarks = existing?['marks'] is Map
+        ? Map<String, dynamic>.from(existing!['marks'] as Map)
+        : <String, dynamic>{};
+
+    final controllers = <String, TextEditingController>{
+      for (final subject in _subjects)
+        subject: TextEditingController(
+          text: existingMarks[subject]?.toString() ?? '',
+        ),
+    };
+
+    String? dialogError;
+    bool saving = false;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF172229),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                student['name']?.toString() ?? 'Student',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              Text(
+                '$_studentClass • Roll ${student['rollNo'] ?? ''} • $_examName',
+                style: const TextStyle(
+                    color: Colors.white38, fontSize: 10),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 540,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ..._subjects.map(
+                    (subject) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: TextField(
+                        controller: controllers[subject],
+                        keyboardType: TextInputType.number,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          labelText:
+                              '$subject (0-${_fullMarks.toStringAsFixed(0)})',
+                          labelStyle:
+                              const TextStyle(color: Colors.white54),
+                          suffixText: '/ ${_fullMarks.toStringAsFixed(0)}',
+                          suffixStyle:
+                              const TextStyle(color: Colors.white38),
+                          filled: true,
+                          fillColor: const Color(0xFF0F191F),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(11),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                      color: Colors.orangeAccent.withOpacity(.07),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'Pass rule: har subject me minimum ${_passMarks.toStringAsFixed(0)} marks. Save ke baad total, %, grade, PASS/FAIL aur Report Card PDF automatic generate hoga.',
+                      style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                          height: 1.4),
+                    ),
+                  ),
+                  if (dialogError != null) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        dialogError!,
+                        style: const TextStyle(
+                            color: Colors.redAccent, fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00A884)),
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final marks = <String, double>{};
+                      for (final subject in _subjects) {
+                        final value = double.tryParse(
+                            controllers[subject]!.text.trim());
+                        if (value == null ||
+                            value < 0 ||
+                            value > _fullMarks) {
+                          setDialogState(() => dialogError =
+                              '$subject marks invalid hain.');
+                          return;
+                        }
+                        marks[subject] = value;
+                      }
+
+                      setDialogState(() {
+                        saving = true;
+                        dialogError = null;
+                      });
+
+                      try {
+                        await _post({
+                          'action': 'save_exam_result',
+                          'examId': _examId,
+                          'studentId': doc.id,
+                          'studentName':
+                              student['name']?.toString() ?? '',
+                          'studentClass': _studentClass,
+                          'rollNo': student['rollNo']?.toString() ?? '',
+                          'marks': marks,
+                          'updatedBy':
+                              FirebaseAuth.instance.currentUser?.email ??
+                                  'Admin',
+                        });
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx, true);
+                      } catch (e) {
+                        setDialogState(() {
+                          saving = false;
+                          dialogError = 'Save error: $e';
+                        });
+                      }
+                    },
+              icon: saving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.save_rounded,
+                      color: Colors.white, size: 17),
+              label: Text(
+                saving ? 'Saving...' : 'Save & Generate Report Card',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    for (final controller in controllers.values) {
+      controller.dispose();
+    }
+
+    if (saved == true && mounted) {
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text(
+              'Marks saved aur report card Google Drive me generate ho gaya.'),
+        ),
+      );
+    }
+  }
+
+  Widget _metric(String label, String value, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        decoration: BoxDecoration(
+          color: color.withOpacity(.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(.18)),
+        ),
+        child: Text(
+          '$label: $value',
+          style: TextStyle(
+              color: color, fontSize: 10, fontWeight: FontWeight.w800),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final pass =
+        _results.where((e) => e['result'] == 'PASS').length;
+    final fail =
+        _results.where((e) => e['result'] == 'FAIL').length;
+    final average = _results.isEmpty
+        ? 0.0
+        : _results.fold<double>(
+              0,
+              (sum, e) =>
+                  sum +
+                  ((e['percentage'] as num?)?.toDouble() ?? 0),
+            ) /
+            _results.length;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1F2C34),
+        title: Text('$_examName • $_studentClass'),
+        actions: [
+          IconButton(
+              onPressed: _loading ? null : _load,
+              icon: const Icon(Icons.refresh_rounded)),
+        ],
+      ),
+      body: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            color: const Color(0xFF121F26),
+            padding: const EdgeInsets.all(11),
+            child: Wrap(
+              spacing: 9,
+              runSpacing: 8,
+              children: [
+                _metric('Results', '${_results.length}',
+                    const Color(0xFF38A8FF)),
+                _metric('Pass', '$pass', const Color(0xFF00D9A5)),
+                _metric('Fail', '$fail', Colors.redAccent),
+                _metric('Average', '${average.toStringAsFixed(1)}%',
+                    Colors.orangeAccent),
+              ],
+            ),
+          ),
+          if (_loading)
+            const Expanded(
+              child: Center(
+                  child: CircularProgressIndicator(
+                      color: Color(0xFF00A884))),
+            )
+          else if (_error != null)
+            Expanded(
+              child: Center(
+                child: Text(_error!,
+                    style: const TextStyle(color: Colors.redAccent)),
+              ),
+            )
+          else
+            Expanded(
+              child: StreamBuilder<
+                  QuerySnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('students_directory')
+                    .where('class', isEqualTo: _studentClass)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState ==
+                          ConnectionState.waiting &&
+                      !snapshot.hasData) {
+                    return const Center(
+                      child: CircularProgressIndicator(
+                          color: Color(0xFF00A884)),
+                    );
+                  }
+
+                  final students = snapshot.data?.docs.toList() ?? [];
+                  students.sort((a, b) {
+                    final ar = int.tryParse(
+                            a.data()['rollNo']?.toString() ?? '') ??
+                        999999;
+                    final br = int.tryParse(
+                            b.data()['rollNo']?.toString() ?? '') ??
+                        999999;
+                    return ar.compareTo(br);
+                  });
+
+                  if (students.isEmpty) {
+                    return const Center(
+                      child: Text('Is class me koi student nahi mila.',
+                          style: TextStyle(color: Colors.white54)),
+                    );
+                  }
+
+                  return ListView.separated(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: students.length,
+                    separatorBuilder: (_, __) =>
+                        const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final doc = students[index];
+                      final student = doc.data();
+                      final result = _resultFor(doc.id);
+                      final reportUrl =
+                          result?['reportCardUrl']?.toString().trim() ??
+                              '';
+                      final passed = result?['result'] == 'PASS';
+
+                      return Container(
+                        padding: const EdgeInsets.all(13),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF172229),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor:
+                                  const Color(0xFF00A884).withOpacity(.13),
+                              foregroundColor: const Color(0xFF00D9A5),
+                              child: Text(
+                                student['name']
+                                            ?.toString()
+                                            .isNotEmpty ==
+                                        true
+                                    ? student['name']
+                                        .toString()
+                                        .substring(0, 1)
+                                        .toUpperCase()
+                                    : 'S',
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    student['name']?.toString() ??
+                                        'Student',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800),
+                                  ),
+                                  Text(
+                                    'Roll ${student['rollNo'] ?? ''}'
+                                    '${result == null ? ' • Marks pending' : ' • ${result['total'] ?? 0}/${result['maximum'] ?? 0} • ${result['percentage'] ?? 0}% • Grade ${result['grade'] ?? ''}'}',
+                                    style: const TextStyle(
+                                        color: Colors.white38,
+                                        fontSize: 10),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (result != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: (passed
+                                          ? const Color(0xFF00A884)
+                                          : Colors.redAccent)
+                                      .withOpacity(.1),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  result['result']?.toString() ?? '',
+                                  style: TextStyle(
+                                      color: passed
+                                          ? const Color(0xFF00D9A5)
+                                          : Colors.redAccent,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w900),
+                                ),
+                              ),
+                            if (reportUrl.isNotEmpty)
+                              IconButton(
+                                tooltip: 'Report Card PDF',
+                                onPressed: () =>
+                                    html.window.open(reportUrl, '_blank'),
+                                icon: const Icon(
+                                    Icons.picture_as_pdf_rounded,
+                                    color: Colors.orangeAccent),
+                              ),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                  backgroundColor:
+                                      const Color(0xFF00A884)),
+                              onPressed: () => _enterMarks(doc),
+                              icon: Icon(
+                                result == null
+                                    ? Icons.add_rounded
+                                    : Icons.edit_rounded,
+                                color: Colors.white,
+                                size: 16,
+                              ),
+                              label: Text(
+                                result == null
+                                    ? 'Enter Marks'
+                                    : 'Edit Marks',
+                                style: const TextStyle(
+                                    color: Colors.white),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
