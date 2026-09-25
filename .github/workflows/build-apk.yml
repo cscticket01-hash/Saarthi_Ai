@@ -1429,17 +1429,25 @@ jobs:
           """
 
           if '_initializeVidyaPushNotifications' not in main_text:
-              main_marker = 'void main() async {'
+              # Latest repo me main() ka exact declaration change ho sakta hai
+              # (void main(), Future<void> main(), async spacing, etc.).
+              # Exact string ke bajay flexible regex use karo.
+              main_decl = re.search(
+                  r'(?m)^(?:Future\s*<\s*void\s*>|void)\s+'
+                  r'main\s*\(\s*\)\s*(?:async\s*)?\{',
+                  main_text,
+              )
 
-              if main_marker not in main_text:
+              if not main_decl:
                   raise SystemExit(
-                      'ERROR: main.dart main() marker nahi mila'
+                      'ERROR: main.dart me main() declaration nahi mila'
                   )
 
-              main_text = main_text.replace(
-                  main_marker,
-                  push_helper + '\n' + main_marker,
-                  1,
+              main_text = (
+                  main_text[:main_decl.start()]
+                  + push_helper
+                  + '\n'
+                  + main_text[main_decl.start():]
               )
 
           init_marker = 'await Firebase.initializeApp();'
@@ -1461,18 +1469,21 @@ jobs:
               )
 
           if 'scaffoldMessengerKey: _vidyaMessengerKey,' not in main_text:
-              material_app_marker = 'return MaterialApp(\n'
+              material_app_match = re.search(
+                  r'return\s+MaterialApp\s*\(',
+                  main_text,
+              )
 
-              if material_app_marker not in main_text:
+              if not material_app_match:
                   raise SystemExit(
-                      'ERROR: MaterialApp marker nahi mila for push banner'
+                      'ERROR: MaterialApp() nahi mila for push banner'
                   )
 
-              main_text = main_text.replace(
-                  material_app_marker,
-                  material_app_marker
-                  + '      scaffoldMessengerKey: _vidyaMessengerKey,\n',
-                  1,
+              insert_at = material_app_match.end()
+              main_text = (
+                  main_text[:insert_at]
+                  + '\n      scaffoldMessengerKey: _vidyaMessengerKey,'
+                  + main_text[insert_at:]
               )
 
           print(
