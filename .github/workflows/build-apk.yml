@@ -658,9 +658,19 @@ jobs:
           echo "Preparing Android-only temporary source from latest repository files..."
 
           # Android-only helper packages. Repository pubspec commit nahi hota.
+          # IMPORTANT: repository me printing 5.13.1 pinned hai, jo web ^0.5.1
+          # use karta hai. file_picker 11.0.3 ko web ^1.1.0 chahiye.
+          # Isliye Android runner copy me printing ko compatible version par
+          # upgrade karke hi file_picker add karte hain.
+          flutter pub add "printing:5.15.1"
           flutter pub add "url_launcher:^6.3.2"
           flutter pub add "file_picker:11.0.3"
           flutter pub get
+
+          echo ""
+          echo "===== ANDROID HELPER DEPENDENCIES ====="
+          flutter pub deps > /tmp/android-helper-deps.txt
+          grep -E "printing |file_picker |url_launcher " /tmp/android-helper-deps.txt || true
 
           # =========================================================
           # Android compatibility shim for the few web APIs that the
