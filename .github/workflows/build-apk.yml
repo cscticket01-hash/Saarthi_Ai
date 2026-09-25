@@ -2721,16 +2721,21 @@ jobs:
           npm install firebase-admin@14.4.0 >/dev/null
 
           cat > publish-update.cjs <<'NODE'
-          const admin = require('firebase-admin');
+          const { initializeApp, cert } =
+            require('firebase-admin/app');
+          const { getFirestore, FieldValue } =
+            require('firebase-admin/firestore');
           const { execSync } = require('child_process');
 
           const serviceAccount = JSON.parse(
             process.env.FIREBASE_SERVICE_ACCOUNT
           );
 
-          admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
+          initializeApp({
+            credential: cert(serviceAccount),
           });
+
+          const db = getFirestore();
 
           const repo = process.env.GITHUB_REPOSITORY;
           const tag = process.env.RELEASE_TAG;
@@ -2755,7 +2760,7 @@ jobs:
           } catch (_) {}
 
           async function main() {
-            await admin.firestore()
+            await db
               .collection('app_config')
               .doc('android_update')
               .set({
@@ -2767,7 +2772,7 @@ jobs:
                 releaseTag: tag,
                 githubRepository: repo,
                 publishedAt:
-                  admin.firestore.FieldValue.serverTimestamp(),
+                  FieldValue.serverTimestamp(),
               }, { merge: true });
 
             console.log(
