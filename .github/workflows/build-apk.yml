@@ -1,4 +1,4 @@
-name: Build Saarthi AI Android APK
+name: Build Vidya Saarthi Android APK
 
 on:
   push:
@@ -449,17 +449,30 @@ jobs:
       # ============================================================
       # 11. ANDROID-ONLY MOBILE SCANNER UPGRADE
       # Repository/web pubspec unchanged rahega. Runner copy only.
-      # mobile_scanner 5.1.1 me Android black-preview/init issues the.
-      # 6.0.8+ fixes controller initialization black-screen issues.
+      # v7.3.0 includes newer Android camera lifecycle/resource fixes.
+      # Unbundled ML Kit uses Google Play Services and avoids bundling the
+      # barcode model inside this APK.
       # ============================================================
       - name: Upgrade Android Mobile Scanner
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Upgrading Android runner copy to mobile_scanner 7.2.1..."
-          flutter pub add "mobile_scanner:7.2.1"
+          echo "Upgrading Android runner copy to mobile_scanner 7.3.0..."
+          flutter pub add "mobile_scanner:7.3.0"
           flutter pub get
+
+          # Use the Google Play Services ML Kit barcode model on Android.
+          # This is an official mobile_scanner Android option.
+          touch android/gradle.properties
+          if grep -q '^dev\.steenbakker\.mobile_scanner\.useUnbundled=' android/gradle.properties; then
+            sed -i \
+              's/^dev\.steenbakker\.mobile_scanner\.useUnbundled=.*/dev.steenbakker.mobile_scanner.useUnbundled=true/' \
+              android/gradle.properties
+          else
+            echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' \
+              >> android/gradle.properties
+          fi
 
           echo ""
           echo "===== MOBILE SCANNER VERSION ====="
@@ -467,12 +480,17 @@ jobs:
           flutter pub deps > /tmp/saarthi-pub-deps.txt
           grep "mobile_scanner" /tmp/saarthi-pub-deps.txt || true
 
-          if ! grep -q "mobile_scanner 7.2.1" /tmp/saarthi-pub-deps.txt; then
-            echo "::error::mobile_scanner 7.2.1 resolve nahi hua."
+          if ! grep -q "mobile_scanner 7.3.0" /tmp/saarthi-pub-deps.txt; then
+            echo "::error::mobile_scanner 7.3.0 resolve nahi hua."
             exit 1
           fi
 
-          echo "OK - Android mobile_scanner 7.2.1 active."
+          echo ""
+          echo "===== MOBILE SCANNER ANDROID MODE ====="
+          grep "dev.steenbakker.mobile_scanner.useUnbundled" \
+            android/gradle.properties
+
+          echo "OK - Android mobile_scanner 7.3.0 active."
 
       # ============================================================
       # 12. FIX OLD PLUGIN COMPILE SDK
@@ -628,24 +646,156 @@ jobs:
 
       # ============================================================
       # 15. ANDROID-ONLY TEMPORARY DART PATCH
-      # Original GitHub Dart files unchanged rahenge
+      # Latest website source ko hi use karta hai.
+      # Sirf runner copy me web-only APIs ko Android-compatible banata hai.
+      # Repository source unchanged rahega.
       # ============================================================
       - name: Prepare Android Safe Dart Source
         shell: bash
         run: |
-          echo "Preparing Android-only temporary source..."
+          set -euo pipefail
 
-          # Android me external WhatsApp link open karne ke liye.
-          # Runner-only pubspec change; repository me commit nahi hota.
+          echo "Preparing Android-only temporary source from latest repository files..."
+
+          # Android-only helper packages. Repository pubspec commit nahi hota.
           flutter pub add "url_launcher:^6.3.2"
+          flutter pub add "file_picker:11.0.3"
+          flutter pub get
+
+          # =========================================================
+          # Android compatibility shim for the few web APIs that the
+          # shared website source uses (localStorage, external URLs,
+          # browser notification gates, etc.).
+          # =========================================================
+          cat > lib/android_html_shim.dart <<'DART'
+          import 'dart:async';
+
+          import 'package:url_launcher/url_launcher.dart';
+
+          class Storage {
+            final Map<String, String> _values = <String, String>{};
+
+            String? operator [](Object? key) => _values[key];
+
+            void operator []=(String key, String value) {
+              _values[key] = value;
+            }
+
+            String? remove(Object? key) => _values.remove(key);
+          }
+
+          class NavigatorInfo {
+            String get userAgent => 'android';
+          }
+
+          class Window {
+            final Storage localStorage = Storage();
+            final NavigatorInfo navigator = NavigatorInfo();
+
+            void open(String url, String target) {
+              final uri = Uri.tryParse(url);
+              if (uri == null) return;
+
+              unawaited(
+                launchUrl(
+                  uri,
+                  mode: LaunchMode.externalApplication,
+                ),
+              );
+            }
+          }
+
+          final Window window = Window();
+
+          class MouseEvent {}
+
+          class _Children {
+            void add(Object value) {}
+          }
+
+          class _Body {
+            final _Children children = _Children();
+          }
+
+          class Document {
+            final _Body? body = _Body();
+
+            Stream<MouseEvent> get onClick =>
+                const Stream<MouseEvent>.empty();
+          }
+
+          final Document document = Document();
+
+          class Notification {
+            Notification(
+              String title, {
+              String? body,
+              String? tag,
+            });
+
+            static bool get supported => true;
+
+            static String? get permission => 'granted';
+
+            static Future<String> requestPermission() async => 'granted';
+
+            Stream<void> get onClick => const Stream<void>.empty();
+
+            void close() {}
+          }
+
+          // Compile-time fallbacks. The real Android implementations for
+          // PDF export and document picking are injected into the shared
+          // source below, so these are not used at runtime.
+          class Blob {
+            Blob(List<Object?> parts, [String? type]);
+          }
+
+          class Url {
+            static String createObjectUrlFromBlob(Blob blob) => '';
+
+            static void revokeObjectUrl(String url) {}
+          }
+
+          class AnchorElement {
+            AnchorElement({String? href});
+
+            void setAttribute(String name, String value) {}
+
+            void click() {}
+
+            void remove() {}
+          }
+
+          class File {
+            String name = '';
+            int size = 0;
+            String type = '';
+          }
+
+          class FileUploadInputElement {
+            String accept = '';
+            List<File>? files;
+
+            Stream<void> get onChange => const Stream<void>.empty();
+
+            void click() {}
+          }
+
+          class FileReader {
+            Object? result;
+
+            Stream<void> get onLoad => const Stream<void>.empty();
+
+            void readAsDataUrl(File file) {}
+          }
+          DART
 
           python3 <<'PY'
           from pathlib import Path
           import re
 
-          dashboard_path = Path(
-              "lib/main_dashboard_screen.dart"
-          )
+          dashboard_path = Path("lib/main_dashboard_screen.dart")
 
           if not dashboard_path.exists():
               raise SystemExit(
@@ -658,129 +808,279 @@ jobs:
           )
 
           # ========================================================
-          # 1. REMOVE dart:html IMPORT
+          # 1. WEB dart:html IMPORT -> ANDROID COMPATIBILITY SHIM
           # ========================================================
-          text = re.sub(
-              r"(?m)^\s*import\s+'dart:html'\s+as\s+html;\s*\n?",
-              "",
+          web_import_pattern = re.compile(
+              r"(?m)^\s*import\s+'dart:html'\s+as\s+html;\s*$"
+          )
+
+          text, html_import_count = web_import_pattern.subn(
+              "import 'android_html_shim.dart' as html;",
               text,
+              count=1,
           )
 
+          if html_import_count == 0:
+              print(
+                  "dart:html import source me nahi tha - "
+                  "Android shim import replacement skip."
+              )
+          else:
+              print("dart:html -> Android compatibility shim patched.")
+
           # ========================================================
-          # 2. ADD url_launcher IMPORT
+          # 2. ADD ANDROID-ONLY IMPORTS
           # ========================================================
-          launcher_import = (
-              "import 'package:url_launcher/url_launcher.dart';\n"
+          imports_to_add = [
+              "import 'package:file_picker/file_picker.dart';",
+              "import 'package:permission_handler/permission_handler.dart';",
+          ]
+
+          mobile_import = (
+              "import 'package:mobile_scanner/mobile_scanner.dart';"
           )
 
-          if launcher_import not in text:
-              mobile_import = (
-                  "import 'package:mobile_scanner/mobile_scanner.dart';\n"
-              )
-
-              qr_import = (
-                  "import 'package:qr_flutter/qr_flutter.dart';\n"
-              )
+          for import_line in imports_to_add:
+              if import_line in text:
+                  continue
 
               if mobile_import in text:
                   text = text.replace(
                       mobile_import,
-                      mobile_import + launcher_import,
-                      1,
-                  )
-              elif qr_import in text:
-                  text = text.replace(
-                      qr_import,
-                      qr_import + launcher_import,
+                      mobile_import + "\n" + import_line,
                       1,
                   )
               else:
                   raise SystemExit(
-                      "ERROR: url_launcher import add karne ki jagah nahi mili"
+                      "ERROR: Android import add karne ke liye "
+                      "mobile_scanner import nahi mila"
                   )
 
           # ========================================================
-          # 3. SCANNER MOBILE DETECTION
+          # 3. ANDROID CAMERA DETECTION
           # ========================================================
-          old_user_agent = (
-              "html.window.navigator.userAgent.toLowerCase()"
+          text = text.replace(
+              "html.window.navigator.userAgent.toLowerCase()",
+              "'android'",
           )
 
-          if old_user_agent in text:
-              text = text.replace(
-                  old_user_agent,
-                  "'android'",
-              )
-              print(
-                  "Scanner user-agent Android ke liye patched."
-              )
           # ========================================================
-          # 4. ANDROID SCANNER CONTROLLER FIX
-          # Manual start + exact camera error reporting.
-          # Runner copy only; website source unchanged.
+          # 4. SCANNER FIX
+          #
+          # Important:
+          # - Camera permission pehle request hoti hai.
+          # - MobileScanner ko manually start()/stop() nahi karte.
+          # - Widget mount hone par plugin khud lifecycle ke saath start hota hai.
+          # - Isse manual controller double-start/race avoid hota hai.
           # ========================================================
-          scanner_field_old = '  bool _showInlineScanner = false;\n  bool _scanHandled = false;\n  bool _isQrVerifying = false;\n  String? _scanError;\n'
-          scanner_field_new = '  bool _showInlineScanner = false;\n  bool _scanHandled = false;\n  bool _isQrVerifying = false;\n\n  final MobileScannerController _qrScannerController =\n      MobileScannerController(\n    autoStart: false,\n    facing: CameraFacing.back,\n    formats: const [BarcodeFormat.qrCode],\n  );\n\n  String? _scanError;\n'
-          if scanner_field_old not in text:
-              raise SystemExit(
-                  "ERROR: Scanner state fields patch point nahi mila"
-              )
-          text = text.replace(scanner_field_old, scanner_field_new, 1)
-          scanner_dispose_old = '  @override\n  void dispose() {\n    _usernameController.dispose();\n    _passwordController.dispose();\n    super.dispose();\n  }\n'
-          scanner_dispose_new = '  @override\n  void dispose() {\n    _qrScannerController.dispose();\n    _usernameController.dispose();\n    _passwordController.dispose();\n    super.dispose();\n  }\n'
-          if scanner_dispose_old not in text:
-              raise SystemExit(
-                  "ERROR: Scanner dispose patch point nahi mila"
-              )
-          text = text.replace(scanner_dispose_old, scanner_dispose_new, 1)
-          switch_role_old = '  void _switchRole(bool isAdmin) {\n    setState(() {\n'
-          switch_role_new = '  void _switchRole(bool isAdmin) {\n    _qrScannerController.stop();\n\n    setState(() {\n'
-          if switch_role_old not in text:
-              raise SystemExit(
-                  "ERROR: Scanner role switch patch point nahi mila"
-              )
-          text = text.replace(switch_role_old, switch_role_new, 1)
-          scanner_start_regex = 'void _startInlineScanner\\(\\) \\{\n  if \\(_isAdminMode\\) return;\n\n  setState\\(\\(\\) \\{\n    _showInlineScanner = true;\n    _scanHandled = false;\n    _isQrVerifying = false;\n    _scanError = null;\n    _scannedStudentData = null;\n    _passwordController\\.clear\\(\\);\n  \\}\\);\n\\}'
-          scanner_start_new = "Future<void> _startInlineScanner() async {\n  if (_isAdminMode) return;\n\n  setState(() {\n    _showInlineScanner = true;\n    _scanHandled = false;\n    _isQrVerifying = false;\n    _scanError = null;\n    _scannedStudentData = null;\n    _passwordController.clear();\n  });\n\n  await Future<void>.delayed(\n    const Duration(milliseconds: 300),\n  );\n\n  try {\n    await _qrScannerController.start();\n  } on MobileScannerException catch (e) {\n    if (!mounted) return;\n\n    final details = e.errorDetails?.message;\n    final code = e.errorCode.name;\n\n    setState(() {\n      _scanError = details == null || details.isEmpty\n          ? 'Scanner error: $code'\n          : 'Scanner error: $code - $details';\n    });\n  } catch (e) {\n    if (!mounted) return;\n\n    setState(() {\n      _scanError = 'Scanner start error: $e';\n    });\n  }\n}"
-          scanner_start_pattern = re.compile(scanner_start_regex)
-          text, scanner_start_count = scanner_start_pattern.subn(
-              scanner_start_new,
-              text,
-              count=1,
+          start_markers = [
+              "void _startInlineScanner() {",
+              "Future<void> _startInlineScanner() async {",
+          ]
+
+          scanner_start = -1
+
+          for marker in start_markers:
+              scanner_start = text.find(marker)
+              if scanner_start != -1:
+                  break
+
+          scanner_close = text.find(
+              "void _closeInlineScanner()",
+              scanner_start if scanner_start >= 0 else 0,
           )
-          if scanner_start_count != 1:
+
+          if scanner_start == -1 or scanner_close == -1:
               raise SystemExit(
-                  "ERROR: Scanner start method patch nahi hua"
+                  "ERROR: Scanner start/close methods patch point nahi mila"
               )
-          scanner_close_old = '  void _closeInlineScanner() {\n    setState(() {\n      _showInlineScanner = false;\n      _scanHandled = false;\n      _isQrVerifying = false;\n      _scanError = null;\n    });\n  }\n'
-          scanner_close_new = '  void _closeInlineScanner() {\n    _qrScannerController.stop();\n\n    setState(() {\n      _showInlineScanner = false;\n      _scanHandled = false;\n      _isQrVerifying = false;\n      _scanError = null;\n    });\n  }\n'
-          if scanner_close_old not in text:
-              raise SystemExit(
-                  "ERROR: Scanner close patch point nahi mila"
-              )
-          text = text.replace(scanner_close_old, scanner_close_new, 1)
-          scanner_clear_old = '  void _clearScannedStudent() {\n    setState(() {\n      _showInlineScanner = false;\n'
-          scanner_clear_new = '  void _clearScannedStudent() {\n    _qrScannerController.stop();\n\n    setState(() {\n      _showInlineScanner = false;\n'
-          if scanner_clear_old not in text:
-              raise SystemExit(
-                  "ERROR: Scanner clear patch point nahi mila"
-              )
-          text = text.replace(scanner_clear_old, scanner_clear_new, 1)
-          scanner_success_old = '      if (!mounted) return;\n\n      setState(() {\n        _selectedClass = studentClass;\n        _usernameController.text = roll;\n'
-          scanner_success_new = '      if (!mounted) return;\n\n      _qrScannerController.stop();\n\n      setState(() {\n        _selectedClass = studentClass;\n        _usernameController.text = roll;\n'
-          if scanner_success_old not in text:
-              raise SystemExit(
-                  "ERROR: Scanner success patch point nahi mila"
-              )
-          text = text.replace(scanner_success_old, scanner_success_new, 1)
-          scanner_widget_old = '                MobileScanner(\n                  fit: BoxFit.cover,\n                  onDetect: _onInlineQrDetected,\n                ),\n'
-          scanner_widget_new = "                MobileScanner(\n                  controller: _qrScannerController,\n                  fit: BoxFit.cover,\n                  onDetect: _onInlineQrDetected,\n                  errorBuilder: (context, error) {\n                    final details = error.errorDetails?.message;\n                    final code = error.errorCode.name;\n\n                    return Container(\n                      color: Colors.black,\n                      alignment: Alignment.center,\n                      padding: const EdgeInsets.all(18),\n                      child: Text(\n                        details == null || details.isEmpty\n                            ? 'Scanner error: $code'\n                            : 'Scanner error: $code\\n$details',\n                        textAlign: TextAlign.center,\n                        style: const TextStyle(\n                          color: Colors.redAccent,\n                          fontSize: 13,\n                          fontWeight: FontWeight.w700,\n                        ),\n                      ),\n                    );\n                  },\n                ),\n"
-          if scanner_widget_old not in text:
+
+          scanner_start_new = """Future<void> _startInlineScanner() async {
+            if (_isAdminMode || _isLoggingIn) return;
+
+            final cameraStatus = await Permission.camera.request();
+
+            if (!mounted) return;
+
+            if (!cameraStatus.isGranted) {
+              setState(() {
+                _showInlineScanner = false;
+                _scanHandled = false;
+                _isQrVerifying = false;
+                _scanError = cameraStatus.isPermanentlyDenied
+                    ? 'Camera permission permanently blocked hai. '
+                        'Phone Settings > Apps > Vidya Saarthi > Permissions '
+                        'me Camera Allow karein.'
+                    : 'Student ID scan ke liye Camera permission Allow karein.';
+              });
+
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(
+                  SnackBar(
+                    duration: const Duration(seconds: 5),
+                    backgroundColor: Colors.orangeAccent,
+                    content: Text(_scanError!),
+                    action: cameraStatus.isPermanentlyDenied
+                        ? SnackBarAction(
+                            label: 'SETTINGS',
+                            textColor: Colors.black,
+                            onPressed: openAppSettings,
+                          )
+                        : null,
+                  ),
+                );
+              return;
+            }
+
+            setState(() {
+              _showInlineScanner = true;
+              _scanHandled = false;
+              _isQrVerifying = false;
+              _scanError = null;
+              _scannedStudentData = null;
+              _passwordController.clear();
+            });
+          }
+
+          """
+
+          text = (
+              text[:scanner_start]
+              + scanner_start_new
+              + text[scanner_close:]
+          )
+
+          # Replace the scanner widget with a lifecycle-safe auto-starting
+          # widget plus a useful retry/error screen.
+          scanner_widget_start = text.find("MobileScanner(")
+
+          if scanner_widget_start == -1:
               raise SystemExit(
                   "ERROR: MobileScanner widget patch point nahi mila"
               )
-          text = text.replace(scanner_widget_old, scanner_widget_new, 1)
-          print("Android scanner controller + detailed error patch applied.")
+
+          # Current shared source has one scanner widget. Replace only the
+          # widget whose onDetect callback is _onInlineQrDetected.
+          scanner_detect = text.find(
+              "onDetect: _onInlineQrDetected",
+              scanner_widget_start,
+          )
+
+          if scanner_detect == -1:
+              raise SystemExit(
+                  "ERROR: Student QR scanner onDetect callback nahi mila"
+              )
+
+          scanner_widget_end = text.find(
+              "\n                ),",
+              scanner_detect,
+          )
+
+          if scanner_widget_end == -1:
+              # Formatting may differ slightly after future UI edits.
+              scanner_widget_end = text.find(
+                  "\n              ),",
+                  scanner_detect,
+              )
+
+          if scanner_widget_end == -1:
+              raise SystemExit(
+                  "ERROR: MobileScanner widget end nahi mila"
+              )
+
+          scanner_widget_end = text.find(
+              "),",
+              scanner_widget_end,
+          ) + 2
+
+          scanner_widget_new = "\n".join([
+              "MobileScanner(",
+              "                  fit: BoxFit.cover,",
+              "                  onDetect: _onInlineQrDetected,",
+              "                  errorBuilder: (context, error) {",
+              "                    final detail =",
+              "                        error.errorDetails?.message?.trim() ?? '';",
+              "                    final code = error.errorCode.name;",
+              "",
+              "                    return Container(",
+              "                      color: Colors.black,",
+              "                      alignment: Alignment.center,",
+              "                      padding: const EdgeInsets.all(20),",
+              "                      child: Column(",
+              "                        mainAxisSize: MainAxisSize.min,",
+              "                        children: [",
+              "                          const Icon(",
+              "                            Icons.camera_alt_outlined,",
+              "                            color: Colors.orangeAccent,",
+              "                            size: 42,",
+              "                          ),",
+              "                          const SizedBox(height: 12),",
+              "                          const Text(",
+              "                            'Camera scanner start nahi hua',",
+              "                            textAlign: TextAlign.center,",
+              "                            style: TextStyle(",
+              "                              color: Colors.white,",
+              "                              fontSize: 14,",
+              "                              fontWeight: FontWeight.w800,",
+              "                            ),",
+              "                          ),",
+              "                          const SizedBox(height: 7),",
+              "                          Text(",
+              "                            detail.isEmpty",
+              "                                ? 'Error: $code'",
+              "                                : 'Error: $code\\n$detail',",
+              "                            textAlign: TextAlign.center,",
+              "                            style: const TextStyle(",
+              "                              color: Colors.white54,",
+              "                              fontSize: 10.5,",
+              "                              height: 1.35,",
+              "                            ),",
+              "                          ),",
+              "                          const SizedBox(height: 14),",
+              "                          ElevatedButton.icon(",
+              "                            style: ElevatedButton.styleFrom(",
+              "                              backgroundColor:",
+              "                                  const Color(0xFF00A884),",
+              "                              foregroundColor: Colors.white,",
+              "                            ),",
+              "                            onPressed: () async {",
+              "                              setState(() {",
+              "                                _showInlineScanner = false;",
+              "                                _scanError = null;",
+              "                              });",
+              "",
+              "                              await Future<void>.delayed(",
+              "                                const Duration(milliseconds: 250),",
+              "                              );",
+              "",
+              "                              if (mounted) {",
+              "                                await _startInlineScanner();",
+              "                              }",
+              "                            },",
+              "                            icon: const Icon(",
+              "                              Icons.refresh_rounded,",
+              "                              size: 18,",
+              "                            ),",
+              "                            label: const Text('Retry Scanner'),",
+              "                          ),",
+              "                        ],",
+              "                      ),",
+              "                    );",
+              "                  },",
+              "                ),",
+          ])
+
+          text = (
+              text[:scanner_widget_start]
+              + scanner_widget_new
+              + text[scanner_widget_end:]
+          )
+
+          print(
+              "Android scanner patched: runtime permission + "
+              "auto lifecycle + retry UI."
+          )
 
           # ========================================================
           # 5. WEB PDF DOWNLOAD -> ANDROID PDF SHARE
@@ -815,71 +1115,124 @@ jobs:
                   + text[pdf_end:]
               )
 
-              print(
-                  "PDF download Android share me patched."
-              )
+              print("ID Card PDF Android share me patched.")
           else:
               print(
                   "HTML PDF download block present nahi hai - skip."
               )
 
           # ========================================================
-          # 6. WHATSAPP WEB OPEN -> ANDROID EXTERNAL APP
-          # ID Card + Fees Receipt, runner copy only.
+          # 6. STUDENT DOCUMENT UPLOAD -> NATIVE ANDROID FILE PICKER
+          # Keeps PDF/JPG/JPEG and total 2 MB validation.
           # ========================================================
-          id_whatsapp_pattern = re.compile(
-              r"html\.window\.open\(\s*"
-              r"'https://wa\.me/\$waNum'\s*,\s*"
-              r"'_blank'\s*\);"
+          file_picker_start = text.find(
+              "    final input = html.FileUploadInputElement()"
           )
 
-          id_whatsapp_replacement = """launchUrl(
-                                        Uri.parse(
-                                          'https://wa.me/$waNum',
-                                        ),
-                                        mode: LaunchMode.externalApplication,
-                                      );"""
-
-          text, id_whatsapp_count = id_whatsapp_pattern.subn(
-              id_whatsapp_replacement,
-              text,
-              count=1,
+          file_reader_end_marker = (
+              "      if (dataUrl.isEmpty) "
+              "throw Exception('File read nahi ho paya.');"
           )
 
-          if id_whatsapp_count == 1:
-              print("ID Card WhatsApp Android launcher patched.")
+          if file_picker_start != -1:
+              file_picker_end = text.find(
+                  file_reader_end_marker,
+                  file_picker_start,
+              )
+
+              if file_picker_end == -1:
+                  raise SystemExit(
+                      "ERROR: Student document web picker end marker nahi mila"
+                  )
+
+              file_picker_end += len(file_reader_end_marker)
+
+              native_picker = """    final picked = await FilePicker.platform.pickFiles(
+              type: FileType.custom,
+              allowedExtensions: const ['pdf', 'jpg', 'jpeg'],
+              allowMultiple: false,
+              withData: true,
+            );
+
+            if (picked == null ||
+                picked.files.isEmpty ||
+                !mounted) {
+              return;
+            }
+
+            final file = picked.files.single;
+            final bytes = file.bytes;
+            final lower = file.name.toLowerCase();
+
+            String mime;
+
+            if (lower.endsWith('.pdf')) {
+              mime = 'application/pdf';
+            } else if (lower.endsWith('.jpg') ||
+                lower.endsWith('.jpeg')) {
+              mime = 'image/jpeg';
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  backgroundColor: Colors.redAccent,
+                  content: Text(
+                    'Sirf PDF/JPG/JPEG document allowed hai.',
+                  ),
+                ),
+              );
+              return;
+            }
+
+            if (bytes == null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  backgroundColor: Colors.redAccent,
+                  content: Text('Document read nahi ho paya.'),
+                ),
+              );
+              return;
+            }
+
+            final oldSize =
+                (replace?['sizeBytes'] as num?)?.toInt() ?? 0;
+
+            if (_totalBytes - oldSize + file.size > _maxBytes) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: Colors.redAccent,
+                  content: Text(
+                    '2 MB total limit exceed hoga. '
+                    'Used ${_formatBytes(_totalBytes)}.',
+                  ),
+                ),
+              );
+              return;
+            }
+
+            setState(() => _uploading = true);
+
+            try {
+              final dataUrl =
+                  'data:$mime;base64,${base64Encode(bytes)}';"""
+
+              text = (
+                  text[:file_picker_start]
+                  + native_picker
+                  + text[file_picker_end:]
+              )
+
+              print(
+                  "Student Documents: Android native file picker patched."
+              )
           else:
-              print("ID Card WhatsApp link present nahi hai - skip.")
-
-          fees_whatsapp_pattern = re.compile(
-              r"html\.window\.open\(\s*"
-              r"'https://wa\.me/\$number\?text=\$message'\s*,\s*"
-              r"'_blank'\s*\);"
-          )
-
-          fees_whatsapp_replacement = """launchUrl(
-                                        Uri.parse(
-                                          'https://wa.me/$number?text=$message',
-                                        ),
-                                        mode: LaunchMode.externalApplication,
-                                      );"""
-
-          text, fees_whatsapp_count = fees_whatsapp_pattern.subn(
-              fees_whatsapp_replacement,
-              text,
-              count=1,
-          )
-
-          if fees_whatsapp_count == 1:
-              print("Fees WhatsApp Android launcher patched.")
-          else:
-              print("Fees WhatsApp link present nahi hai - skip.")
-
+              print(
+                  "Student document web picker source me nahi mila - skip."
+              )
 
           # ========================================================
-          # 7. USE NATIVE ANDROID FIREBASE CONFIG
-          # Website keeps FirebaseOptions; Android runner uses
-          # google-services.json. No Saarthi AI Auth/Google login exists.
+          # 7. NATIVE ANDROID FIREBASE CONFIG
+          # Website FirebaseOptions stays in repository.
+          # Android runner uses google-services.json.
           # ========================================================
           main_path = Path("lib/main.dart")
 
@@ -902,23 +1255,76 @@ jobs:
               re.S,
           )
 
-          main_text, firebase_init_count = firebase_init_pattern.subn(
-              "await Firebase.initializeApp();",
-              main_text,
-              count=1,
+          main_text, firebase_init_count = (
+              firebase_init_pattern.subn(
+                  "await Firebase.initializeApp();",
+                  main_text,
+                  count=1,
+              )
           )
 
-          if firebase_init_count != 1:
-              raise SystemExit(
-                  "ERROR: Android Firebase.initializeApp native patch nahi hua"
+          if firebase_init_count == 0:
+              if "await Firebase.initializeApp();" in main_text:
+                  print(
+                      "Android Firebase init already native tha."
+                  )
+              else:
+                  raise SystemExit(
+                      "ERROR: Firebase.initializeApp Android patch "
+                      "point nahi mila"
+                  )
+          else:
+              print(
+                  "Android Firebase google-services.json config active."
               )
 
-          print(
-              "Android: Firebase now uses google-services.json native config."
+          # ========================================================
+          # 8. ANDROID APP VISIBLE NAME
+          # Package id ko touch nahi karta.
+          # ========================================================
+          manifest_path = Path(
+              "android/app/src/main/AndroidManifest.xml"
           )
 
+          manifest_text = manifest_path.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          application_match = re.search(
+              r"<application\b[^>]*>",
+              manifest_text,
+              re.S,
+          )
+
+          if application_match:
+              app_tag = application_match.group(0)
+
+              if re.search(r'android:label="[^"]*"', app_tag):
+                  new_app_tag = re.sub(
+                      r'android:label="[^"]*"',
+                      'android:label="Vidya Saarthi"',
+                      app_tag,
+                      count=1,
+                  )
+              else:
+                  new_app_tag = app_tag[:-1] + (
+                      ' android:label="Vidya Saarthi">'
+                  )
+
+              manifest_text = (
+                  manifest_text[:application_match.start()]
+                  + new_app_tag
+                  + manifest_text[application_match.end():]
+              )
+
+              manifest_path.write_text(
+                  manifest_text,
+                  encoding="utf-8",
+              )
+
           # ========================================================
-          # SAVE RUNNER-ONLY FILES
+          # SAVE RUNNER-ONLY DART FILES
           # ========================================================
           dashboard_path.write_text(
               text,
@@ -932,7 +1338,7 @@ jobs:
 
           print("")
           print(
-              "Android temporary Dart source created successfully."
+              "Android temporary source created from latest website code."
           )
           PY
 
@@ -940,6 +1346,10 @@ jobs:
           echo "========================================="
           echo "CHECKING ANDROID TEMPORARY SOURCE"
           echo "========================================="
+
+          echo ""
+          echo "Repository commit used by APK:"
+          git rev-parse HEAD
 
           echo ""
           echo "Checking native Android Firebase initialization..."
@@ -952,69 +1362,79 @@ jobs:
           grep -n "Firebase.initializeApp();" lib/main.dart
 
           echo ""
-          echo "Checking removed Saarthi AI login/chat..."
+          echo "Checking Android compatibility shim..."
 
-          if grep -nE \
-            "AuthScreen|class ChatScreen|signInWithPopup|google_sign_in" \
-            lib/main.dart; then
-            echo "::error::Removed AI/Auth code Android main.dart me mil gaya!"
+          if grep -n "import 'dart:html'" lib/main_dashboard_screen.dart; then
+            echo "::error::Android source me direct dart:html import present hai!"
             exit 1
-          else
-            echo "OK - old Saarthi AI Auth/Chat code absent."
           fi
 
-          grep -n "home: const MainDashboardScreen()" lib/main.dart
-
-          echo ""
-          echo "Checking dart:html / html.* ..."
-
-          if grep -nE \
-            "dart:html|html\." \
-            lib/main_dashboard_screen.dart; then
-            echo ""
-            echo "::error::Android source me html code abhi bhi present hai!"
-            exit 1
-          else
-            echo "OK - dart:html completely removed."
-          fi
-
-          echo ""
-          echo "Checking mobile_scanner..."
           grep -n \
-            "mobile_scanner" \
+            "android_html_shim.dart" \
             lib/main_dashboard_screen.dart || true
 
+          test -s lib/android_html_shim.dart
+
           echo ""
-          echo "Checking Android scanner controller patch..."
-          grep -n "_qrScannerController" \
+          echo "Checking mobile scanner..."
+
+          flutter pub deps > /tmp/android-pub-deps.txt
+          grep "mobile_scanner" /tmp/android-pub-deps.txt
+          grep -n "Permission.camera.request" \
             lib/main_dashboard_screen.dart
           grep -n "errorBuilder:" \
             lib/main_dashboard_screen.dart
 
-          echo ""
-          echo "Checking url_launcher..."
-          grep -n \
-            "url_launcher" \
-            lib/main_dashboard_screen.dart
+          if grep -n "_qrScannerController" lib/main_dashboard_screen.dart; then
+            echo "::error::Old manual scanner controller patch abhi bhi present hai!"
+            exit 1
+          else
+            echo "OK - manual scanner start/stop controller absent."
+          fi
 
           echo ""
-          echo "Checking Printing.sharePdf..."
-          grep -n \
-            "Printing.sharePdf" \
+          echo "Checking Student Documents native picker..."
+
+          if grep -n "FileUploadInputElement" lib/main_dashboard_screen.dart; then
+            echo "::error::Android source me web FileUploadInputElement abhi bhi present hai!"
+            exit 1
+          fi
+
+          grep -n "FilePicker.platform.pickFiles" \
             lib/main_dashboard_screen.dart || true
 
           echo ""
+          echo "Checking ID Card Android PDF share..."
+          grep -n "Printing.sharePdf" \
+            lib/main_dashboard_screen.dart || true
+
+          echo ""
+          echo "Checking Vidya Saarthi branding..."
+          grep -n "Vidya Saarthi" \
+            lib/main.dart \
+            lib/main_dashboard_screen.dart \
+            | head -n 10 || true
+
+          echo ""
           echo "Android temporary source READY."
+
       # ============================================================
       # 17. BUILD RELEASE APK
+      # Every run gets a higher Android versionCode so the newest APK
+      # actually replaces the older installed build.
       # ============================================================
-      - name: Build Saarthi AI Release APK
+      - name: Build Vidya Saarthi Release APK
         shell: bash
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           flutter build apk \
-            --release
+            --release \
+            --build-name="1.0.${{ github.run_number }}" \
+            --build-number="${{ github.run_number }}" \
+            --dart-define=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            --dart-define=GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}" \
+            --dart-define=GOOGLE_WEB_CLIENT_ID="${{ secrets.GOOGLE_WEB_CLIENT_ID }}"
 
       # ============================================================
       # 17. VERIFY APK EXISTS
@@ -1039,11 +1459,11 @@ jobs:
 
           cp \
             build/app/outputs/flutter-apk/app-release.apk \
-            release/Saarthi-AI-v${{ github.run_number }}.apk
+            release/Vidya-Saarthi-v${{ github.run_number }}.apk
 
           echo ""
           echo "========================================="
-          echo "       SAARTHI AI APK READY"
+          echo "       VIDYA SAARTHI APK READY"
           echo "========================================="
           echo ""
 
@@ -1052,7 +1472,7 @@ jobs:
           echo ""
           echo "APK SHA256:"
           sha256sum \
-            release/Saarthi-AI-v${{ github.run_number }}.apk
+            release/Vidya-Saarthi-v${{ github.run_number }}.apk
 
       # ============================================================
       # 19. BUILD SUMMARY
@@ -1061,10 +1481,10 @@ jobs:
         shell: bash
         run: |
           APK_SIZE=$(du -h \
-            release/Saarthi-AI-v${{ github.run_number }}.apk \
+            release/Vidya-Saarthi-v${{ github.run_number }}.apk \
             | cut -f1)
 
-          echo "# 📱 Saarthi AI Android" >> "$GITHUB_STEP_SUMMARY"
+          echo "# 📱 Vidya Saarthi Android" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ APK Build Successful" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -1090,7 +1510,7 @@ jobs:
       - name: Upload Saarthi AI APK
         uses: actions/upload-artifact@v4
         with:
-          name: Saarthi-AI-APK-${{ github.run_number }}
+          name: Vidya-Saarthi-APK-${{ github.run_number }}
           path: release/*.apk
           if-no-files-found: error
           retention-days: 30
