@@ -79,6 +79,101 @@ jobs:
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
       # =========================================================
+      # BLOCK COMMON INSPECT / VIEW SOURCE SHORTCUTS
+      # =========================================================
+      - name: Add Browser Inspect Protection
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          index_file = Path("build/web/index.html")
+
+          if not index_file.exists():
+              raise SystemExit("build/web/index.html not found")
+
+          html = index_file.read_text(encoding="utf-8")
+
+          marker = "<!-- VIDYA_SAARTHI_INSPECT_PROTECTION -->"
+
+          protection = r'''
+          <!-- VIDYA_SAARTHI_INSPECT_PROTECTION -->
+          <script>
+          (() => {
+            // Disable right-click context menu.
+            document.addEventListener('contextmenu', function(event) {
+              event.preventDefault();
+            }, true);
+
+            // Disable common browser developer-tool shortcuts.
+            document.addEventListener('keydown', function(event) {
+              const key = (event.key || '').toLowerCase();
+
+              // F12
+              if (event.key === 'F12') {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+
+              // Ctrl + Shift + I / J / C / K
+              if (
+                event.ctrlKey &&
+                event.shiftKey &&
+                ['i', 'j', 'c', 'k'].includes(key)
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+
+              // Ctrl + U = View Source
+              if (event.ctrlKey && key === 'u') {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+
+              // Mac equivalents
+              if (
+                event.metaKey &&
+                event.altKey &&
+                ['i', 'j', 'c'].includes(key)
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+
+              if (event.metaKey && key === 'u') {
+                event.preventDefault();
+                event.stopPropagation();
+                return false;
+              }
+            }, true);
+          })();
+          </script>
+          '''
+
+          if marker not in html:
+              if "</body>" in html:
+                  html = html.replace(
+                      "</body>",
+                      protection + "\n</body>"
+                  )
+              else:
+                  html += protection
+
+              index_file.write_text(
+                  html,
+                  encoding="utf-8"
+              )
+
+              print("Inspect protection added successfully.")
+          else:
+              print("Inspect protection already exists.")
+          PY
+
+      # =========================================================
       # VERIFY BUILD
       # =========================================================
       - name: Verify Built Assets
@@ -88,7 +183,10 @@ jobs:
           test -f build/web/assets/assets/principal_sign.png
           test -f build/web/assets/assets/whatsapp.png
 
+          grep -q "VIDYA_SAARTHI_INSPECT_PROTECTION" build/web/index.html
+
           echo "===== BUILD READY ====="
+          echo "===== INSPECT PROTECTION FOUND ====="
 
       # =========================================================
       # CREATE FIREBASE SERVICE ACCOUNT FILE
