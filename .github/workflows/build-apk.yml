@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -334,7 +334,7 @@ jobs:
           test -s android/app/saarthi-release.jks
 
       # ============================================================
-      # 8. ENSURE CAMERA + INTERNET PERMISSIONS
+      # 8. ENSURE CAMERA + INTERNET + NOTIFICATION PERMISSIONS
       # ============================================================
       - name: Ensure Android Permissions
         shell: bash
@@ -362,6 +362,11 @@ jobs:
           if 'android.permission.CAMERA' not in text:
               additions.append(
                   '    <uses-permission android:name="android.permission.CAMERA" />'
+              )
+
+          if 'android.permission.POST_NOTIFICATIONS' not in text:
+              additions.append(
+                  '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
               )
 
           if 'android.hardware.camera.any' not in text:
@@ -682,12 +687,13 @@ jobs:
           # aur existing printing/Firebase versions ko bilkul touch nahi karte.
           flutter pub add "url_launcher:^6.3.2"
           flutter pub add "file_picker:8.0.7"
+          flutter pub add "firebase_messaging:14.9.4"
           flutter pub get
 
           echo ""
           echo "===== ANDROID HELPER DEPENDENCIES ====="
           flutter pub deps > /tmp/android-helper-deps.txt
-          grep -E "printing |file_picker |url_launcher " /tmp/android-helper-deps.txt || true
+          grep -E "printing |file_picker |url_launcher |firebase_messaging " /tmp/android-helper-deps.txt || true
 
           if ! grep -q "file_picker 8.0.7" /tmp/android-helper-deps.txt; then
             echo "::error::file_picker 8.0.7 resolve nahi hua."
@@ -1311,7 +1317,175 @@ jobs:
               )
 
           # ========================================================
-          # 8. ANDROID APP VISIBLE NAME
+          # 8. ANDROID PUSH NOTIFICATION STARTUP
+          # - App open par notification permission maangta hai.
+          # - Allowed hone par school_notices FCM topic subscribe karta hai.
+          # - Foreground me new push ko in-app banner me dikhata hai.
+          # - Background/closed app notification Android system dikhata hai.
+          # ========================================================
+          messaging_import = (
+              "import 'package:firebase_messaging/firebase_messaging.dart';\n"
+          )
+
+          if messaging_import not in main_text:
+              material_import = "import 'package:flutter/material.dart';\n"
+
+              if material_import in main_text:
+                  main_text = main_text.replace(
+                      material_import,
+                      material_import + messaging_import,
+                      1,
+                  )
+              else:
+                  raise SystemExit(
+                      "ERROR: main.dart me material import nahi mila"
+                  )
+
+          push_helper = r"""
+          final GlobalKey<ScaffoldMessengerState> _vidyaMessengerKey =
+              GlobalKey<ScaffoldMessengerState>();
+          
+          Future<void> _initializeVidyaPushNotifications() async {
+            try {
+              final messaging = FirebaseMessaging.instance;
+          
+              final settings = await messaging.requestPermission(
+                alert: true,
+                badge: true,
+                sound: true,
+                provisional: false,
+              );
+          
+              final allowed =
+                  settings.authorizationStatus == AuthorizationStatus.authorized ||
+                  settings.authorizationStatus == AuthorizationStatus.provisional;
+          
+              if (allowed) {
+                await messaging.subscribeToTopic('school_notices');
+              }
+          
+              FirebaseMessaging.onMessage.listen((message) {
+                final notification = message.notification;
+                final title = notification?.title?.trim();
+                final body = notification?.body?.trim();
+          
+                if ((title == null || title.isEmpty) &&
+          (body == null || body.isEmpty)) {
+                  return;
+                }
+          
+                _vidyaMessengerKey.currentState
+                  ?..hideCurrentSnackBar()
+                  ..showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 6),
+            backgroundColor: const Color(0xFF16332F),
+            content: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.notifications_active_rounded,
+                  color: Color(0xFF00E8B5),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title?.isNotEmpty == true
+                            ? title!
+                            : 'New School Notice',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (body?.isNotEmpty == true) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          body!,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+                  );
+              });
+            } catch (e) {
+              debugPrint('Vidya Saarthi push init error: $e');
+            }
+          }
+          """
+
+          if '_initializeVidyaPushNotifications' not in main_text:
+              main_marker = 'void main() async {'
+
+              if main_marker not in main_text:
+                  raise SystemExit(
+                      'ERROR: main.dart main() marker nahi mila'
+                  )
+
+              main_text = main_text.replace(
+                  main_marker,
+                  push_helper + '\n' + main_marker,
+                  1,
+              )
+
+          init_marker = 'await Firebase.initializeApp();'
+          push_call = (
+              'await Firebase.initializeApp();\n'
+              '  await _initializeVidyaPushNotifications();'
+          )
+
+          if 'await _initializeVidyaPushNotifications();' not in main_text:
+              if init_marker not in main_text:
+                  raise SystemExit(
+                      'ERROR: Android Firebase init marker missing for push'
+                  )
+
+              main_text = main_text.replace(
+                  init_marker,
+                  push_call,
+                  1,
+              )
+
+          if 'scaffoldMessengerKey: _vidyaMessengerKey,' not in main_text:
+              material_app_marker = 'return MaterialApp(\n'
+
+              if material_app_marker not in main_text:
+                  raise SystemExit(
+                      'ERROR: MaterialApp marker nahi mila for push banner'
+                  )
+
+              main_text = main_text.replace(
+                  material_app_marker,
+                  material_app_marker
+                  + '      scaffoldMessengerKey: _vidyaMessengerKey,\n',
+                  1,
+              )
+
+          print(
+              'Android FCM startup permission + topic subscription patched.'
+          )
+
+          main_text = main_text.replace(
+              "title: 'Saarthi AI'",
+              "title: 'Vidya Saarthi'",
+          )
+
+          # ========================================================
+          # 9. ANDROID APP VISIBLE NAME
           # Package id ko touch nahi karta.
           # ========================================================
           manifest_path = Path(
@@ -1392,6 +1566,9 @@ jobs:
           fi
 
           grep -n "Firebase.initializeApp();" lib/main.dart
+          grep -n "FirebaseMessaging.instance" lib/main.dart
+          grep -n "subscribeToTopic('school_notices')" lib/main.dart
+          grep -n "scaffoldMessengerKey: _vidyaMessengerKey" lib/main.dart
 
           echo ""
           echo "Checking Android compatibility shim..."
@@ -1592,6 +1769,29 @@ jobs:
             android/gradle.properties || true
 
       # ============================================================
+      # 16B. ANDROID-ONLY STUDENT MOBILE UI
+      # IMPORTANT: This patches only the GitHub runner copy.
+      # Repository/web main_dashboard_screen.dart remains unchanged.
+      # ============================================================
+      - name: Apply Android-only Student Mobile UI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 scripts/android_mobile_ui_patch.py
+
+          echo ""
+          echo "===== MOBILE-ONLY UI CHECK ====="
+          grep -n "_openAndroidStudentProfilePanel" \
+            lib/main_dashboard_screen.dart
+          grep -n "_buildAndroidMobileNoticeBoard" \
+            lib/main_dashboard_screen.dart
+          grep -n "DOWNLOAD UPDATE" \
+            lib/main_dashboard_screen.dart
+          grep -n "Profile & Settings" \
+            lib/main_dashboard_screen.dart | head -n 5
+
+      # ============================================================
       # 17. BUILD RELEASE APK
       # Every run gets a higher Android versionCode so the newest APK
       # actually replaces the older installed build.
@@ -1606,6 +1806,9 @@ jobs:
             --release \
             --build-name="1.0.${{ github.run_number }}" \
             --build-number="${{ github.run_number }}" \
+            --dart-define=APP_PLATFORM="android" \
+            --dart-define=APP_VERSION_CODE="${{ github.run_number }}" \
+            --dart-define=APP_VERSION_NAME="1.0.${{ github.run_number }}" \
             --dart-define=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
             --dart-define=GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}" \
             --dart-define=GOOGLE_WEB_CLIENT_ID="${{ secrets.GOOGLE_WEB_CLIENT_ID }}"
@@ -1633,7 +1836,7 @@ jobs:
 
           cp \
             build/app/outputs/flutter-apk/app-release.apk \
-            release/Vidya-Saarthi-v${{ github.run_number }}.apk
+            release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
 
           echo ""
           echo "========================================="
@@ -1646,7 +1849,118 @@ jobs:
           echo ""
           echo "APK SHA256:"
           sha256sum \
-            release/Vidya-Saarthi-v${{ github.run_number }}.apk
+            release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+
+      # ============================================================
+      # 19. PUBLISH GITHUB RELEASE
+      # Same package id + same signing key + higher build number =
+      # existing installed Vidya Saarthi app updates in place.
+      # ============================================================
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v1.0.${{ github.run_number }}
+          name: Vidya Saarthi v1.0.${{ github.run_number }}
+          make_latest: true
+          generate_release_notes: true
+          files: release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+
+      # ============================================================
+      # 20. UPDATE FIRESTORE APP UPDATE CONTROL
+      # Profile > Settings > App Update isi document ko read karta hai.
+      # Requires existing GitHub secret: FIREBASE_SERVICE_ACCOUNT
+      # ============================================================
+      - name: Publish App Update Metadata
+        shell: bash
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: 1.0.${{ github.run_number }}
+          RELEASE_TAG: android-v1.0.${{ github.run_number }}
+          APK_FILE: Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+        run: |
+          set -euo pipefail
+
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT secret missing."
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/vidya-update-admin"
+          cd "$RUNNER_TEMP/vidya-update-admin"
+          npm init -y >/dev/null 2>&1
+          npm install firebase-admin@14.4.0 >/dev/null
+
+          cat > publish-update.cjs <<'NODE'
+          const admin = require('firebase-admin');
+          const { execSync } = require('child_process');
+
+          const serviceAccount = JSON.parse(
+            process.env.FIREBASE_SERVICE_ACCOUNT
+          );
+
+          admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+          });
+
+          const repo = process.env.GITHUB_REPOSITORY;
+          const tag = process.env.RELEASE_TAG;
+          const apkFile = process.env.APK_FILE;
+          const versionCode = Number(process.env.VERSION_CODE);
+          const versionName = process.env.VERSION_NAME;
+          const apkUrl =
+            `https://github.com/${repo}/releases/download/${tag}/${apkFile}`;
+
+          let commitMessage =
+            'Latest Vidya Saarthi improvements and fixes.';
+
+          try {
+            commitMessage = execSync(
+              'git -C "$GITHUB_WORKSPACE" log -1 --pretty=%s',
+              {
+                env: process.env,
+                encoding: 'utf8',
+                shell: '/bin/bash',
+              },
+            ).trim() || commitMessage;
+          } catch (_) {}
+
+          async function main() {
+            await admin.firestore()
+              .collection('app_config')
+              .doc('android_update')
+              .set({
+                versionCode,
+                versionName,
+                apkUrl,
+                whatsNew: [commitMessage],
+                mandatory: false,
+                releaseTag: tag,
+                githubRepository: repo,
+                publishedAt:
+                  admin.firestore.FieldValue.serverTimestamp(),
+              }, { merge: true });
+
+            console.log(
+              'Firestore Android update metadata published.'
+            );
+            console.log(
+              'Version:',
+              versionName,
+              '(' + versionCode + ')',
+            );
+            console.log('APK:', apkUrl);
+          }
+
+          main()
+            .then(() => process.exit(0))
+            .catch((error) => {
+              console.error(error);
+              process.exit(1);
+            });
+          NODE
+
+          node publish-update.cjs
 
       # ============================================================
       # 19. BUILD SUMMARY
@@ -1655,7 +1969,7 @@ jobs:
         shell: bash
         run: |
           APK_SIZE=$(du -h \
-            release/Vidya-Saarthi-v${{ github.run_number }}.apk \
+            release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk \
             | cut -f1)
 
           echo "# 📱 Vidya Saarthi Android" >> "$GITHUB_STEP_SUMMARY"
@@ -1667,7 +1981,7 @@ jobs:
           echo "- Build: **#${{ github.run_number }}**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Branch: **${{ github.ref_name }}**" >> "$GITHUB_STEP_SUMMARY"
           echo "- APK Size: **$APK_SIZE**" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Android SDK: **34+**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Android SDK: **36**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Java: **17**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Camera Scanner: **Enabled**" >> "$GITHUB_STEP_SUMMARY"
           echo "- Build Type: **Release**" >> "$GITHUB_STEP_SUMMARY"
@@ -1675,13 +1989,13 @@ jobs:
           echo "- Signing: **Permanent release key**" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          echo "APK ko Artifacts section se download karein." \
+          echo "APK Artifact + GitHub Release dono me publish hoga." \
             >> "$GITHUB_STEP_SUMMARY"
 
       # ============================================================
       # 20. UPLOAD APK
       # ============================================================
-      - name: Upload Saarthi AI APK
+      - name: Upload Vidya Saarthi APK
         uses: actions/upload-artifact@v4
         with:
           name: Vidya-Saarthi-APK-${{ github.run_number }}
