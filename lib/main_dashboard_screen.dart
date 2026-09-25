@@ -1438,286 +1438,613 @@ if (!passwordMatched) {
   Widget build(BuildContext context) {
     if (_isRestoringSession) {
       return const Scaffold(
-        backgroundColor: Color(0xFF121B22),
+        backgroundColor: Color(0xFF06171D),
         body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF00A884)),
+          child: CircularProgressIndicator(color: Color(0xFF00D9A5)),
         ),
       );
     }
 
-final screenWidth = MediaQuery.of(context).size.width;
+    final media = MediaQuery.of(context);
+    final screenWidth = media.size.width;
+    final screenHeight = media.size.height;
+    final isCompact = screenWidth < 700;
+    final showMobileScanner = !_isAdminMode && screenWidth <= 700;
 
-final showMobileScanner =
-    !_isAdminMode && screenWidth <= 700;
+    Widget decorationIcon(
+      IconData icon, {
+      double size = 120,
+      double opacity = 0.16,
+    }) {
+      return Icon(
+        icon,
+        size: size,
+        color: const Color(0xFF00E8D0).withOpacity(opacity),
+      );
+    }
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF121B22),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('School Portal'),
-      ),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 500),
-            child: Column(
+    Widget brandHeader() {
+      final logo = Container(
+        width: isCompact ? 68 : 82,
+        height: isCompact ? 68 : 82,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [
+              Color(0xFF33E9D0),
+              Color(0xFF00A8FF),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF00E8D0).withOpacity(0.25),
+              blurRadius: 28,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(
+              Icons.auto_stories_rounded,
+              color: Colors.white,
+              size: isCompact ? 38 : 46,
+            ),
+            Positioned(
+              top: 5,
+              right: 7,
+              child: Icon(
+                Icons.star_rounded,
+                color: Colors.amberAccent,
+                size: isCompact ? 16 : 19,
+              ),
+            ),
+          ],
+        ),
+      );
+
+      final title = Column(
+        crossAxisAlignment:
+            isCompact ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+        children: [
+          RichText(
+            textAlign: isCompact ? TextAlign.center : TextAlign.left,
+            text: TextSpan(
               children: [
-                Icon(
-                  _isAdminMode
-                      ? Icons.admin_panel_settings_rounded
-                      : Icons.school_rounded,
-                  size: 65,
-                  color: const Color(0xFF00A884),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _isAdminMode
-                      ? 'ADMIN LOGIN'
-                      : 'STUDENT LOGIN',
-                  style: const TextStyle(
+                TextSpan(
+                  text: 'Vidya ',
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
+                    fontSize: isCompact ? 36 : 52,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -1.0,
                   ),
                 ),
-                const SizedBox(height: 24),
-
-                // Admin / Student selector - existing behavior kept.
-                Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1F2C34),
-                    borderRadius: BorderRadius.circular(12),
+                TextSpan(
+                  text: 'Saarthi',
+                  style: TextStyle(
+                    color: const Color(0xFF00E8D0),
+                    fontSize: isCompact ? 36 : 52,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -1.0,
                   ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => _switchRole(true),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 10,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            'SMART SCHOOL MANAGEMENT SUITE',
+            textAlign: isCompact ? TextAlign.center : TextAlign.left,
+            style: TextStyle(
+              color: const Color(0xFFBCE8E5).withOpacity(0.82),
+              fontSize: isCompact ? 10.5 : 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: isCompact ? 2.0 : 3.2,
+            ),
+          ),
+        ],
+      );
+
+      return Column(
+        children: [
+          if (isCompact)
+            Column(
+              children: [
+                logo,
+                const SizedBox(height: 14),
+                title,
+              ],
+            )
+          else
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                logo,
+                const SizedBox(width: 22),
+                title,
+              ],
+            ),
+          SizedBox(height: isCompact ? 14 : 18),
+          Container(
+            width: isCompact ? 300 : 560,
+            height: 1,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.transparent,
+                  const Color(0xFF00E8D0).withOpacity(0.95),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            isCompact
+                ? 'EMPOWERING SCHOOLS  •  ENABLING EDUCATION'
+                : 'EMPOWERING SCHOOLS   •   ENABLING EDUCATION   •   BUILDING BRIGHTER TOMORROWS',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.64),
+              fontSize: isCompact ? 8.5 : 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: isCompact ? 1.0 : 2.3,
+            ),
+          ),
+        ],
+      );
+    }
+
+    Widget loginPanel() {
+      return Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(isCompact ? 18 : 28),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xFF0C2A30).withOpacity(0.97),
+              const Color(0xFF0A1E26).withOpacity(0.98),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(
+            color: const Color(0xFF00E8D0).withOpacity(0.72),
+            width: 1.2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF00D7C0).withOpacity(0.14),
+              blurRadius: 35,
+              spreadRadius: 2,
+            ),
+            BoxShadow(
+              color: Colors.black.withOpacity(0.40),
+              blurRadius: 35,
+              offset: const Offset(0, 18),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: const Color(0xFF00A884).withOpacity(0.13),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFF00E8D0).withOpacity(0.25),
+                ),
+              ),
+              child: Icon(
+                _isAdminMode
+                    ? Icons.admin_panel_settings_rounded
+                    : Icons.school_rounded,
+                size: 35,
+                color: const Color(0xFF00D9A5),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              _isAdminMode ? 'ADMIN LOGIN' : 'STUDENT LOGIN',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: isCompact ? 21 : 24,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.3,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              _isAdminMode
+                  ? 'Access your school management dashboard'
+                  : 'Access your student portal securely',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white54,
+                fontSize: 11.5,
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Existing Admin / Student switching behaviour kept intact.
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF142832),
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _switchRole(true),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        decoration: BoxDecoration(
+                          gradient: _isAdminMode
+                              ? const LinearGradient(
+                                  colors: [
+                                    Color(0xFF00A884),
+                                    Color(0xFF00D9A5),
+                                  ],
+                                )
+                              : null,
+                          color: _isAdminMode ? null : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.security, size: 16, color: Colors.white),
+                            SizedBox(width: 6),
+                            Text(
+                              'Admin',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                            decoration: BoxDecoration(
-                              color: _isAdminMode
-                                  ? const Color(0xFF00A884)
-                                  : Colors.transparent,
-                              borderRadius:
-                                  BorderRadius.circular(10),
-                            ),
-                            child: const Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.security,
-                                  size: 16,
-                                  color: Colors.white,
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Admin',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight:
-                                        FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                          ],
                         ),
                       ),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => _switchRole(false),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 10,
+                    ),
+                  ),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _switchRole(false),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        decoration: BoxDecoration(
+                          gradient: !_isAdminMode
+                              ? const LinearGradient(
+                                  colors: [
+                                    Color(0xFF00A884),
+                                    Color(0xFF00D9A5),
+                                  ],
+                                )
+                              : null,
+                          color: !_isAdminMode ? null : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.person, size: 16, color: Colors.white),
+                            SizedBox(width: 6),
+                            Text(
+                              'Student',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                            decoration: BoxDecoration(
-                              color: !_isAdminMode
-                                  ? const Color(0xFF00A884)
-                                  : Colors.transparent,
-                              borderRadius:
-                                  BorderRadius.circular(10),
-                            ),
-                            child: const Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.person,
-                                  size: 16,
-                                  color: Colors.white,
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Student',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight:
-                                        FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 18),
+
+            // Existing mobile student QR flow kept intact.
+            if (showMobileScanner) ...[
+              if (_showInlineScanner)
+                _buildInlineScannerPanel()
+              else if (_scannedStudentData != null)
+                _buildVerifiedStudentCard()
+              else
+                _buildScanLaunchCard(),
+              const SizedBox(height: 16),
+              if (_scannedStudentData == null) ...[
+                _buildManualLoginDivider(),
+                const SizedBox(height: 16),
+              ],
+            ],
+
+            // Existing manual student class selector kept intact.
+            if (!_isAdminMode && _scannedStudentData == null) ...[
+              DropdownButtonFormField<String>(
+                value: _selectedClass,
+                dropdownColor: const Color(0xFF162A32),
+                style: const TextStyle(color: Colors.white),
+                decoration: _inputDecoration('Class'),
+                items: _classList
+                    .map(
+                      (value) => DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _selectedClass = value);
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            if (_isAdminMode || _scannedStudentData == null)
+              TextField(
+                controller: _usernameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: _inputDecoration(
+                  _isAdminMode ? 'Admin Email' : 'Student ID / Roll No',
+                  icon: _isAdminMode
+                      ? Icons.person_outline
+                      : Icons.badge_outlined,
+                ),
+              ),
+
+            if (_isAdminMode || _scannedStudentData == null)
+              const SizedBox(height: 16),
+
+            TextField(
+              controller: _passwordController,
+              obscureText: _obscurePassword,
+              style: const TextStyle(color: Colors.white),
+              decoration: _inputDecoration(
+                _isAdminMode
+                    ? 'Password'
+                    : _scannedStudentData != null
+                        ? 'Confirm Date of Birth (DD/MM/YYYY)'
+                        : 'Date of Birth (DD/MM/YYYY)',
+                icon: Icons.lock_outline,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                    color: Colors.grey,
+                  ),
+                  onPressed: () => setState(
+                    () => _obscurePassword = !_obscurePassword,
                   ),
                 ),
+              ),
+            ),
 
-                const SizedBox(height: 18),
+            const SizedBox(height: 22),
 
-                // =================================================
-                // MOBILE-ONLY INLINE SCANNER
-                // Desktop / PC gets none of this UI.
-                // =================================================
-                if (showMobileScanner) ...[
-                  if (_showInlineScanner)
-                    _buildInlineScannerPanel()
-                  else if (_scannedStudentData != null)
-                    _buildVerifiedStudentCard()
-                  else
-                    _buildScanLaunchCard(),
-
-                  const SizedBox(height: 16),
-
-                  if (_scannedStudentData == null) ...[
-                    _buildManualLoginDivider(),
-                    const SizedBox(height: 16),
-                  ],
-                ],
-
-                // =================================================
-                // EXISTING MANUAL STUDENT LOGIN
-                // After QR verification, Class + Roll are auto-filled
-                // and hidden; DOB + existing login button remain.
-                // =================================================
-                if (!_isAdminMode &&
-                    _scannedStudentData == null) ...[
-                  DropdownButtonFormField<String>(
-                    value: _selectedClass,
-                    dropdownColor:
-                        const Color(0xFF1F2C34),
-                    style:
-                        const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration('Class'),
-                    items: _classList
-                        .map(
-                          (value) =>
-                              DropdownMenuItem<String>(
-                            value: value,
-                            child: Text(value),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(
-                          () => _selectedClass = value,
-                        );
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                // Hide Roll field only after successful QR scan.
-                if (_isAdminMode ||
-                    _scannedStudentData == null)
-                  TextField(
-                    controller: _usernameController,
-                    style:
-                        const TextStyle(color: Colors.white),
-                    decoration: _inputDecoration(
-                      _isAdminMode
-                          ? 'Admin Email'
-                          : 'Student ID / Roll No',
-                      icon: _isAdminMode
-                          ? Icons.person_outline
-                          : Icons.badge_outlined,
-                    ),
-                  ),
-
-                if (_isAdminMode ||
-                    _scannedStudentData == null)
-                  const SizedBox(height: 16),
-
-                // DOB / Password remains exactly part of login.
-                TextField(
-                  controller: _passwordController,
-                  obscureText: _obscurePassword,
-                  style:
-                      const TextStyle(color: Colors.white),
-                  decoration: _inputDecoration(
-                    _isAdminMode
-                        ? 'Password'
-                        : _scannedStudentData != null
-                            ? 'Confirm Date of Birth (DD/MM/YYYY)'
-                            : 'Date of Birth (DD/MM/YYYY)',
-                    icon: Icons.lock_outline,
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscurePassword
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                        color: Colors.grey,
-                      ),
-                      onPressed: () => setState(
-                        () => _obscurePassword =
-                            !_obscurePassword,
-                      ),
-                    ),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00B894),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shadowColor: const Color(0xFF00D9A5).withOpacity(0.35),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(13),
                   ),
                 ),
-
-                const SizedBox(height: 24),
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          const Color(0xFF00A884),
-                      shape: RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(12),
-                      ),
-                    ),
-                    onPressed:
-                        _isLoggingIn ? null : _handleLogin,
-                    child: _isLoggingIn
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child:
-                                CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          )
-                        : Text(
+                onPressed: _isLoggingIn ? null : _handleLogin,
+                child: _isLoggingIn
+                    ? const SizedBox(
+                        width: 21,
+                        height: 21,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
                             _isAdminMode
                                 ? 'LOGIN AS ADMIN'
                                 : _scannedStudentData != null
                                     ? 'VERIFY DOB & ENTER PORTAL'
                                     : 'LOGIN AS STUDENT',
                             style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.2,
                             ),
                           ),
-                  ),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.arrow_forward_rounded, size: 20),
+                        ],
+                      ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF06171D),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(0, -0.35),
+                  radius: 1.25,
+                  colors: [
+                    Color(0xFF0B3B3A),
+                    Color(0xFF08262D),
+                    Color(0xFF06171D),
+                    Color(0xFF041116),
+                  ],
+                  stops: [0.0, 0.34, 0.72, 1.0],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
+
+          // Decorative school visuals. They never receive clicks.
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Stack(
+                children: [
+                  if (!isCompact) ...[
+                    Positioned(
+                      left: -8,
+                      top: screenHeight * 0.18,
+                      child: decorationIcon(
+                        Icons.account_balance_rounded,
+                        size: 190,
+                        opacity: 0.14,
+                      ),
+                    ),
+                    Positioned(
+                      right: 38,
+                      top: screenHeight * 0.13,
+                      child: decorationIcon(
+                        Icons.school_rounded,
+                        size: 145,
+                        opacity: 0.16,
+                      ),
+                    ),
+                    Positioned(
+                      right: -16,
+                      top: screenHeight * 0.35,
+                      child: decorationIcon(
+                        Icons.public_rounded,
+                        size: 185,
+                        opacity: 0.12,
+                      ),
+                    ),
+                    Positioned(
+                      right: 170,
+                      top: screenHeight * 0.38,
+                      child: decorationIcon(
+                        Icons.menu_book_rounded,
+                        size: 105,
+                        opacity: 0.10,
+                      ),
+                    ),
+                  ],
+                  Positioned(
+                    left: -screenWidth * 0.12,
+                    bottom: screenHeight * 0.11,
+                    child: Transform.rotate(
+                      angle: -0.08,
+                      child: Container(
+                        width: screenWidth * 0.72,
+                        height: 2,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.transparent,
+                              const Color(0xFF00E8D0).withOpacity(0.62),
+                              Colors.transparent,
+                            ],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF00E8D0).withOpacity(0.28),
+                              blurRadius: 16,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    right: -screenWidth * 0.13,
+                    bottom: screenHeight * 0.22,
+                    child: Transform.rotate(
+                      angle: 0.07,
+                      child: Container(
+                        width: screenWidth * 0.68,
+                        height: 2,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.transparent,
+                              const Color(0xFF00B6FF).withOpacity(0.56),
+                              Colors.transparent,
+                            ],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF00B6FF).withOpacity(0.22),
+                              blurRadius: 14,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          Positioned.fill(
+            child: SafeArea(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isCompact ? 14 : 28,
+                  vertical: isCompact ? 22 : 34,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: screenHeight - (isCompact ? 44 : 68),
+                  ),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1180),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          brandHeader(),
+                          SizedBox(height: isCompact ? 24 : 34),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 530),
+                            child: loginPanel(),
+                          ),
+                          SizedBox(height: isCompact ? 18 : 28),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
