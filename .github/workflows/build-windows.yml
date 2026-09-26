@@ -69,6 +69,15 @@ jobs:
             ''
           )
 
+          # mobile_scanner is only needed by mobile/web student QR flow.
+          # Windows Admin uses lib/windows_mobile_scanner_shim.dart instead,
+          # so remove the package only from the temporary Windows CI pubspec.
+          $pubspec = [regex]::Replace(
+            $pubspec,
+            '(?m)^\s*mobile_scanner:\s*[^\r\n]+\r?\n',
+            ''
+          )
+
           # The repository still uses the old 2024 FlutterFire Windows plugins.
           # Newer MSVC toolchains reject their std::variant conversion code.
           # Upgrade Firebase ONLY inside this Windows CI runner.
@@ -102,7 +111,7 @@ jobs:
           Set-Content -Path "pubspec.yaml" -Value $pubspec -Encoding UTF8
 
           Write-Host "===== WINDOWS CI PUBSPEC ====="
-          Select-String -Path "pubspec.yaml" -Pattern "firebase_core:|firebase_auth:|cloud_firestore:|printing:|agora_rtc_engine:"
+          Select-String -Path "pubspec.yaml" -Pattern "firebase_core:|firebase_auth:|cloud_firestore:|printing:|agora_rtc_engine:|mobile_scanner:"
 
       - name: Clean Flutter
         shell: powershell
