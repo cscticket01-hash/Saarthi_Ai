@@ -133,6 +133,16 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Windows app version: $version"
 
+      - name: Check Windows Firebase API Key
+        shell: powershell
+        env:
+          WINDOWS_FIREBASE_API_KEY: ${{ secrets.WINDOWS_FIREBASE_API_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_FIREBASE_API_KEY)) {
+            throw "GitHub secret WINDOWS_FIREBASE_API_KEY is missing."
+          }
+          Write-Host "WINDOWS_FIREBASE_API_KEY secret is configured."
+
       - name: Build Windows Admin App
         shell: powershell
         run: |
@@ -140,6 +150,7 @@ jobs:
             --release `
             -t lib/main_windows.dart `
             --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
+            --dart-define=WINDOWS_FIREBASE_API_KEY=${{ secrets.WINDOWS_FIREBASE_API_KEY }} `
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
       - name: Verify Windows Build
