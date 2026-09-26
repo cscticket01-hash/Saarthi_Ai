@@ -14,6 +14,11 @@ const String _windowsAppVersion = String.fromEnvironment(
   defaultValue: '1.0.0',
 );
 
+const String _windowsFirebaseApiKey = String.fromEnvironment(
+  'WINDOWS_FIREBASE_API_KEY',
+  defaultValue: '',
+);
+
 void _saveWindowsAdminPortalSession() {
   final storage = windows_html.window.localStorage;
   storage['saarthi_portal_role_v1'] = 'admin';
@@ -28,9 +33,16 @@ void _saveWindowsAdminPortalSession() {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  if (_windowsFirebaseApiKey.trim().isEmpty) {
+    throw StateError(
+      'WINDOWS_FIREBASE_API_KEY missing. Build the Windows app with the '
+      'WINDOWS_FIREBASE_API_KEY dart-define.',
+    );
+  }
+
   await Firebase.initializeApp(
     options: const FirebaseOptions(
-      apiKey: 'AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A',
+      apiKey: _windowsFirebaseApiKey,
       appId: '1:751405981184:web:f1240e05c084bac7b242e5',
       messagingSenderId: '751405981184',
       projectId: 'saarthi-ai-df12b',
