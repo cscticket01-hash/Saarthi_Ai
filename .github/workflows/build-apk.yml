@@ -696,12 +696,13 @@ jobs:
           flutter pub add "http:^1.2.2"
           flutter pub add "path_provider:2.1.4"
           flutter pub add "open_filex:4.7.0"
+          flutter pub add "shared_preferences:2.3.2"
           flutter pub get
 
           echo ""
           echo "===== ANDROID HELPER DEPENDENCIES ====="
           flutter pub deps > /tmp/android-helper-deps.txt
-          grep -E "printing |file_picker |url_launcher |firebase_messaging |http |path_provider |open_filex " /tmp/android-helper-deps.txt || true
+          grep -E "printing |file_picker |url_launcher |firebase_messaging |http |path_provider |open_filex |shared_preferences " /tmp/android-helper-deps.txt || true
 
           if ! grep -q "file_picker 8.0.7" /tmp/android-helper-deps.txt; then
             echo "::error::file_picker 8.0.7 resolve nahi hua."
@@ -716,18 +717,47 @@ jobs:
           cat > lib/android_html_shim.dart <<'DART'
           import 'dart:async';
 
+          import 'package:shared_preferences/shared_preferences.dart';
           import 'package:url_launcher/url_launcher.dart';
 
           class Storage {
             final Map<String, String> _values = <String, String>{};
+            SharedPreferences? _preferences;
+            bool _initialized = false;
+
+            Future<void> initialize() async {
+              if (_initialized) return;
+              final preferences = await SharedPreferences.getInstance();
+              _preferences = preferences;
+              for (final key in preferences.getKeys()) {
+                final value = preferences.getString(key);
+                if (value != null) {
+                  _values[key] = value;
+                }
+              }
+              _initialized = true;
+            }
 
             String? operator [](Object? key) => _values[key];
 
             void operator []=(String key, String value) {
               _values[key] = value;
+              final preferences = _preferences;
+              if (preferences != null) {
+                unawaited(preferences.setString(key, value));
+              }
             }
 
-            String? remove(Object? key) => _values.remove(key);
+            String? remove(Object? key) {
+              final stringKey = key?.toString();
+              if (stringKey == null) return null;
+              final oldValue = _values.remove(stringKey);
+              final preferences = _preferences;
+              if (preferences != null) {
+                unawaited(preferences.remove(stringKey));
+              }
+              return oldValue;
+            }
           }
 
           class NavigatorInfo {
@@ -737,6 +767,8 @@ jobs:
           class Window {
             final Storage localStorage = Storage();
             final NavigatorInfo navigator = NavigatorInfo();
+
+            Future<void> initializeLocalStorage() => localStorage.initialize();
 
             void open(String url, String target) {
               final uri = Uri.tryParse(url);
@@ -3150,6 +3182,666 @@ jobs:
             echo "::error::Old School Notifications settings card still present."
             exit 1
           fi
+
+      # ============================================================
+      # ANDROID-ONLY: SETTINGS + SESSION + RAPID BACK FIX
+      # ============================================================
+      - name: Apply Android Session and Advanced Settings Fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > scripts/android_4_requests_patch.py <<'PY4REQUESTS'
+          from pathlib import Path
+          import re
+
+          DASHBOARD = Path('lib/main_dashboard_screen.dart')
+          if not DASHBOARD.exists():
+              raise SystemExit('ERROR: lib/main_dashboard_screen.dart nahi mila')
+          text = DASHBOARD.read_text(encoding='utf-8', errors='ignore')
+
+          # Android imports
+          mobile_import = "import 'package:mobile_scanner/mobile_scanner.dart';"
+          for import_line in [
+              "import 'package:flutter/gestures.dart';",
+              "import 'package:flutter/services.dart';",
+          ]:
+              if import_line not in text:
+                  if mobile_import not in text:
+                      raise SystemExit('ERROR: mobile_scanner import patch point nahi mila')
+                  text = text.replace(mobile_import, mobile_import + '\n' + import_line, 1)
+
+          # Persistent local storage must be loaded before session restore.
+          restore_marker = "  Future<void> _restoreSavedPortalSession() async {\n"
+          if 'await html.window.initializeLocalStorage();' not in text:
+              if restore_marker not in text:
+                  raise SystemExit('ERROR: Portal restore method patch point nahi mila')
+              text = text.replace(
+                  restore_marker,
+                  restore_marker + '    await html.window.initializeLocalStorage();\n',
+                  1,
+              )
+
+
+          def patch_portal_section(section: str, role: str) -> str:
+              field_anchor = 'int _loginBackResetToken = 0;'
+              if '_lastRapidBackAt' not in section:
+                  if field_anchor not in section:
+                      raise SystemExit(f'ERROR: {role} back fields patch point nahi mila')
+                  section = section.replace(
+                      field_anchor,
+                      field_anchor + '\nDateTime? _lastRapidBackAt;',
+                      1,
+                  )
+
+              handler_start = section.find('void _handleLoginBack(bool didPop) {')
+              if handler_start == -1:
+                  raise SystemExit(f'ERROR: {role} back handler start nahi mila')
+
+              brace_start = section.find('{', handler_start)
+              depth = 0
+              handler_end = -1
+              for i in range(brace_start, len(section)):
+                  ch = section[i]
+                  if ch == '{':
+                      depth += 1
+                  elif ch == '}':
+                      depth -= 1
+                      if depth == 0:
+                          handler_end = i + 1
+                          break
+              if handler_end == -1:
+                  raise SystemExit(f'ERROR: {role} back handler end nahi mila')
+              while handler_end < len(section) and section[handler_end] == '\n':
+                  handler_end += 1
+
+              new_handler = '''void _handleLoginBack(bool didPop) {
+            if (didPop) return;
+
+            final now = DateTime.now();
+            final previous = _lastRapidBackAt;
+
+            if (previous == null ||
+                now.difference(previous).inMilliseconds > 650) {
+              _loginBackPressCount = 0;
+            }
+
+            _lastRapidBackAt = now;
+            _loginBackPressCount++;
+
+            if (_loginBackPressCount >= 3) {
+              _loginBackPressCount = 0;
+              _loginBackResetToken++;
+              _lastRapidBackAt = null;
+
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              SystemNavigator.pop();
+              return;
+            }
+
+            final remaining = 3 - _loginBackPressCount;
+
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  duration: const Duration(milliseconds: 430),
+                  behavior: SnackBarBehavior.floating,
+                  margin: const EdgeInsets.fromLTRB(92, 0, 92, 16),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  backgroundColor: const Color(0xFFFFA726),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  content: Text(
+                    remaining == 1 ? 'Exit: Back ×1' : 'Exit: Back ×$remaining',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              );
+
+            final token = ++_loginBackResetToken;
+
+            Future<void>.delayed(
+              const Duration(milliseconds: 650),
+              () {
+                if (!mounted || token != _loginBackResetToken) return;
+                _loginBackPressCount = 0;
+                _lastRapidBackAt = null;
+              },
+            );
+          }
+
+          '''
+              section = section[:handler_start] + new_handler + section[handler_end:]
+
+              inactivity_marker = '  void _startPortalInactivityTimer() {'
+              pointer_helper = '''  void _handlePortalPointerEvent(PointerEvent event) {
+              if (event is! PointerDownEvent || !mounted || _autoLogoutInProgress) {
+                return;
+              }
+
+              _touchPortalSession();
+              _sessionSecondsRemaining.value = _portalInactivityLimit.inSeconds;
+            }
+
+          '''
+              if '_handlePortalPointerEvent(PointerEvent event)' not in section:
+                  idx = section.find(inactivity_marker)
+                  if idx == -1:
+                      raise SystemExit(f'ERROR: {role} inactivity method nahi mila')
+                  section = section[:idx] + pointer_helper + section[idx:]
+
+              start = section.find(inactivity_marker)
+              auto_marker = (
+                  '  Future<void> _autoLogoutAdmin() async {' if role == 'admin'
+                  else '  Future<void> _autoLogoutStudent() async {'
+              )
+              end = section.find(auto_marker, start)
+              if start == -1 or end == -1:
+                  raise SystemExit(f'ERROR: {role} inactivity timer boundaries nahi mile')
+
+              auto_call = '_autoLogoutAdmin()' if role == 'admin' else '_autoLogoutStudent()'
+              new_timer = f'''  void _startPortalInactivityTimer() {{
+              final initialRemaining = _portalSessionRemainingSeconds();
+              _sessionSecondsRemaining.value = initialRemaining;
+
+              _sessionTimer?.cancel();
+              _sessionTimer = Timer.periodic(
+                const Duration(seconds: 1),
+                (_) {{
+                  if (!mounted || _autoLogoutInProgress) return;
+
+                  final remaining = _portalSessionRemainingSeconds();
+                  _sessionSecondsRemaining.value = remaining;
+
+                  if (remaining <= 0) {{
+                    {auto_call};
+                  }}
+                }},
+              );
+
+              if (initialRemaining <= 0) {{
+                WidgetsBinding.instance.addPostFrameCallback((_) {{
+                  if (mounted) {auto_call};
+                }});
+              }}
+            }}
+
+          '''
+              section = section[:start] + new_timer + section[end:]
+
+              if 'pointerRouter.addGlobalRoute(_handlePortalPointerEvent)' not in section:
+                  init_pattern = re.compile(
+                      r'(?ms)(@override\s*\n\s*void\s+initState\(\)\s*\{\s*\n\s*super\.initState\(\);\s*\n)'
+                  )
+                  section, count = init_pattern.subn(
+                      lambda m: m.group(1)
+                      + '    GestureBinding.instance.pointerRouter.addGlobalRoute(\n'
+                      + '      _handlePortalPointerEvent,\n'
+                      + '    );\n',
+                      section,
+                      count=1,
+                  )
+                  if count == 0:
+                      raise SystemExit(f'ERROR: {role} initState patch point nahi mila')
+
+              if 'pointerRouter.removeGlobalRoute(_handlePortalPointerEvent)' not in section:
+                  dispose_marker = '  void dispose() {\n'
+                  idx = section.find(dispose_marker)
+                  if idx == -1:
+                      raise SystemExit(f'ERROR: {role} dispose patch point nahi mila')
+                  insert_at = idx + len(dispose_marker)
+                  section = (
+                      section[:insert_at]
+                      + '    GestureBinding.instance.pointerRouter.removeGlobalRoute(\n'
+                      + '      _handlePortalPointerEvent,\n'
+                      + '    );\n'
+                      + section[insert_at:]
+                  )
+
+              section = re.sub(
+                  r'canPop:\s*_loginBackPressCount\s*>=\s*2,',
+                  'canPop: false,',
+                  section,
+                  count=1,
+              )
+              return section
+
+          # Student portal patch
+          student_start = text.find('class _StudentPortalScreenState')
+          admin_start = text.find('class _AdminDashboardScreenState', student_start)
+          if student_start == -1 or admin_start == -1:
+              raise SystemExit('ERROR: Student/Admin state boundaries nahi mile')
+          student_section = text[student_start:admin_start]
+          student_section = patch_portal_section(student_section, 'student')
+          text = text[:student_start] + student_section + text[admin_start:]
+
+          # Admin portal patch
+          admin_start = text.find('class _AdminDashboardScreenState')
+          settings_class_start = text.find('class SettingsScreen', admin_start)
+          if admin_start == -1 or settings_class_start == -1:
+              raise SystemExit('ERROR: Admin/Settings boundaries nahi mile')
+          admin_section = text[admin_start:settings_class_start]
+          admin_section = patch_portal_section(admin_section, 'admin')
+          text = text[:admin_start] + admin_section + text[settings_class_start:]
+
+          # Main Settings: replace existing Advanced Settings block with a compact whole-card button.
+          settings_state_start = text.find('class _SettingsScreenState')
+          advanced_screen_start = text.find('class AdvancedSettingsScreen', settings_state_start)
+          if settings_state_start == -1 or advanced_screen_start == -1:
+              raise SystemExit('ERROR: Settings / Advanced Settings classes nahi mile')
+          settings_section = text[settings_state_start:advanced_screen_start]
+
+          adv_start = settings_section.find('// ADVANCED SETTINGS')
+          uid_comment = settings_section.find('// TEST STUDENT UID SETTINGS', adv_start)
+          if adv_start == -1 or uid_comment == -1:
+              raise SystemExit('ERROR: Main Advanced/UID UI markers nahi mile')
+
+          # Include preceding SizedBox before Advanced block.
+          replace_start = settings_section.rfind('                const SizedBox(height: 16),', 0, adv_start)
+          if replace_start == -1:
+              raise SystemExit('ERROR: Advanced Settings leading spacing marker nahi mila')
+          # Stop at the SizedBox immediately before UID comment.
+          replace_end = settings_section.rfind('                const SizedBox(height: 16),', adv_start, uid_comment)
+          if replace_end == -1:
+              raise SystemExit('ERROR: Advanced Settings end marker nahi mila')
+
+          compact_advanced = '''                const SizedBox(height: 16),
+
+                          Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(18),
+                              onTap: () async {
+                                await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const AdvancedSettingsScreen(),
+                                  ),
+                                );
+
+                                if (mounted) {
+                                  _fetchLinkedAccount();
+                                  _fetchUidTestSettings();
+                                }
+                              },
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(18),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF172229),
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(
+                                    color: Colors.orangeAccent.withOpacity(0.16),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: Colors.orangeAccent.withOpacity(0.11),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: const Icon(
+                                        Icons.admin_panel_settings_rounded,
+                                        color: Colors.orangeAccent,
+                                        size: 22,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Advanced Settings',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          SizedBox(height: 3),
+                                          Text(
+                                            'Google Drive, Student UID & protected system controls',
+                                            style: TextStyle(
+                                              color: Colors.white38,
+                                              fontSize: 10.5,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Container(
+                                      width: 36,
+                                      height: 36,
+                                      decoration: BoxDecoration(
+                                        color: Colors.orangeAccent.withOpacity(0.08),
+                                        borderRadius: BorderRadius.circular(11),
+                                      ),
+                                      child: const Icon(
+                                        Icons.chevron_right_rounded,
+                                        color: Colors.orangeAccent,
+                                        size: 25,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+
+          '''
+          settings_section = settings_section[:replace_start] + compact_advanced + settings_section[replace_end:]
+
+          # Remove old UID card from main Settings using balanced parentheses.
+          uid_comment = settings_section.find('// TEST STUDENT UID SETTINGS')
+          if uid_comment == -1:
+              raise SystemExit('ERROR: UID card marker disappeared unexpectedly')
+          uid_space_start = settings_section.rfind('                const SizedBox(height: 16),', 0, uid_comment)
+          uid_call_start = settings_section.find('_settingsCard(', uid_comment)
+          if uid_space_start == -1 or uid_call_start == -1:
+              raise SystemExit('ERROR: UID card boundaries nahi mile')
+
+          # Find matching parenthesis for _settingsCard(...)
+          pos = uid_call_start + len('_settingsCard')
+          depth = 0
+          in_single = False
+          in_double = False
+          escape = False
+          end_pos = -1
+          for i in range(pos, len(settings_section)):
+              ch = settings_section[i]
+              if escape:
+                  escape = False
+                  continue
+              if ch == '\\':
+                  escape = True
+                  continue
+              if not in_double and ch == "'":
+                  in_single = not in_single
+                  continue
+              if not in_single and ch == '"':
+                  in_double = not in_double
+                  continue
+              if in_single or in_double:
+                  continue
+              if ch == '(':
+                  depth += 1
+              elif ch == ')':
+                  depth -= 1
+                  if depth == 0:
+                      end_pos = i + 1
+                      break
+          if end_pos == -1:
+              raise SystemExit('ERROR: UID _settingsCard closing bracket nahi mila')
+          # Include comma/newline after call.
+          while end_pos < len(settings_section) and settings_section[end_pos] in ' \t':
+              end_pos += 1
+          if end_pos < len(settings_section) and settings_section[end_pos] == ',':
+              end_pos += 1
+          if end_pos < len(settings_section) and settings_section[end_pos] == '\n':
+              end_pos += 1
+          settings_section = settings_section[:uid_space_start] + settings_section[end_pos:]
+          text = text[:settings_state_start] + settings_section + text[advanced_screen_start:]
+
+          # Copy UID logic methods from Settings to Advanced Settings.
+          settings_state_start = text.find('class _SettingsScreenState')
+          advanced_screen_start = text.find('class AdvancedSettingsScreen', settings_state_start)
+          settings_section = text[settings_state_start:advanced_screen_start]
+          uid_methods_start = settings_section.find('  Future<void> _fetchUidTestSettings() async {')
+          uid_methods_end = settings_section.find('  Future<void> _confirmLogout() async {', uid_methods_start)
+          if uid_methods_start == -1 or uid_methods_end == -1:
+              raise SystemExit('ERROR: UID logic methods source block nahi mila')
+          uid_methods = settings_section[uid_methods_start:uid_methods_end]
+
+          advanced_state_start = text.find('class _AdvancedSettingsScreenState')
+          drive_dialog_start = text.find('class _DriveUnlinkSecurityDialog', advanced_state_start)
+          if advanced_state_start == -1 or drive_dialog_start == -1:
+              raise SystemExit('ERROR: Advanced state boundaries nahi mile')
+          advanced_section = text[advanced_state_start:drive_dialog_start]
+
+          uid_fields = '''  final TextEditingController _uidStartController =
+                TextEditingController(text: 'TEST-000001');
+
+            bool _uidSettingsLoading = true;
+            bool _uidMasterEnabled = false;
+            bool _uidFeesEnabled = false;
+            bool _uidIdCardEnabled = false;
+            bool _uidEverActivated = false;
+            String _uidPrefix = 'TEST-';
+            int _uidPadding = 6;
+            int _uidNextNumber = 1;
+            String _uidLastIssued = '';
+
+          '''
+          if '_uidStartController' not in advanced_section:
+              fields_anchor = '  bool _saving = false;\n'
+              if fields_anchor not in advanced_section:
+                  raise SystemExit('ERROR: Advanced UID fields insert point nahi mila')
+              advanced_section = advanced_section.replace(fields_anchor, fields_anchor + '\n' + uid_fields, 1)
+
+          # Advanced init/dispose.
+          init_pos = advanced_section.find('  void initState() {')
+          dispose_pos = advanced_section.find('  void dispose() {', init_pos)
+          if init_pos == -1 or dispose_pos == -1:
+              raise SystemExit('ERROR: Advanced init/dispose nahi mila')
+          init_slice = advanced_section[init_pos:dispose_pos]
+          if '_fetchUidTestSettings();' not in init_slice:
+              if '    _load();\n' not in init_slice:
+                  raise SystemExit('ERROR: Advanced _load init marker nahi mila')
+              init_slice = init_slice.replace('    _load();\n', '    _load();\n    _fetchUidTestSettings();\n', 1)
+              advanced_section = advanced_section[:init_pos] + init_slice + advanced_section[dispose_pos:]
+
+          dispose_pos = advanced_section.find('  void dispose() {')
+          load_pos = advanced_section.find('  Future<void> _load()', dispose_pos)
+          dispose_slice = advanced_section[dispose_pos:load_pos]
+          if '_uidStartController.dispose();' not in dispose_slice:
+              if '    _script.dispose();\n' not in dispose_slice:
+                  raise SystemExit('ERROR: Advanced script dispose marker nahi mila')
+              dispose_slice = dispose_slice.replace('    _script.dispose();\n', '    _script.dispose();\n    _uidStartController.dispose();\n', 1)
+              advanced_section = advanced_section[:dispose_pos] + dispose_slice + advanced_section[load_pos:]
+
+          if 'Future<void> _fetchUidTestSettings() async {' not in advanced_section:
+              helper_idx = advanced_section.find('  InputDecoration _input(')
+              if helper_idx == -1:
+                  raise SystemExit('ERROR: Advanced method insert point nahi mila')
+              advanced_section = advanced_section[:helper_idx] + uid_methods + advanced_section[helper_idx:]
+
+          uid_helpers = r'''
+            InputDecoration _uidInputDecoration(String hint, IconData icon) {
+              return InputDecoration(
+                hintText: hint,
+                hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
+                prefixIcon: Icon(icon, color: const Color(0xFF00A884), size: 19),
+                filled: true,
+                fillColor: const Color(0xFF0F191F),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.white.withOpacity(0.06)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFF00A884)),
+                ),
+              );
+            }
+
+            Widget _advancedUidToggleTile({
+              required String title,
+              required String subtitle,
+              required bool value,
+              required ValueChanged<bool> onChanged,
+              bool enabled = true,
+            }) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F191F),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withOpacity(0.055)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(title, style: TextStyle(color: enabled ? Colors.white : Colors.white30, fontSize: 12.5, fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 3),
+                          Text(subtitle, style: TextStyle(color: enabled ? Colors.white38 : Colors.white24, fontSize: 10, height: 1.35)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Switch(value: value, activeColor: const Color(0xFF00D9A5), onChanged: enabled ? onChanged : null),
+                  ],
+                ),
+              );
+            }
+
+            Widget _buildAdvancedStudentUidCard() {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF172229),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF00D9A5).withOpacity(0.14)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(color: const Color(0xFF00A884).withOpacity(0.11), borderRadius: BorderRadius.circular(12)),
+                          child: const Icon(Icons.badge_rounded, color: Color(0xFF00D9A5), size: 21),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Student UID — TEST MODE', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
+                              SizedBox(height: 3),
+                              Text('Fees identity + optional ID Card UID preview', style: TextStyle(color: Colors.white38, fontSize: 10.5)),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          _uidMasterEnabled ? 'TEST ON' : 'TEST OFF',
+                          style: TextStyle(color: _uidMasterEnabled ? const Color(0xFF00D9A5) : Colors.grey, fontSize: 9, fontWeight: FontWeight.w900),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 15),
+                    Container(height: 1, color: Colors.white.withOpacity(0.055)),
+                    const SizedBox(height: 15),
+                    if (_uidSettingsLoading)
+                      const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(color: Color(0xFF00A884))))
+                    else ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(13),
+                        decoration: BoxDecoration(color: Colors.orangeAccent.withOpacity(0.07), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.orangeAccent.withOpacity(0.18))),
+                        child: const Text(
+                          'Abhi TEST mode hai. Default example TEST-000001 hai. Final version me school SVN-000001 jaisa production format rakh sakta hai. Assigned TEST UID delete hone ke baad reuse nahi hoga.',
+                          style: TextStyle(color: Colors.white60, fontSize: 11, height: 1.45),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: _uidStartController,
+                        enabled: !_uidEverActivated && !_uidMasterEnabled,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _uidInputDecoration('Starting UID — Example: TEST-000001', Icons.tag_rounded),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _uidEverActivated
+                            ? 'Sequence locked for this TEST run. Next UID: ${_formatTestStudentUid(_uidPrefix, _uidPadding, _uidNextNumber)}'
+                            : 'Class 1 Roll 1 se numbering start hogi, phir Class/Roll order me aage badegi.',
+                        style: const TextStyle(color: Colors.white38, fontSize: 10.5, height: 1.4),
+                      ),
+                      if (_uidLastIssued.isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        Text('Last issued TEST UID: $_uidLastIssued', style: const TextStyle(color: Color(0xFF00D9A5), fontSize: 10.5, fontWeight: FontWeight.w700)),
+                      ],
+                      const SizedBox(height: 14),
+                      _advancedUidToggleTile(
+                        title: 'Enable Student UID',
+                        subtitle: _uidMasterEnabled ? 'TEST UID assignment active hai.' : 'ON karne par 20 sec warning + Admin Password verification hoga.',
+                        value: _uidMasterEnabled,
+                        onChanged: _setUidMasterEnabled,
+                      ),
+                      const SizedBox(height: 10),
+                      _advancedUidToggleTile(
+                        title: 'Use Student UID for Fees',
+                        subtitle: _uidMasterEnabled ? 'ON: fee ledger TEST UID se link hoga. OFF: Name + Father + DOB + Roll + Mobile identity use hogi.' : 'Pehle master Student UID ON karein.',
+                        value: _uidFeesEnabled,
+                        enabled: _uidMasterEnabled,
+                        onChanged: (value) => _setUidFeatureFlag('feesEnabled', value),
+                      ),
+                      const SizedBox(height: 10),
+                      _advancedUidToggleTile(
+                        title: 'Show Student UID on ID Card',
+                        subtitle: _uidMasterEnabled ? 'ON: QR/scanner ke paas same TEST UID dikhai dega.' : 'Pehle master Student UID ON karein.',
+                        value: _uidIdCardEnabled,
+                        enabled: _uidMasterEnabled,
+                        onChanged: (value) => _setUidFeatureFlag('idCardEnabled', value),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            }
+
+          '''
+          if '_buildAdvancedStudentUidCard()' not in advanced_section:
+              build_marker = '  @override\n  Widget build(BuildContext context) {'
+              build_idx = advanced_section.find(build_marker)
+              if build_idx == -1:
+                  raise SystemExit('ERROR: Advanced build method nahi mila')
+              advanced_section = advanced_section[:build_idx] + uid_helpers + advanced_section[build_idx:]
+
+          if '_buildAdvancedStudentUidCard(),' not in advanced_section:
+              column_close = advanced_section.rfind('                    ],\n                  ),\n')
+              if column_close == -1:
+                  raise SystemExit('ERROR: Advanced Settings Column close patch point nahi mila')
+              advanced_section = (
+                  advanced_section[:column_close]
+                  + '                      const SizedBox(height: 14),\n'
+                  + '                      _buildAdvancedStudentUidCard(),\n'
+                  + advanced_section[column_close:]
+              )
+
+          text = text[:advanced_state_start] + advanced_section + text[drive_dialog_start:]
+          DASHBOARD.write_text(text, encoding='utf-8')
+
+          print('Android requested 4-change patch applied.')
+          PY4REQUESTS
+
+          python3 scripts/android_4_requests_patch.py
+
+          echo ""
+          echo "===== ANDROID 4-REQUEST VALIDATION ====="
+          grep -n "initializeLocalStorage" lib/main_dashboard_screen.dart | head -n 5
+          grep -n "_handlePortalPointerEvent" lib/main_dashboard_screen.dart | head -n 10
+          grep -n "Exit: Back" lib/main_dashboard_screen.dart | head -n 10
+          grep -n "_buildAdvancedStudentUidCard" lib/main_dashboard_screen.dart | head -n 5
+          grep -n "Google Drive, Student UID" lib/main_dashboard_screen.dart | head -n 5
 
       # ============================================================
       # 17. BUILD RELEASE APK
