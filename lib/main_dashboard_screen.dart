@@ -17,8 +17,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 
 // ============================================================
-// WEB BOOTSTRAP BACKGROUND
-// Applies the Vidya Saarthi background as soon as this library loads.
+// VIDYA SAARTHI WEB BOOTSTRAP BACKGROUND
 // ============================================================
 final bool _vidyaWebBootstrapBackgroundApplied = (() {
   try {
@@ -1473,11 +1472,8 @@ if (!passwordMatched) {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  Icons.auto_stories_rounded,
-                  color: Color(0xFF00E8D0),
-                  size: 54,
-                ),
+                Icon(Icons.auto_stories_rounded,
+                    color: Color(0xFF00E8D0), size: 54),
                 SizedBox(height: 14),
                 Text(
                   'Vidya Saarthi',
@@ -1485,7 +1481,6 @@ if (!passwordMatched) {
                     color: Colors.white,
                     fontSize: 24,
                     fontWeight: FontWeight.w900,
-                    letterSpacing: 0.2,
                   ),
                 ),
                 SizedBox(height: 5),
@@ -8552,99 +8547,89 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 const SizedBox(height: 16),
 
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(18),
-                    onTap: () async {
-                      await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const AdvancedSettingsScreen(),
-                        ),
-                      );
-                      if (mounted) {
-                        _fetchLinkedAccount();
-                      }
-                    },
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF172229),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: Colors.orangeAccent.withOpacity(0.18),
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.16),
-                            blurRadius: 18,
-                            offset: const Offset(0, 8),
+                // =====================================================
+                // ADVANCED SETTINGS
+                // Google Drive integration is intentionally kept inside
+                // the protected Advanced Settings screen only.
+                // =====================================================
+                _settingsCard(
+                  icon: Icons.admin_panel_settings_rounded,
+                  iconColor: Colors.orangeAccent,
+                  title: 'Advanced Settings',
+                  subtitle: 'Protected integrations & system controls',
+                  trailing: const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.white38,
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(13),
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdvancedSettingsScreen(),
                           ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              color: Colors.orangeAccent.withOpacity(0.11),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: Colors.orangeAccent.withOpacity(0.20),
+                        );
+                        if (mounted) {
+                          _fetchLinkedAccount();
+                        }
+                      },
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F191F),
+                          borderRadius: BorderRadius.circular(13),
+                          border: Border.all(
+                            color: Colors.orangeAccent.withOpacity(0.16),
+                          ),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(
+                              Icons.security_rounded,
+                              color: Colors.orangeAccent,
+                              size: 21,
+                            ),
+                            SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Open Advanced Settings',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  SizedBox(height: 3),
+                                  Text(
+                                    'Google Drive, Student UID aur protected system controls yahan manage honge.',
+                                    style: TextStyle(
+                                      color: Colors.white38,
+                                      fontSize: 10.5,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            child: const Icon(
-                              Icons.admin_panel_settings_rounded,
+                            Icon(
+                              Icons.arrow_forward_rounded,
                               color: Colors.orangeAccent,
-                              size: 22,
+                              size: 19,
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Advanced Settings',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                SizedBox(height: 3),
-                                Text(
-                                  'Google Drive, Student UID & protected system controls',
-                                  style: TextStyle(
-                                    color: Colors.white38,
-                                    fontSize: 10.5,
-                                    height: 1.35,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: Colors.orangeAccent.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(11),
-                            ),
-                            child: const Icon(
-                              Icons.chevron_right_rounded,
-                              color: Colors.orangeAccent,
-                              size: 25,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
+
 
               ],
             ),
@@ -15787,19 +15772,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   bool _loading = true;
   bool _saving = false;
 
-  final TextEditingController _uidStartController =
-      TextEditingController(text: 'TEST-000001');
-
-  bool _uidSettingsLoading = true;
-  bool _uidMasterEnabled = false;
-  bool _uidFeesEnabled = false;
-  bool _uidIdCardEnabled = false;
-  bool _uidEverActivated = false;
-  String _uidPrefix = 'TEST-';
-  int _uidPadding = 6;
-  int _uidNextNumber = 1;
-  String _uidLastIssued = '';
-
   bool get _linked =>
       (_linkedGmail?.trim().isNotEmpty ?? false) &&
       (_linkedScript?.trim().isNotEmpty ?? false);
@@ -15808,14 +15780,12 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   void initState() {
     super.initState();
     _load();
-    _fetchUidTestSettings();
   }
 
   @override
   void dispose() {
     _gmail.dispose();
     _script.dispose();
-    _uidStartController.dispose();
     super.dispose();
   }
 
@@ -15971,6 +15941,256 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         ),
       );
     }
+  }
+
+  InputDecoration _input(String text, IconData icon) => InputDecoration(
+        hintText: text,
+        hintStyle: const TextStyle(color: Colors.white30),
+        prefixIcon: Icon(icon, color: Colors.orangeAccent),
+        filled: true,
+        fillColor: const Color(0xFF0F191F),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+      );
+
+  Widget _info(String label, String value, IconData icon) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F191F),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: const Color(0xFF4DA3FF)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 10)),
+                  const SizedBox(height: 3),
+                  SelectableText(
+                    value,
+                    style: const TextStyle(
+                        color: Colors.white70, fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF172229),
+        title: const Text('Advanced Settings'),
+      ),
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00A884)))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(18),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 900),
+                  child: Column(
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF2A2417), Color(0xFF172229)],
+                          ),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                              color: Colors.orangeAccent.withOpacity(0.20)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.security_rounded,
+                                color: Colors.orangeAccent, size: 30),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Protected settings: Google Drive unlink/change ke liye 30-second wait + current Admin password verification mandatory hai.',
+                                style: TextStyle(
+                                    color: Colors.white70, height: 1.4),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF172229),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.add_to_drive_rounded,
+                                    color: Color(0xFF4DA3FF)),
+                                const SizedBox(width: 10),
+                                const Expanded(
+                                  child: Text(
+                                    'Google Drive Integration',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  _linked ? 'CONNECTED' : 'NOT CONNECTED',
+                                  style: TextStyle(
+                                    color: _linked
+                                        ? const Color(0xFF00D9A5)
+                                        : Colors.orangeAccent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            if (_linked) ...[
+                              _info('Linked Gmail ID', _linkedGmail ?? '',
+                                  Icons.mail_outline_rounded),
+                              const SizedBox(height: 10),
+                              _info('Google Apps Script URL',
+                                  _linkedScript ?? '', Icons.link_rounded),
+                              const SizedBox(height: 14),
+                              const Text(
+                                'Student documents, fee history, exam data aur report cards linked Google backend me save honge.',
+                                style: TextStyle(
+                                    color: Color(0xFF00D9A5),
+                                    fontSize: 11,
+                                    height: 1.4),
+                              ),
+                              const SizedBox(height: 14),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: _saving ? null : _unlink,
+                                  icon: const Icon(Icons.sync_alt_rounded),
+                                  label: const Text(
+                                      'Unlink / Change Google Drive Account'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.orangeAccent,
+                                    side: BorderSide(
+                                        color: Colors.orangeAccent
+                                            .withOpacity(0.5)),
+                                  ),
+                                ),
+                              ),
+                            ] else ...[
+                              TextField(
+                                controller: _gmail,
+                                style: const TextStyle(color: Colors.white),
+                                decoration:
+                                    _input('School Gmail ID', Icons.mail_outline),
+                              ),
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: _script,
+                                style: const TextStyle(color: Colors.white),
+                                decoration: _input(
+                                    'Google Apps Script /exec URL',
+                                    Icons.link_rounded),
+                              ),
+                              const SizedBox(height: 14),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: _saving ? null : _save,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor:
+                                        const Color(0xFF00A884),
+                                  ),
+                                  icon: _saving
+                                      ? const SizedBox(
+                                          width: 17,
+                                          height: 17,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white),
+                                        )
+                                      : const Icon(Icons.cloud_done_rounded,
+                                          color: Colors.white),
+                                  label: Text(
+                                    _saving ? 'Saving...' : 'Connect Google Drive',
+                                    style:
+                                        const TextStyle(color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      const _AdvancedStudentUidSettingsPanel(),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+
+
+class _AdvancedStudentUidSettingsPanel extends StatefulWidget {
+  const _AdvancedStudentUidSettingsPanel();
+
+  @override
+  State<_AdvancedStudentUidSettingsPanel> createState() =>
+      _AdvancedStudentUidSettingsPanelState();
+}
+
+class _AdvancedStudentUidSettingsPanelState
+    extends State<_AdvancedStudentUidSettingsPanel> {
+  final TextEditingController _uidStartController =
+      TextEditingController(text: 'TEST-000001');
+
+  bool _uidSettingsLoading = true;
+  bool _uidMasterEnabled = false;
+  bool _uidFeesEnabled = false;
+  bool _uidIdCardEnabled = false;
+  bool _uidEverActivated = false;
+  String _uidPrefix = 'TEST-';
+  int _uidPadding = 6;
+  int _uidNextNumber = 1;
+  String _uidLastIssued = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUidTestSettings();
+  }
+
+  @override
+  void dispose() {
+    _uidStartController.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchUidTestSettings() async {
@@ -16399,8 +16619,27 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     }
   }
 
+  InputDecoration _uidInput(String hint, IconData icon) => InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
+        prefixIcon: Icon(icon, color: const Color(0xFF00A884), size: 19),
+        filled: true,
+        fillColor: const Color(0xFF0F191F),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.06)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFF00A884)),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.04)),
+        ),
+      );
 
-  Widget _uidToggleTile({
+  Widget _toggle({
     required String title,
     required String subtitle,
     required bool value,
@@ -16452,122 +16691,18 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     );
   }
 
+  @override
+  Widget build(BuildContext context) {
+    final statusColor =
+        _uidMasterEnabled ? const Color(0xFF00D9A5) : Colors.grey;
 
-  Widget _statusPill(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.22)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            text,
-            style: TextStyle(
-              color: color,
-              fontSize: 9,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-
-  InputDecoration _modernInputDecoration(String hint, IconData icon) {
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
-      prefixIcon: Icon(icon, color: const Color(0xFF00A884), size: 19),
-      filled: true,
-      fillColor: const Color(0xFF0F191F),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.white.withOpacity(0.06)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF00A884)),
-      ),
-    );
-  }
-
-  InputDecoration _input(String text, IconData icon) => InputDecoration(
-        hintText: text,
-        hintStyle: const TextStyle(color: Colors.white30),
-        prefixIcon: Icon(icon, color: Colors.orangeAccent),
-        filled: true,
-        fillColor: const Color(0xFF0F191F),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-      );
-
-  Widget _info(String label, String value, IconData icon) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(13),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0F191F),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: const Color(0xFF4DA3FF)),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label,
-                      style: const TextStyle(
-                          color: Colors.white38, fontSize: 10)),
-                  const SizedBox(height: 3),
-                  SelectableText(
-                    value,
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 11.5),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-
-  Widget _settingsCard({
-    required IconData icon,
-    required Color iconColor,
-    required String title,
-    required String subtitle,
-    required Widget child,
-    Widget? trailing,
-  }) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: const Color(0xFF172229),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(0.065)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.16),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFF00D9A5).withOpacity(0.14)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -16578,333 +16713,140 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.11),
+                  color: const Color(0xFF00A884).withOpacity(0.11),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: iconColor.withOpacity(0.18)),
                 ),
-                child: Icon(icon, color: iconColor, size: 21),
+                child: const Icon(
+                  Icons.badge_rounded,
+                  color: Color(0xFF00D9A5),
+                  size: 21,
+                ),
               ),
               const SizedBox(width: 12),
-              Expanded(
+              const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      title,
-                      style: const TextStyle(
+                      'Student UID — TEST MODE',
+                      style: TextStyle(
                         color: Colors.white,
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    SizedBox(height: 3),
                     Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: Colors.white38,
-                        fontSize: 10.5,
-                      ),
+                      'Fees identity + optional ID Card UID preview',
+                      style: TextStyle(color: Colors.white38, fontSize: 10.5),
                     ),
                   ],
                 ),
               ),
-              if (trailing != null) ...[
-                const SizedBox(width: 10),
-                trailing,
-              ],
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _uidMasterEnabled ? 'TEST ON' : 'TEST OFF',
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 15),
           Container(height: 1, color: Colors.white.withOpacity(0.055)),
           const SizedBox(height: 15),
-          child,
+          if (_uidSettingsLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: CircularProgressIndicator(color: Color(0xFF00A884)),
+              ),
+            )
+          else ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent.withOpacity(0.07),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orangeAccent.withOpacity(0.18)),
+              ),
+              child: const Text(
+                'Abhi TEST mode hai. Default example TEST-000001 hai. Assigned TEST UID delete hone ke baad reuse nahi hoga.',
+                style: TextStyle(color: Colors.white60, fontSize: 11, height: 1.45),
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _uidStartController,
+              enabled: !_uidEverActivated && !_uidMasterEnabled,
+              style: const TextStyle(color: Colors.white),
+              decoration: _uidInput(
+                'Starting UID — Example: TEST-000001',
+                Icons.tag_rounded,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _uidEverActivated
+                  ? 'Sequence locked. Next UID: ${_formatTestStudentUid(_uidPrefix, _uidPadding, _uidNextNumber)}'
+                  : 'Class 1 Roll 1 se numbering start hogi, phir Class/Roll order me aage badegi.',
+              style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+            ),
+            if (_uidLastIssued.isNotEmpty) ...[
+              const SizedBox(height: 5),
+              Text(
+                'Last issued TEST UID: $_uidLastIssued',
+                style: const TextStyle(
+                  color: Color(0xFF00D9A5),
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            const SizedBox(height: 14),
+            _toggle(
+              title: 'Enable Student UID',
+              subtitle: _uidMasterEnabled
+                  ? 'TEST UID assignment active hai.'
+                  : 'ON karne par 20 sec warning + Admin Password verification hoga.',
+              value: _uidMasterEnabled,
+              onChanged: _setUidMasterEnabled,
+            ),
+            const SizedBox(height: 10),
+            _toggle(
+              title: 'Use Student UID for Fees',
+              subtitle: _uidMasterEnabled
+                  ? 'ON: fee ledger TEST UID se link hoga.'
+                  : 'Pehle master Student UID ON karein.',
+              value: _uidFeesEnabled,
+              enabled: _uidMasterEnabled,
+              onChanged: (value) => _setUidFeatureFlag('feesEnabled', value),
+            ),
+            const SizedBox(height: 10),
+            _toggle(
+              title: 'Show Student UID on ID Card',
+              subtitle: _uidMasterEnabled
+                  ? 'ON: ID Card par same TEST UID dikhai dega.'
+                  : 'Pehle master Student UID ON karein.',
+              value: _uidIdCardEnabled,
+              enabled: _uidMasterEnabled,
+              onChanged: (value) => _setUidFeatureFlag('idCardEnabled', value),
+            ),
+          ],
         ],
       ),
     );
   }
-
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0B141A),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF172229),
-        title: const Text('Advanced Settings'),
-      ),
-      body: _loading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF00A884)))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(18),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 900),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF2A2417), Color(0xFF172229)],
-                          ),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                              color: Colors.orangeAccent.withOpacity(0.20)),
-                        ),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.security_rounded,
-                                color: Colors.orangeAccent, size: 30),
-                            SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'Protected settings: Google Drive unlink/change ke liye 30-second wait + current Admin password verification mandatory hai.',
-                                style: TextStyle(
-                                    color: Colors.white70, height: 1.4),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF172229),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: Colors.white10),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const Icon(Icons.add_to_drive_rounded,
-                                    color: Color(0xFF4DA3FF)),
-                                const SizedBox(width: 10),
-                                const Expanded(
-                                  child: Text(
-                                    'Google Drive Integration',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                                Text(
-                                  _linked ? 'CONNECTED' : 'NOT CONNECTED',
-                                  style: TextStyle(
-                                    color: _linked
-                                        ? const Color(0xFF00D9A5)
-                                        : Colors.orangeAccent,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            if (_linked) ...[
-                              _info('Linked Gmail ID', _linkedGmail ?? '',
-                                  Icons.mail_outline_rounded),
-                              const SizedBox(height: 10),
-                              _info('Google Apps Script URL',
-                                  _linkedScript ?? '', Icons.link_rounded),
-                              const SizedBox(height: 14),
-                              const Text(
-                                'Student documents, fee history, exam data aur report cards linked Google backend me save honge.',
-                                style: TextStyle(
-                                    color: Color(0xFF00D9A5),
-                                    fontSize: 11,
-                                    height: 1.4),
-                              ),
-                              const SizedBox(height: 14),
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: _saving ? null : _unlink,
-                                  icon: const Icon(Icons.sync_alt_rounded),
-                                  label: const Text(
-                                      'Unlink / Change Google Drive Account'),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.orangeAccent,
-                                    side: BorderSide(
-                                        color: Colors.orangeAccent
-                                            .withOpacity(0.5)),
-                                  ),
-                                ),
-                              ),
-                            ] else ...[
-                              TextField(
-                                controller: _gmail,
-                                style: const TextStyle(color: Colors.white),
-                                decoration:
-                                    _input('School Gmail ID', Icons.mail_outline),
-                              ),
-                              const SizedBox(height: 10),
-                              TextField(
-                                controller: _script,
-                                style: const TextStyle(color: Colors.white),
-                                decoration: _input(
-                                    'Google Apps Script /exec URL',
-                                    Icons.link_rounded),
-                              ),
-                              const SizedBox(height: 14),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  onPressed: _saving ? null : _save,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor:
-                                        const Color(0xFF00A884),
-                                  ),
-                                  icon: _saving
-                                      ? const SizedBox(
-                                          width: 17,
-                                          height: 17,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white),
-                                        )
-                                      : const Icon(Icons.cloud_done_rounded,
-                                          color: Colors.white),
-                                  label: Text(
-                                    _saving ? 'Saving...' : 'Connect Google Drive',
-                                    style:
-                                        const TextStyle(color: Colors.white),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                const SizedBox(height: 16),
-
-                // =====================================================
-                // TEST STUDENT UID SETTINGS
-                // =====================================================
-                _settingsCard(
-                  icon: Icons.badge_rounded,
-                  iconColor: const Color(0xFF00D9A5),
-                  title: 'Student UID — TEST MODE',
-                  subtitle: 'Fees identity + optional ID Card UID preview',
-                  trailing: _statusPill(
-                    _uidMasterEnabled ? 'TEST ON' : 'TEST OFF',
-                    _uidMasterEnabled
-                        ? const Color(0xFF00D9A5)
-                        : Colors.grey,
-                  ),
-                  child: _uidSettingsLoading
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(12),
-                            child: CircularProgressIndicator(
-                              color: Color(0xFF00A884),
-                            ),
-                          ),
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(13),
-                              decoration: BoxDecoration(
-                                color: Colors.orangeAccent.withOpacity(0.07),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: Colors.orangeAccent.withOpacity(0.18),
-                                ),
-                              ),
-                              child: const Text(
-                                'Abhi TEST mode hai. Default example TEST-000001 hai. Final version me school SVN-000001 jaisa production format rakh sakta hai. Assigned TEST UID delete hone ke baad reuse nahi hoga.',
-                                style: TextStyle(
-                                  color: Colors.white60,
-                                  fontSize: 11,
-                                  height: 1.45,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            TextField(
-                              controller: _uidStartController,
-                              enabled: !_uidEverActivated && !_uidMasterEnabled,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: _modernInputDecoration(
-                                'Starting UID — Example: TEST-000001',
-                                Icons.tag_rounded,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              _uidEverActivated
-                                  ? 'Sequence locked for this TEST run. Next UID: ${_formatTestStudentUid(_uidPrefix, _uidPadding, _uidNextNumber)}'
-                                  : 'Class 1 Roll 1 se numbering start hogi, phir Class/Roll order me aage badegi.',
-                              style: const TextStyle(
-                                color: Colors.white38,
-                                fontSize: 10.5,
-                                height: 1.4,
-                              ),
-                            ),
-                            if (_uidLastIssued.isNotEmpty) ...[
-                              const SizedBox(height: 5),
-                              Text(
-                                'Last issued TEST UID: $_uidLastIssued',
-                                style: const TextStyle(
-                                  color: Color(0xFF00D9A5),
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 14),
-                            _uidToggleTile(
-                              title: 'Enable Student UID',
-                              subtitle: _uidMasterEnabled
-                                  ? 'TEST UID assignment active hai.'
-                                  : 'ON karne par 20 sec warning + Admin Password verification hoga.',
-                              value: _uidMasterEnabled,
-                              onChanged: _setUidMasterEnabled,
-                            ),
-                            const SizedBox(height: 10),
-                            _uidToggleTile(
-                              title: 'Use Student UID for Fees',
-                              subtitle: _uidMasterEnabled
-                                  ? 'ON: fee ledger TEST UID se link hoga. OFF: Name + Father + DOB + Roll + Mobile identity use hogi.'
-                                  : 'Pehle master Student UID ON karein.',
-                              value: _uidFeesEnabled,
-                              enabled: _uidMasterEnabled,
-                              onChanged: (value) =>
-                                  _setUidFeatureFlag('feesEnabled', value),
-                            ),
-                            const SizedBox(height: 10),
-                            _uidToggleTile(
-                              title: 'Show Student UID on ID Card',
-                              subtitle: _uidMasterEnabled
-                                  ? 'ON: QR/scanner ke paas same TEST UID dikhai dega.'
-                                  : 'Pehle master Student UID ON karein.',
-                              value: _uidIdCardEnabled,
-                              enabled: _uidMasterEnabled,
-                              onChanged: (value) =>
-                                  _setUidFeatureFlag('idCardEnabled', value),
-                            ),
-                          ],
-                        ),
-                ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-    );
-  }
 }
-
 class _DriveUnlinkSecurityDialog extends StatefulWidget {
   const _DriveUnlinkSecurityDialog();
 
@@ -18016,8 +17958,13 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   bool _loading = true;
   bool _saving = false;
   String? _error;
+
   List<Map<String, dynamic>> _exams = [];
   List<Map<String, dynamic>> _results = [];
+  Map<String, int> _studentCounts = <String, int>{};
+
+  final List<String> _classList =
+      List.generate(10, (index) => 'Class ${index + 1}');
 
   @override
   void initState() {
@@ -18033,7 +17980,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
     if (url.isEmpty) {
       throw Exception(
-          'Google Drive backend Advanced Settings me connected nahi hai.');
+        'Google Drive backend Advanced Settings me connected nahi hai.',
+      );
     }
     return url;
   }
@@ -18041,7 +17989,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
     final response = await http.post(
       Uri.parse(await _scriptUrl()),
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
       body: jsonEncode(body),
     );
     if (response.statusCode != 200) {
@@ -18058,11 +18006,33 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     return result;
   }
 
+  Future<Map<String, int>> _loadStudentCounts(
+    List<Map<String, dynamic>> exams,
+  ) async {
+    final classes = exams
+        .map((e) => e['studentClass']?.toString().trim() ?? '')
+        .where((e) => e.isNotEmpty)
+        .toSet()
+        .toList();
+
+    final entries = await Future.wait<MapEntry<String, int>>(
+      classes.map((className) async {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('students_directory')
+            .where('class', isEqualTo: className)
+            .get();
+        return MapEntry(className, snapshot.docs.length);
+      }),
+    );
+    return Map<String, int>.fromEntries(entries);
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
     });
+
     try {
       final result = await _post({'action': 'list_exam_center'});
 
@@ -18073,10 +18043,21 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               .toList()
           : <Map<String, dynamic>>[];
 
+      final exams = convert(result['exams']);
+      final results = convert(result['results']);
+
+      Map<String, int> counts = <String, int>{};
+      try {
+        counts = await _loadStudentCounts(exams);
+      } catch (e) {
+        debugPrint('Exam Center student count warning: $e');
+      }
+
       if (!mounted) return;
       setState(() {
-        _exams = convert(result['exams']);
-        _results = convert(result['results']);
+        _exams = exams;
+        _results = results;
+        _studentCounts = counts;
         _loading = false;
       });
     } catch (e) {
@@ -18088,170 +18069,544 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     }
   }
 
-  List<Map<String, dynamic>> _forExam(String id) =>
-      _results.where((e) => e['examId']?.toString() == id).toList();
+  int _classNumber(String value) =>
+      int.tryParse(value.replaceAll(RegExp(r'[^0-9]'), '')) ?? 999999;
 
-  Future<void> _createExam() async {
-    final name = TextEditingController();
-    final subjects =
-        TextEditingController(text: 'English, Mathematics, Science');
-    final full = TextEditingController(text: '100');
-    final pass = TextEditingController(text: '33');
-    var selectedClass = 'Class 1';
-    String? dialogError;
+  double _number(dynamic value) => value is num
+      ? value.toDouble()
+      : double.tryParse(value?.toString() ?? '') ?? 0;
 
-    final payload = await showDialog<Map<String, dynamic>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF172229),
-          title: const Text('Create Exam',
-              style: TextStyle(color: Colors.white)),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: name,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _dialogInput(
-                        'Exam Name', Icons.edit_note_rounded),
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    value: selectedClass,
-                    dropdownColor: const Color(0xFF172229),
-                    style: const TextStyle(color: Colors.white),
-                    decoration:
-                        _dialogInput('Class', Icons.class_rounded),
-                    items: List.generate(10, (i) => 'Class ${i + 1}')
-                        .map((v) =>
-                            DropdownMenuItem(value: v, child: Text(v)))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) {
-                        setDialogState(() => selectedClass = v);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: subjects,
-                    minLines: 2,
-                    maxLines: 3,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: _dialogInput(
-                        'Subjects — comma separated',
-                        Icons.menu_book_rounded),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: full,
-                          keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _dialogInput(
-                              'Full Marks / Subject',
-                              Icons.score_rounded),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: pass,
-                          keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: _dialogInput(
-                              'Pass Marks / Subject',
-                              Icons.task_alt_rounded),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (dialogError != null) ...[
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(dialogError!,
-                          style: const TextStyle(
-                              color: Colors.redAccent, fontSize: 11)),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00A884)),
-              onPressed: () {
-                final examName = name.text.trim();
-                final subjectList = subjects.text
-                    .split(',')
-                    .map((e) => e.trim())
-                    .where((e) => e.isNotEmpty)
-                    .toList();
-                final fullMarks = double.tryParse(full.text.trim());
-                final passMarks = double.tryParse(pass.text.trim());
+  int _timestamp(dynamic value) => value is num
+      ? value.toInt()
+      : int.tryParse(value?.toString() ?? '') ?? 0;
 
-                if (examName.isEmpty ||
-                    subjectList.isEmpty ||
-                    fullMarks == null ||
-                    fullMarks <= 0 ||
-                    passMarks == null ||
-                    passMarks < 0 ||
-                    passMarks > fullMarks) {
-                  setDialogState(() => dialogError =
-                      'Exam name, subjects aur marks sahi bharein.');
-                  return;
-                }
+  List<Map<String, dynamic>> _forExam(String examId) => _results
+      .where((e) => e['examId']?.toString() == examId)
+      .toList();
 
-                Navigator.pop(ctx, {
-                  'examName': examName,
-                  'studentClass': selectedClass,
-                  'subjects': subjectList,
-                  'fullMarks': fullMarks,
-                  'passMarks': passMarks,
-                });
-              },
-              child: const Text('Create Exam',
-                  style: TextStyle(color: Colors.white)),
-            ),
-          ],
+  List<List<Map<String, dynamic>>> _examGroups() {
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    for (final exam in _exams) {
+      final displayName = exam['examName']?.toString().trim() ?? 'Exam';
+      final key = displayName.toLowerCase();
+      grouped.putIfAbsent(key, () => <Map<String, dynamic>>[]);
+      grouped[key]!.add(exam);
+    }
+
+    final groups = grouped.values.toList();
+    for (final group in groups) {
+      group.sort((a, b) => _classNumber(
+            a['studentClass']?.toString() ?? '',
+          ).compareTo(_classNumber(
+            b['studentClass']?.toString() ?? '',
+          )));
+    }
+
+    groups.sort((a, b) {
+      int latest(List<Map<String, dynamic>> group) => group.fold<int>(
+            0,
+            (best, e) {
+              final value = _timestamp(e['timestamp']);
+              return value > best ? value : best;
+            },
+          );
+      return latest(b).compareTo(latest(a));
+    });
+    return groups;
+  }
+
+  int _expectedForExam(Map<String, dynamic> exam) =>
+      _studentCounts[exam['studentClass']?.toString() ?? ''] ?? 0;
+
+  int _pendingForExam(Map<String, dynamic> exam) {
+    final expected = _expectedForExam(exam);
+    final done = _forExam(exam['examId']?.toString() ?? '').length;
+    final pending = expected - done;
+    return pending > 0 ? pending : 0;
+  }
+
+  int _groupExpected(List<Map<String, dynamic>> group) => group.fold<int>(
+        0,
+        (sum, exam) => sum + _expectedForExam(exam),
+      );
+
+  int _groupCompleted(List<Map<String, dynamic>> group) => group.fold<int>(
+        0,
+        (sum, exam) =>
+            sum + _forExam(exam['examId']?.toString() ?? '').length,
+      );
+
+  double _groupProgress(List<Map<String, dynamic>> group) {
+    final expected = _groupExpected(group);
+    if (expected <= 0) return 0;
+    return (_groupCompleted(group) / expected).clamp(0.0, 1.0).toDouble();
+  }
+
+  String _academicYear() {
+    final now = DateTime.now();
+    final start = now.month >= 4 ? now.year : now.year - 1;
+    final next = ((start + 1) % 100).toString().padLeft(2, '0');
+    return '$start-$next';
+  }
+
+  Future<void> _openMarks(Map<String, dynamic> exam) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ExamMarksEntryScreen(
+          exam: Map<String, dynamic>.from(exam),
         ),
       ),
     );
+    if (mounted) await _load();
+  }
 
-    name.dispose();
-    subjects.dispose();
-    full.dispose();
-    pass.dispose();
+  Future<void> _createExam() async {
+    if (_saving) return;
 
-    if (payload == null || !mounted) return;
+    final examName = TextEditingController();
+    final defaultSubjects =
+        TextEditingController(text: 'English, Mathematics, Science');
+    final defaultFull = TextEditingController(text: '100');
+    final defaultPass = TextEditingController(text: '33');
+
+    final selectedClasses = <String>{'Class 1'};
+    final subjectsByClass = <String, TextEditingController>{};
+    final fullByClass = <String, TextEditingController>{};
+    final passByClass = <String, TextEditingController>{};
+    String? dialogError;
+
+    void ensureClass(String className) {
+      subjectsByClass.putIfAbsent(
+        className,
+        () => TextEditingController(text: defaultSubjects.text),
+      );
+      fullByClass.putIfAbsent(
+        className,
+        () => TextEditingController(text: defaultFull.text),
+      );
+      passByClass.putIfAbsent(
+        className,
+        () => TextEditingController(text: defaultPass.text),
+      );
+    }
+
+    ensureClass('Class 1');
+
+    final payloads = await showDialog<List<Map<String, dynamic>>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final selectedSorted = selectedClasses.toList()
+            ..sort((a, b) => _classNumber(a).compareTo(_classNumber(b)));
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF111B22),
+            insetPadding: const EdgeInsets.all(18),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+            ),
+            title: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.orangeAccent.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: const Icon(
+                    Icons.add_task_rounded,
+                    color: Colors.orangeAccent,
+                  ),
+                ),
+                const SizedBox(width: 11),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Create Exam',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'One exam • multiple classes • class-wise custom settings',
+                        style: TextStyle(color: Colors.white38, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white54),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 820,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: examName,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _dialogInput(
+                        'Exam Name — Example: Final Exam 2026',
+                        Icons.edit_note_rounded,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'SELECT CLASSES',
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _classList.map((className) {
+                        final selected = selectedClasses.contains(className);
+                        return FilterChip(
+                          selected: selected,
+                          label: Text(className),
+                          selectedColor:
+                              const Color(0xFF00A884).withOpacity(0.28),
+                          checkmarkColor: const Color(0xFF00D9A5),
+                          backgroundColor: const Color(0xFF172229),
+                          side: BorderSide(
+                            color: selected
+                                ? const Color(0xFF00D9A5)
+                                : Colors.white12,
+                          ),
+                          labelStyle: TextStyle(
+                            color: selected
+                                ? const Color(0xFF00D9A5)
+                                : Colors.white70,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          onSelected: (value) {
+                            setDialogState(() {
+                              if (value) {
+                                selectedClasses.add(className);
+                                ensureClass(className);
+                              } else {
+                                selectedClasses.remove(className);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 18),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0D171D),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'DEFAULT CLASS SETTINGS',
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: defaultSubjects,
+                            minLines: 1,
+                            maxLines: 2,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: _dialogInput(
+                              'Default Subjects — comma separated',
+                              Icons.menu_book_rounded,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: defaultFull,
+                                  keyboardType: TextInputType.number,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: _dialogInput(
+                                    'Full Marks / Subject',
+                                    Icons.score_rounded,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: TextField(
+                                  controller: defaultPass,
+                                  keyboardType: TextInputType.number,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: _dialogInput(
+                                    'Pass Marks / Subject',
+                                    Icons.task_alt_rounded,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: OutlinedButton.icon(
+                              onPressed: selectedClasses.isEmpty
+                                  ? null
+                                  : () {
+                                      for (final className in selectedClasses) {
+                                        ensureClass(className);
+                                        subjectsByClass[className]!.text =
+                                            defaultSubjects.text;
+                                        fullByClass[className]!.text =
+                                            defaultFull.text;
+                                        passByClass[className]!.text =
+                                            defaultPass.text;
+                                      }
+                                      setDialogState(() {});
+                                    },
+                              icon: const Icon(
+                                Icons.content_copy_rounded,
+                                size: 16,
+                              ),
+                              label: const Text('Apply to selected classes'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (selectedSorted.isNotEmpty) ...[
+                      const Text(
+                        'CLASS-WISE CUSTOMIZATION',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.1,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ...selectedSorted.map((className) {
+                        ensureClass(className);
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF172229),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: ExpansionTile(
+                            tilePadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 2,
+                            ),
+                            childrenPadding:
+                                const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                            iconColor: const Color(0xFF00D9A5),
+                            collapsedIconColor: Colors.white38,
+                            title: Text(
+                              className,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            subtitle: const Text(
+                              'Subjects / Full marks / Pass marks customize karein',
+                              style: TextStyle(
+                                color: Colors.white38,
+                                fontSize: 10,
+                              ),
+                            ),
+                            children: [
+                              TextField(
+                                controller: subjectsByClass[className],
+                                minLines: 1,
+                                maxLines: 3,
+                                style: const TextStyle(color: Colors.white),
+                                decoration: _dialogInput(
+                                  'Subjects — comma separated',
+                                  Icons.menu_book_rounded,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: fullByClass[className],
+                                      keyboardType: TextInputType.number,
+                                      style:
+                                          const TextStyle(color: Colors.white),
+                                      decoration: _dialogInput(
+                                        'Full Marks',
+                                        Icons.score_rounded,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: TextField(
+                                      controller: passByClass[className],
+                                      keyboardType: TextInputType.number,
+                                      style:
+                                          const TextStyle(color: Colors.white),
+                                      decoration: _dialogInput(
+                                        'Pass Marks',
+                                        Icons.task_alt_rounded,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                    if (dialogError != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(11),
+                        decoration: BoxDecoration(
+                          color: Colors.redAccent.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          dialogError!,
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00A884),
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () {
+                  final name = examName.text.trim();
+                  if (name.isEmpty) {
+                    setDialogState(() => dialogError = 'Exam name bharein.');
+                    return;
+                  }
+                  if (selectedClasses.isEmpty) {
+                    setDialogState(() =>
+                        dialogError = 'Kam se kam ek class select karein.');
+                    return;
+                  }
+
+                  final configs = <Map<String, dynamic>>[];
+                  for (final className in selectedSorted) {
+                    final subjectList = subjectsByClass[className]!
+                        .text
+                        .split(',')
+                        .map((e) => e.trim())
+                        .where((e) => e.isNotEmpty)
+                        .toList();
+                    final fullMarks = double.tryParse(
+                      fullByClass[className]!.text.trim(),
+                    );
+                    final passMarks = double.tryParse(
+                      passByClass[className]!.text.trim(),
+                    );
+
+                    if (subjectList.isEmpty ||
+                        fullMarks == null ||
+                        fullMarks <= 0 ||
+                        passMarks == null ||
+                        passMarks < 0 ||
+                        passMarks > fullMarks) {
+                      setDialogState(() => dialogError =
+                          '$className ki subjects/full/pass marks setting check karein.');
+                      return;
+                    }
+
+                    configs.add({
+                      'examName': name,
+                      'studentClass': className,
+                      'subjects': subjectList,
+                      'fullMarks': fullMarks,
+                      'passMarks': passMarks,
+                    });
+                  }
+
+                  Navigator.pop(dialogContext, configs);
+                },
+                icon: const Icon(Icons.rocket_launch_rounded, size: 18),
+                label: const Text('Create Exam'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    examName.dispose();
+    defaultSubjects.dispose();
+    defaultFull.dispose();
+    defaultPass.dispose();
+    for (final c in subjectsByClass.values) c.dispose();
+    for (final c in fullByClass.values) c.dispose();
+    for (final c in passByClass.values) c.dispose();
+
+    if (payloads == null || payloads.isEmpty || !mounted) return;
 
     setState(() => _saving = true);
+    var created = 0;
+
     try {
-      await _post({
-        'action': 'save_exam',
-        ...payload,
-        'createdBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-      });
+      for (final payload in payloads) {
+        await _post({
+          'action': 'save_exam',
+          ...payload,
+          'createdBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+        });
+        created++;
+      }
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
-          content: Text('Exam Google Drive database me create ho gaya.'),
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text(
+            '${payloads.first['examName']} $created class configuration ke saath create ho gaya.',
+          ),
         ),
       );
     } catch (e) {
@@ -18259,7 +18614,11 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: Colors.redAccent,
-          content: Text('Exam create error: $e'),
+          content: Text(
+            created > 0
+                ? '$created class save hui, baaki save nahi ho payi: $e'
+                : 'Exam create error: $e',
+          ),
         ),
       );
     } finally {
@@ -18267,45 +18626,80 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     }
   }
 
-  InputDecoration _dialogInput(String label, IconData icon) =>
-      InputDecoration(
+  InputDecoration _dialogInput(String label, IconData icon) => InputDecoration(
         labelText: label,
         labelStyle: const TextStyle(color: Colors.white54),
         prefixIcon: Icon(icon, color: Colors.orangeAccent),
         filled: true,
         fillColor: const Color(0xFF0F191F),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.07)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(11),
+          borderSide: const BorderSide(color: Colors.orangeAccent),
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(11),
           borderSide: BorderSide.none,
         ),
       );
 
-  Widget _metric(
-      String label, String value, Color color, IconData icon) {
+  Widget _metricCard({
+    required String title,
+    required String value,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+  }) {
     return Container(
-      width: 175,
-      padding: const EdgeInsets.all(12),
+      width: 205,
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: const Color(0xFF172229),
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: color.withOpacity(.22)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.18)),
       ),
       child: Row(
         children: [
-          Icon(icon, color: color),
-          const SizedBox(width: 8),
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.11),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 22),
+          ),
+          const SizedBox(width: 11),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(value,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16)),
-                Text(label,
-                    style: const TextStyle(
-                        color: Colors.white38, fontSize: 9.5)),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white30, fontSize: 8.5),
+                ),
               ],
             ),
           ),
@@ -18314,33 +18708,747 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     );
   }
 
-  Widget _pill(String text, Color color) => Container(
+  Widget _smallPill(String text, Color color) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
         decoration: BoxDecoration(
-          color: color.withOpacity(.09),
+          color: color.withOpacity(0.09),
           borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withOpacity(0.18)),
         ),
-        child: Text(text,
-            style: TextStyle(
-                color: color, fontSize: 9, fontWeight: FontWeight.w800)),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: color,
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      );
+
+  Widget _sectionHeader(String title, String subtitle, IconData icon) => Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: const Color(0xFF00A884).withOpacity(0.10),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, color: const Color(0xFF00D9A5), size: 19),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Colors.white38, fontSize: 9.5),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+
+  Future<void> _openExamGroup(List<Map<String, dynamic>> group) async {
+    if (group.isEmpty) return;
+    final examName = group.first['examName']?.toString() ?? 'Exam';
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF111B22),
+        insetPadding: const EdgeInsets.all(18),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.school_rounded, color: Colors.orangeAccent),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    examName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    '${group.length} class configuration${group.length == 1 ? '' : 's'}',
+                    style: const TextStyle(color: Colors.white38, fontSize: 10),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              icon: const Icon(Icons.close_rounded, color: Colors.white54),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 860,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 610),
+            child: SingleChildScrollView(
+              child: Column(
+                children: group.map((exam) {
+                  final id = exam['examId']?.toString() ?? '';
+                  final className = exam['studentClass']?.toString() ?? '';
+                  final results = _forExam(id);
+                  final expected = _expectedForExam(exam);
+                  final progress = expected > 0
+                      ? (results.length / expected).clamp(0.0, 1.0).toDouble()
+                      : 0.0;
+                  final subjects = exam['subjects'] is List
+                      ? List<dynamic>.from(exam['subjects'] as List)
+                      : <dynamic>[];
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF172229),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00A884).withOpacity(0.10),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  className.replaceAll('Class ', ''),
+                                  style: const TextStyle(
+                                    color: Color(0xFF00D9A5),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    className,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${subjects.length} subjects • Full ${exam['fullMarks'] ?? 0} • Pass ${exam['passMarks'] ?? 0}',
+                                    style: const TextStyle(
+                                      color: Colors.white38,
+                                      fontSize: 9.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF00A884),
+                                foregroundColor: Colors.white,
+                              ),
+                              onPressed: () {
+                                Navigator.pop(dialogContext);
+                                _openMarks(exam);
+                              },
+                              icon: const Icon(Icons.edit_note_rounded, size: 17),
+                              label: const Text('Marks & Results'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 11),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(20),
+                                child: LinearProgressIndicator(
+                                  minHeight: 7,
+                                  value: progress,
+                                  backgroundColor: Colors.white10,
+                                  color: const Color(0xFF00D9A5),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              expected <= 0
+                                  ? '${results.length} entered'
+                                  : '${results.length}/$expected',
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _examGroupCard(List<Map<String, dynamic>> group) {
+    final examName = group.first['examName']?.toString() ?? 'Exam';
+    final allResults = <Map<String, dynamic>>[];
+    final subjectSet = <String>{};
+
+    for (final exam in group) {
+      allResults.addAll(_forExam(exam['examId']?.toString() ?? ''));
+      if (exam['subjects'] is List) {
+        for (final subject in exam['subjects'] as List) {
+          final value = subject.toString().trim();
+          if (value.isNotEmpty) subjectSet.add(value);
+        }
+      }
+    }
+
+    final pass = allResults.where((e) => e['result'] == 'PASS').length;
+    final fail = allResults.where((e) => e['result'] == 'FAIL').length;
+
+    Map<String, dynamic>? topper;
+    for (final result in allResults) {
+      if (topper == null ||
+          _number(result['percentage']) > _number(topper['percentage'])) {
+        topper = result;
+      }
+    }
+
+    final progress = _groupProgress(group);
+    final expected = _groupExpected(group);
+    final completed = _groupCompleted(group);
+    final classes = group
+        .map((e) => e['studentClass']?.toString() ?? '')
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () => _openExamGroup(group),
+      child: Ink(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF172229),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.orangeAccent.withOpacity(0.15)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFA726), Color(0xFFFF7043)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.fact_check_rounded,
+                    color: Colors.black,
+                    size: 25,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        examName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${group.length} class${group.length == 1 ? '' : 'es'} • ${subjectSet.length} unique subjects',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _smallPill(
+                  expected > 0 && completed >= expected
+                      ? 'COMPLETE'
+                      : completed > 0
+                          ? 'IN PROGRESS'
+                          : 'READY',
+                  expected > 0 && completed >= expected
+                      ? const Color(0xFF00D9A5)
+                      : completed > 0
+                          ? Colors.orangeAccent
+                          : const Color(0xFF38A8FF),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: classes
+                  .map(
+                    (className) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F191F),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Text(
+                        className,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: LinearProgressIndicator(
+                      minHeight: 8,
+                      value: progress,
+                      backgroundColor: Colors.white10,
+                      color: const Color(0xFF00D9A5),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  expected <= 0 ? '$completed results' : '$completed/$expected',
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              children: [
+                _smallPill('Results ${allResults.length}', const Color(0xFF38A8FF)),
+                _smallPill('Pass $pass', const Color(0xFF00D9A5)),
+                _smallPill('Fail $fail', Colors.redAccent),
+                if (topper != null)
+                  _smallPill(
+                    'Top ${topper['studentName'] ?? ''} • ${_number(topper['percentage']).toStringAsFixed(1)}%',
+                    Colors.amberAccent,
+                  ),
+              ],
+            ),
+            if (subjectSet.isNotEmpty) ...[
+              const SizedBox(height: 11),
+              Text(
+                'Subjects: ${subjectSet.take(8).join(' • ')}${subjectSet.length > 8 ? ' • +${subjectSet.length - 8}' : ''}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white30,
+                  fontSize: 9.2,
+                  height: 1.35,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00A884),
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () => _openExamGroup(group),
+                icon: const Icon(Icons.dashboard_customize_rounded, size: 17),
+                label: const Text('Manage Classes'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _performanceOverview() {
+    final byClass = <String, List<double>>{};
+    for (final result in _results) {
+      final className = result['studentClass']?.toString().trim() ?? '';
+      if (className.isEmpty) continue;
+      byClass.putIfAbsent(className, () => <double>[]);
+      byClass[className]!.add(_number(result['percentage']));
+    }
+
+    final classes = byClass.keys.toList()
+      ..sort((a, b) => _classNumber(a).compareTo(_classNumber(b)));
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionHeader(
+            'Performance Overview',
+            'Average percentage by class',
+            Icons.bar_chart_rounded,
+          ),
+          const SizedBox(height: 14),
+          if (classes.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 26),
+              child: Center(
+                child: Text(
+                  'Marks save hone ke baad class performance yahan dikhega.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white38, fontSize: 10.5),
+                ),
+              ),
+            )
+          else
+            ...classes.map((className) {
+              final values = byClass[className]!;
+              final average = values.isEmpty
+                  ? 0.0
+                  : values.fold<double>(0, (sum, value) => sum + value) /
+                      values.length;
+              final factor = (average / 100).clamp(0.0, 1.0).toDouble();
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 58,
+                      child: Text(
+                        className,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) => Stack(
+                          children: [
+                            Container(
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: Colors.white10,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
+                            Container(
+                              width: constraints.maxWidth * factor,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00D9A5),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 46,
+                      child: Text(
+                        '${average.toStringAsFixed(1)}%',
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _recentResults() {
+    final recent = List<Map<String, dynamic>>.from(_results)
+      ..sort((a, b) =>
+          _timestamp(b['timestamp']).compareTo(_timestamp(a['timestamp'])));
+    final items = recent.take(6).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionHeader(
+            'Recent Results',
+            'Latest saved student results',
+            Icons.history_edu_rounded,
+          ),
+          const SizedBox(height: 12),
+          if (items.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text(
+                  'Abhi koi result save nahi hua.',
+                  style: TextStyle(color: Colors.white38, fontSize: 10.5),
+                ),
+              ),
+            )
+          else
+            ...items.map((result) {
+              final passed = result['result'] == 'PASS';
+              final reportUrl =
+                  result['reportCardUrl']?.toString().trim() ?? '';
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F191F),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      passed ? Icons.check_circle_rounded : Icons.cancel_rounded,
+                      color: passed
+                          ? const Color(0xFF00D9A5)
+                          : Colors.redAccent,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            result['studentName']?.toString() ?? 'Student',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          Text(
+                            '${result['studentClass'] ?? ''} • ${result['examName'] ?? 'Exam'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white38,
+                              fontSize: 9,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      '${_number(result['percentage']).toStringAsFixed(1)}%',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    if (reportUrl.isNotEmpty)
+                      IconButton(
+                        tooltip: 'Open Report Card',
+                        onPressed: () => html.window.open(reportUrl, '_blank'),
+                        icon: const Icon(
+                          Icons.picture_as_pdf_rounded,
+                          color: Colors.orangeAccent,
+                          size: 18,
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyState() => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 42),
+        decoration: BoxDecoration(
+          color: const Color(0xFF172229),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Column(
+          children: [
+            const Icon(
+              Icons.assignment_add_rounded,
+              color: Colors.orangeAccent,
+              size: 46,
+            ),
+            const SizedBox(height: 13),
+            const Text(
+              'Create your first exam',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'Final Exam, Half Yearly, Unit Test — ek exam ke andar Class 1–10 customize karein.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white38, fontSize: 10.5),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00A884),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: _saving ? null : _createExam,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Create Exam'),
+            ),
+          ],
+        ),
       );
 
   @override
   Widget build(BuildContext context) {
-    final passTotal =
-        _results.where((e) => e['result'] == 'PASS').length;
-    final failTotal =
-        _results.where((e) => e['result'] == 'FAIL').length;
+    final groups = _examGroups();
+    final passTotal = _results.where((e) => e['result'] == 'PASS').length;
+    final failTotal = _results.where((e) => e['result'] == 'FAIL').length;
+    final totalResults = passTotal + failTotal;
+    final passRate = totalResults == 0 ? 0.0 : passTotal / totalResults * 100;
+    final pendingMarks =
+        _exams.fold<int>(0, (sum, exam) => sum + _pendingForExam(exam));
 
     return Scaffold(
       backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Exam Center'),
+        backgroundColor: const Color(0xFF111B22),
+        elevation: 0,
+        title: const Text(
+          'Exam Center',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: const Color(0xFF172229),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.calendar_month_rounded,
+                    color: Color(0xFF00D9A5),
+                    size: 15,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _academicYear(),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           IconButton(
-              onPressed: _loading ? null : _load,
-              icon: const Icon(Icons.refresh_rounded)),
+            tooltip: 'Refresh',
+            onPressed: _loading ? null : _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -18352,206 +19460,238 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                 width: 17,
                 height: 17,
                 child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.black),
+                  strokeWidth: 2,
+                  color: Colors.black,
+                ),
               )
             : const Icon(Icons.add_task_rounded),
         label: Text(_saving ? 'Creating...' : 'Create Exam'),
       ),
       body: _loading
           ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF00A884)))
+              child: CircularProgressIndicator(color: Color(0xFF00A884)),
+            )
           : _error != null
               ? Center(
-                  child: Text(_error!,
-                      style: const TextStyle(color: Colors.redAccent)))
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.cloud_off_rounded,
+                          color: Colors.redAccent,
+                          size: 40,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _error!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.redAccent),
+                        ),
+                        const SizedBox(height: 14),
+                        ElevatedButton.icon(
+                          onPressed: _load,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
               : RefreshIndicator(
                   onRefresh: _load,
+                  color: const Color(0xFF00A884),
                   child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 95),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 100),
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(18),
+                        padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
-                            colors: [Color(0xFF3B2A13), Color(0xFF172229)],
+                            colors: [
+                              Color(0xFF11343A),
+                              Color(0xFF172229),
+                              Color(0xFF2A2417),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
                           ),
-                          borderRadius: BorderRadius.circular(18),
+                          borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                              color: Colors.orangeAccent.withOpacity(.2)),
+                            color: Colors.orangeAccent.withOpacity(0.18),
+                          ),
                         ),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.fact_check_rounded,
-                                color: Colors.orangeAccent, size: 34),
-                            SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'Marks entry → automatic total, percentage, grade, PASS/FAIL → Google Drive report card PDF.',
-                                style: TextStyle(
-                                    color: Colors.white70, height: 1.4),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final compact = constraints.maxWidth < 680;
+                            final intro = Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Examination Dashboard',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 21,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                const Text(
+                                  'Plan • Conduct • Evaluate • Generate Report Cards',
+                                  style: TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 10.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 11),
+                                const Text(
+                                  'Ek Final Exam create karke Class 1–10 ko ek hi exam card ke andar class-wise subjects, full marks aur pass marks ke saath customize karein.',
+                                  style: TextStyle(
+                                    color: Colors.white60,
+                                    fontSize: 11,
+                                    height: 1.45,
+                                  ),
+                                ),
+                              ],
+                            );
+                            final button = ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.orangeAccent,
+                                foregroundColor: Colors.black,
                               ),
-                            ),
-                          ],
+                              onPressed: _saving ? null : _createExam,
+                              icon: const Icon(Icons.add_rounded),
+                              label: const Text(
+                                'Create Exam',
+                                style: TextStyle(fontWeight: FontWeight.w900),
+                              ),
+                            );
+
+                            if (compact) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  intro,
+                                  const SizedBox(height: 14),
+                                  button,
+                                ],
+                              );
+                            }
+                            return Row(
+                              children: [
+                                Expanded(child: intro),
+                                const SizedBox(width: 20),
+                                button,
+                              ],
+                            );
+                          },
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 14),
                       Wrap(
                         spacing: 10,
                         runSpacing: 10,
                         children: [
-                          _metric('Exams', '${_exams.length}',
-                              Colors.orangeAccent,
-                              Icons.assignment_rounded),
-                          _metric('Results', '${_results.length}',
-                              const Color(0xFF38A8FF),
-                              Icons.edit_note_rounded),
-                          _metric('Passed', '$passTotal',
-                              const Color(0xFF00D9A5),
-                              Icons.check_circle_rounded),
-                          _metric('Failed', '$failTotal',
-                              Colors.redAccent, Icons.cancel_rounded),
+                          _metricCard(
+                            title: 'Total Exams',
+                            value: '${groups.length}',
+                            subtitle: '${_exams.length} class configurations',
+                            icon: Icons.assignment_rounded,
+                            color: Colors.orangeAccent,
+                          ),
+                          _metricCard(
+                            title: 'Results Entered',
+                            value: '${_results.length}',
+                            subtitle: 'Student result records',
+                            icon: Icons.edit_note_rounded,
+                            color: const Color(0xFF38A8FF),
+                          ),
+                          _metricCard(
+                            title: 'Pass Rate',
+                            value: '${passRate.toStringAsFixed(1)}%',
+                            subtitle: '$passTotal pass • $failTotal fail',
+                            icon: Icons.trending_up_rounded,
+                            color: const Color(0xFF00D9A5),
+                          ),
+                          _metricCard(
+                            title: 'Pending Marks',
+                            value: '$pendingMarks',
+                            subtitle: 'Student results remaining',
+                            icon: Icons.pending_actions_rounded,
+                            color: Colors.purpleAccent,
+                          ),
                         ],
                       ),
-                      const SizedBox(height: 14),
-                      if (_exams.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.all(30),
-                          child: Text(
-                            'Abhi koi exam create nahi hua.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                        )
-                      else
-                        ..._exams.map((exam) {
-                          final id = exam['examId']?.toString() ?? '';
-                          final results = _forExam(id);
-                          final pass = results
-                              .where((e) => e['result'] == 'PASS')
-                              .length;
-                          final fail = results
-                              .where((e) => e['result'] == 'FAIL')
-                              .length;
-                          Map<String, dynamic>? topper;
-                          for (final r in results) {
-                            if (topper == null ||
-                                ((r['percentage'] as num?)?.toDouble() ?? 0) >
-                                    ((topper['percentage'] as num?)
-                                            ?.toDouble() ??
-                                        0)) {
-                              topper = r;
-                            }
-                          }
-                          final subjectList = exam['subjects'] is List
-                              ? List<dynamic>.from(exam['subjects'] as List)
-                              : <dynamic>[];
+                      const SizedBox(height: 18),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final wide = constraints.maxWidth >= 980;
 
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            padding: const EdgeInsets.all(14),
+                          final main = Container(
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF172229),
-                              borderRadius: BorderRadius.circular(15),
-                              border: Border.all(
-                                  color:
-                                      Colors.orangeAccent.withOpacity(.14)),
+                              color: const Color(0xFF111B22),
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: Colors.white10),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.school_rounded,
-                                        color: Colors.orangeAccent,
-                                        size: 28),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            exam['examName']?.toString() ??
-                                                'Exam',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w900,
-                                            ),
-                                          ),
-                                          Text(
-                                            '${exam['studentClass'] ?? ''} • ${subjectList.length} subjects • Full ${exam['fullMarks'] ?? 0} • Pass ${exam['passMarks'] ?? 0}',
-                                            style: const TextStyle(
-                                                color: Colors.white38,
-                                                fontSize: 10),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    ElevatedButton.icon(
-                                      style: ElevatedButton.styleFrom(
-                                          backgroundColor:
-                                              const Color(0xFF00A884)),
-                                      onPressed: () async {
-                                        await Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) =>
-                                                ExamMarksEntryScreen(
-                                              exam: Map<String, dynamic>.from(
-                                                  exam),
-                                            ),
-                                          ),
-                                        );
-                                        if (mounted) _load();
-                                      },
-                                      icon: const Icon(
-                                          Icons.edit_note_rounded,
-                                          color: Colors.white,
-                                          size: 17),
-                                      label: const Text('Manage Marks',
-                                          style:
-                                              TextStyle(color: Colors.white)),
-                                    ),
-                                  ],
+                                _sectionHeader(
+                                  'Exam Groups',
+                                  'Final Exam / Half Yearly / Unit Test — class-wise settings inside',
+                                  Icons.view_agenda_rounded,
                                 ),
-                                const SizedBox(height: 10),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: [
-                                    _pill('Results ${results.length}',
-                                        const Color(0xFF38A8FF)),
-                                    _pill('Pass $pass',
-                                        const Color(0xFF00D9A5)),
-                                    _pill('Fail $fail', Colors.redAccent),
-                                    if (topper != null)
-                                      _pill(
-                                        'Top: ${topper['studentName'] ?? ''} • ${((topper['percentage'] as num?)?.toDouble() ?? 0).toStringAsFixed(1)}%',
-                                        Colors.amberAccent,
-                                      ),
-                                  ],
-                                ),
-                                if (subjectList.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Subjects: ${subjectList.join(' • ')}',
-                                    style: const TextStyle(
-                                        color: Colors.white30,
-                                        fontSize: 9.5),
+                                const SizedBox(height: 14),
+                                if (groups.isEmpty)
+                                  _emptyState()
+                                else
+                                  ...groups.map(
+                                    (group) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 10),
+                                      child: _examGroupCard(group),
+                                    ),
                                   ),
-                                ],
                               ],
                             ),
                           );
-                        }),
+
+                          final side = Column(
+                            children: [
+                              _performanceOverview(),
+                              const SizedBox(height: 12),
+                              _recentResults(),
+                            ],
+                          );
+
+                          if (!wide) {
+                            return Column(
+                              children: [
+                                main,
+                                const SizedBox(height: 12),
+                                side,
+                              ],
+                            );
+                          }
+
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(flex: 7, child: main),
+                              const SizedBox(width: 12),
+                              Expanded(flex: 4, child: side),
+                            ],
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),
     );
   }
 }
-
 
 class ExamMarksEntryScreen extends StatefulWidget {
   final Map<String, dynamic> exam;
