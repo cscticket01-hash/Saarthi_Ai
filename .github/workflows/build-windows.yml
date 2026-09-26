@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout Repository
@@ -49,6 +49,33 @@ jobs:
       - name: Generate Windows-Compatible Dashboard
         shell: powershell
         run: python scripts/windows_admin_patch.py
+
+      # =========================================================
+      # WINDOWS-ONLY DEPENDENCY PREP
+      # Agora is not used by the Windows Admin source.
+      # Remove it only inside this GitHub runner so Android/Web
+      # pubspec in the repository stays unchanged.
+      # =========================================================
+      - name: Prepare Windows-only Dependencies
+        shell: powershell
+        run: |
+          $pubspec = Get-Content "pubspec.yaml" -Raw
+
+          $updated = [regex]::Replace(
+            $pubspec,
+            '(?m)^\s*agora_rtc_engine:\s*[^\r\n]+\r?\n',
+            ''
+          )
+
+          if ($updated -eq $pubspec) {
+            Write-Host "agora_rtc_engine line not found; continuing."
+          } else {
+            Set-Content -Path "pubspec.yaml" -Value $updated -Encoding UTF8
+            Write-Host "Removed agora_rtc_engine for Windows CI build only."
+          }
+
+          Write-Host "===== Windows dependency check ====="
+          Select-String -Path "pubspec.yaml" -Pattern "agora_rtc_engine" -SimpleMatch
 
       - name: Clean Flutter
         shell: powershell
