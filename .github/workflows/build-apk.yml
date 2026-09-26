@@ -1,6 +1,3 @@
-
-    
-  
 name: Build Vidya Saarthi Android APK
 
 on:
@@ -98,3 +95,2823 @@ jobs:
             echo "Existing Android configuration preserve kiya jayega."
           fi
 
+      # ============================================================
+      # 8. FIREBASE + PERMANENT RELEASE SIGNING
+      # Runner-only: repository source unchanged rahega
+      # ============================================================
+      - name: Configure Firebase and Permanent Signing
+        shell: bash
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          ANDROID_KEYSTORE_ENCRYPTED_BASE64: ${{ secrets.ANDROID_KEYSTORE_ENCRYPTED_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            echo "::error::GOOGLE_SERVICES_JSON_BASE64 secret missing."
+            exit 1
+          fi
+
+
+          if [ -z "$ANDROID_KEYSTORE_ENCRYPTED_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_ENCRYPTED_BASE64 secret missing."
+            exit 1
+          fi
+
+          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+            echo "::error::ANDROID_KEYSTORE_PASSWORD secret missing."
+            exit 1
+          fi
+
+          echo "Restoring Firebase Android configuration..."
+          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" \
+            | base64 --decode \
+            > android/app/google-services.json
+
+          echo "Restoring permanent encrypted signing key..."
+          printf '%s' "$ANDROID_KEYSTORE_ENCRYPTED_BASE64" \
+            | base64 --decode \
+            > android/app/saarthi-release.jks.enc
+
+          openssl enc \
+            -d \
+            -aes-256-cbc \
+            -pbkdf2 \
+            -iter 200000 \
+            -in android/app/saarthi-release.jks.enc \
+            -out android/app/saarthi-release.jks \
+            -pass env:ANDROID_KEYSTORE_PASSWORD
+
+          rm -f android/app/saarthi-release.jks.enc
+          chmod 600 android/app/saarthi-release.jks
+
+          python3 <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          expected_package = "com.example.saarthi_ai"
+
+          google_json = Path("android/app/google-services.json")
+          settings = Path("android/settings.gradle.kts")
+          app_gradle = Path("android/app/build.gradle.kts")
+
+          for path in (google_json, settings, app_gradle):
+              if not path.exists():
+                  raise SystemExit(f"ERROR: Required file missing: {path}")
+
+          data = json.loads(google_json.read_text(encoding="utf-8"))
+
+          clients = data.get("client", [])
+          matched = [
+              client for client in clients
+              if client.get("client_info", {})
+                  .get("android_client_info", {})
+                  .get("package_name") == expected_package
+          ]
+
+          if not matched:
+              raise SystemExit(
+                  "ERROR: google-services.json package name "
+                  f"{expected_package} se match nahi karta"
+              )
+
+          settings_text = settings.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          google_plugin_decl = (
+              '    id("com.google.gms.google-services") '
+              'version "4.5.0" apply false'
+          )
+
+          if 'id("com.google.gms.google-services")' not in settings_text:
+              settings_text, count = re.subn(
+                  r'(?m)^plugins\s*\{\s*$',
+                  "plugins {\n" + google_plugin_decl,
+                  settings_text,
+                  count=1,
+              )
+
+              if count != 1:
+                  raise SystemExit(
+                      "ERROR: settings.gradle.kts plugins block nahi mila"
+                  )
+
+              settings.write_text(
+                  settings_text,
+                  encoding="utf-8",
+              )
+
+          app_text = app_gradle.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          if 'id("com.google.gms.google-services")' not in app_text:
+              android_plugin = '    id("com.android.application")'
+              google_plugin = '    id("com.google.gms.google-services")'
+
+              if android_plugin in app_text:
+                  app_text = app_text.replace(
+                      android_plugin,
+                      android_plugin + "\n" + google_plugin,
+                      1,
+                  )
+              else:
+                  app_text, count = re.subn(
+                      r'(?m)^plugins\s*\{\s*$',
+                      'plugins {\n' + google_plugin,
+                      app_text,
+                      count=1,
+                  )
+
+                  if count != 1:
+                      raise SystemExit(
+                          "ERROR: app/build.gradle.kts plugins block nahi mila"
+                      )
+
+          if 'create("release")' not in app_text:
+              signing_block = """    signingConfigs {
+                  create("release") {
+                      storeFile = file("saarthi-release.jks")
+                      storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                      keyAlias = "saarthi"
+                      keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                  }
+              }
+
+          """
+
+              build_types_marker = "    buildTypes {\n"
+
+              if build_types_marker not in app_text:
+                  raise SystemExit(
+                      "ERROR: app/build.gradle.kts buildTypes block nahi mila"
+                  )
+
+              app_text = app_text.replace(
+                  build_types_marker,
+                  signing_block + build_types_marker,
+                  1,
+              )
+
+          release_signing = (
+              'signingConfig = signingConfigs.getByName("release")'
+          )
+
+          if release_signing not in app_text:
+              debug_signing = (
+                  'signingConfig = signingConfigs.getByName("debug")'
+              )
+
+              if debug_signing in app_text:
+                  app_text = app_text.replace(
+                      debug_signing,
+                      release_signing,
+                      1,
+                  )
+              else:
+                  app_text, count = re.subn(
+                      r'(?m)^(\s*)release\s*\{\s*$',
+                      lambda m: (
+                          f'{m.group(1)}release {{\n'
+                          f'{m.group(1)}    {release_signing}'
+                      ),
+                      app_text,
+                      count=1,
+                  )
+
+                  if count != 1:
+                      raise SystemExit(
+                          "ERROR: release buildType patch nahi hua"
+                      )
+
+          app_gradle.write_text(
+              app_text,
+              encoding="utf-8",
+          )
+
+          print("Firebase package verified:", expected_package)
+          print("Google Services Gradle plugin configured.")
+          print("Permanent release signing configured.")
+          PY
+
+          EXPECTED_SHA1="76:24:14:31:E2:A8:21:D7:56:64:A6:12:24:46:EB:50:6F:CA:D0:1B"
+
+          ACTUAL_SHA1="$(
+            keytool -list -v \
+              -keystore android/app/saarthi-release.jks \
+              -alias saarthi \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+              | sed -n 's/^[[:space:]]*SHA1: //p' \
+              | head -n 1
+          )"
+
+          if [ "$ACTUAL_SHA1" != "$EXPECTED_SHA1" ]; then
+            echo "::error::Signing key SHA-1 mismatch."
+            echo "Expected: $EXPECTED_SHA1"
+            echo "Actual:   $ACTUAL_SHA1"
+            exit 1
+          fi
+
+          echo "Permanent signing SHA-1 verified: $ACTUAL_SHA1"
+
+          echo ""
+          echo "===== FIREBASE / SIGNING CHECK ====="
+          grep -n \
+            'com.google.gms.google-services' \
+            android/settings.gradle.kts \
+            android/app/build.gradle.kts
+
+          grep -n \
+            'signingConfig = signingConfigs.getByName("release")' \
+            android/app/build.gradle.kts
+
+          test -s android/app/google-services.json
+          test -s android/app/saarthi-release.jks
+
+      # ============================================================
+      # 8. ENSURE CAMERA + INTERNET + NOTIFICATION PERMISSIONS
+      # ============================================================
+      - name: Ensure Android Permissions
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+
+          if not manifest.exists():
+              raise SystemExit("ERROR: AndroidManifest.xml nahi mila")
+
+          text = manifest.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          additions = []
+
+          if 'android.permission.INTERNET' not in text:
+              additions.append(
+                  '    <uses-permission android:name="android.permission.INTERNET" />'
+              )
+
+          if 'android.permission.CAMERA' not in text:
+              additions.append(
+                  '    <uses-permission android:name="android.permission.CAMERA" />'
+              )
+
+          if 'android.permission.POST_NOTIFICATIONS' not in text:
+              additions.append(
+                  '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
+              )
+
+          if 'android.hardware.camera.any' not in text:
+              additions.append(
+                  '    <uses-feature android:name="android.hardware.camera.any" android:required="false" />'
+              )
+
+          if additions:
+              manifest_end = text.find('>')
+
+              if manifest_end == -1:
+                  raise SystemExit("ERROR: Invalid AndroidManifest.xml")
+
+              text = (
+                  text[:manifest_end + 1]
+                  + "\n"
+                  + "\n".join(additions)
+                  + "\n"
+                  + text[manifest_end + 1:]
+              )
+
+          # mobile_scanner 5.1.1 + Android Impeller can show a
+          # black/error camera preview on some Android devices.
+          # Disable Impeller only for this Android APK build.
+          impeller_meta = (
+              '        <meta-data '
+              'android:name="io.flutter.embedding.android.EnableImpeller" '
+              'android:value="false" />'
+          )
+
+          if 'io.flutter.embedding.android.EnableImpeller' not in text:
+              app_start = text.find('<application')
+
+              if app_start == -1:
+                  raise SystemExit(
+                      "ERROR: AndroidManifest.xml me <application> tag nahi mila"
+                  )
+
+              app_tag_end = text.find('>', app_start)
+
+              if app_tag_end == -1:
+                  raise SystemExit(
+                      "ERROR: AndroidManifest.xml ka <application> tag invalid hai"
+                  )
+
+              insert_at = app_tag_end + 1
+              text = (
+                  text[:insert_at]
+                  + "\n"
+                  + impeller_meta
+                  + text[insert_at:]
+              )
+
+          manifest.write_text(
+              text,
+              encoding="utf-8",
+          )
+
+          print("===== ANDROID MANIFEST =====")
+          final_manifest = manifest.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          print(final_manifest)
+
+          if 'io.flutter.embedding.android.EnableImpeller' not in final_manifest:
+              raise SystemExit("ERROR: Impeller disable flag missing")
+
+          print("Android scanner fix: Impeller disabled.")
+          PY
+
+      # ============================================================
+      # 9. CLEAN PROJECT
+      # ============================================================
+      - name: Clean Project
+        run: flutter clean
+
+      # ============================================================
+      # 10. GET DEPENDENCIES
+      # ============================================================
+      - name: Install Flutter Dependencies
+        run: flutter pub get
+
+      # ============================================================
+      # 11. ANDROID-ONLY MOBILE SCANNER UPGRADE
+      # Repository/web pubspec unchanged rahega. Runner copy only.
+      # v7.3.0 includes newer Android camera lifecycle/resource fixes.
+      # Unbundled ML Kit uses Google Play Services and avoids bundling the
+      # barcode model inside this APK.
+      # ============================================================
+      - name: Upgrade Android Mobile Scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Upgrading Android runner copy to mobile_scanner 7.3.0..."
+          flutter pub add "mobile_scanner:7.3.0"
+          flutter pub get
+
+          # Use the Google Play Services ML Kit barcode model on Android.
+          # This is an official mobile_scanner Android option.
+          touch android/gradle.properties
+          if grep -q '^dev\.steenbakker\.mobile_scanner\.useUnbundled=' android/gradle.properties; then
+            sed -i \
+              's/^dev\.steenbakker\.mobile_scanner\.useUnbundled=.*/dev.steenbakker.mobile_scanner.useUnbundled=true/' \
+              android/gradle.properties
+          else
+            echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' \
+              >> android/gradle.properties
+          fi
+
+          # GitHub Actions/Gradle file watcher can occasionally throw
+          # "Already watching path: .../android". Disable VFS watching
+          # only for the CI runner; repository source is unchanged.
+          if grep -q '^org\.gradle\.vfs\.watch=' android/gradle.properties; then
+            sed -i \
+              's/^org\.gradle\.vfs\.watch=.*/org.gradle.vfs.watch=false/' \
+              android/gradle.properties
+          else
+            echo 'org.gradle.vfs.watch=false' >> android/gradle.properties
+          fi
+
+          echo ""
+          echo "===== MOBILE SCANNER VERSION ====="
+
+          flutter pub deps > /tmp/saarthi-pub-deps.txt
+          grep "mobile_scanner" /tmp/saarthi-pub-deps.txt || true
+
+          if ! grep -q "mobile_scanner 7.3.0" /tmp/saarthi-pub-deps.txt; then
+            echo "::error::mobile_scanner 7.3.0 resolve nahi hua."
+            exit 1
+          fi
+
+          echo ""
+          echo "===== MOBILE SCANNER ANDROID MODE ====="
+          grep "dev.steenbakker.mobile_scanner.useUnbundled" \
+            android/gradle.properties
+
+          echo "OK - Android mobile_scanner 7.3.0 active."
+
+      # ============================================================
+      # 12. FIX OLD PLUGIN COMPILE SDK
+      # Existing Android plugins runner-only patch to API 36
+      # ============================================================
+      - name: Fix Plugin Compile SDK
+        shell: bash
+        run: |
+          echo "Fixing existing Android plugin compileSdk to 36..."
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+
+          package_patterns = [
+              "agora_rtc_engine-*",
+              "iris_method_channel-*",
+              "printing-*",
+              "mobile_scanner-*",
+              "flutter_contacts-*",
+              "permission_handler_android-*",
+              "url_launcher_android-*",
+              "flutter_plugin_android_lifecycle-*",
+          ]
+
+          found_packages = 0
+          patched_files = 0
+
+          for package_pattern in package_patterns:
+              packages = list(pub_cache.glob(package_pattern))
+
+              if not packages:
+                  print(f"WARNING: {package_pattern} nahi mila")
+                  continue
+
+              for package in packages:
+                  found_packages += 1
+
+                  print("")
+                  print("====================================")
+                  print("PACKAGE:", package)
+                  print("====================================")
+
+                  android_dir = package / "android"
+
+                  if not android_dir.exists():
+                      print("Android folder nahi hai - skip")
+                      continue
+
+                  gradle_files = list(android_dir.rglob("*.gradle"))
+                  gradle_files += list(android_dir.rglob("*.gradle.kts"))
+
+                  for file in gradle_files:
+                      text = file.read_text(
+                          encoding="utf-8",
+                          errors="ignore",
+                      )
+
+                      original = text
+
+                      if file.name.endswith(".gradle.kts"):
+                          text = re.sub(
+                              r'(?m)^(\s*)compileSdk\s*=.*$',
+                              r'\1compileSdk = 36',
+                              text,
+                          )
+                          text = re.sub(
+                              r'(?m)^(\s*)compileSdkVersion\s*=.*$',
+                              r'\1compileSdk = 36',
+                              text,
+                          )
+                      else:
+                          text = re.sub(
+                              r'(?m)^(\s*)compileSdkVersion\s+.*$',
+                              r'\1compileSdkVersion 36',
+                              text,
+                          )
+                          text = re.sub(
+                              r'(?m)^(\s*)compileSdk\s*(?:=\s*)?.*$',
+                              r'\1compileSdkVersion 36',
+                              text,
+                          )
+
+                      if text != original:
+                          file.write_text(
+                              text,
+                              encoding="utf-8",
+                          )
+                          patched_files += 1
+                          print("PATCHED:", file)
+
+          print("")
+          print("Found packages:", found_packages)
+          print("Patched Gradle files:", patched_files)
+
+          if found_packages == 0:
+              raise SystemExit(
+                  "ERROR: Android plugin packages nahi mile"
+              )
+          PY
+
+          echo ""
+          echo "===== AGORA AFTER PATCH ====="
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name "agora_rtc_engine-*" \
+            -exec grep -R -n "compileSdk" {}/android \; \
+            2>/dev/null || true
+
+          echo ""
+          echo "===== IRIS AFTER PATCH ====="
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name "iris_method_channel-*" \
+            -exec grep -R -n "compileSdk" {}/android \; \
+            2>/dev/null || true
+
+          echo ""
+          echo "===== PRINTING AFTER PATCH ====="
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name "printing-*" \
+            -exec grep -R -n "compileSdk" {}/android \; \
+            2>/dev/null || true
+
+          echo ""
+          echo "Existing plugin compileSdk 36 patch completed."
+
+      # ============================================================
+      # 13. VERIFY ANDROID CONFIGURATION
+      # ============================================================
+      - name: Verify Android Configuration
+        shell: bash
+        run: |
+          echo "===== APP COMPILE SDK ====="
+          grep -R -n "compileSdk" android/app 2>/dev/null || true
+
+          echo ""
+          echo "===== CAMERA PERMISSION ====="
+          grep -R -n "android.permission.CAMERA" \
+            android/app/src/main/AndroidManifest.xml
+
+          echo ""
+          echo "===== INTERNET PERMISSION ====="
+          grep -R -n "android.permission.INTERNET" \
+            android/app/src/main/AndroidManifest.xml
+
+      # ============================================================
+      # 14. FLUTTER DOCTOR
+      # ============================================================
+      - name: Flutter Doctor
+        run: flutter doctor -v
+
+      # ============================================================
+      # 15. ANDROID-ONLY TEMPORARY DART PATCH
+      # Latest website source ko hi use karta hai.
+      # Sirf runner copy me web-only APIs ko Android-compatible banata hai.
+      # Repository source unchanged rahega.
+      # ============================================================
+      - name: Prepare Android Safe Dart Source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Preparing Android-only temporary source from latest repository files..."
+
+          # Android-only helper packages. Repository pubspec commit nahi hota.
+          # IMPORTANT:
+          # - Project ka existing Firebase stack package:web ^0.5.1 use karta hai.
+          # - printing 5.13.1 bhi isi compatible web generation par hai.
+          # - file_picker 8.1.0+ package:web 1.x par chala gaya.
+          # Isliye Android runner me file_picker 8.0.7 pin karte hain,
+          # aur existing printing/Firebase versions ko bilkul touch nahi karte.
+          flutter pub add "url_launcher:^6.3.2"
+          flutter pub add "file_picker:8.0.7"
+          flutter pub add "firebase_messaging:14.9.4"
+          flutter pub get
+
+          echo ""
+          echo "===== ANDROID HELPER DEPENDENCIES ====="
+          flutter pub deps > /tmp/android-helper-deps.txt
+          grep -E "printing |file_picker |url_launcher |firebase_messaging " /tmp/android-helper-deps.txt || true
+
+          if ! grep -q "file_picker 8.0.7" /tmp/android-helper-deps.txt; then
+            echo "::error::file_picker 8.0.7 resolve nahi hua."
+            exit 1
+          fi
+
+          # =========================================================
+          # Android compatibility shim for the few web APIs that the
+          # shared website source uses (localStorage, external URLs,
+          # browser notification gates, etc.).
+          # =========================================================
+          cat > lib/android_html_shim.dart <<'DART'
+          import 'dart:async';
+
+          import 'package:url_launcher/url_launcher.dart';
+
+          class Storage {
+            final Map<String, String> _values = <String, String>{};
+
+            String? operator [](Object? key) => _values[key];
+
+            void operator []=(String key, String value) {
+              _values[key] = value;
+            }
+
+            String? remove(Object? key) => _values.remove(key);
+          }
+
+          class NavigatorInfo {
+            String get userAgent => 'android';
+          }
+
+          class Window {
+            final Storage localStorage = Storage();
+            final NavigatorInfo navigator = NavigatorInfo();
+
+            void open(String url, String target) {
+              final uri = Uri.tryParse(url);
+              if (uri == null) return;
+
+              unawaited(
+                launchUrl(
+                  uri,
+                  mode: LaunchMode.externalApplication,
+                ),
+              );
+            }
+          }
+
+          final Window window = Window();
+
+          class MouseEvent {}
+
+          class _Children {
+            void add(Object value) {}
+          }
+
+          class _Body {
+            final _Children children = _Children();
+          }
+
+          class Document {
+            final _Body? body = _Body();
+
+            Stream<MouseEvent> get onClick =>
+                const Stream<MouseEvent>.empty();
+          }
+
+          final Document document = Document();
+
+          class Notification {
+            Notification(
+              String title, {
+              String? body,
+              String? tag,
+            });
+
+            static bool get supported => true;
+
+            static String? get permission => 'granted';
+
+            static Future<String> requestPermission() async => 'granted';
+
+            Stream<void> get onClick => const Stream<void>.empty();
+
+            void close() {}
+          }
+
+          // Compile-time fallbacks. The real Android implementations for
+          // PDF export and document picking are injected into the shared
+          // source below, so these are not used at runtime.
+          class Blob {
+            Blob(List<Object?> parts, [String? type]);
+          }
+
+          class Url {
+            static String createObjectUrlFromBlob(Blob blob) => '';
+
+            static void revokeObjectUrl(String url) {}
+          }
+
+          class AnchorElement {
+            AnchorElement({String? href});
+
+            void setAttribute(String name, String value) {}
+
+            void click() {}
+
+            void remove() {}
+          }
+
+          class File {
+            String name = '';
+            int size = 0;
+            String type = '';
+          }
+
+          class FileUploadInputElement {
+            String accept = '';
+            List<File>? files;
+
+            Stream<void> get onChange => const Stream<void>.empty();
+
+            void click() {}
+          }
+
+          class FileReader {
+            Object? result;
+
+            Stream<void> get onLoad => const Stream<void>.empty();
+
+            void readAsDataUrl(File file) {}
+          }
+          DART
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          dashboard_path = Path("lib/main_dashboard_screen.dart")
+
+          if not dashboard_path.exists():
+              raise SystemExit(
+                  "ERROR: lib/main_dashboard_screen.dart nahi mila"
+              )
+
+          text = dashboard_path.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          # ========================================================
+          # 1. WEB dart:html IMPORT -> ANDROID COMPATIBILITY SHIM
+          # ========================================================
+          web_import_pattern = re.compile(
+              r"(?m)^\s*import\s+'dart:html'\s+as\s+html;\s*$"
+          )
+
+          text, html_import_count = web_import_pattern.subn(
+              "import 'android_html_shim.dart' as html;",
+              text,
+              count=1,
+          )
+
+          if html_import_count == 0:
+              print(
+                  "dart:html import source me nahi tha - "
+                  "Android shim import replacement skip."
+              )
+          else:
+              print("dart:html -> Android compatibility shim patched.")
+
+          # ========================================================
+          # 2. ADD ANDROID-ONLY IMPORTS
+          # ========================================================
+          imports_to_add = [
+              "import 'package:file_picker/file_picker.dart';",
+              "import 'package:permission_handler/permission_handler.dart';",
+          ]
+
+          mobile_import = (
+              "import 'package:mobile_scanner/mobile_scanner.dart';"
+          )
+
+          for import_line in imports_to_add:
+              if import_line in text:
+                  continue
+
+              if mobile_import in text:
+                  text = text.replace(
+                      mobile_import,
+                      mobile_import + "\n" + import_line,
+                      1,
+                  )
+              else:
+                  raise SystemExit(
+                      "ERROR: Android import add karne ke liye "
+                      "mobile_scanner import nahi mila"
+                  )
+
+          # ========================================================
+          # 3. ANDROID CAMERA DETECTION
+          # ========================================================
+          text = text.replace(
+              "html.window.navigator.userAgent.toLowerCase()",
+              "'android'",
+          )
+
+          # ========================================================
+          # 4. SCANNER FIX
+          #
+          # Important:
+          # - Camera permission pehle request hoti hai.
+          # - MobileScanner ko manually start()/stop() nahi karte.
+          # - Widget mount hone par plugin khud lifecycle ke saath start hota hai.
+          # - Isse manual controller double-start/race avoid hota hai.
+          # ========================================================
+          start_markers = [
+              "void _startInlineScanner() {",
+              "Future<void> _startInlineScanner() async {",
+          ]
+
+          scanner_start = -1
+
+          for marker in start_markers:
+              scanner_start = text.find(marker)
+              if scanner_start != -1:
+                  break
+
+          scanner_close = text.find(
+              "void _closeInlineScanner()",
+              scanner_start if scanner_start >= 0 else 0,
+          )
+
+          if scanner_start == -1 or scanner_close == -1:
+              raise SystemExit(
+                  "ERROR: Scanner start/close methods patch point nahi mila"
+              )
+
+          scanner_start_new = """Future<void> _startInlineScanner() async {
+            if (_isAdminMode || _isLoggingIn) return;
+
+            final cameraStatus = await Permission.camera.request();
+
+            if (!mounted) return;
+
+            if (!cameraStatus.isGranted) {
+              setState(() {
+                _showInlineScanner = false;
+                _scanHandled = false;
+                _isQrVerifying = false;
+                _scanError = cameraStatus.isPermanentlyDenied
+                    ? 'Camera permission permanently blocked hai. '
+                        'Phone Settings > Apps > Vidya Saarthi > Permissions '
+                        'me Camera Allow karein.'
+                    : 'Student ID scan ke liye Camera permission Allow karein.';
+              });
+
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(
+                  SnackBar(
+                    duration: const Duration(seconds: 5),
+                    backgroundColor: Colors.orangeAccent,
+                    content: Text(_scanError!),
+                    action: cameraStatus.isPermanentlyDenied
+                        ? SnackBarAction(
+                            label: 'SETTINGS',
+                            textColor: Colors.black,
+                            onPressed: openAppSettings,
+                          )
+                        : null,
+                  ),
+                );
+              return;
+            }
+
+            setState(() {
+              _showInlineScanner = true;
+              _scanHandled = false;
+              _isQrVerifying = false;
+              _scanError = null;
+              _scannedStudentData = null;
+              _passwordController.clear();
+            });
+          }
+
+          """
+
+          text = (
+              text[:scanner_start]
+              + scanner_start_new
+              + text[scanner_close:]
+          )
+
+          # Replace the scanner widget with a lifecycle-safe auto-starting
+          # widget plus a useful retry/error screen.
+          scanner_widget_start = text.find("MobileScanner(")
+
+          if scanner_widget_start == -1:
+              raise SystemExit(
+                  "ERROR: MobileScanner widget patch point nahi mila"
+              )
+
+          # Current shared source has one scanner widget. Replace only the
+          # widget whose onDetect callback is _onInlineQrDetected.
+          scanner_detect = text.find(
+              "onDetect: _onInlineQrDetected",
+              scanner_widget_start,
+          )
+
+          if scanner_detect == -1:
+              raise SystemExit(
+                  "ERROR: Student QR scanner onDetect callback nahi mila"
+              )
+
+          scanner_widget_end = text.find(
+              "\n                ),",
+              scanner_detect,
+          )
+
+          if scanner_widget_end == -1:
+              # Formatting may differ slightly after future UI edits.
+              scanner_widget_end = text.find(
+                  "\n              ),",
+                  scanner_detect,
+              )
+
+          if scanner_widget_end == -1:
+              raise SystemExit(
+                  "ERROR: MobileScanner widget end nahi mila"
+              )
+
+          scanner_widget_end = text.find(
+              "),",
+              scanner_widget_end,
+          ) + 2
+
+          scanner_widget_new = "\n".join([
+              "MobileScanner(",
+              "                  fit: BoxFit.cover,",
+              "                  onDetect: _onInlineQrDetected,",
+              "                  errorBuilder: (context, error) {",
+              "                    final detail =",
+              "                        error.errorDetails?.message?.trim() ?? '';",
+              "                    final code = error.errorCode.name;",
+              "",
+              "                    return Container(",
+              "                      color: Colors.black,",
+              "                      alignment: Alignment.center,",
+              "                      padding: const EdgeInsets.all(20),",
+              "                      child: Column(",
+              "                        mainAxisSize: MainAxisSize.min,",
+              "                        children: [",
+              "                          const Icon(",
+              "                            Icons.camera_alt_outlined,",
+              "                            color: Colors.orangeAccent,",
+              "                            size: 42,",
+              "                          ),",
+              "                          const SizedBox(height: 12),",
+              "                          const Text(",
+              "                            'Camera scanner start nahi hua',",
+              "                            textAlign: TextAlign.center,",
+              "                            style: TextStyle(",
+              "                              color: Colors.white,",
+              "                              fontSize: 14,",
+              "                              fontWeight: FontWeight.w800,",
+              "                            ),",
+              "                          ),",
+              "                          const SizedBox(height: 7),",
+              "                          Text(",
+              "                            detail.isEmpty",
+              "                                ? 'Error: $code'",
+              "                                : 'Error: $code\\n$detail',",
+              "                            textAlign: TextAlign.center,",
+              "                            style: const TextStyle(",
+              "                              color: Colors.white54,",
+              "                              fontSize: 10.5,",
+              "                              height: 1.35,",
+              "                            ),",
+              "                          ),",
+              "                          const SizedBox(height: 14),",
+              "                          ElevatedButton.icon(",
+              "                            style: ElevatedButton.styleFrom(",
+              "                              backgroundColor:",
+              "                                  const Color(0xFF00A884),",
+              "                              foregroundColor: Colors.white,",
+              "                            ),",
+              "                            onPressed: () async {",
+              "                              setState(() {",
+              "                                _showInlineScanner = false;",
+              "                                _scanError = null;",
+              "                              });",
+              "",
+              "                              await Future<void>.delayed(",
+              "                                const Duration(milliseconds: 250),",
+              "                              );",
+              "",
+              "                              if (mounted) {",
+              "                                await _startInlineScanner();",
+              "                              }",
+              "                            },",
+              "                            icon: const Icon(",
+              "                              Icons.refresh_rounded,",
+              "                              size: 18,",
+              "                            ),",
+              "                            label: const Text('Retry Scanner'),",
+              "                          ),",
+              "                        ],",
+              "                      ),",
+              "                    );",
+              "                  },",
+              "                ),",
+          ])
+
+          text = (
+              text[:scanner_widget_start]
+              + scanner_widget_new
+              + text[scanner_widget_end:]
+          )
+
+          print(
+              "Android scanner patched: runtime permission + "
+              "auto lifecycle + retry UI."
+          )
+
+          # ========================================================
+          # 5. WEB PDF DOWNLOAD -> ANDROID PDF SHARE
+          # ========================================================
+          pdf_start_marker = "final blob = html.Blob("
+          pdf_end_marker = "html.Url.revokeObjectUrl(url);"
+
+          pdf_start = text.find(pdf_start_marker)
+
+          if pdf_start != -1:
+              pdf_end = text.find(
+                  pdf_end_marker,
+                  pdf_start,
+              )
+
+              if pdf_end == -1:
+                  raise SystemExit(
+                      "ERROR: PDF html block ka end nahi mila"
+                  )
+
+              pdf_end += len(pdf_end_marker)
+
+              pdf_replacement = """await Printing.sharePdf(
+              bytes: pdfBytes,
+              filename:
+                  'SVN_ID_Card_${safeName}_Roll_$roll.pdf',
+            );"""
+
+              text = (
+                  text[:pdf_start]
+                  + pdf_replacement
+                  + text[pdf_end:]
+              )
+
+              print("ID Card PDF Android share me patched.")
+          else:
+              print(
+                  "HTML PDF download block present nahi hai - skip."
+              )
+
+          # ========================================================
+          # 6. STUDENT DOCUMENT UPLOAD -> NATIVE ANDROID FILE PICKER
+          # Keeps PDF/JPG/JPEG and total 2 MB validation.
+          # ========================================================
+          file_picker_start = text.find(
+              "    final input = html.FileUploadInputElement()"
+          )
+
+          file_reader_end_marker = (
+              "      if (dataUrl.isEmpty) "
+              "throw Exception('File read nahi ho paya.');"
+          )
+
+          if file_picker_start != -1:
+              file_picker_end = text.find(
+                  file_reader_end_marker,
+                  file_picker_start,
+              )
+
+              if file_picker_end == -1:
+                  raise SystemExit(
+                      "ERROR: Student document web picker end marker nahi mila"
+                  )
+
+              file_picker_end += len(file_reader_end_marker)
+
+              native_picker = """    final picked = await FilePicker.platform.pickFiles(
+              type: FileType.custom,
+              allowedExtensions: const ['pdf', 'jpg', 'jpeg'],
+              allowMultiple: false,
+              withData: true,
+            );
+
+            if (picked == null ||
+                picked.files.isEmpty ||
+                !mounted) {
+              return;
+            }
+
+            final file = picked.files.single;
+            final bytes = file.bytes;
+            final lower = file.name.toLowerCase();
+
+            String mime;
+
+            if (lower.endsWith('.pdf')) {
+              mime = 'application/pdf';
+            } else if (lower.endsWith('.jpg') ||
+                lower.endsWith('.jpeg')) {
+              mime = 'image/jpeg';
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  backgroundColor: Colors.redAccent,
+                  content: Text(
+                    'Sirf PDF/JPG/JPEG document allowed hai.',
+                  ),
+                ),
+              );
+              return;
+            }
+
+            if (bytes == null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  backgroundColor: Colors.redAccent,
+                  content: Text('Document read nahi ho paya.'),
+                ),
+              );
+              return;
+            }
+
+            final oldSize =
+                (replace?['sizeBytes'] as num?)?.toInt() ?? 0;
+
+            if (_totalBytes - oldSize + file.size > _maxBytes) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: Colors.redAccent,
+                  content: Text(
+                    '2 MB total limit exceed hoga. '
+                    'Used ${_formatBytes(_totalBytes)}.',
+                  ),
+                ),
+              );
+              return;
+            }
+
+            setState(() => _uploading = true);
+
+            try {
+              final dataUrl =
+                  'data:$mime;base64,${base64Encode(bytes)}';"""
+
+              text = (
+                  text[:file_picker_start]
+                  + native_picker
+                  + text[file_picker_end:]
+              )
+
+              print(
+                  "Student Documents: Android native file picker patched."
+              )
+          else:
+              print(
+                  "Student document web picker source me nahi mila - skip."
+              )
+
+          # ========================================================
+          # 7. NATIVE ANDROID FIREBASE CONFIG
+          # Website FirebaseOptions stays in repository.
+          # Android runner uses google-services.json.
+          # ========================================================
+          main_path = Path("lib/main.dart")
+
+          if not main_path.exists():
+              raise SystemExit(
+                  "ERROR: lib/main.dart nahi mila"
+              )
+
+          main_text = main_path.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          firebase_init_pattern = re.compile(
+              r"await\s+Firebase\.initializeApp\(\s*"
+              r"options:\s*const\s+FirebaseOptions\("
+              r".*?"
+              r"\),\s*"
+              r"\);",
+              re.S,
+          )
+
+          main_text, firebase_init_count = (
+              firebase_init_pattern.subn(
+                  "await Firebase.initializeApp();",
+                  main_text,
+                  count=1,
+              )
+          )
+
+          if firebase_init_count == 0:
+              if "await Firebase.initializeApp();" in main_text:
+                  print(
+                      "Android Firebase init already native tha."
+                  )
+              else:
+                  raise SystemExit(
+                      "ERROR: Firebase.initializeApp Android patch "
+                      "point nahi mila"
+                  )
+          else:
+              print(
+                  "Android Firebase google-services.json config active."
+              )
+
+          # ========================================================
+          # 8. ANDROID PUSH NOTIFICATION STARTUP
+          # - App open par notification permission maangta hai.
+          # - Allowed hone par school_notices FCM topic subscribe karta hai.
+          # - Foreground me new push ko in-app banner me dikhata hai.
+          # - Background/closed app notification Android system dikhata hai.
+          # ========================================================
+          messaging_import = (
+              "import 'package:firebase_messaging/firebase_messaging.dart';\n"
+          )
+
+          if messaging_import not in main_text:
+              material_import = "import 'package:flutter/material.dart';\n"
+
+              if material_import in main_text:
+                  main_text = main_text.replace(
+                      material_import,
+                      material_import + messaging_import,
+                      1,
+                  )
+              else:
+                  raise SystemExit(
+                      "ERROR: main.dart me material import nahi mila"
+                  )
+
+          push_helper = r"""
+          final GlobalKey<ScaffoldMessengerState> _vidyaMessengerKey =
+              GlobalKey<ScaffoldMessengerState>();
+          
+          Future<void> _initializeVidyaPushNotifications() async {
+            try {
+              final messaging = FirebaseMessaging.instance;
+          
+              final settings = await messaging.requestPermission(
+                alert: true,
+                badge: true,
+                sound: true,
+                provisional: false,
+              );
+          
+              final allowed =
+                  settings.authorizationStatus == AuthorizationStatus.authorized ||
+                  settings.authorizationStatus == AuthorizationStatus.provisional;
+          
+              if (allowed) {
+                await messaging.subscribeToTopic('school_notices');
+              }
+          
+              FirebaseMessaging.onMessage.listen((message) {
+                final notification = message.notification;
+                final title = notification?.title?.trim();
+                final body = notification?.body?.trim();
+          
+                if ((title == null || title.isEmpty) &&
+          (body == null || body.isEmpty)) {
+                  return;
+                }
+          
+                _vidyaMessengerKey.currentState
+                  ?..hideCurrentSnackBar()
+                  ..showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 6),
+            backgroundColor: const Color(0xFF16332F),
+            content: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.notifications_active_rounded,
+                  color: Color(0xFF00E8B5),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title?.isNotEmpty == true
+                            ? title!
+                            : 'New School Notice',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (body?.isNotEmpty == true) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          body!,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+                  );
+              });
+            } catch (e) {
+              debugPrint('Vidya Saarthi push init error: $e');
+            }
+          }
+          """
+
+          if '_initializeVidyaPushNotifications' not in main_text:
+              # Latest repo me main() ka exact declaration change ho sakta hai
+              # (void main(), Future<void> main(), async spacing, etc.).
+              # Exact string ke bajay flexible regex use karo.
+              main_decl = re.search(
+                  r'(?m)^(?:Future\s*<\s*void\s*>|void)\s+'
+                  r'main\s*\(\s*\)\s*(?:async\s*)?\{',
+                  main_text,
+              )
+
+              if not main_decl:
+                  raise SystemExit(
+                      'ERROR: main.dart me main() declaration nahi mila'
+                  )
+
+              main_text = (
+                  main_text[:main_decl.start()]
+                  + push_helper
+                  + '\n'
+                  + main_text[main_decl.start():]
+              )
+
+          init_marker = 'await Firebase.initializeApp();'
+          push_call = (
+              'await Firebase.initializeApp();\n'
+              '  await _initializeVidyaPushNotifications();'
+          )
+
+          if 'await _initializeVidyaPushNotifications();' not in main_text:
+              if init_marker not in main_text:
+                  raise SystemExit(
+                      'ERROR: Android Firebase init marker missing for push'
+                  )
+
+              main_text = main_text.replace(
+                  init_marker,
+                  push_call,
+                  1,
+              )
+
+          if 'scaffoldMessengerKey: _vidyaMessengerKey,' not in main_text:
+              material_app_match = re.search(
+                  r'return\s+MaterialApp\s*\(',
+                  main_text,
+              )
+
+              if not material_app_match:
+                  raise SystemExit(
+                      'ERROR: MaterialApp() nahi mila for push banner'
+                  )
+
+              insert_at = material_app_match.end()
+              main_text = (
+                  main_text[:insert_at]
+                  + '\n      scaffoldMessengerKey: _vidyaMessengerKey,'
+                  + main_text[insert_at:]
+              )
+
+          print(
+              'Android FCM startup permission + topic subscription patched.'
+          )
+
+          main_text = main_text.replace(
+              "title: 'Saarthi AI'",
+              "title: 'Vidya Saarthi'",
+          )
+
+          # ========================================================
+          # 9. ANDROID APP VISIBLE NAME
+          # Package id ko touch nahi karta.
+          # ========================================================
+          manifest_path = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          manifest_text = manifest_path.read_text(
+              encoding="utf-8",
+              errors="ignore",
+          )
+
+          application_match = re.search(
+              r"<application\b[^>]*>",
+              manifest_text,
+              re.S,
+          )
+
+          if application_match:
+              app_tag = application_match.group(0)
+
+              if re.search(r'android:label="[^"]*"', app_tag):
+                  new_app_tag = re.sub(
+                      r'android:label="[^"]*"',
+                      'android:label="Vidya Saarthi"',
+                      app_tag,
+                      count=1,
+                  )
+              else:
+                  new_app_tag = app_tag[:-1] + (
+                      ' android:label="Vidya Saarthi">'
+                  )
+
+              manifest_text = (
+                  manifest_text[:application_match.start()]
+                  + new_app_tag
+                  + manifest_text[application_match.end():]
+              )
+
+              manifest_path.write_text(
+                  manifest_text,
+                  encoding="utf-8",
+              )
+
+          # ========================================================
+          # SAVE RUNNER-ONLY DART FILES
+          # ========================================================
+          dashboard_path.write_text(
+              text,
+              encoding="utf-8",
+          )
+
+          main_path.write_text(
+              main_text,
+              encoding="utf-8",
+          )
+
+          print("")
+          print(
+              "Android temporary source created from latest website code."
+          )
+          PY
+
+          echo ""
+          echo "========================================="
+          echo "CHECKING ANDROID TEMPORARY SOURCE"
+          echo "========================================="
+
+          echo ""
+          echo "Repository commit used by APK:"
+          git rev-parse HEAD
+
+          echo ""
+          echo "Checking native Android Firebase initialization..."
+
+          if grep -n "FirebaseOptions(" lib/main.dart; then
+            echo "::error::Android main.dart me web FirebaseOptions abhi bhi present hai!"
+            exit 1
+          fi
+
+          grep -n "Firebase.initializeApp();" lib/main.dart
+          grep -n "FirebaseMessaging.instance" lib/main.dart
+          grep -n "subscribeToTopic('school_notices')" lib/main.dart
+          grep -n "scaffoldMessengerKey: _vidyaMessengerKey" lib/main.dart
+
+          echo ""
+          echo "Checking Android compatibility shim..."
+
+          if grep -n "import 'dart:html'" lib/main_dashboard_screen.dart; then
+            echo "::error::Android source me direct dart:html import present hai!"
+            exit 1
+          fi
+
+          grep -n \
+            "android_html_shim.dart" \
+            lib/main_dashboard_screen.dart || true
+
+          test -s lib/android_html_shim.dart
+
+          echo ""
+          echo "Checking mobile scanner..."
+
+          flutter pub deps > /tmp/android-pub-deps.txt
+          grep "mobile_scanner" /tmp/android-pub-deps.txt
+          grep -n "Permission.camera.request" \
+            lib/main_dashboard_screen.dart
+          grep -n "errorBuilder:" \
+            lib/main_dashboard_screen.dart
+
+          if grep -n "_qrScannerController" lib/main_dashboard_screen.dart; then
+            echo "::error::Old manual scanner controller patch abhi bhi present hai!"
+            exit 1
+          else
+            echo "OK - manual scanner start/stop controller absent."
+          fi
+
+          echo ""
+          echo "Checking Student Documents native picker..."
+
+          if grep -n "FileUploadInputElement" lib/main_dashboard_screen.dart; then
+            echo "::error::Android source me web FileUploadInputElement abhi bhi present hai!"
+            exit 1
+          fi
+
+          grep -n "FilePicker.platform.pickFiles" \
+            lib/main_dashboard_screen.dart || true
+
+          echo ""
+          echo "Checking ID Card Android PDF share..."
+          grep -n "Printing.sharePdf" \
+            lib/main_dashboard_screen.dart || true
+
+          echo ""
+          echo "Checking Vidya Saarthi branding..."
+          grep -n "Vidya Saarthi" \
+            lib/main.dart \
+            lib/main_dashboard_screen.dart \
+            | head -n 10 || true
+
+          echo ""
+          echo "Android temporary source READY."
+
+      # ============================================================
+      # 16. FORCE APP + ALL REQUIRED PLUGINS TO COMPILE SDK 36
+      # file_picker 8.0.7 is kept for old Firebase/web compatibility,
+      # but its Android module defaults to API 34. Newer lifecycle AARs
+      # now require every consuming Android module to compile with API 36.
+      # Runner-only patch; repository files are not committed.
+      # ============================================================
+      - name: Force Android Compile SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Patching app + Android plugin modules to compileSdk 36..."
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          APP_SDK = "36"
+
+          def patch_gradle_file(path: Path) -> bool:
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              original = text
+
+              if path.name.endswith(".gradle.kts"):
+                  text = re.sub(
+                      r'(?m)^(\s*)compileSdk\s*=.*$',
+                      rf'\1compileSdk = {APP_SDK}',
+                      text,
+                  )
+                  text = re.sub(
+                      r'(?m)^(\s*)compileSdkVersion\s*=.*$',
+                      rf'\1compileSdk = {APP_SDK}',
+                      text,
+                  )
+              else:
+                  text = re.sub(
+                      r'(?m)^(\s*)compileSdkVersion\s+.*$',
+                      rf'\1compileSdkVersion {APP_SDK}',
+                      text,
+                  )
+                  text = re.sub(
+                      r'(?m)^(\s*)compileSdk\s*(?:=\s*)?.*$',
+                      rf'\1compileSdkVersion {APP_SDK}',
+                      text,
+                  )
+
+              if text != original:
+                  path.write_text(text, encoding="utf-8")
+                  return True
+
+              return False
+
+          # Main Android app must compile against 36 too.
+          app_candidates = [
+              Path("android/app/build.gradle.kts"),
+              Path("android/app/build.gradle"),
+          ]
+
+          app_patched = False
+          for app_file in app_candidates:
+              if app_file.exists():
+                  changed = patch_gradle_file(app_file)
+                  app_patched = app_patched or changed
+                  print("APP:", app_file, "patched=", changed)
+
+          pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+
+          # These are the Android plugins used by this project or pulled in
+          # by the Android-only helper packages. file_picker is the module
+          # that triggered the current AAR metadata failure.
+          patterns = [
+              "file_picker-*",
+              "flutter_plugin_android_lifecycle-*",
+              "mobile_scanner-*",
+              "flutter_contacts-*",
+              "permission_handler_android-*",
+              "url_launcher_android-*",
+              "agora_rtc_engine-*",
+              "iris_method_channel-*",
+              "printing-*",
+          ]
+
+          seen = set()
+          patched = []
+
+          for pattern in patterns:
+              for package in pub_cache.glob(pattern):
+                  if package in seen:
+                      continue
+                  seen.add(package)
+
+                  android_dir = package / "android"
+                  if not android_dir.exists():
+                      continue
+
+                  for gradle_file in list(android_dir.rglob("*.gradle")) + \
+                          list(android_dir.rglob("*.gradle.kts")):
+                      if patch_gradle_file(gradle_file):
+                          patched.append(str(gradle_file))
+
+          print("Patched plugin Gradle files:", len(patched))
+          for item in patched:
+              print("PATCHED:", item)
+
+          # file_picker must exist because Android source uses it.
+          file_picker_dirs = list(pub_cache.glob("file_picker-8.0.7"))
+          if not file_picker_dirs:
+              raise SystemExit("ERROR: file_picker 8.0.7 package not found")
+          PY
+
+          # Keep Gradle VFS watcher off in CI to avoid the intermittent
+          # "Already watching path" exception seen in the previous run.
+          touch android/gradle.properties
+          if grep -q '^org\.gradle\.vfs\.watch=' android/gradle.properties; then
+            sed -i \
+              's/^org\.gradle\.vfs\.watch=.*/org.gradle.vfs.watch=false/' \
+              android/gradle.properties
+          else
+            echo 'org.gradle.vfs.watch=false' >> android/gradle.properties
+          fi
+
+          echo ""
+          echo "===== FINAL APP COMPILE SDK ====="
+          grep -R -n "compileSdk" android/app 2>/dev/null || true
+
+          echo ""
+          echo "===== FINAL FILE_PICKER COMPILE SDK ====="
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name "file_picker-8.0.7" \
+            -exec grep -R -n "compileSdk" {}/android \; \
+            2>/dev/null || true
+
+          echo ""
+          echo "===== GRADLE CI PROPERTIES ====="
+          grep -E \
+            'org.gradle.vfs.watch|dev.steenbakker.mobile_scanner.useUnbundled' \
+            android/gradle.properties || true
+
+      # ============================================================
+      # 16B. ANDROID-ONLY STUDENT MOBILE UI
+      # IMPORTANT: This patches only the GitHub runner copy.
+      # Repository/web main_dashboard_screen.dart remains unchanged.
+      # ============================================================
+      - name: Apply Android-only Student Mobile UI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p scripts
+          cat > scripts/android_mobile_ui_patch.py <<'PYMOBILEPATCH'
+          from pathlib import Path
+          import textwrap
+
+          DASHBOARD = Path('lib/main_dashboard_screen.dart')
+
+          if not DASHBOARD.exists():
+              raise SystemExit('ERROR: lib/main_dashboard_screen.dart nahi mila')
+
+          text = DASHBOARD.read_text(encoding='utf-8', errors='ignore')
+
+          launcher_import = "import 'package:url_launcher/url_launcher.dart';"
+          if launcher_import not in text:
+              mobile_import = "import 'package:mobile_scanner/mobile_scanner.dart';"
+              if mobile_import not in text:
+                  raise SystemExit('ERROR: mobile_scanner import nahi mila')
+              text = text.replace(mobile_import, mobile_import + '\n' + launcher_import, 1)
+
+          student_state_start = text.find('class _StudentPortalScreenState')
+          if student_state_start == -1:
+              raise SystemExit('ERROR: StudentPortal state class nahi mila')
+
+          admin_state_start = text.find('class _AdminDashboardScreenState', student_state_start)
+          if admin_state_start == -1:
+              raise SystemExit('ERROR: AdminDashboard state class marker nahi mila')
+
+          student_section = text[student_state_start:admin_state_start]
+
+          if '_openAndroidStudentProfilePanel' not in student_section:
+              build_marker = '  @override\n  Widget build(BuildContext context) {'
+              build_index = student_section.find(build_marker)
+              if build_index == -1:
+                  raise SystemExit('ERROR: StudentPortal build method nahi mila')
+
+              helpers = textwrap.dedent(r'''
+                String _formatAndroidNoticeDateTime(dynamic value) {
+                  DateTime? date;
+
+                  if (value is Timestamp) {
+                    date = value.toDate();
+                  } else if (value is int) {
+                    date = DateTime.fromMillisecondsSinceEpoch(value);
+                  } else if (value is num) {
+                    date = DateTime.fromMillisecondsSinceEpoch(value.toInt());
+                  } else if (value is DateTime) {
+                    date = value;
+                  } else if (value != null) {
+                    final raw = value.toString().trim();
+                    final millis = int.tryParse(raw);
+                    if (millis != null) {
+                      date = DateTime.fromMillisecondsSinceEpoch(millis);
+                    } else {
+                      date = DateTime.tryParse(raw);
+                    }
+                  }
+
+                  if (date == null) return '';
+
+                  final local = date.toLocal();
+                  final day = local.day.toString().padLeft(2, '0');
+                  final month = local.month.toString().padLeft(2, '0');
+                  final year = local.year.toString();
+
+                  var hour = local.hour;
+                  final suffix = hour >= 12 ? 'PM' : 'AM';
+                  hour = hour % 12;
+                  if (hour == 0) hour = 12;
+
+                  final minute = local.minute.toString().padLeft(2, '0');
+
+                  return '$day/$month/$year • $hour:$minute $suffix';
+                }
+
+                Widget _buildAndroidMobileNoticeBoard() {
+                  return StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('school_notices')
+                        .orderBy('timestamp', descending: true)
+                        .limit(30)
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      final docs = snapshot.data?.docs ?? const <QueryDocumentSnapshot>[];
+
+                      return Container(
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF17332F),
+                              Color(0xFF15252B),
+                              Color(0xFF111A20),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
+                            color: const Color(0xFF00A884).withOpacity(0.18),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.20),
+                              blurRadius: 24,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 13),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 46,
+                                    height: 46,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF00A884).withOpacity(0.14),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: const Color(0xFF00D9A5).withOpacity(0.20),
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.notifications_active_rounded,
+                                      color: Color(0xFF00D9A5),
+                                      size: 23,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 11),
+                                  const Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Notice Board',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                        SizedBox(height: 2),
+                                        Text(
+                                          'School announcements & updates',
+                                          style: TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 10.5,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 6,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF0D171C),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(color: Colors.white10),
+                                    ),
+                                    child: Text(
+                                      '${docs.length}',
+                                      style: const TextStyle(
+                                        color: Color(0xFF00D9A5),
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(height: 1, color: Colors.white.withOpacity(0.055)),
+                            if (snapshot.connectionState == ConnectionState.waiting)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 42),
+                                child: Center(
+                                  child: CircularProgressIndicator(
+                                    color: Color(0xFF00A884),
+                                    strokeWidth: 2.4,
+                                  ),
+                                ),
+                              )
+                            else if (snapshot.hasError)
+                              Padding(
+                                padding: const EdgeInsets.all(18),
+                                child: _emptyNoticeState(
+                                  icon: Icons.error_outline_rounded,
+                                  title: 'Notice load nahi ho paya',
+                                  subtitle: 'Internet connection check karke dobara try karein.',
+                                ),
+                              )
+                            else if (docs.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.all(18),
+                                child: _emptyNoticeState(
+                                  icon: Icons.notifications_none_rounded,
+                                  title: 'Abhi koi notice nahi hai',
+                                  subtitle: 'School notice publish karega to yahan turant dikhega.',
+                                ),
+                              )
+                            else
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                                child: Column(
+                                  children: [
+                                    for (var index = 0; index < docs.length; index++)
+                                      Builder(
+                                        builder: (context) {
+                                          final notice = docs[index].data()
+                                              as Map<String, dynamic>;
+                                          final category =
+                                              notice['category']?.toString() ?? 'General';
+                                          final accent = _categoryColor(category);
+                                          final date = _formatAndroidNoticeDateTime(notice['timestamp']);
+
+                                          return Container(
+                                            width: double.infinity,
+                                            margin: const EdgeInsets.only(bottom: 10),
+                                            padding: const EdgeInsets.all(14),
+                                            decoration: BoxDecoration(
+                                              color: index == 0
+                                                  ? accent.withOpacity(0.075)
+                                                  : const Color(0xFF10191F),
+                                              borderRadius: BorderRadius.circular(16),
+                                              border: Border.all(
+                                                color: index == 0
+                                                    ? accent.withOpacity(0.26)
+                                                    : Colors.white.withOpacity(0.055),
+                                              ),
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Row(
+                                                  children: [
+                                                    Container(
+                                                      width: 38,
+                                                      height: 38,
+                                                      decoration: BoxDecoration(
+                                                        color: accent.withOpacity(0.13),
+                                                        borderRadius: BorderRadius.circular(11),
+                                                      ),
+                                                      child: Icon(
+                                                        _categoryIcon(category),
+                                                        color: accent,
+                                                        size: 19,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 10),
+                                                    Expanded(
+                                                      child: Wrap(
+                                                        spacing: 7,
+                                                        runSpacing: 5,
+                                                        crossAxisAlignment:
+                                                            WrapCrossAlignment.center,
+                                                        children: [
+                                                          Container(
+                                                            padding: const EdgeInsets.symmetric(
+                                                              horizontal: 8,
+                                                              vertical: 4,
+                                                            ),
+                                                            decoration: BoxDecoration(
+                                                              color: accent.withOpacity(0.12),
+                                                              borderRadius:
+                                                                  BorderRadius.circular(20),
+                                                            ),
+                                                            child: Text(
+                                                              category.toUpperCase(),
+                                                              style: TextStyle(
+                                                                color: accent,
+                                                                fontSize: 8.5,
+                                                                fontWeight: FontWeight.w900,
+                                                                letterSpacing: .4,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                          if (index == 0)
+                                                            const Text(
+                                                              'LATEST',
+                                                              style: TextStyle(
+                                                                color: Color(0xFF00D9A5),
+                                                                fontSize: 8.5,
+                                                                fontWeight: FontWeight.w900,
+                                                                letterSpacing: .6,
+                                                              ),
+                                                            ),
+                                                          if (date.isNotEmpty)
+                                                            Text(
+                                                              date,
+                                                              style: const TextStyle(
+                                                                color: Colors.white30,
+                                                                fontSize: 9,
+                                                              ),
+                                                            ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 10),
+                                                Text(
+                                                  notice['title']?.toString() ?? 'Notice',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 14.5,
+                                                    fontWeight: FontWeight.w800,
+                                                    height: 1.25,
+                                                  ),
+                                                ),
+                                                if ((notice['description']?.toString() ?? '')
+                                                    .trim()
+                                                    .isNotEmpty) ...[
+                                                  const SizedBox(height: 6),
+                                                  Text(
+                                                    notice['description'].toString(),
+                                                    style: const TextStyle(
+                                                      color: Colors.white60,
+                                                      fontSize: 11.5,
+                                                      height: 1.5,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                }
+
+                Widget _buildAndroidAppUpdateCard() {
+                  const currentVersionCode = int.fromEnvironment(
+                    'APP_VERSION_CODE',
+                    defaultValue: 1,
+                  );
+                  const currentVersionName = String.fromEnvironment(
+                    'APP_VERSION_NAME',
+                    defaultValue: '1.0.0',
+                  );
+
+                  return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('app_config')
+                        .doc('android_update')
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      final data = snapshot.data?.data() ?? <String, dynamic>{};
+                      final latestCode = (data['versionCode'] as num?)?.toInt() ?? 0;
+                      final latestName = data['versionName']?.toString().trim() ?? '';
+                      final apkUrl = data['apkUrl']?.toString().trim() ?? '';
+                      final mandatory = data['mandatory'] == true;
+                      final updateAvailable = latestCode > currentVersionCode;
+
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(15),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: updateAvailable
+                                ? const [Color(0xFF163934), Color(0xFF14262C)]
+                                : const [Color(0xFF17242B), Color(0xFF131D23)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: updateAvailable
+                                ? const Color(0xFF00A884).withOpacity(0.35)
+                                : Colors.white10,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 42,
+                                  height: 42,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF00A884).withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Icon(
+                                    updateAvailable
+                                        ? Icons.system_update_alt_rounded
+                                        : Icons.verified_rounded,
+                                    color: const Color(0xFF00D9A5),
+                                    size: 21,
+                                  ),
+                                ),
+                                const SizedBox(width: 11),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        updateAvailable
+                                            ? 'Update Available'
+                                            : 'Vidya Saarthi is up to date',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        updateAvailable && latestName.isNotEmpty
+                                            ? 'Current $currentVersionName  •  Latest $latestName'
+                                            : 'Installed version $currentVersionName',
+                                        style: const TextStyle(
+                                          color: Colors.white38,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (updateAvailable) ...[
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF00A884),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(11),
+                                    ),
+                                  ),
+                                  onPressed: apkUrl.isEmpty
+                                      ? null
+                                      : () async {
+                                          final uri = Uri.tryParse(apkUrl);
+                                          if (uri == null) return;
+
+                                          final opened = await launchUrl(
+                                            uri,
+                                            mode: LaunchMode.externalApplication,
+                                          );
+
+                                          if (!opened && mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(
+                                                backgroundColor: Colors.redAccent,
+                                                content: Text(
+                                                  'Update download open nahi ho paya.',
+                                                ),
+                                              ),
+                                            );
+                                          }
+                                        },
+                                  icon: const Icon(Icons.download_rounded, size: 19),
+                                  label: Text(
+                                    mandatory ? 'UPDATE REQUIRED' : 'DOWNLOAD UPDATE',
+                                    style: const TextStyle(fontWeight: FontWeight.w900),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 7),
+                              const Text(
+                                'Download ke baad Android install confirmation dega. Same Vidya Saarthi app update hogi.',
+                                style: TextStyle(
+                                  color: Colors.white30,
+                                  fontSize: 9.5,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                }
+
+                Widget _buildAndroidWhatsNewCard() {
+                  return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('app_config')
+                        .doc('android_update')
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      final data = snapshot.data?.data() ?? <String, dynamic>{};
+                      final latestName = data['versionName']?.toString().trim() ?? '';
+                      final raw = data['whatsNew'];
+
+                      final items = raw is List
+                          ? raw
+                              .map((e) => e.toString().trim())
+                              .where((e) => e.isNotEmpty)
+                              .take(8)
+                              .toList()
+                          : <String>[];
+
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(15),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF17332F),
+                              Color(0xFF15252B),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: const Color(0xFF00A884).withOpacity(0.28),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 42,
+                                  height: 42,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF00A884).withOpacity(0.14),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.auto_awesome_rounded,
+                                    color: Color(0xFF00D9A5),
+                                    size: 21,
+                                  ),
+                                ),
+                                const SizedBox(width: 11),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        "What's New",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        latestName.isEmpty
+                                            ? 'Latest Vidya Saarthi improvements'
+                                            : 'Version $latestName',
+                                        style: const TextStyle(
+                                          color: Colors.white38,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 13),
+                            if (snapshot.connectionState == ConnectionState.waiting)
+                              const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: CircularProgressIndicator(
+                                    color: Color(0xFF00A884),
+                                    strokeWidth: 2.2,
+                                  ),
+                                ),
+                              )
+                            else if (items.isEmpty)
+                              const Text(
+                                'Latest update details yahan dikhengi. New APK publish hote hi release changes automatically update ho jayenge.',
+                                style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 10.5,
+                                  height: 1.45,
+                                ),
+                              )
+                            else
+                              for (final item in items)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 7),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Padding(
+                                        padding: EdgeInsets.only(top: 5),
+                                        child: Icon(
+                                          Icons.check_circle_rounded,
+                                          size: 12,
+                                          color: Color(0xFF00D9A5),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          item,
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 10.8,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                }
+
+                Future<void> _openAndroidStudentProfilePanel() async {
+                  await showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    barrierColor: Colors.black.withOpacity(0.62),
+                    builder: (sheetContext) {
+                      return FractionallySizedBox(
+                        heightFactor: 0.93,
+                        child: DefaultTabController(
+                          length: 2,
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF10191F),
+                              borderRadius: BorderRadius.only(
+                                topLeft: Radius.circular(24),
+                                topRight: Radius.circular(24),
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                const SizedBox(height: 9),
+                                Container(
+                                  width: 42,
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white24,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 5),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 40,
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF00A884).withOpacity(0.13),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: const Icon(
+                                          Icons.account_circle_rounded,
+                                          color: Color(0xFF00D9A5),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      const Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Profile & Settings',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 17,
+                                                fontWeight: FontWeight.w900,
+                                              ),
+                                            ),
+                                            Text(
+                                              'Vidya Saarthi Student',
+                                              style: TextStyle(
+                                                color: Colors.white38,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      IconButton(
+                                        onPressed: () => Navigator.pop(sheetContext),
+                                        icon: const Icon(
+                                          Icons.close_rounded,
+                                          color: Colors.white54,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const TabBar(
+                                  indicatorColor: Color(0xFF00D9A5),
+                                  labelColor: Color(0xFF00D9A5),
+                                  unselectedLabelColor: Colors.white38,
+                                  tabs: [
+                                    Tab(
+                                      icon: Icon(Icons.person_rounded, size: 18),
+                                      text: 'Profile',
+                                    ),
+                                    Tab(
+                                      icon: Icon(Icons.settings_rounded, size: 18),
+                                      text: 'Settings',
+                                    ),
+                                  ],
+                                ),
+                                Expanded(
+                                  child: TabBarView(
+                                    children: [
+                                      SingleChildScrollView(
+                                        padding: const EdgeInsets.all(14),
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF172229),
+                                            borderRadius: BorderRadius.circular(20),
+                                            border: Border.all(color: Colors.white10),
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              _buildProfileTop(),
+                                              Padding(
+                                                padding: const EdgeInsets.all(16),
+                                                child: _buildProfileDetails(),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      SingleChildScrollView(
+                                        padding: const EdgeInsets.all(14),
+                                        child: Column(
+                                          children: [
+                                            _buildAndroidAppUpdateCard(),
+                                            const SizedBox(height: 12),
+                                            _buildAndroidWhatsNewCard(),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                SafeArea(
+                                  top: false,
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+                                    child: SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.redAccent,
+                                          side: BorderSide(
+                                            color: Colors.redAccent.withOpacity(0.42),
+                                          ),
+                                          padding:
+                                              const EdgeInsets.symmetric(vertical: 13),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                        ),
+                                        onPressed: () {
+                                          Navigator.pop(sheetContext);
+                                          _logoutStudent();
+                                        },
+                                        icon: const Icon(
+                                          Icons.logout_rounded,
+                                          size: 18,
+                                        ),
+                                        label: const Text(
+                                          'LOGOUT',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                }
+              ''')
+
+              student_section = student_section[:build_index] + helpers + student_section[build_index:]
+
+          old_logout = """          IconButton(
+                      tooltip: 'Logout',
+                      icon: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.10), borderRadius: BorderRadius.circular(11)),
+                        child: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 19),
+                      ),
+                      onPressed: _logoutStudent,
+                    ),"""
+
+          new_profile_button = """          IconButton(
+                      tooltip: 'Profile & Settings',
+                      icon: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00A884).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(11),
+                          border: Border.all(
+                            color: const Color(0xFF00A884).withOpacity(0.24),
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.account_circle_rounded,
+                          color: Color(0xFF00D9A5),
+                          size: 21,
+                        ),
+                      ),
+                      onPressed: _openAndroidStudentProfilePanel,
+                    ),"""
+
+          if old_logout not in student_section:
+              raise SystemExit('ERROR: Student Portal logout appbar patch point nahi mila')
+          student_section = student_section.replace(old_logout, new_profile_button, 1)
+
+          old_mobile_layout = """          if (isMobile) {
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+                        child: Column(
+                          children: [
+                            _buildMobileProfileCard(),
+                            const SizedBox(height: 14),
+                            _buildNoticeBoard(context, height: null),
+                          ],
+                        ),
+                      );
+                    }"""
+
+          new_mobile_layout = """          if (isMobile) {
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+                        child: _buildAndroidMobileNoticeBoard(),
+                      );
+                    }"""
+
+          if old_mobile_layout not in student_section:
+              raise SystemExit('ERROR: Student Portal mobile layout patch point nahi mila')
+          student_section = student_section.replace(old_mobile_layout, new_mobile_layout, 1)
+
+          text = text[:student_state_start] + student_section + text[admin_state_start:]
+          DASHBOARD.write_text(text, encoding='utf-8')
+
+          print('Android-only Student Portal UI patch applied.')
+          print('Website/repository source is not changed by this script in CI.')
+          PYMOBILEPATCH
+
+          python3 scripts/android_mobile_ui_patch.py
+
+          echo ""
+          echo "===== MOBILE-ONLY UI CHECK ====="
+          grep -n "_openAndroidStudentProfilePanel" \
+            lib/main_dashboard_screen.dart
+          grep -n "_buildAndroidMobileNoticeBoard" \
+            lib/main_dashboard_screen.dart
+          grep -n "DOWNLOAD UPDATE" \
+            lib/main_dashboard_screen.dart
+          grep -n "Profile & Settings" \
+            lib/main_dashboard_screen.dart | head -n 5
+          grep -n "_formatAndroidNoticeDateTime" \
+            lib/main_dashboard_screen.dart
+          grep -n "What's New" \
+            lib/main_dashboard_screen.dart | head -n 5
+
+          if grep -q "School Notifications" lib/main_dashboard_screen.dart; then
+            echo "::error::Old School Notifications settings card still present."
+            exit 1
+          fi
+
+      # ============================================================
+      # 17. BUILD RELEASE APK
+      # Every run gets a higher Android versionCode so the newest APK
+      # actually replaces the older installed build.
+      # ============================================================
+      - name: Build Vidya Saarthi Release APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          GRADLE_OPTS: -Dorg.gradle.vfs.watch=false
+        run: |
+          flutter build apk \
+            --release \
+            --build-name="1.0.${{ github.run_number }}" \
+            --build-number="${{ github.run_number }}" \
+            --dart-define=APP_PLATFORM="android" \
+            --dart-define=APP_VERSION_CODE="${{ github.run_number }}" \
+            --dart-define=APP_VERSION_NAME="1.0.${{ github.run_number }}" \
+            --dart-define=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            --dart-define=GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}" \
+            --dart-define=GOOGLE_WEB_CLIENT_ID="${{ secrets.GOOGLE_WEB_CLIENT_ID }}"
+
+      # ============================================================
+      # 17. VERIFY APK EXISTS
+      # ============================================================
+      - name: Verify APK
+        shell: bash
+        run: |
+          if [ ! -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
+            echo "::error::app-release.apk nahi mila!"
+            exit 1
+          fi
+
+          ls -lh build/app/outputs/flutter-apk/app-release.apk
+
+      # ============================================================
+      # 18. PREPARE FINAL APK
+      # ============================================================
+      - name: Prepare Final APK
+        shell: bash
+        run: |
+          mkdir -p release
+
+          cp \
+            build/app/outputs/flutter-apk/app-release.apk \
+            release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+
+          echo ""
+          echo "========================================="
+          echo "       VIDYA SAARTHI APK READY"
+          echo "========================================="
+          echo ""
+
+          ls -lh release/
+
+          echo ""
+          echo "APK SHA256:"
+          sha256sum \
+            release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+
+      # ============================================================
+      # 19. PUBLISH GITHUB RELEASE
+      # Same package id + same signing key + higher build number =
+      # existing installed Vidya Saarthi app updates in place.
+      # ============================================================
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v1.0.${{ github.run_number }}
+          name: Vidya Saarthi v1.0.${{ github.run_number }}
+          make_latest: true
+          generate_release_notes: true
+          files: release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+
+      # ============================================================
+      # 20. UPDATE FIRESTORE APP UPDATE CONTROL
+      # Profile > Settings > App Update isi document ko read karta hai.
+      # Requires existing GitHub secret: FIREBASE_SERVICE_ACCOUNT
+      # ============================================================
+      - name: Publish App Update Metadata
+        shell: bash
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: 1.0.${{ github.run_number }}
+          RELEASE_TAG: android-v1.0.${{ github.run_number }}
+          APK_FILE: Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+        run: |
+          set -euo pipefail
+
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT secret missing."
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/vidya-update-admin"
+          cd "$RUNNER_TEMP/vidya-update-admin"
+          npm init -y >/dev/null 2>&1
+          npm install firebase-admin@14.4.0 >/dev/null
+
+          cat > publish-update.cjs <<'NODE'
+          const { initializeApp, cert } =
+            require('firebase-admin/app');
+          const { getFirestore, FieldValue } =
+            require('firebase-admin/firestore');
+          const { execSync } = require('child_process');
+
+          const serviceAccount = JSON.parse(
+            process.env.FIREBASE_SERVICE_ACCOUNT
+          );
+
+          initializeApp({
+            credential: cert(serviceAccount),
+          });
+
+          const db = getFirestore();
+
+          const repo = process.env.GITHUB_REPOSITORY;
+          const tag = process.env.RELEASE_TAG;
+          const apkFile = process.env.APK_FILE;
+          const versionCode = Number(process.env.VERSION_CODE);
+          const versionName = process.env.VERSION_NAME;
+          const apkUrl =
+            `https://github.com/${repo}/releases/download/${tag}/${apkFile}`;
+
+          let commitMessage =
+            'Latest Vidya Saarthi improvements and fixes.';
+
+          try {
+            commitMessage = execSync(
+              'git -C "$GITHUB_WORKSPACE" log -1 --pretty=%s',
+              {
+                env: process.env,
+                encoding: 'utf8',
+                shell: '/bin/bash',
+              },
+            ).trim() || commitMessage;
+          } catch (_) {}
+
+          async function main() {
+            await db
+              .collection('app_config')
+              .doc('android_update')
+              .set({
+                versionCode,
+                versionName,
+                apkUrl,
+                whatsNew: [commitMessage],
+                mandatory: false,
+                releaseTag: tag,
+                githubRepository: repo,
+                publishedAt:
+                  FieldValue.serverTimestamp(),
+              }, { merge: true });
+
+            console.log(
+              'Firestore Android update metadata published.'
+            );
+            console.log(
+              'Version:',
+              versionName,
+              '(' + versionCode + ')',
+            );
+            console.log('APK:', apkUrl);
+          }
+
+          main()
+            .then(() => process.exit(0))
+            .catch((error) => {
+              console.error(error);
+              process.exit(1);
+            });
+          NODE
+
+          node publish-update.cjs
+
+      # ============================================================
+      # 19. BUILD SUMMARY
+      # ============================================================
+      - name: Create Build Summary
+        shell: bash
+        run: |
+          APK_SIZE=$(du -h \
+            release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk \
+            | cut -f1)
+
+          echo "# 📱 Vidya Saarthi Android" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ APK Build Successful" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Build Information" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Build: **#${{ github.run_number }}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Branch: **${{ github.ref_name }}**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- APK Size: **$APK_SIZE**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Android SDK: **36**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Java: **17**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Camera Scanner: **Enabled**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Build Type: **Release**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Firebase Android: **Configured**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Signing: **Permanent release key**" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "APK Artifact + GitHub Release dono me publish hoga." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      # ============================================================
+      # 20. UPLOAD APK
+      # ============================================================
+      - name: Upload Vidya Saarthi APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vidya-Saarthi-APK-${{ github.run_number }}
+          path: release/*.apk
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      # ============================================================
+      # CLEANUP SENSITIVE RUNNER FILES
+      # ============================================================
+      - name: Cleanup Signing Files
+        if: always()
+        shell: bash
+        run: |
+          rm -f \
+            android/app/saarthi-release.jks \
+            android/app/saarthi-release.jks.enc \
+            android/app/google-services.json
