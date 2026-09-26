@@ -90,10 +90,19 @@ jobs:
             '${1}cloud_firestore: ^6.10.0'
           )
 
+          # printing 5.13.1 pins package:web ^0.5.1, while modern
+          # firebase_auth_web requires package:web ^1.x.
+          # Upgrade printing only inside Windows CI.
+          $pubspec = [regex]::Replace(
+            $pubspec,
+            '(?m)^(\s*)printing:\s*[^\r\n]+',
+            '${1}printing: ^5.14.3'
+          )
+
           Set-Content -Path "pubspec.yaml" -Value $pubspec -Encoding UTF8
 
           Write-Host "===== WINDOWS CI PUBSPEC ====="
-          Select-String -Path "pubspec.yaml" -Pattern "firebase_core:|firebase_auth:|cloud_firestore:|agora_rtc_engine:"
+          Select-String -Path "pubspec.yaml" -Pattern "firebase_core:|firebase_auth:|cloud_firestore:|printing:|agora_rtc_engine:"
 
       - name: Clean Flutter
         shell: powershell
@@ -103,7 +112,7 @@ jobs:
         shell: powershell
         run: |
           flutter pub get
-          flutter pub deps | Select-String "firebase_core|firebase_auth|cloud_firestore"
+          flutter pub deps | Select-String "firebase_core|firebase_auth|cloud_firestore|printing|web "
 
       - name: Read App Version
         id: app_version
