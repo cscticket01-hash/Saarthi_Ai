@@ -2633,6 +2633,23 @@ jobs:
               raise SystemExit('ERROR: Student Portal logout appbar patch point nahi mila')
           student_section = student_section.replace(old_logout, new_profile_button, 1)
 
+          # Android mobile app: hide Flutter's automatically generated back arrow.
+          # The phone/system Back button continues to work through the existing PopScope.
+          old_student_appbar = """      appBar: AppBar(
+                  elevation: 0,"""
+
+          new_student_appbar = """      appBar: AppBar(
+                  automaticallyImplyLeading: false,
+                  elevation: 0,"""
+
+          if old_student_appbar not in student_section:
+              raise SystemExit('ERROR: Student Portal AppBar patch point nahi mila')
+          student_section = student_section.replace(
+              old_student_appbar,
+              new_student_appbar,
+              1,
+          )
+
           old_mobile_layout = """          if (isMobile) {
                       return SingleChildScrollView(
                         padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
@@ -2679,6 +2696,8 @@ jobs:
           grep -n "_formatAndroidNoticeDateTime" \
             lib/main_dashboard_screen.dart
           grep -n "What's New" \
+            lib/main_dashboard_screen.dart | head -n 5
+          grep -n "automaticallyImplyLeading: false" \
             lib/main_dashboard_screen.dart | head -n 5
 
           if grep -q "School Notifications" lib/main_dashboard_screen.dart; then
