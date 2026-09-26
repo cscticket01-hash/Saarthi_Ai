@@ -3857,6 +3857,315 @@ jobs:
           grep -n "Google Drive, Student UID" lib/main_dashboard_screen.dart | head -n 5
 
       # ============================================================
+      # ANDROID APK: STUDENT PORTAL ONLY
+      # Website remains Admin + Student.
+      # ============================================================
+      - name: Make Android APK Student Only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > scripts/android_student_only_patch.py <<'PYSTUDENTONLY'
+          from pathlib import Path
+
+          DASHBOARD = Path('lib/main_dashboard_screen.dart')
+
+          if not DASHBOARD.exists():
+              raise SystemExit('ERROR: lib/main_dashboard_screen.dart nahi mila')
+
+          text = DASHBOARD.read_text(encoding='utf-8', errors='ignore')
+
+          login_state_start = text.find(
+              'class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen>'
+          )
+
+          if login_state_start == -1:
+              raise SystemExit('ERROR: Login state class nahi mila')
+
+          student_portal_start = text.find(
+              'class StudentPortalScreen extends StatefulWidget',
+              login_state_start,
+          )
+
+          if student_portal_start == -1:
+              raise SystemExit('ERROR: Student Portal boundary nahi mila')
+
+          login_section = text[login_state_start:student_portal_start]
+
+          # ================================================================
+          # 1. FORCE ANDROID APK TO STUDENT MODE ONLY
+          # ================================================================
+          if 'bool _isAdminMode = false;' not in login_section:
+              login_section = login_section.replace(
+                  'bool _isAdminMode = true;',
+                  'bool _isAdminMode = false;',
+                  1,
+              )
+
+          # ================================================================
+          # 2. OLD ADMIN SESSION MUST NEVER RESTORE IN ANDROID APP
+          #    If an older APK left an admin session, clear it and show
+          #    Student Login instead.
+          # ================================================================
+          admin_restore_start = login_section.find("    if (role == 'admin') {")
+          student_restore_start = login_section.find(
+              "    if (role == 'student') {",
+              admin_restore_start,
+          )
+
+          if admin_restore_start == -1 or student_restore_start == -1:
+              raise SystemExit('ERROR: Admin session restore block nahi mila')
+
+          admin_restore_replacement = """    if (role == 'admin') {
+                try {
+                  await FirebaseAuth.instance.signOut();
+                } catch (_) {}
+
+                _clearPortalSession();
+
+                if (mounted) {
+                  setState(() {
+                    _isAdminMode = false;
+                    _isRestoringSession = false;
+                  });
+                }
+                return;
+              }
+
+          """
+
+          login_section = (
+              login_section[:admin_restore_start]
+              + admin_restore_replacement
+              + login_section[student_restore_start:]
+          )
+
+          # ================================================================
+          # 3. ROLE SWITCHER: ADMIN/STUDENT TABS REMOVE FROM APK
+          # ================================================================
+          role_ui_start = login_section.find(
+              '            // Existing Admin / Student switching behaviour kept intact.'
+          )
+
+          scanner_ui_marker = login_section.find(
+              '            // Existing mobile student QR flow kept intact.',
+              role_ui_start,
+          )
+
+          if role_ui_start == -1 or scanner_ui_marker == -1:
+              raise SystemExit('ERROR: Admin/Student role switch UI block nahi mila')
+
+          login_section = (
+              login_section[:role_ui_start]
+              + """            // Android APK is Student Portal only.
+                      const SizedBox(height: 4),
+
+          """
+              + login_section[scanner_ui_marker:]
+          )
+
+          # ================================================================
+          # 4. EVEN IF CALLED INTERNALLY, ROLE SWITCH CAN NEVER ENABLE ADMIN
+          # ================================================================
+          switch_start = login_section.find('  void _switchRole(bool isAdmin) {')
+          normalize_marker = login_section.find(
+              '  String _normalizeDob(String value) {',
+              switch_start,
+          )
+
+          if switch_start == -1 or normalize_marker == -1:
+              raise SystemExit('ERROR: _switchRole method patch point nahi mila')
+
+          new_switch = """  void _switchRole(bool isAdmin) {
+              setState(() {
+                _isAdminMode = false;
+                _usernameController.clear();
+                _passwordController.clear();
+
+                _showInlineScanner = false;
+                _scanHandled = false;
+                _isQrVerifying = false;
+                _scanError = null;
+                _scannedStudentData = null;
+              });
+            }
+
+          """
+
+          login_section = (
+              login_section[:switch_start]
+              + new_switch
+              + login_section[normalize_marker:]
+          )
+
+          # ================================================================
+          # 5. VISIBLE LOGIN PAGE TEXT/ICON = STUDENT ONLY
+          # ================================================================
+          login_section = login_section.replace(
+              """              child: Icon(
+                          _isAdminMode
+                              ? Icons.admin_panel_settings_rounded
+                              : Icons.school_rounded,
+                          size: 35,
+                          color: const Color(0xFF00D9A5),
+                        ),""",
+              """              child: const Icon(
+                          Icons.school_rounded,
+                          size: 35,
+                          color: Color(0xFF00D9A5),
+                        ),""",
+              1,
+          )
+
+          login_section = login_section.replace(
+              """            Text(
+                        _isAdminMode ? 'ADMIN LOGIN' : 'STUDENT LOGIN',
+                        style: TextStyle(""",
+              """            Text(
+                        'STUDENT LOGIN',
+                        style: TextStyle(""",
+              1,
+          )
+
+          login_section = login_section.replace(
+              """            Text(
+                        _isAdminMode
+                            ? 'Access your school management dashboard'
+                            : 'Access your student portal securely',
+                        textAlign: TextAlign.center,""",
+              """            const Text(
+                        'Access your student portal securely',
+                        textAlign: TextAlign.center,""",
+              1,
+          )
+
+          # Student ID field only.
+          login_section = login_section.replace(
+              """                decoration: _inputDecoration(
+                            _isAdminMode ? 'Admin Email' : 'Student ID / Roll No',
+                            icon: _isAdminMode
+                                ? Icons.person_outline
+                                : Icons.badge_outlined,
+                          ),""",
+              """                decoration: _inputDecoration(
+                            'Student ID / Roll No',
+                            icon: Icons.badge_outlined,
+                          ),""",
+              1,
+          )
+
+          # DOB field only.
+          login_section = login_section.replace(
+              """              decoration: _inputDecoration(
+                          _isAdminMode
+                              ? 'Password'
+                              : _scannedStudentData != null
+                                  ? 'Confirm Date of Birth (DD/MM/YYYY)'
+                                  : 'Date of Birth (DD/MM/YYYY)',""",
+              """              decoration: _inputDecoration(
+                          _scannedStudentData != null
+                              ? 'Confirm Date of Birth (DD/MM/YYYY)'
+                              : 'Date of Birth (DD/MM/YYYY)',""",
+              1,
+          )
+
+          # Login button only shows Student text.
+          login_section = login_section.replace(
+              """                          Text(
+                                      _isAdminMode
+                                          ? 'LOGIN AS ADMIN'
+                                          : _scannedStudentData != null
+                                              ? 'VERIFY DOB & ENTER PORTAL'
+                                              : 'LOGIN AS STUDENT',""",
+              """                          Text(
+                                      _scannedStudentData != null
+                                          ? 'VERIFY DOB & ENTER PORTAL'
+                                          : 'LOGIN AS STUDENT',""",
+              1,
+          )
+
+          # ================================================================
+          # 6. HARD BLOCK ADMIN AUTH PATH IN APK
+          #    Existing website source is unchanged; Android runner copy only.
+          # ================================================================
+          handle_login_start = login_section.find('  Future<void> _handleLogin() async {')
+          if handle_login_start == -1:
+              raise SystemExit('ERROR: _handleLogin method nahi mila')
+
+          try_marker = login_section.find('    try {', handle_login_start)
+          admin_branch_start = login_section.find(
+              '      if (_isAdminMode) {',
+              try_marker,
+          )
+
+          student_branch_marker = login_section.find(
+              '      final studentRoll = idText;',
+              admin_branch_start,
+          )
+
+          if admin_branch_start == -1 or student_branch_marker == -1:
+              raise SystemExit('ERROR: Admin login branch boundaries nahi mile')
+
+          login_section = (
+              login_section[:admin_branch_start]
+              + """      // Android APK is Student-only. Admin authentication route disabled.
+                _isAdminMode = false;
+
+          """
+              + login_section[student_branch_marker:]
+          )
+
+          text = (
+              text[:login_state_start]
+              + login_section
+              + text[student_portal_start:]
+          )
+
+          DASHBOARD.write_text(text, encoding='utf-8')
+
+          print('Android Student-only patch applied.')
+          print('Admin Login UI removed from APK.')
+          print('Admin session restore blocked in APK.')
+          print('Student session restore remains enabled.')
+          print('Website/repository source remains unchanged.')
+          PYSTUDENTONLY
+
+          python3 scripts/android_student_only_patch.py
+
+          echo ""
+          echo "===== STUDENT-ONLY APK VALIDATION ====="
+          grep -n "Android APK is Student Portal only" \
+            lib/main_dashboard_screen.dart | head -n 5
+          grep -n "STUDENT LOGIN" \
+            lib/main_dashboard_screen.dart | head -n 5
+          grep -n "Admin authentication route disabled" \
+            lib/main_dashboard_screen.dart | head -n 5
+
+          LOGIN_START=$(grep -n "class _SchoolAdminLoginScreenState" \
+            lib/main_dashboard_screen.dart | head -n 1 | cut -d: -f1)
+          STUDENT_START=$(grep -n "class StudentPortalScreen extends StatefulWidget" \
+            lib/main_dashboard_screen.dart | head -n 1 | cut -d: -f1)
+
+          if [ -z "$LOGIN_START" ] || [ -z "$STUDENT_START" ]; then
+            echo "::error::Student-only validation boundaries nahi mile."
+            exit 1
+          fi
+
+          sed -n "${LOGIN_START},${STUDENT_START}p" \
+            lib/main_dashboard_screen.dart > /tmp/student-login-section.txt
+
+          if grep -q "onTap: () => _switchRole(true)" \
+            /tmp/student-login-section.txt; then
+            echo "::error::Admin role switch APK login UI me abhi bhi present hai."
+            exit 1
+          fi
+
+          if grep -q "LOGIN AS ADMIN" /tmp/student-login-section.txt; then
+            echo "::error::Admin login button APK login UI me abhi bhi present hai."
+            exit 1
+          fi
+
+      # ============================================================
       # 17. BUILD RELEASE APK
       # Every run gets a higher Android versionCode so the newest APK
       # actually replaces the older installed build.
