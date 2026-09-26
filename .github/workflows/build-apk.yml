@@ -3598,7 +3598,20 @@ jobs:
           advanced_screen_start = text.find('class AdvancedSettingsScreen', settings_state_start)
           settings_section = text[settings_state_start:advanced_screen_start]
           uid_methods_start = settings_section.find('  Future<void> _fetchUidTestSettings() async {')
-          uid_methods_end = settings_section.find('  Future<void> _confirmLogout() async {', uid_methods_start)
+          admin_update_helper_start = settings_section.find(
+              'Future<void> _cleanupAdminAndroidUpdateCache(',
+              uid_methods_start,
+          )
+          confirm_logout_start = settings_section.find(
+              '  Future<void> _confirmLogout() async {',
+              uid_methods_start,
+          )
+          uid_methods_end_candidates = [
+              value
+              for value in [admin_update_helper_start, confirm_logout_start]
+              if value != -1
+          ]
+          uid_methods_end = min(uid_methods_end_candidates) if uid_methods_end_candidates else -1
           if uid_methods_start == -1 or uid_methods_end == -1:
               raise SystemExit('ERROR: UID logic methods source block nahi mila')
           uid_methods = settings_section[uid_methods_start:uid_methods_end]
