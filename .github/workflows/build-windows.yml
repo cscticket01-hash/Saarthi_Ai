@@ -61,21 +61,39 @@ jobs:
         run: |
           $pubspec = Get-Content "pubspec.yaml" -Raw
 
-          $updated = [regex]::Replace(
+          # Agora is not used by the Windows Admin source and its Windows SDK
+          # download/extraction is unstable in hosted CI. Remove only in runner.
+          $pubspec = [regex]::Replace(
             $pubspec,
             '(?m)^\s*agora_rtc_engine:\s*[^\r\n]+\r?\n',
             ''
           )
 
-          if ($updated -eq $pubspec) {
-            Write-Host "agora_rtc_engine line not found; continuing."
-          } else {
-            Set-Content -Path "pubspec.yaml" -Value $updated -Encoding UTF8
-            Write-Host "Removed agora_rtc_engine for Windows CI build only."
-          }
+          # The repository still uses the old 2024 FlutterFire Windows plugins.
+          # Newer MSVC toolchains reject their std::variant conversion code.
+          # Upgrade Firebase ONLY inside this Windows CI runner.
+          $pubspec = [regex]::Replace(
+            $pubspec,
+            '(?m)^(\s*)firebase_core:\s*[^\r\n]+',
+            '${1}firebase_core: ^4.15.0'
+          )
 
-          Write-Host "===== Windows dependency check ====="
-          Select-String -Path "pubspec.yaml" -Pattern "agora_rtc_engine" -SimpleMatch
+          $pubspec = [regex]::Replace(
+            $pubspec,
+            '(?m)^(\s*)firebase_auth:\s*[^\r\n]+',
+            '${1}firebase_auth: ^6.7.0'
+          )
+
+          $pubspec = [regex]::Replace(
+            $pubspec,
+            '(?m)^(\s*)cloud_firestore:\s*[^\r\n]+',
+            '${1}cloud_firestore: ^6.10.0'
+          )
+
+          Set-Content -Path "pubspec.yaml" -Value $pubspec -Encoding UTF8
+
+          Write-Host "===== WINDOWS CI PUBSPEC ====="
+          Select-String -Path "pubspec.yaml" -Pattern "firebase_core:|firebase_auth:|cloud_firestore:|agora_rtc_engine:"
 
       - name: Clean Flutter
         shell: powershell
@@ -83,7 +101,9 @@ jobs:
 
       - name: Get Dependencies
         shell: powershell
-        run: flutter pub get
+        run: |
+          flutter pub get
+          flutter pub deps | Select-String "firebase_core|firebase_auth|cloud_firestore"
 
       - name: Read App Version
         id: app_version
