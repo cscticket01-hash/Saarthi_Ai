@@ -15,6 +15,20 @@ import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+
+// ============================================================
+// WEB BOOTSTRAP BACKGROUND
+// Applies the Vidya Saarthi background as soon as this library loads.
+// ============================================================
+final bool _vidyaWebBootstrapBackgroundApplied = (() {
+  try {
+    html.document.documentElement?.style.backgroundColor = '#06171D';
+    html.document.body?.style.backgroundColor = '#06171D';
+  } catch (_) {}
+  return true;
+})();
+
+
 // ============================================================
 // PORTAL SESSION + 30 MINUTE INACTIVITY
 // Keeps login across browser reload. Any click/tap refreshes 30 minutes.
@@ -1437,10 +1451,65 @@ if (!passwordMatched) {
   @override
   Widget build(BuildContext context) {
     if (_isRestoringSession) {
-      return const Scaffold(
-        backgroundColor: Color(0xFF06171D),
-        body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF00D9A5)),
+      return Scaffold(
+        backgroundColor: const Color(0xFF06171D),
+        body: Container(
+          width: double.infinity,
+          height: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: RadialGradient(
+              center: Alignment(0, -0.25),
+              radius: 1.15,
+              colors: [
+                Color(0xFF0B3B3A),
+                Color(0xFF08262D),
+                Color(0xFF06171D),
+                Color(0xFF041116),
+              ],
+              stops: [0.0, 0.34, 0.72, 1.0],
+            ),
+          ),
+          child: const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.auto_stories_rounded,
+                  color: Color(0xFF00E8D0),
+                  size: 54,
+                ),
+                SizedBox(height: 14),
+                Text(
+                  'Vidya Saarthi',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                SizedBox(height: 5),
+                Text(
+                  'SMART SCHOOL MANAGEMENT SUITE',
+                  style: TextStyle(
+                    color: Color(0xFFBCE8E5),
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.7,
+                  ),
+                ),
+                SizedBox(height: 20),
+                SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(
+                    color: Color(0xFF00D9A5),
+                    strokeWidth: 2.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       );
     }
@@ -7515,7 +7584,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _fetchLinkedAccount();
-    _fetchUidTestSettings();
   }
 
   @override
@@ -8484,202 +8552,100 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 const SizedBox(height: 16),
 
-                // =====================================================
-                // ADVANCED SETTINGS
-                // Google Drive integration is intentionally kept inside
-                // the protected Advanced Settings screen only.
-                // =====================================================
-                _settingsCard(
-                  icon: Icons.admin_panel_settings_rounded,
-                  iconColor: Colors.orangeAccent,
-                  title: 'Advanced Settings',
-                  subtitle: 'Protected integrations & system controls',
-                  trailing: const Icon(
-                    Icons.chevron_right_rounded,
-                    color: Colors.white38,
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(13),
-                      onTap: () async {
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const AdvancedSettingsScreen(),
-                          ),
-                        );
-                        if (mounted) {
-                          _fetchLinkedAccount();
-                        }
-                      },
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0F191F),
-                          borderRadius: BorderRadius.circular(13),
-                          border: Border.all(
-                            color: Colors.orangeAccent.withOpacity(0.16),
-                          ),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(18),
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const AdvancedSettingsScreen(),
                         ),
-                        child: const Row(
-                          children: [
-                            Icon(
-                              Icons.security_rounded,
-                              color: Colors.orangeAccent,
-                              size: 21,
-                            ),
-                            SizedBox(width: 11),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Open Advanced Settings',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  SizedBox(height: 3),
-                                  Text(
-                                    'Google Drive connection aur protected unlink/change controls yahan manage honge.',
-                                    style: TextStyle(
-                                      color: Colors.white38,
-                                      fontSize: 10.5,
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                ],
+                      );
+                      if (mounted) {
+                        _fetchLinkedAccount();
+                      }
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF172229),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: Colors.orangeAccent.withOpacity(0.18),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.16),
+                            blurRadius: 18,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: Colors.orangeAccent.withOpacity(0.11),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.orangeAccent.withOpacity(0.20),
                               ),
                             ),
-                            Icon(
-                              Icons.arrow_forward_rounded,
+                            child: const Icon(
+                              Icons.admin_panel_settings_rounded,
                               color: Colors.orangeAccent,
-                              size: 19,
+                              size: 22,
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Advanced Settings',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                SizedBox(height: 3),
+                                Text(
+                                  'Google Drive, Student UID & protected system controls',
+                                  style: TextStyle(
+                                    color: Colors.white38,
+                                    fontSize: 10.5,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: Colors.orangeAccent.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(11),
+                            ),
+                            child: const Icon(
+                              Icons.chevron_right_rounded,
+                              color: Colors.orangeAccent,
+                              size: 25,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                 ),
 
-                const SizedBox(height: 16),
-
-                // =====================================================
-                // TEST STUDENT UID SETTINGS
-                // =====================================================
-                _settingsCard(
-                  icon: Icons.badge_rounded,
-                  iconColor: const Color(0xFF00D9A5),
-                  title: 'Student UID — TEST MODE',
-                  subtitle: 'Fees identity + optional ID Card UID preview',
-                  trailing: _statusPill(
-                    _uidMasterEnabled ? 'TEST ON' : 'TEST OFF',
-                    _uidMasterEnabled
-                        ? const Color(0xFF00D9A5)
-                        : Colors.grey,
-                  ),
-                  child: _uidSettingsLoading
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(12),
-                            child: CircularProgressIndicator(
-                              color: Color(0xFF00A884),
-                            ),
-                          ),
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(13),
-                              decoration: BoxDecoration(
-                                color: Colors.orangeAccent.withOpacity(0.07),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: Colors.orangeAccent.withOpacity(0.18),
-                                ),
-                              ),
-                              child: const Text(
-                                'Abhi TEST mode hai. Default example TEST-000001 hai. Final version me school SVN-000001 jaisa production format rakh sakta hai. Assigned TEST UID delete hone ke baad reuse nahi hoga.',
-                                style: TextStyle(
-                                  color: Colors.white60,
-                                  fontSize: 11,
-                                  height: 1.45,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            TextField(
-                              controller: _uidStartController,
-                              enabled: !_uidEverActivated && !_uidMasterEnabled,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: _modernInputDecoration(
-                                'Starting UID — Example: TEST-000001',
-                                Icons.tag_rounded,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              _uidEverActivated
-                                  ? 'Sequence locked for this TEST run. Next UID: ${_formatTestStudentUid(_uidPrefix, _uidPadding, _uidNextNumber)}'
-                                  : 'Class 1 Roll 1 se numbering start hogi, phir Class/Roll order me aage badegi.',
-                              style: const TextStyle(
-                                color: Colors.white38,
-                                fontSize: 10.5,
-                                height: 1.4,
-                              ),
-                            ),
-                            if (_uidLastIssued.isNotEmpty) ...[
-                              const SizedBox(height: 5),
-                              Text(
-                                'Last issued TEST UID: $_uidLastIssued',
-                                style: const TextStyle(
-                                  color: Color(0xFF00D9A5),
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 14),
-                            _uidToggleTile(
-                              title: 'Enable Student UID',
-                              subtitle: _uidMasterEnabled
-                                  ? 'TEST UID assignment active hai.'
-                                  : 'ON karne par 20 sec warning + Admin Password verification hoga.',
-                              value: _uidMasterEnabled,
-                              onChanged: _setUidMasterEnabled,
-                            ),
-                            const SizedBox(height: 10),
-                            _uidToggleTile(
-                              title: 'Use Student UID for Fees',
-                              subtitle: _uidMasterEnabled
-                                  ? 'ON: fee ledger TEST UID se link hoga. OFF: Name + Father + DOB + Roll + Mobile identity use hogi.'
-                                  : 'Pehle master Student UID ON karein.',
-                              value: _uidFeesEnabled,
-                              enabled: _uidMasterEnabled,
-                              onChanged: (value) =>
-                                  _setUidFeatureFlag('feesEnabled', value),
-                            ),
-                            const SizedBox(height: 10),
-                            _uidToggleTile(
-                              title: 'Show Student UID on ID Card',
-                              subtitle: _uidMasterEnabled
-                                  ? 'ON: QR/scanner ke paas same TEST UID dikhai dega.'
-                                  : 'Pehle master Student UID ON karein.',
-                              value: _uidIdCardEnabled,
-                              enabled: _uidMasterEnabled,
-                              onChanged: (value) =>
-                                  _setUidFeatureFlag('idCardEnabled', value),
-                            ),
-                          ],
-                        ),
-                ),
               ],
             ),
           ),
@@ -15821,6 +15787,19 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   bool _loading = true;
   bool _saving = false;
 
+  final TextEditingController _uidStartController =
+      TextEditingController(text: 'TEST-000001');
+
+  bool _uidSettingsLoading = true;
+  bool _uidMasterEnabled = false;
+  bool _uidFeesEnabled = false;
+  bool _uidIdCardEnabled = false;
+  bool _uidEverActivated = false;
+  String _uidPrefix = 'TEST-';
+  int _uidPadding = 6;
+  int _uidNextNumber = 1;
+  String _uidLastIssued = '';
+
   bool get _linked =>
       (_linkedGmail?.trim().isNotEmpty ?? false) &&
       (_linkedScript?.trim().isNotEmpty ?? false);
@@ -15829,12 +15808,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   void initState() {
     super.initState();
     _load();
+    _fetchUidTestSettings();
   }
 
   @override
   void dispose() {
     _gmail.dispose();
     _script.dispose();
+    _uidStartController.dispose();
     super.dispose();
   }
 
@@ -15992,6 +15973,536 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     }
   }
 
+  Future<void> _fetchUidTestSettings() async {
+    try {
+      final data = await _loadTestStudentUidConfig();
+      if (!mounted) return;
+
+      final prefix = data['prefix']?.toString() ?? 'TEST-';
+      final padding = (data['padding'] as num?)?.toInt() ?? 6;
+      final nextNumber = (data['nextNumber'] as num?)?.toInt() ?? 1;
+      final everActivated = data['everActivated'] == true;
+
+      setState(() {
+        _uidMasterEnabled = data['masterEnabled'] == true;
+        _uidFeesEnabled = data['feesEnabled'] == true;
+        _uidIdCardEnabled = data['idCardEnabled'] == true;
+        _uidEverActivated = everActivated;
+        _uidPrefix = prefix;
+        _uidPadding = padding;
+        _uidNextNumber = nextNumber;
+        _uidLastIssued = data['lastIssuedUid']?.toString() ?? '';
+        _uidSettingsLoading = false;
+
+        if (everActivated) {
+          _uidStartController.text =
+              _formatTestStudentUid(prefix, padding, nextNumber);
+        } else {
+          _uidStartController.text =
+              data['startPattern']?.toString() ?? 'TEST-000001';
+        }
+      });
+    } catch (e) {
+      debugPrint('Test UID settings load error: $e');
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+    }
+  }
+
+  int _classSortNumber(String value) {
+    return int.tryParse(value.replaceAll(RegExp(r'[^0-9]'), '')) ?? 999999;
+  }
+
+  int _rollSortNumber(String value) {
+    return int.tryParse(value.trim()) ?? 999999;
+  }
+
+  Future<String?> _showUidActivationPasswordDialog() async {
+    final passwordController = TextEditingController();
+    int secondsLeft = 20;
+    bool countdownStarted = false;
+
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            if (!countdownStarted) {
+              countdownStarted = true;
+
+              Future<void>(() async {
+                while (secondsLeft > 0) {
+                  await Future<void>.delayed(const Duration(seconds: 1));
+                  if (!dialogContext.mounted) return;
+                  setDialogState(() => secondsLeft--);
+                }
+              });
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF172229),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.badge_rounded, color: Color(0xFF00D9A5)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Activate TEST Student UID?',
+                      style: TextStyle(color: Colors.white, fontSize: 17),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 470,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Kya school ke sabhi existing students Student Directory me add ho chuke hain?\n\n'
+                      'TEST UID activate hone par existing students ko Class 1 → Class 10 aur Roll No order me permanent TEST UID assign hoga. '
+                      'Delete hone ke baad purana UID dobara issue nahi hoga. Final production UID baad me alag se activate kiya jayega.',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orangeAccent.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.orangeAccent.withOpacity(0.25),
+                        ),
+                      ),
+                      child: Text(
+                        secondsLeft > 0
+                            ? 'Student Directory verify karein... Password option $secondsLeft sec baad unlock hoga.'
+                            : 'Verification time complete. Ab Admin Password enter karein.',
+                        style: TextStyle(
+                          color: secondsLeft > 0
+                              ? Colors.orangeAccent
+                              : const Color(0xFF00D9A5),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: passwordController,
+                      enabled: secondsLeft == 0,
+                      obscureText: true,
+                      style: const TextStyle(color: Colors.white),
+                      onChanged: (_) => setDialogState(() {}),
+                      decoration: InputDecoration(
+                        labelText: 'Admin Password',
+                        labelStyle: const TextStyle(color: Colors.white54),
+                        prefixIcon: const Icon(
+                          Icons.lock_outline_rounded,
+                          color: Color(0xFF00A884),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF0F191F),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: secondsLeft == 0 &&
+                          passwordController.text.trim().isNotEmpty
+                      ? () => Navigator.pop(
+                            dialogContext,
+                            passwordController.text,
+                          )
+                      : null,
+                  icon: const Icon(Icons.verified_user_rounded, size: 18),
+                  label: const Text('Verify & Activate'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+    return result;
+  }
+
+  Future<void> _verifyCurrentAdminPassword(String password) async {
+    final user = FirebaseAuth.instance.currentUser;
+    final email = user?.email?.trim() ?? '';
+
+    if (user == null || email.isEmpty) {
+      throw Exception('Admin login session nahi mila.');
+    }
+
+    final credential = EmailAuthProvider.credential(
+      email: email,
+      password: password,
+    );
+
+    await user.reauthenticateWithCredential(credential);
+  }
+
+  Future<void> _activateUidTestMode() async {
+    if (_uidSettingsLoading) return;
+
+    Map<String, dynamic>? parsedPattern;
+
+    if (!_uidEverActivated) {
+      try {
+        parsedPattern = _parseTestUidPattern(_uidStartController.text);
+      } on FormatException catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(e.message.toString()),
+          ),
+        );
+        return;
+      }
+    }
+
+    final password = await _showUidActivationPasswordDialog();
+    if (password == null || password.isEmpty || !mounted) return;
+
+    setState(() => _uidSettingsLoading = true);
+
+    try {
+      await _verifyCurrentAdminPassword(password);
+
+      final freshConfig = await _loadTestStudentUidConfig();
+      final everActivated = freshConfig['everActivated'] == true;
+
+      final prefix = everActivated
+          ? (freshConfig['prefix']?.toString() ?? _uidPrefix)
+          : parsedPattern!['prefix'].toString();
+      final padding = everActivated
+          ? ((freshConfig['padding'] as num?)?.toInt() ?? _uidPadding)
+          : parsedPattern!['padding'] as int;
+      var nextNumber = everActivated
+          ? ((freshConfig['nextNumber'] as num?)?.toInt() ?? _uidNextNumber)
+          : parsedPattern!['startNumber'] as int;
+
+      final students = await FirebaseFirestore.instance
+          .collection('students_directory')
+          .get();
+
+      final docs = [...students.docs];
+      docs.sort((a, b) {
+        final ad = a.data();
+        final bd = b.data();
+
+        final classCompare = _classSortNumber(
+          ad['class']?.toString() ?? '',
+        ).compareTo(
+          _classSortNumber(bd['class']?.toString() ?? ''),
+        );
+        if (classCompare != 0) return classCompare;
+
+        final rollCompare = _rollSortNumber(
+          ad['rollNo']?.toString() ?? '',
+        ).compareTo(
+          _rollSortNumber(bd['rollNo']?.toString() ?? ''),
+        );
+        if (rollCompare != 0) return rollCompare;
+
+        return (ad['name']?.toString() ?? '')
+            .toLowerCase()
+            .compareTo((bd['name']?.toString() ?? '').toLowerCase());
+      });
+
+      final missing = docs.where((doc) {
+        return (doc.data()[_testStudentUidField]?.toString().trim() ?? '')
+            .isEmpty;
+      }).toList();
+
+      final assignments = <MapEntry<
+          DocumentReference<Map<String, dynamic>>, String>>[];
+      var reservedNextNumber = nextNumber;
+      String lastIssued = freshConfig['lastIssuedUid']?.toString() ?? '';
+
+      for (final doc in missing) {
+        final uid =
+            _formatTestStudentUid(prefix, padding, reservedNextNumber);
+        assignments.add(MapEntry(doc.reference, uid));
+        lastIssued = uid;
+        reservedNextNumber++;
+      }
+
+      // Counter pehle reserve hota hai. Agar network/batch beech me fail bhi ho,
+      // reserved UID dobara reuse nahi hoga; sirf gap aa sakta hai.
+      await _testStudentUidConfigRef().set(
+        {
+          'testMode': true,
+          'masterEnabled': false,
+          'everActivated': true,
+          'prefix': prefix,
+          'padding': padding,
+          'startPattern': everActivated
+              ? freshConfig['startPattern']?.toString()
+              : _uidStartController.text.trim(),
+          'nextNumber': reservedNextNumber,
+          'lastIssuedUid': lastIssued,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      for (var start = 0; start < assignments.length; start += 400) {
+        final batch = FirebaseFirestore.instance.batch();
+        final end = (start + 400 < assignments.length)
+            ? start + 400
+            : assignments.length;
+
+        for (var i = start; i < end; i++) {
+          final assignment = assignments[i];
+          batch.update(assignment.key, {
+            _testStudentUidField: assignment.value,
+            'studentUidTestAssignedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        await batch.commit();
+      }
+
+      await _testStudentUidConfigRef().set(
+        {
+          'masterEnabled': true,
+          'feesEnabled': freshConfig['feesEnabled'] == true,
+          'idCardEnabled': freshConfig['idCardEnabled'] == true,
+          'activatedAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      await _fetchUidTestSettings();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text(
+            missing.isEmpty
+                ? 'TEST Student UID ON ho gaya. Sab existing students ke UID pehle se assigned hain.'
+                : 'TEST Student UID ON. ${missing.length} existing students ko UID assign hua.',
+          ),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            e.code == 'wrong-password' || e.code == 'invalid-credential'
+                ? 'Admin Password galat hai.'
+                : 'Admin verification failed: ${e.message ?? e.code}',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('TEST UID activation error: $e'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _setUidMasterEnabled(bool value) async {
+    if (value) {
+      await _activateUidTestMode();
+      return;
+    }
+
+    setState(() => _uidSettingsLoading = true);
+
+    try {
+      await _testStudentUidConfigRef().set(
+        {
+          'masterEnabled': false,
+          'feesEnabled': false,
+          'idCardEnabled': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      await _fetchUidTestSettings();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('TEST UID OFF error: $e'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _setUidFeatureFlag(String field, bool value) async {
+    if (!_uidMasterEnabled) return;
+
+    setState(() => _uidSettingsLoading = true);
+    try {
+      await _testStudentUidConfigRef().set(
+        {
+          field: value,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      await _fetchUidTestSettings();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _uidSettingsLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('TEST UID setting save error: $e'),
+        ),
+      );
+    }
+  }
+
+
+  Widget _uidToggleTile({
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+    bool enabled = true,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F191F),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.055)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: enabled ? Colors.white : Colors.white30,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: enabled ? Colors.white38 : Colors.white24,
+                    fontSize: 10,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Switch(
+            value: value,
+            activeColor: const Color(0xFF00D9A5),
+            onChanged: enabled ? onChanged : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+
+  Widget _statusPill(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.22)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+  InputDecoration _modernInputDecoration(String hint, IconData icon) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
+      prefixIcon: Icon(icon, color: const Color(0xFF00A884), size: 19),
+      filled: true,
+      fillColor: const Color(0xFF0F191F),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.white.withOpacity(0.06)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFF00A884)),
+      ),
+    );
+  }
+
   InputDecoration _input(String text, IconData icon) => InputDecoration(
         hintText: text,
         hintStyle: const TextStyle(color: Colors.white30),
@@ -16034,6 +16545,84 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           ],
         ),
       );
+
+  Widget _settingsCard({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required Widget child,
+    Widget? trailing,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.065)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.16),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.11),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: iconColor.withOpacity(0.18)),
+                ),
+                child: Icon(icon, color: iconColor, size: 21),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 10),
+                trailing,
+              ],
+            ],
+          ),
+          const SizedBox(height: 15),
+          Container(height: 1, color: Colors.white.withOpacity(0.055)),
+          const SizedBox(height: 15),
+          child,
+        ],
+      ),
+    );
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -16194,6 +16783,119 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                           ],
                         ),
                       ),
+                const SizedBox(height: 16),
+
+                // =====================================================
+                // TEST STUDENT UID SETTINGS
+                // =====================================================
+                _settingsCard(
+                  icon: Icons.badge_rounded,
+                  iconColor: const Color(0xFF00D9A5),
+                  title: 'Student UID — TEST MODE',
+                  subtitle: 'Fees identity + optional ID Card UID preview',
+                  trailing: _statusPill(
+                    _uidMasterEnabled ? 'TEST ON' : 'TEST OFF',
+                    _uidMasterEnabled
+                        ? const Color(0xFF00D9A5)
+                        : Colors.grey,
+                  ),
+                  child: _uidSettingsLoading
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(12),
+                            child: CircularProgressIndicator(
+                              color: Color(0xFF00A884),
+                            ),
+                          ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(13),
+                              decoration: BoxDecoration(
+                                color: Colors.orangeAccent.withOpacity(0.07),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.orangeAccent.withOpacity(0.18),
+                                ),
+                              ),
+                              child: const Text(
+                                'Abhi TEST mode hai. Default example TEST-000001 hai. Final version me school SVN-000001 jaisa production format rakh sakta hai. Assigned TEST UID delete hone ke baad reuse nahi hoga.',
+                                style: TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 11,
+                                  height: 1.45,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            TextField(
+                              controller: _uidStartController,
+                              enabled: !_uidEverActivated && !_uidMasterEnabled,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: _modernInputDecoration(
+                                'Starting UID — Example: TEST-000001',
+                                Icons.tag_rounded,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _uidEverActivated
+                                  ? 'Sequence locked for this TEST run. Next UID: ${_formatTestStudentUid(_uidPrefix, _uidPadding, _uidNextNumber)}'
+                                  : 'Class 1 Roll 1 se numbering start hogi, phir Class/Roll order me aage badegi.',
+                              style: const TextStyle(
+                                color: Colors.white38,
+                                fontSize: 10.5,
+                                height: 1.4,
+                              ),
+                            ),
+                            if (_uidLastIssued.isNotEmpty) ...[
+                              const SizedBox(height: 5),
+                              Text(
+                                'Last issued TEST UID: $_uidLastIssued',
+                                style: const TextStyle(
+                                  color: Color(0xFF00D9A5),
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 14),
+                            _uidToggleTile(
+                              title: 'Enable Student UID',
+                              subtitle: _uidMasterEnabled
+                                  ? 'TEST UID assignment active hai.'
+                                  : 'ON karne par 20 sec warning + Admin Password verification hoga.',
+                              value: _uidMasterEnabled,
+                              onChanged: _setUidMasterEnabled,
+                            ),
+                            const SizedBox(height: 10),
+                            _uidToggleTile(
+                              title: 'Use Student UID for Fees',
+                              subtitle: _uidMasterEnabled
+                                  ? 'ON: fee ledger TEST UID se link hoga. OFF: Name + Father + DOB + Roll + Mobile identity use hogi.'
+                                  : 'Pehle master Student UID ON karein.',
+                              value: _uidFeesEnabled,
+                              enabled: _uidMasterEnabled,
+                              onChanged: (value) =>
+                                  _setUidFeatureFlag('feesEnabled', value),
+                            ),
+                            const SizedBox(height: 10),
+                            _uidToggleTile(
+                              title: 'Show Student UID on ID Card',
+                              subtitle: _uidMasterEnabled
+                                  ? 'ON: QR/scanner ke paas same TEST UID dikhai dega.'
+                                  : 'Pehle master Student UID ON karein.',
+                              value: _uidIdCardEnabled,
+                              enabled: _uidMasterEnabled,
+                              onChanged: (value) =>
+                                  _setUidFeatureFlag('idCardEnabled', value),
+                            ),
+                          ],
+                        ),
+                ),
                     ],
                   ),
                 ),
