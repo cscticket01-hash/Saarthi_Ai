@@ -2834,17 +2834,18 @@ jobs:
 
               student_section = student_section[:build_index] + helpers + student_section[build_index:]
 
-          student_init_pattern = re.compile(
-              r"(?ms)(@override\s*\n\s*void\s+initState\(\)\s*\{\s*\n\s*super\.initState\(\);\s*\n)(\s*_fetchStudentProfile\(\);\s*\n\s*\})"
-          )
-          student_section, student_init_count = student_init_pattern.subn(
-              lambda m: m.group(1) + "    _cleanupAndroidUpdateCache();\n" + m.group(2),
-              student_section,
-              count=1,
-          )
-          if student_init_count == 0:
-              raise SystemExit(
-                  'ERROR: Student Portal initState me _fetchStudentProfile() patch point nahi mila'
+          student_init_anchor = """    super.initState();
+          """
+
+          if '_cleanupAndroidUpdateCache();' not in student_section:
+              if student_init_anchor not in student_section:
+                  raise SystemExit(
+                      'ERROR: Student Portal initState me super.initState() patch point nahi mila'
+                  )
+              student_section = student_section.replace(
+                  student_init_anchor,
+                  student_init_anchor + "    _cleanupAndroidUpdateCache();\\n",
+                  1,
               )
 
           old_logout = """          IconButton(
