@@ -19362,7 +19362,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         child: Column(
           children: [
             const Icon(
-              Icons.assignment_add_rounded,
+              Icons.add_task_rounded,
               color: Colors.orangeAccent,
               size: 46,
             ),
