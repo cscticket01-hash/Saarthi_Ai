@@ -1801,6 +1801,7 @@ jobs:
           cat > scripts/android_mobile_ui_patch.py <<'PYMOBILEPATCH'
           from pathlib import Path
           import textwrap
+          import re
 
           DASHBOARD = Path('lib/main_dashboard_screen.dart')
 
@@ -1811,10 +1812,11 @@ jobs:
 
           launcher_import = "import 'package:url_launcher/url_launcher.dart';"
           if launcher_import not in text:
-              mobile_import = "import 'package:mobile_scanner/mobile_scanner.dart';"
-              if mobile_import not in text:
-                  raise SystemExit('ERROR: mobile_scanner import nahi mila')
-              text = text.replace(mobile_import, mobile_import + '\n' + launcher_import, 1)
+              import_matches = list(re.finditer(r"(?m)^import\s+[^;]+;\s*$", text))
+              if not import_matches:
+                  raise SystemExit('ERROR: Dart import insert point nahi mila')
+              insert_at = import_matches[-1].end()
+              text = text[:insert_at] + '\n' + launcher_import + text[insert_at:]
 
           android_update_imports = [
               "import 'dart:io';",
@@ -2832,28 +2834,18 @@ jobs:
 
               student_section = student_section[:build_index] + helpers + student_section[build_index:]
 
-          old_student_init = """  @override
-            void initState() {
-              super.initState();
-              _fetchStudentProfile();
-            }
-          """
-
-          new_student_init = """  @override
-            void initState() {
-              super.initState();
-              _cleanupAndroidUpdateCache();
-              _fetchStudentProfile();
-            }
-          """
-
-          if old_student_init not in student_section:
-              raise SystemExit('ERROR: Student Portal initState patch point nahi mila')
-          student_section = student_section.replace(
-              old_student_init,
-              new_student_init,
-              1,
+          student_init_pattern = re.compile(
+              r"(?ms)(@override\s*\n\s*void\s+initState\(\)\s*\{\s*\n\s*super\.initState\(\);\s*\n)(\s*_fetchStudentProfile\(\);\s*\n\s*\})"
           )
+          student_section, student_init_count = student_init_pattern.subn(
+              lambda m: m.group(1) + "    _cleanupAndroidUpdateCache();\n" + m.group(2),
+              student_section,
+              count=1,
+          )
+          if student_init_count == 0:
+              raise SystemExit(
+                  'ERROR: Student Portal initState me _fetchStudentProfile() patch point nahi mila'
+              )
 
           old_logout = """          IconButton(
                       tooltip: 'Logout',
@@ -2933,6 +2925,193 @@ jobs:
           student_section = student_section.replace(old_mobile_layout, new_mobile_layout, 1)
 
           text = text[:student_state_start] + student_section + text[admin_state_start:]
+
+          # Android-only Admin Settings updater (mobile/compact layout)
+          settings_state_start = text.find('class _SettingsScreenState')
+          if settings_state_start == -1:
+              raise SystemExit('ERROR: SettingsScreen state class nahi mila')
+          settings_state_end = text.find('\nclass ', settings_state_start + 10)
+          if settings_state_end == -1:
+              settings_state_end = len(text)
+          settings_section = text[settings_state_start:settings_state_end]
+
+          admin_state_anchor = "  bool _isLoading = false;\n"
+          admin_state_fields = """  bool _isLoading = false;
+
+            bool _adminAndroidUpdateDownloading = false;
+            double _adminAndroidUpdateProgress = 0.0;
+            String _adminAndroidUpdateStatus = '';
+          """
+          if '_adminAndroidUpdateDownloading' not in settings_section:
+              if admin_state_anchor not in settings_section:
+                  raise SystemExit('ERROR: Admin updater state patch point nahi mila')
+              settings_section = settings_section.replace(admin_state_anchor, admin_state_fields, 1)
+
+          admin_helpers = textwrap.dedent(r"""
+            Future<void> _cleanupAdminAndroidUpdateCache({String? keepPath}) async {
+              try {
+                final tempDir = await getTemporaryDirectory();
+                if (!await tempDir.exists()) return;
+                await for (final entity in tempDir.list()) {
+                  if (entity is! File) continue;
+                  final path = entity.path;
+                  final name = path.split(Platform.pathSeparator).last;
+                  if (!name.startsWith('Vidya-Saarthi-') || !name.endsWith('.apk')) continue;
+                  if (keepPath != null && path == keepPath) continue;
+                  try { await entity.delete(); } catch (_) {}
+                }
+              } catch (_) {}
+            }
+
+            Future<void> _downloadAdminAndroidUpdate({
+              required String apkUrl,
+              required String latestName,
+            }) async {
+              if (_adminAndroidUpdateDownloading) return;
+              final uri = Uri.tryParse(apkUrl);
+              if (uri == null) return;
+              setState(() {
+                _adminAndroidUpdateDownloading = true;
+                _adminAndroidUpdateProgress = 0.0;
+                _adminAndroidUpdateStatus = 'Preparing update...';
+              });
+              http.Client? client;
+              IOSink? sink;
+              File? apkFile;
+              try {
+                await _cleanupAdminAndroidUpdateCache();
+                final tempDir = await getTemporaryDirectory();
+                final safeVersion = latestName.isEmpty ? 'latest' : latestName.replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '_');
+                apkFile = File('${tempDir.path}/Vidya-Saarthi-$safeVersion.apk');
+                if (await apkFile.exists()) await apkFile.delete();
+                client = http.Client();
+                final response = await client.send(http.Request('GET', uri));
+                if (response.statusCode < 200 || response.statusCode >= 300) throw Exception('Download HTTP ${response.statusCode}');
+                final total = response.contentLength ?? 0;
+                var received = 0;
+                sink = apkFile.openWrite();
+                await for (final chunk in response.stream) {
+                  sink.add(chunk);
+                  received += chunk.length;
+                  if (!mounted) continue;
+                  setState(() {
+                    _adminAndroidUpdateProgress = total > 0 ? (received / total).clamp(0.0, 1.0) : 0.0;
+                    _adminAndroidUpdateStatus = total > 0 ? '${(_adminAndroidUpdateProgress * 100).toStringAsFixed(0)}% downloaded' : 'Downloading update...';
+                  });
+                }
+                await sink.flush();
+                await sink.close();
+                sink = null;
+                if (!mounted) return;
+                setState(() {
+                  _adminAndroidUpdateProgress = 1.0;
+                  _adminAndroidUpdateStatus = 'Download complete. Opening Android installer...';
+                });
+                await _cleanupAdminAndroidUpdateCache(keepPath: apkFile.path);
+                final result = await OpenFilex.open(apkFile.path, type: 'application/vnd.android.package-archive');
+                if (!mounted) return;
+                if (result.type != ResultType.done) throw Exception(result.message);
+                setState(() {
+                  _adminAndroidUpdateStatus = 'Installer opened. Android par Update/Install confirm karein.';
+                });
+              } catch (e) {
+                try { await sink?.close(); } catch (_) {}
+                try { if (apkFile != null && await apkFile.exists()) await apkFile.delete(); } catch (_) {}
+                if (!mounted) return;
+                setState(() {
+                  _adminAndroidUpdateDownloading = false;
+                  _adminAndroidUpdateProgress = 0.0;
+                  _adminAndroidUpdateStatus = '';
+                });
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Update download failed: $e')));
+              } finally {
+                client?.close();
+              }
+            }
+
+            Widget _buildAndroidAdminUpdateCard() {
+              const currentVersionCode = int.fromEnvironment('APP_VERSION_CODE', defaultValue: 1);
+              const currentVersionName = String.fromEnvironment('APP_VERSION_NAME', defaultValue: '1.0.0');
+              return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance.collection('app_config').doc('android_update').snapshots(),
+                builder: (context, snapshot) {
+                  final data = snapshot.data?.data() ?? <String, dynamic>{};
+                  final latestCode = (data['versionCode'] as num?)?.toInt() ?? 0;
+                  final latestName = data['versionName']?.toString().trim() ?? '';
+                  final apkUrl = data['apkUrl']?.toString().trim() ?? '';
+                  final mandatory = data['mandatory'] == true;
+                  final updateAvailable = latestCode > currentVersionCode;
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(13),
+                    decoration: BoxDecoration(
+                      color: updateAvailable ? const Color(0xFF15322F) : const Color(0xFF172229),
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(color: updateAvailable ? const Color(0xFF00A884).withOpacity(0.38) : Colors.white10),
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(children: [
+                        Icon(updateAvailable ? Icons.system_update_alt_rounded : Icons.verified_rounded, color: const Color(0xFF00D9A5), size: 20),
+                        const SizedBox(width: 9),
+                        Expanded(child: Text(updateAvailable ? 'Update Available' : 'Vidya Saarthi is up to date', style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w800))),
+                      ]),
+                      const SizedBox(height: 6),
+                      Text(updateAvailable ? 'Installed $currentVersionName  •  Latest $latestName' : 'Installed version $currentVersionName', style: const TextStyle(color: Colors.white54, fontSize: 10.5)),
+                      if (_adminAndroidUpdateDownloading) ...[
+                        const SizedBox(height: 10),
+                        LinearProgressIndicator(value: _adminAndroidUpdateProgress > 0 ? _adminAndroidUpdateProgress.clamp(0.0, 1.0) : null, color: const Color(0xFF00D9A5), backgroundColor: Colors.white12),
+                        const SizedBox(height: 7),
+                        Text(_adminAndroidUpdateStatus.isEmpty ? 'Preparing update...' : _adminAndroidUpdateStatus, style: const TextStyle(color: Colors.white60, fontSize: 10.3)),
+                      ],
+                      if (updateAvailable) ...[
+                        const SizedBox(height: 10),
+                        SizedBox(width: double.infinity, child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12)),
+                          onPressed: apkUrl.isEmpty || _adminAndroidUpdateDownloading ? null : () => _downloadAdminAndroidUpdate(apkUrl: apkUrl, latestName: latestName),
+                          icon: const Icon(Icons.download_rounded, size: 18),
+                          label: Text(_adminAndroidUpdateDownloading ? 'DOWNLOADING...' : (mandatory ? 'UPDATE REQUIRED' : 'DOWNLOAD UPDATE'), style: const TextStyle(fontWeight: FontWeight.w800)),
+                        )),
+                      ],
+                    ]),
+                  );
+                },
+              );
+            }
+
+          """)
+          if '_buildAndroidAdminUpdateCard' not in settings_section:
+              marker = '  Future<void> _confirmLogout() async {'
+              idx = settings_section.find(marker)
+              if idx == -1:
+                  raise SystemExit('ERROR: Admin Settings helper insert point nahi mila')
+              settings_section = settings_section[:idx] + admin_helpers + settings_section[idx:]
+
+          old_compact = """                      if (compact) {
+                                  return Column(
+                                    children: [
+                                      profileInfo,
+                                      const SizedBox(height: 16),
+                                      SizedBox(width: double.infinity, child: logoutButton),
+                                    ],
+                                  );
+                                }
+          """
+          new_compact = """                      if (compact) {
+                                  return Column(
+                                    children: [
+                                      profileInfo,
+                                      const SizedBox(height: 16),
+                                      SizedBox(width: double.infinity, child: logoutButton),
+                                      const SizedBox(height: 10),
+                                      _buildAndroidAdminUpdateCard(),
+                                    ],
+                                  );
+                                }
+          """
+          if old_compact not in settings_section:
+              raise SystemExit('ERROR: Admin Logout ke niche updater patch point nahi mila')
+          settings_section = settings_section.replace(old_compact, new_compact, 1)
+          text = text[:settings_state_start] + settings_section + text[settings_state_end:]
           DASHBOARD.write_text(text, encoding='utf-8')
 
           print('Android-only Student Portal UI patch applied.')
@@ -2962,6 +3141,8 @@ jobs:
           grep -n "_cleanupAndroidUpdateCache" \
             lib/main_dashboard_screen.dart | head -n 5
           grep -n "_androidUpdateProgress" \
+            lib/main_dashboard_screen.dart | head -n 5
+          grep -n "_buildAndroidAdminUpdateCard" \
             lib/main_dashboard_screen.dart | head -n 5
 
           if grep -q "School Notifications" lib/main_dashboard_screen.dart; then
