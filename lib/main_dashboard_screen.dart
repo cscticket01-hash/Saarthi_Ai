@@ -19451,22 +19451,6 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _saving ? null : _createExam,
-        backgroundColor: Colors.orangeAccent,
-        foregroundColor: Colors.black,
-        icon: _saving
-            ? const SizedBox(
-                width: 17,
-                height: 17,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.black,
-                ),
-              )
-            : const Icon(Icons.add_task_rounded),
-        label: Text(_saving ? 'Creating...' : 'Create Exam'),
-      ),
       body: _loading
           ? const Center(
               child: CircularProgressIndicator(color: Color(0xFF00A884)),
@@ -19556,36 +19540,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                 ),
                               ],
                             );
-                            final button = ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.orangeAccent,
-                                foregroundColor: Colors.black,
-                              ),
-                              onPressed: _saving ? null : _createExam,
-                              icon: const Icon(Icons.add_rounded),
-                              label: const Text(
-                                'Create Exam',
-                                style: TextStyle(fontWeight: FontWeight.w900),
-                              ),
-                            );
-
-                            if (compact) {
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  intro,
-                                  const SizedBox(height: 14),
-                                  button,
-                                ],
-                              );
-                            }
-                            return Row(
-                              children: [
-                                Expanded(child: intro),
-                                const SizedBox(width: 20),
-                                button,
-                              ],
-                            );
+                            return intro;
                           },
                         ),
                       ),
@@ -19639,10 +19594,42 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _sectionHeader(
-                                  'Exam Groups',
-                                  'Final Exam / Half Yearly / Unit Test — class-wise settings inside',
-                                  Icons.view_agenda_rounded,
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: _sectionHeader(
+                                        'Exam Groups',
+                                        'Final Exam / Half Yearly / Unit Test — class-wise settings inside',
+                                        Icons.view_agenda_rounded,
+                                      ),
+                                    ),
+                                    if (groups.isNotEmpty) ...[
+                                      const SizedBox(width: 12),
+                                      ElevatedButton.icon(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              const Color(0xFF00A884),
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                            vertical: 11,
+                                          ),
+                                        ),
+                                        onPressed:
+                                            _saving ? null : _createExam,
+                                        icon: const Icon(
+                                          Icons.add_rounded,
+                                          size: 17,
+                                        ),
+                                        label: const Text(
+                                          'Create Exam',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                                 const SizedBox(height: 14),
                                 if (groups.isEmpty)
