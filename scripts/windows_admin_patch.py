@@ -1,38 +1,74 @@
-VIDYA SAARTHI WINDOWS ADMIN - SETUP
+from pathlib import Path
+import re
 
-1. Copy the folders/files from this pack into the ROOT of your GitHub repository.
-   - lib/main_windows.dart
-   - lib/windows_html_shim.dart
-   - lib/windows_mobile_scanner_shim.dart
-   - scripts/windows_admin_patch.py
-   - .github/workflows/build-windows.yml
+src = Path('lib/main_dashboard_screen.dart')
+out = Path('lib/main_dashboard_screen_windows.dart')
 
-2. Do NOT replace lib/main.dart or lib/main_dashboard_screen.dart.
-   Your existing Web/Android source stays unchanged.
+if not src.exists():
+    raise SystemExit('lib/main_dashboard_screen.dart not found')
 
-3. Commit and push to main.
+text = src.read_text(encoding='utf-8')
 
-4. GitHub -> Actions -> Build Vidya Saarthi Windows Admin -> Run workflow.
+html_import = "import 'dart:html' as html;"
+scanner_import = "import 'package:mobile_scanner/mobile_scanner.dart';"
 
-5. When completed, download artifact:
-   Vidya-Saarthi-Windows-<version>
-   It contains:
-   - Vidya_Saarthi_Setup_<version>.exe
-   - Vidya_Saarthi_Windows_Portable_<version>.zip
+if html_import not in text:
+    raise SystemExit('Expected dart:html import not found. Source changed; patch stopped safely.')
 
-WINDOWS UPDATE CONFIG (optional now; required when publishing updates)
-Firestore collection: app_config
-Document: windows_update
-Fields:
-  enabled: true
-  latestVersion: "1.0.1"
-  minimumVersion: "1.0.0"
-  downloadUrl: "DIRECT_HTTPS_URL_TO_NEW_SETUP_EXE"
-  forceUpdate: false
-  releaseNotes: "What changed in this version"
+text = text.replace(
+    html_import,
+    "import 'windows_html_shim.dart' as html;",
+    1,
+)
 
-Notes:
-- The Windows app uses an Admin-only login entry.
-- Existing Website build workflow is not replaced.
-- The Windows build generates its platform folder only inside GitHub Actions.
-- Current Windows stage is online-first. Offline database/sync is the next stage after this build passes.
+if scanner_import in text:
+    text = text.replace(
+        scanner_import,
+        "import 'windows_mobile_scanner_shim.dart';",
+        1,
+    )
+
+# Browser-only Image.network rendering hint is unnecessary on Windows.
+text = re.sub(
+    r'\s*webHtmlElementStrategy:\s*WebHtmlElementStrategy\s*\.prefer,\s*',
+    '\n',
+    text,
+)
+
+# Desktop build must never accidentally expose the Student/Admin role switch
+# as its startup entry. main_windows.dart uses its own Admin-only login.
+# These guards also stop accidental switching if the old login is ever opened.
+text = text.replace(
+    'bool _isAdminMode = false;',
+    'bool _isAdminMode = true;',
+    1,
+)
+
+old_switch = '''  void _switchRole(bool isAdmin) {
+    setState(() {
+      _isAdminMode = isAdmin;'''
+new_switch = '''  void _switchRole(bool isAdmin) {
+    setState(() {
+      _isAdminMode = true;'''
+if old_switch in text:
+    text = text.replace(old_switch, new_switch, 1)
+
+out.write_text(text, encoding='utf-8')
+
+checks = {
+    'dart:html removed': "import 'dart:html' as html;" not in text,
+    'Windows html shim active': "import 'windows_html_shim.dart' as html;" in text,
+    'mobile scanner shim active': "windows_mobile_scanner_shim.dart" in text,
+    'Admin default forced': 'bool _isAdminMode = true;' in text,
+    'Admin dashboard retained': 'class AdminDashboardScreen' in text,
+    'Exam Center retained': 'class ExamCenterScreen' in text,
+    'Student management retained': 'students_directory' in text,
+}
+
+failed = [name for name, ok in checks.items() if not ok]
+if failed:
+    raise SystemExit('Windows patch validation failed: ' + ', '.join(failed))
+
+print('Generated:', out)
+for name in checks:
+    print(name + ': OK')
