@@ -1,0 +1,168 @@
+name: Build Vidya Saarthi Windows Admin
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lib/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'scripts/windows_admin_patch.py'
+      - '.github/workflows/build-windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show Flutter Version
+        shell: powershell
+        run: flutter --version
+
+      - name: Generate Windows Platform
+        shell: powershell
+        run: flutter create --platforms=windows --no-pub .
+
+      - name: Verify Windows Source Files
+        shell: powershell
+        run: |
+          if (!(Test-Path "lib\main_dashboard_screen.dart")) { throw "lib/main_dashboard_screen.dart missing" }
+          if (!(Test-Path "lib\main_windows.dart")) { throw "lib/main_windows.dart missing" }
+          if (!(Test-Path "lib\windows_html_shim.dart")) { throw "lib/windows_html_shim.dart missing" }
+          if (!(Test-Path "lib\windows_mobile_scanner_shim.dart")) { throw "lib/windows_mobile_scanner_shim.dart missing" }
+          if (!(Test-Path "scripts\windows_admin_patch.py")) { throw "scripts/windows_admin_patch.py missing" }
+
+      - name: Generate Windows-Compatible Dashboard
+        shell: powershell
+        run: python scripts/windows_admin_patch.py
+
+      - name: Clean Flutter
+        shell: powershell
+        run: flutter clean
+
+      - name: Get Dependencies
+        shell: powershell
+        run: flutter pub get
+
+      - name: Read App Version
+        id: app_version
+        shell: powershell
+        run: |
+          $line = Select-String -Path pubspec.yaml -Pattern '^version:\s*([^+\s]+)' | Select-Object -First 1
+          if (-not $line) { throw "pubspec version not found" }
+          $version = $line.Matches[0].Groups[1].Value
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Windows app version: $version"
+
+      - name: Build Windows Admin App
+        shell: powershell
+        run: |
+          flutter build windows `
+            --release `
+            -t lib/main_windows.dart `
+            --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
+            --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+
+      - name: Verify Windows Build
+        shell: powershell
+        run: |
+          $release = "build\windows\x64\runner\Release"
+          if (!(Test-Path $release)) { throw "Windows Release folder missing" }
+          $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw "Windows EXE not found" }
+          Write-Host "Built EXE: $($exe.FullName)"
+
+      - name: Create Portable ZIP
+        shell: powershell
+        run: |
+          $release = "build\windows\x64\runner\Release"
+          $zip = "build\Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "$release\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "Portable ZIP: $zip"
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Create Windows Installer Script
+        shell: powershell
+        run: |
+          $release = (Resolve-Path "build\windows\x64\runner\Release").Path
+          $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw "EXE not found for installer" }
+          $outDir = (Resolve-Path "build").Path
+          $version = "${{ steps.app_version.outputs.version }}"
+
+          $iss = @"
+          [Setup]
+          AppId={{9B6E3770-2F58-4D10-A468-38C588A4E24B}
+          AppName=Vidya Saarthi
+          AppVersion=$version
+          AppPublisher=Vidya Saarthi
+          DefaultDirName={localappdata}\Programs\Vidya Saarthi
+          DefaultGroupName=Vidya Saarthi
+          OutputDir=$outDir
+          OutputBaseFilename=Vidya_Saarthi_Setup_$version
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          PrivilegesRequired=lowest
+          CloseApplications=yes
+          RestartApplications=yes
+          UninstallDisplayIcon={app}\$($exe.Name)
+
+          [Files]
+          Source: "$release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"
+          Name: "{autodesktop}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"
+
+          [Run]
+          Filename: "{app}\$($exe.Name)"; Description: "Launch Vidya Saarthi"; Flags: nowait postinstall skipifsilent
+          "@
+
+          $iss | Out-File -FilePath "build\vidya_saarthi_windows.iss" -Encoding utf8
+
+      - name: Build Setup EXE
+        shell: powershell
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { throw "Inno Setup ISCC.exe missing" }
+          & $iscc "build\vidya_saarthi_windows.iss"
+
+      - name: Verify Installer
+        shell: powershell
+        run: |
+          $installer = "build\Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe"
+          if (!(Test-Path $installer)) { throw "Installer not created: $installer" }
+          Write-Host "Installer ready: $installer"
+
+      - name: Upload Windows Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vidya-Saarthi-Windows-${{ steps.app_version.outputs.version }}
+          path: |
+            build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
+            build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
+          retention-days: 14
+          if-no-files-found: error
