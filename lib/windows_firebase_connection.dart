@@ -91,26 +91,75 @@ class WindowsFirebaseConnection {
     final config = parse(link);
     FirebaseApp? probe;
     FirebaseAuth? auth;
+    var createdDefault = false;
+    var saved = false;
+
     try {
-      probe = await Firebase.initializeApp(
-        name: 'school-check-${DateTime.now().microsecondsSinceEpoch}', options: options(config));
-      auth = FirebaseAuth.instanceFor(app: probe);
-      final db = FirebaseFirestore.instanceFor(app: probe);
-      db.settings = const Settings(persistenceEnabled: false);
-      final credential = await auth.signInWithEmailAndPassword(email: email.trim(), password: password);
-      await requireAdmin(credential.user!);
-      // A server-only read proves Firestore exists and school-config reads are permitted.
-      await db.collection('school_config').doc('windows_connection_check')
-          .get(const GetOptions(source: Source.server)).timeout(const Duration(seconds: 20));
+      // main() sets current only after a saved default app has loaded.
+      // On first run current is null, so setup creates the default app.
+      final hasDefault = current != null;
+
+      if (!hasDefault) {
+        // First-run Windows setup: use the supplied school config as the
+        // default app. This avoids a FlutterFire desktop [core/no-app]
+        // failure that can occur when a named app is the first app created.
+        await Firebase.initializeApp(options: options(config));
+        createdDefault = true;
+        auth = FirebaseAuth.instance;
+        final db = FirebaseFirestore.instance;
+        db.settings = const Settings(persistenceEnabled: false);
+
+        final credential = await auth.signInWithEmailAndPassword(
+          email: email.trim(),
+          password: password,
+        );
+        await requireAdmin(credential.user!);
+        await db
+            .collection('school_config')
+            .doc('windows_connection_check')
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 20));
+      } else {
+        // A signed-in school is already running. Probe another project in a
+        // named app so the current saved project is left untouched on error.
+        probe = await Firebase.initializeApp(
+          name: 'school-check-${DateTime.now().microsecondsSinceEpoch}',
+          options: options(config),
+        );
+        auth = FirebaseAuth.instanceFor(app: probe);
+        final db = FirebaseFirestore.instanceFor(app: probe);
+        db.settings = const Settings(persistenceEnabled: false);
+
+        final credential = await auth.signInWithEmailAndPassword(
+          email: email.trim(),
+          password: password,
+        );
+        await requireAdmin(credential.user!);
+        await db
+            .collection('school_config')
+            .doc('windows_connection_check')
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 20));
+      }
+
       final target = file;
       await target.parent.create(recursive: true);
       final temporary = File('${target.path}.pending');
       await temporary.writeAsString(jsonEncode(config), flush: true);
       await temporary.rename(target.path);
-      // Default Firebase and its current login are untouched until a fresh process starts.
+      saved = true;
     } finally {
-      try { await auth?.signOut(); } catch (_) {}
-      try { await probe?.delete(); } catch (_) {}
+      try {
+        await auth?.signOut();
+      } catch (_) {}
+      try {
+        await probe?.delete();
+      } catch (_) {}
+      if (createdDefault && !saved) {
+        try {
+          await Firebase.app().delete();
+        } catch (_) {}
+      }
     }
   }
 }
