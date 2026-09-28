@@ -9,25 +9,24 @@ if not src.exists():
 
 text = src.read_text(encoding='utf-8')
 
+# ============================================================
+# WINDOWS COMPATIBILITY PATCH
+# ============================================================
+
 html_import = "import 'dart:html' as html;"
 scanner_import = "import 'package:mobile_scanner/mobile_scanner.dart';"
 
 if html_import not in text:
-    raise SystemExit('Expected dart:html import not found. Source changed; patch stopped safely.')
+    raise SystemExit(
+        'Expected dart:html import not found. '
+        'Source changed; patch stopped safely.'
+    )
 
 text = text.replace(
     html_import,
     "import 'windows_html_shim.dart' as html;",
     1,
 )
-
-if "import 'windows_update_manager.dart';" not in text:
-    text = text.replace(
-        "import 'windows_html_shim.dart' as html;\n",
-        "import 'windows_html_shim.dart' as html;\n"
-        "import 'windows_update_manager.dart';\n",
-        1,
-    )
 
 if scanner_import in text:
     text = text.replace(
@@ -36,16 +35,12 @@ if scanner_import in text:
         1,
     )
 
-# Browser-only Image.network rendering hint is unnecessary on Windows.
 text = re.sub(
     r'\s*webHtmlElementStrategy:\s*WebHtmlElementStrategy\s*\.prefer,\s*',
     '\n',
     text,
 )
 
-# Desktop build must never accidentally expose the Student/Admin role switch
-# as its startup entry. main_windows.dart uses its own Admin-only login.
-# These guards also stop accidental switching if the old login is ever opened.
 text = text.replace(
     'bool _isAdminMode = false;',
     'bool _isAdminMode = true;',
@@ -55,62 +50,718 @@ text = text.replace(
 old_switch = '''  void _switchRole(bool isAdmin) {
     setState(() {
       _isAdminMode = isAdmin;'''
+
 new_switch = '''  void _switchRole(bool isAdmin) {
     setState(() {
       _isAdminMode = true;'''
+
 if old_switch in text:
-    text = text.replace(old_switch, new_switch, 1)
+    text = text.replace(
+        old_switch,
+        new_switch,
+        1,
+    )
 
+# ============================================================
+# WINDOWS-ONLY ADVANCED SETTINGS CONNECTION BOXES
+# ============================================================
 
-# Add Windows Update card to the normal Settings page.
-settings_anchor = """                const SizedBox(height: 16),
+state_anchor = '''  bool _loading = true;
+  bool _saving = false;
+'''
 
-                // =====================================================
-                // ADVANCED SETTINGS
-"""
-settings_replacement = """                const SizedBox(height: 16),
+state_add = '''  bool _loading = true;
+  bool _saving = false;
 
-                // =====================================================
-                // WINDOWS APP UPDATE
-                // =====================================================
-                const WindowsUpdateSettingsCard(),
+  // WINDOWS ONLY - external connection links
+  final _firebaseConnectionLink = TextEditingController();
+  final _googleCloudConsoleLink = TextEditingController();
 
-                const SizedBox(height: 16),
+  String? _linkedFirebaseConnectionLink;
+  String? _linkedGoogleCloudConsoleLink;
 
-                // =====================================================
-                // ADVANCED SETTINGS
-"""
+  bool _editingFirebaseConnectionLink = false;
+  bool _editingGoogleCloudConsoleLink = false;
+  bool _savingWindowsConnectionLink = false;
+'''
 
-if settings_anchor not in text:
+if state_anchor not in text:
     raise SystemExit(
-        'Windows Settings update-card anchor not found. Source changed; '
-        'patch stopped safely.'
+        'Windows connection UI patch point missing: '
+        'Advanced Settings state fields changed.'
     )
 
 text = text.replace(
-    settings_anchor,
-    settings_replacement,
+    state_anchor,
+    state_add,
     1,
 )
 
-out.write_text(text, encoding='utf-8')
+init_anchor = '''  void initState() {
+    super.initState();
+    _load();
+  }
+'''
+
+init_add = '''  void initState() {
+    super.initState();
+    _load();
+    _loadWindowsExternalConnectionLinks();
+  }
+'''
+
+if init_anchor not in text:
+    raise SystemExit(
+        'Windows connection UI patch point missing: '
+        'Advanced Settings initState changed.'
+    )
+
+text = text.replace(
+    init_anchor,
+    init_add,
+    1,
+)
+
+dispose_anchor = '''  void dispose() {
+    _gmail.dispose();
+    _script.dispose();
+    super.dispose();
+  }
+'''
+
+dispose_add = '''  void dispose() {
+    _gmail.dispose();
+    _script.dispose();
+    _firebaseConnectionLink.dispose();
+    _googleCloudConsoleLink.dispose();
+    super.dispose();
+  }
+'''
+
+if dispose_anchor not in text:
+    raise SystemExit(
+        'Windows connection UI patch point missing: '
+        'Advanced Settings dispose changed.'
+    )
+
+text = text.replace(
+    dispose_anchor,
+    dispose_add,
+    1,
+)
+
+methods_anchor = '''  InputDecoration _input(String text, IconData icon) => InputDecoration(
+'''
+
+methods_add = r'''  Future<void> _loadWindowsExternalConnectionLinks() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('windows_external_connections')
+          .get();
+
+      final data = doc.data() ?? <String, dynamic>{};
+
+      if (!mounted) return;
+
+      final firebaseLink =
+          data['firebaseLink']?.toString().trim() ?? '';
+
+      final googleCloudLink =
+          data['googleCloudConsoleLink']?.toString().trim() ?? '';
+
+      setState(() {
+        _linkedFirebaseConnectionLink =
+            firebaseLink.isEmpty ? null : firebaseLink;
+
+        _linkedGoogleCloudConsoleLink =
+            googleCloudLink.isEmpty ? null : googleCloudLink;
+
+        _firebaseConnectionLink.text =
+            _linkedFirebaseConnectionLink ?? '';
+
+        _googleCloudConsoleLink.text =
+            _linkedGoogleCloudConsoleLink ?? '';
+      });
+    } catch (e) {
+      debugPrint(
+        'Windows external connection links load error: $e',
+      );
+    }
+  }
+
+  bool _validFirebaseConnectionLink(String value) {
+    final link = value.trim();
+
+    if (!link.startsWith(
+      'vidyasaarthi://firebase?config=',
+    )) {
+      return false;
+    }
+
+    final uri = Uri.tryParse(link);
+    final config =
+        uri?.queryParameters['config']?.trim() ?? '';
+
+    return config.length >= 20;
+  }
+
+  bool _validGoogleCloudConsoleLink(String value) {
+    final uri = Uri.tryParse(value.trim());
+
+    if (uri == null || uri.scheme != 'https') {
+      return false;
+    }
+
+    return uri.host.toLowerCase() ==
+        'console.cloud.google.com';
+  }
+
+  Future<void> _saveWindowsExternalConnectionLink(
+    String type,
+  ) async {
+    if (_savingWindowsConnectionLink) return;
+
+    final isFirebase = type == 'firebase';
+
+    final controller = isFirebase
+        ? _firebaseConnectionLink
+        : _googleCloudConsoleLink;
+
+    final value = controller.text.trim();
+
+    if (isFirebase) {
+      if (!_validFirebaseConnectionLink(value)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(
+              'Valid Vidya Saarthi Firebase Link daalein.',
+            ),
+          ),
+        );
+        return;
+      }
+    } else {
+      if (!_validGoogleCloudConsoleLink(value)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(
+              'Valid Google Cloud Console link daalein.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
+    setState(() {
+      _savingWindowsConnectionLink = true;
+    });
+
+    try {
+      final field = isFirebase
+          ? 'firebaseLink'
+          : 'googleCloudConsoleLink';
+
+      final updatedField = isFirebase
+          ? 'firebaseLinkUpdatedAt'
+          : 'googleCloudConsoleLinkUpdatedAt';
+
+      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('windows_external_connections')
+          .set(
+        {
+          field: value,
+          updatedField: FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        if (isFirebase) {
+          _linkedFirebaseConnectionLink = value;
+          _editingFirebaseConnectionLink = false;
+        } else {
+          _linkedGoogleCloudConsoleLink = value;
+          _editingGoogleCloudConsoleLink = false;
+        }
+
+        _savingWindowsConnectionLink = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text(
+            isFirebase
+                ? 'Firebase Link save ho gaya.'
+                : 'Google Cloud Console Link save ho gaya.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _savingWindowsConnectionLink = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Connection link save error: $e',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _startProtectedWindowsConnectionEdit(
+    String type,
+  ) async {
+    final verified = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _DriveUnlinkSecurityDialog(),
+    );
+
+    if (verified != true || !mounted) return;
+
+    final isFirebase = type == 'firebase';
+
+    setState(() {
+      if (isFirebase) {
+        _editingFirebaseConnectionLink = true;
+        _firebaseConnectionLink.text =
+            _linkedFirebaseConnectionLink ?? '';
+      } else {
+        _editingGoogleCloudConsoleLink = true;
+        _googleCloudConsoleLink.text =
+            _linkedGoogleCloudConsoleLink ?? '';
+      }
+    });
+  }
+
+  Future<void> _removeWindowsExternalConnectionLink(
+    String type,
+  ) async {
+    if (_savingWindowsConnectionLink) return;
+
+    final isFirebase = type == 'firebase';
+
+    setState(() {
+      _savingWindowsConnectionLink = true;
+    });
+
+    try {
+      final field = isFirebase
+          ? 'firebaseLink'
+          : 'googleCloudConsoleLink';
+
+      final updatedField = isFirebase
+          ? 'firebaseLinkUpdatedAt'
+          : 'googleCloudConsoleLinkUpdatedAt';
+
+      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('windows_external_connections')
+          .set(
+        {
+          field: FieldValue.delete(),
+          updatedField: FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        if (isFirebase) {
+          _linkedFirebaseConnectionLink = null;
+          _firebaseConnectionLink.clear();
+          _editingFirebaseConnectionLink = false;
+        } else {
+          _linkedGoogleCloudConsoleLink = null;
+          _googleCloudConsoleLink.clear();
+          _editingGoogleCloudConsoleLink = false;
+        }
+
+        _savingWindowsConnectionLink = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text(
+            isFirebase
+                ? 'Firebase Link remove ho gaya.'
+                : 'Google Cloud Console Link remove ho gaya.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _savingWindowsConnectionLink = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Connection link remove error: $e',
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _windowsExternalConnectionCard({
+    required String type,
+    required String title,
+    required String description,
+    required IconData icon,
+    required Color accent,
+    required TextEditingController controller,
+    required String? linkedValue,
+    required bool editing,
+    required String hint,
+  }) {
+    final configured =
+        linkedValue?.trim().isNotEmpty ?? false;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: accent.withOpacity(0.22),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                icon,
+                color: accent,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Text(
+                configured ? 'CONFIGURED' : 'NOT CONFIGURED',
+                style: TextStyle(
+                  color: configured
+                      ? const Color(0xFF00D9A5)
+                      : Colors.orangeAccent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            description,
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: 11,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          if (configured && !editing) ...[
+            _info(
+              type == 'firebase'
+                  ? 'Firebase Link'
+                  : 'Google Cloud Console Link',
+              linkedValue ?? '',
+              Icons.link_rounded,
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _savingWindowsConnectionLink
+                    ? null
+                    : () =>
+                        _startProtectedWindowsConnectionEdit(
+                          type,
+                        ),
+                icon: const Icon(
+                  Icons.sync_alt_rounded,
+                ),
+                label: Text(
+                  type == 'firebase'
+                      ? 'Change / Remove Firebase Link'
+                      : 'Change / Remove Google Cloud Link',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.orangeAccent,
+                  side: BorderSide(
+                    color: Colors.orangeAccent
+                        .withOpacity(0.5),
+                  ),
+                ),
+              ),
+            ),
+          ] else ...[
+            TextField(
+              controller: controller,
+              enabled: !_savingWindowsConnectionLink,
+              style: const TextStyle(
+                color: Colors.white,
+              ),
+              decoration: _input(
+                hint,
+                Icons.link_rounded,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                if (editing) ...[
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _savingWindowsConnectionLink
+                          ? null
+                          : () {
+                              setState(() {
+                                if (type == 'firebase') {
+                                  _editingFirebaseConnectionLink =
+                                      false;
+                                  _firebaseConnectionLink.text =
+                                      _linkedFirebaseConnectionLink ??
+                                          '';
+                                } else {
+                                  _editingGoogleCloudConsoleLink =
+                                      false;
+                                  _googleCloudConsoleLink.text =
+                                      _linkedGoogleCloudConsoleLink ??
+                                          '';
+                                }
+                              });
+                            },
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _savingWindowsConnectionLink
+                          ? null
+                          : () =>
+                              _removeWindowsExternalConnectionLink(
+                                type,
+                              ),
+                      icon: const Icon(
+                        Icons.delete_outline_rounded,
+                      ),
+                      label: const Text('Remove'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  flex: editing ? 2 : 1,
+                  child: ElevatedButton.icon(
+                    onPressed: _savingWindowsConnectionLink
+                        ? null
+                        : () =>
+                            _saveWindowsExternalConnectionLink(
+                              type,
+                            ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          const Color(0xFF00A884),
+                    ),
+                    icon: _savingWindowsConnectionLink
+                        ? const SizedBox(
+                            width: 17,
+                            height: 17,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.save_rounded,
+                            color: Colors.white,
+                          ),
+                    label: Text(
+                      _savingWindowsConnectionLink
+                          ? 'Saving...'
+                          : editing
+                              ? 'Save Changes'
+                              : 'Save Link',
+                      style: const TextStyle(
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _input(String text, IconData icon) => InputDecoration(
+'''
+
+if methods_anchor not in text:
+    raise SystemExit(
+        'Windows connection UI patch point missing: '
+        'Advanced Settings input helper changed.'
+    )
+
+text = text.replace(
+    methods_anchor,
+    methods_add,
+    1,
+)
+
+text = text.replace(
+    'Protected settings: Google Drive unlink/change ke liye '
+    '30-second wait + current Admin password verification mandatory hai.',
+    'Protected settings: Google Drive, Firebase aur Google Cloud '
+    'connection change/remove ke liye 30-second wait + current '
+    'Admin password verification mandatory hai.',
+    1,
+)
+
+ui_anchor = '''                      const SizedBox(height: 14),
+                      const _AdvancedStudentUidSettingsPanel(),
+'''
+
+ui_add = '''                      const SizedBox(height: 14),
+
+                      _windowsExternalConnectionCard(
+                        type: 'firebase',
+                        title: 'Firebase Connection',
+                        description:
+                            'Windows app ke liye Firebase connection link save karein. '
+                            'Current runtime Firebase abhi change nahi hoga.',
+                        icon: Icons.local_fire_department_rounded,
+                        accent: Colors.orangeAccent,
+                        controller: _firebaseConnectionLink,
+                        linkedValue: _linkedFirebaseConnectionLink,
+                        editing: _editingFirebaseConnectionLink,
+                        hint: 'Vidya Saarthi Firebase Link',
+                      ),
+
+                      const SizedBox(height: 14),
+
+                      _windowsExternalConnectionCard(
+                        type: 'google_cloud',
+                        title: 'Google Cloud Console',
+                        description:
+                            'Windows app ke liye Google Cloud Console project link save karein.',
+                        icon: Icons.cloud_queue_rounded,
+                        accent: const Color(0xFF4DA3FF),
+                        controller: _googleCloudConsoleLink,
+                        linkedValue: _linkedGoogleCloudConsoleLink,
+                        editing: _editingGoogleCloudConsoleLink,
+                        hint: 'https://console.cloud.google.com/...',
+                      ),
+
+                      const SizedBox(height: 14),
+                      const _AdvancedStudentUidSettingsPanel(),
+'''
+
+if ui_anchor not in text:
+    raise SystemExit(
+        'Windows connection UI patch point missing: '
+        'Advanced Settings UID panel anchor changed.'
+    )
+
+text = text.replace(
+    ui_anchor,
+    ui_add,
+    1,
+)
+
+out.write_text(
+    text,
+    encoding='utf-8',
+)
 
 checks = {
-    'dart:html removed': "import 'dart:html' as html;" not in text,
-    'Windows html shim active': "import 'windows_html_shim.dart' as html;" in text,
-    'mobile scanner shim active': "windows_mobile_scanner_shim.dart" in text,
-    'Admin default forced': 'bool _isAdminMode = true;' in text,
-    'Admin dashboard retained': 'class AdminDashboardScreen' in text,
-    'Windows update import active': "import 'windows_update_manager.dart';" in text,
-    'Windows update Settings card active': 'WindowsUpdateSettingsCard' in text,
-    'Exam Center retained': 'class ExamCenterScreen' in text,
-    'Student management retained': 'students_directory' in text,
+    'dart:html removed':
+        "import 'dart:html' as html;" not in text,
+
+    'Windows html shim active':
+        "import 'windows_html_shim.dart' as html;" in text,
+
+    'mobile scanner shim active':
+        "windows_mobile_scanner_shim.dart" in text,
+
+    'Admin default forced':
+        'bool _isAdminMode = true;' in text,
+
+    'Admin dashboard retained':
+        'class AdminDashboardScreen' in text,
+
+    'Exam Center retained':
+        'class ExamCenterScreen' in text,
+
+    'Student management retained':
+        'students_directory' in text,
+
+    'Firebase connection box added':
+        "title: 'Firebase Connection'" in text,
+
+    'Google Cloud box added':
+        "title: 'Google Cloud Console'" in text,
+
+    '30-second password dialog reused':
+        '_DriveUnlinkSecurityDialog()' in text,
+
+    'Windows connection Firestore doc added':
+        "doc('windows_external_connections')" in text,
+
+    'Website source not overwritten':
+        out != src,
 }
 
-failed = [name for name, ok in checks.items() if not ok]
+failed = [
+    name
+    for name, ok in checks.items()
+    if not ok
+]
+
 if failed:
-    raise SystemExit('Windows patch validation failed: ' + ', '.join(failed))
+    raise SystemExit(
+        'Windows patch validation failed: ' +
+        ', '.join(failed)
+    )
 
 print('Generated:', out)
+
 for name in checks:
     print(name + ': OK')
