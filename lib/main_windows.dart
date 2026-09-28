@@ -9,15 +9,11 @@ import 'package:flutter/material.dart';
 import 'main_dashboard_screen_windows.dart';
 import 'windows_html_shim.dart' as windows_html;
 import 'windows_update_manager.dart';
+import 'windows_firebase_connection.dart';
 
 const String _windowsAppVersion = String.fromEnvironment(
   'APP_VERSION',
   defaultValue: '1.0.0',
-);
-
-const String _windowsFirebaseApiKey = String.fromEnvironment(
-  'WINDOWS_FIREBASE_API_KEY',
-  defaultValue: '',
 );
 
 void _saveWindowsAdminPortalSession() {
@@ -34,23 +30,8 @@ void _saveWindowsAdminPortalSession() {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  if (_windowsFirebaseApiKey.trim().isEmpty) {
-    throw StateError(
-      'WINDOWS_FIREBASE_API_KEY missing. Build the Windows app with the '
-      'WINDOWS_FIREBASE_API_KEY dart-define.',
-    );
-  }
-
-  await Firebase.initializeApp(
-    options: const FirebaseOptions(
-      apiKey: _windowsFirebaseApiKey,
-      appId: '1:751405981184:web:f1240e05c084bac7b242e5',
-      messagingSenderId: '751405981184',
-      projectId: 'saarthi-ai-df12b',
-      authDomain: 'vidyasaarthi.web.app',
-      storageBucket: 'saarthi-ai-df12b.firebasestorage.app',
-    ),
-  );
+  await WindowsFirebaseConnection.bootstrap();
+  windows_html.setSchoolStorageNamespace(WindowsFirebaseConnection.projectId);
 
   runApp(const VidyaSaarthiWindowsApp());
 }
@@ -82,7 +63,9 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           child: child ?? const SizedBox.shrink(),
         );
       },
-      home: const WindowsAdminLoginScreen(),
+      home: WindowsFirebaseConnection.current == null
+          ? const WindowsFirebaseSetupScreen()
+          : const WindowsAdminLoginScreen(),
     );
   }
 }
@@ -456,31 +439,8 @@ class _WindowsAdminLoginScreenState extends State<WindowsAdminLoginScreen> {
   bool _obscure = true;
   bool _loggingIn = false;
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreAdmin());
-  }
-
-  Future<void> _restoreAdmin() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null || !mounted) return;
-
-    _saveWindowsAdminPortalSession();
-
-    await WindowsUpdateManager.promptIfAvailable(context);
-    if (!mounted) return;
-
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => const AdminDashboardScreen(),
-      ),
-    );
-
-    if (mounted) setState(() {});
-  }
-
   Future<void> _login() async {
+    if (_loggingIn) return;
     final email = _emailController.text.trim();
     final password = _passwordController.text;
 
@@ -502,6 +462,12 @@ class _WindowsAdminLoginScreenState extends State<WindowsAdminLoginScreen> {
         password: password,
       );
 
+      try {
+        await WindowsFirebaseConnection.requireAdmin(FirebaseAuth.instance.currentUser!);
+      } catch (_) {
+        await FirebaseAuth.instance.signOut();
+        rethrow;
+      }
       _saveWindowsAdminPortalSession();
 
       if (!mounted) return;
@@ -690,6 +656,18 @@ class _WindowsAdminLoginScreenState extends State<WindowsAdminLoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  Text('School: ${WindowsFirebaseConnection.projectId}'),
+                  TextButton.icon(
+                    onPressed: _loggingIn ? null : () async {
+                      await Navigator.of(context).push(MaterialPageRoute<void>(
+                        builder: (_) => WindowsFirebaseSetupScreen(
+                          protectCurrent: FirebaseAuth.instance.currentUser != null,
+                        ),
+                      ));
+                    },
+                    icon: const Icon(Icons.settings_ethernet),
+                    label: const Text('School / Firebase Connection'),
+                  ),
                   Text(
                     'Version $_windowsAppVersion',
                     style: const TextStyle(color: Colors.white24, fontSize: 9),
