@@ -409,9 +409,14 @@ String _feeIdentityForStudent(
 
 const String _schoolProfileCacheDocId = 'school_profile_cache';
 
+// Memory cache keeps School Settings / branding instant inside the current session.
+Map<String, dynamic>? _schoolProfileMemoryCache;
+String? _schoolProfileScriptUrlMemoryCache;
+
 Map<String, dynamic> _defaultSchoolProfile() => <String, dynamic>{
       'schoolName': 'SARASWATI VIDYA NIKETAN, MADHABDHAM',
       'principalName': 'Principal',
+      'schoolContactNo': '',
       'logoUrl': '',
       'logoFileId': '',
       'sealUrl': '',
@@ -434,6 +439,9 @@ Map<String, dynamic> _mergeSchoolProfile(Map<String, dynamic>? raw) {
 }
 
 Future<String> _schoolProfileScriptUrl() async {
+  final cachedUrl = _schoolProfileScriptUrlMemoryCache?.trim() ?? '';
+  if (cachedUrl.isNotEmpty) return cachedUrl;
+
   final doc = await FirebaseFirestore.instance
       .collection('school_config')
       .doc('google_drive_account')
@@ -445,6 +453,8 @@ Future<String> _schoolProfileScriptUrl() async {
       'Google Drive backend Advanced Settings me connected nahi hai.',
     );
   }
+
+  _schoolProfileScriptUrlMemoryCache = url;
   return url;
 }
 
@@ -475,11 +485,19 @@ Future<Map<String, dynamic>> _schoolProfileBackendPost(
 }
 
 Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
+  if (_schoolProfileMemoryCache != null) {
+    return _mergeSchoolProfile(_schoolProfileMemoryCache);
+  }
+
   try {
     final doc = await _schoolProfileCacheRef().get();
-    return _mergeSchoolProfile(doc.data());
+    final profile = _mergeSchoolProfile(doc.data());
+    _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
+    return profile;
   } catch (_) {
-    return _defaultSchoolProfile();
+    final profile = _defaultSchoolProfile();
+    _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
+    return profile;
   }
 }
 
@@ -492,6 +510,8 @@ Future<Map<String, dynamic>> _refreshSchoolProfileFromDrive() async {
   final profile = raw is Map
       ? _mergeSchoolProfile(Map<String, dynamic>.from(raw))
       : _defaultSchoolProfile();
+
+  _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
 
   await _schoolProfileCacheRef().set(
     {
@@ -4154,30 +4174,111 @@ void _handleLoginBack(bool didPop) {
     }
   }
 
+  String _normalizeDirectoryRoll(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return '';
+
+    if (RegExp(r'^\d+$').hasMatch(raw)) {
+      final normalized = raw.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+      return normalized.isEmpty ? '0' : normalized;
+    }
+
+    return raw.toLowerCase();
+  }
+
   Future<void> _searchStudent() async {
-    final roll = _rollController.text.trim();
-    if (roll.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kripya Roll Number bharein')));
+    final enteredRoll = _rollController.text.trim();
+    final requestedRoll = _normalizeDirectoryRoll(enteredRoll);
+
+    if (requestedRoll.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kripya Roll Number bharein')),
+      );
       return;
     }
+
     setState(() => _isSearchingStudent = true);
+
     try {
-      final docId = '${_directoryClass}_Roll_$roll';
-      final doc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
-      if (doc.exists) {
-        final data = doc.data()!;
-        _nameController.text = data['name']?.toString() ?? '';
-        _parentContactController.text = data['parentContact']?.toString() ?? '';
-        _studentPhotoUrl = data['photoUrl']?.toString();
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Student mil gaya!')));
+      Map<String, dynamic>? studentData;
+
+      // Fast exact lookup first for the most common stored document IDs.
+      final candidateIds = <String>{
+        '${_directoryClass}_Roll_$enteredRoll',
+        '${_directoryClass}_Roll_$requestedRoll',
+      };
+
+      for (final docId in candidateIds) {
+        final doc = await FirebaseFirestore.instance
+            .collection('students_directory')
+            .doc(docId)
+            .get();
+        if (doc.exists) {
+          final data = doc.data();
+          if (data != null &&
+              _normalizeDirectoryRoll(data['rollNo']?.toString() ?? '') ==
+                  requestedRoll) {
+            studentData = data;
+            break;
+          }
+        }
+      }
+
+      // Fallback handles legacy IDs like Roll_01 / Roll_001 / Roll_0001.
+      if (studentData == null) {
+        final classSnapshot = await FirebaseFirestore.instance
+            .collection('students_directory')
+            .where('class', isEqualTo: _directoryClass)
+            .get();
+
+        for (final doc in classSnapshot.docs) {
+          final data = doc.data();
+          final storedRoll =
+              _normalizeDirectoryRoll(data['rollNo']?.toString() ?? '');
+          if (storedRoll == requestedRoll) {
+            studentData = data;
+            break;
+          }
+        }
+      }
+
+      if (studentData != null) {
+        _nameController.text = studentData['name']?.toString() ?? '';
+        _parentContactController.text =
+            studentData['parentContact']?.toString() ?? '';
+        _studentPhotoUrl = studentData['photoUrl']?.toString();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Color(0xFF00A884),
+              content: Text('Student mil gaya!'),
+            ),
+          );
+        }
       } else {
         _nameController.clear();
         _parentContactController.clear();
         _studentPhotoUrl = null;
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Is Roll No ka koi student nahi mila!')));
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: Colors.redAccent,
+              content: Text('Is Roll No ka koi student nahi mila!'),
+            ),
+          );
+        }
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Search error: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Search error: $e'),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSearchingStudent = false);
     }
@@ -6454,120 +6555,19 @@ Future<void> _printIdCard() async {
           _buildPortalSessionTimer(_sessionSecondsRemaining),
           const SizedBox(width: 8),
 
-          // Header Settings menu: School Settings + protected controls + Logout.
-          PopupMenuButton<String>(
+          // Settings icon opens the Settings screen directly.
+          IconButton(
             tooltip: 'Settings',
-            color: const Color(0xFF172229),
-            offset: const Offset(0, 48),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(
-                color: Colors.white.withOpacity(0.08),
-              ),
-            ),
-            onSelected: (value) async {
-              if (value == 'school_settings') {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const SchoolSettingsScreen(),
-                  ),
-                );
-                if (mounted) setState(() {});
-                return;
-              }
-
-              if (value == 'control_settings') {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const SettingsScreen(),
-                  ),
-                );
-                if (mounted) setState(() {});
-                return;
-              }
-
-              if (value == 'logout') {
-                await _confirmAdminLogoutFromHeader();
-              }
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const SettingsScreen(),
+                ),
+              );
+              if (mounted) setState(() {});
             },
-            itemBuilder: (_) => [
-              const PopupMenuItem<String>(
-                value: 'school_settings',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.school_rounded,
-                      color: Color(0xFF00D9A5),
-                      size: 19,
-                    ),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'School Settings',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Name, Logo, Seal & Signature',
-                            style: TextStyle(
-                              color: Colors.white38,
-                              fontSize: 9.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'control_settings',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.tune_rounded,
-                      color: Colors.orangeAccent,
-                      size: 19,
-                    ),
-                    SizedBox(width: 10),
-                    Text(
-                      'Control Settings',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ],
-                ),
-              ),
-              const PopupMenuDivider(),
-              const PopupMenuItem<String>(
-                value: 'logout',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.logout_rounded,
-                      color: Colors.redAccent,
-                      size: 19,
-                    ),
-                    SizedBox(width: 10),
-                    Text(
-                      'Logout',
-                      style: TextStyle(
-                        color: Colors.redAccent,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            child: Container(
+            icon: Container(
               width: 40,
               height: 40,
               decoration: BoxDecoration(
@@ -8222,8 +8222,9 @@ class SchoolSettingsScreen extends StatefulWidget {
 class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   final TextEditingController _schoolNameController = TextEditingController();
   final TextEditingController _principalNameController = TextEditingController();
+  final TextEditingController _schoolContactController = TextEditingController();
 
-  bool _loading = true;
+  bool _loading = false;
   bool _saving = false;
   String? _error;
 
@@ -8246,6 +8247,11 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   @override
   void initState() {
     super.initState();
+
+    // Paint immediately from memory/defaults; refresh cache/Drive in background.
+    _applyProfile(
+      _schoolProfileMemoryCache ?? _defaultSchoolProfile(),
+    );
     _load();
   }
 
@@ -8253,6 +8259,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   void dispose() {
     _schoolNameController.dispose();
     _principalNameController.dispose();
+    _schoolContactController.dispose();
     super.dispose();
   }
 
@@ -8269,6 +8276,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   void _applyProfile(Map<String, dynamic> profile) {
     _schoolNameController.text = _schoolName(profile);
     _principalNameController.text = _principalName(profile);
+    _schoolContactController.text =
+        profile['schoolContactNo']?.toString().trim() ?? '';
     _logoUrl = profile['logoUrl']?.toString().trim() ?? '';
     _sealUrl = profile['sealUrl']?.toString().trim() ?? '';
     _signatureUrl =
@@ -8276,33 +8285,227 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
+    // Never block the screen with a full-page loader.
     try {
-      // Fast cached data first.
       final cached = await _loadSchoolProfileCache();
       if (mounted) {
-        setState(() => _applyProfile(cached));
+        setState(() {
+          _applyProfile(cached);
+          _loading = false;
+          _error = null;
+        });
       }
-
-      // Then refresh source-of-truth from Drive.
-      final fresh = await _refreshSchoolProfileFromDrive();
-      if (!mounted) return;
-
-      setState(() {
-        _applyProfile(fresh);
-        _loading = false;
-      });
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = e.toString();
-      });
+      debugPrint('School profile cache load warning: $e');
     }
+
+    // Google Drive is source-of-truth, but refresh does not block opening.
+    Future<void>(() async {
+      try {
+        final fresh = await _refreshSchoolProfileFromDrive();
+        if (!mounted) return;
+        setState(() {
+          _applyProfile(fresh);
+          _error = null;
+        });
+      } catch (e) {
+        debugPrint('School profile background refresh warning: $e');
+      }
+    });
+  }
+
+  Future<bool> _confirmAdminPasswordBeforeSave() async {
+    final user = FirebaseAuth.instance.currentUser;
+    final email = user?.email?.trim() ?? '';
+
+    if (user == null || email.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Admin login session nahi mila.'),
+          ),
+        );
+      }
+      return false;
+    }
+
+    final passwordController = TextEditingController();
+    bool obscure = true;
+    bool verifying = false;
+    String? errorMessage;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF172229),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              title: const Row(
+                children: [
+                  Icon(
+                    Icons.lock_rounded,
+                    color: Color(0xFF00D9A5),
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Confirm Admin Password',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'School Settings save karne se pehle Admin Password verify karein.',
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11.5,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: passwordController,
+                      obscureText: obscure,
+                      autofocus: true,
+                      onSubmitted: verifying
+                          ? null
+                          : (_) async {
+                              final password = passwordController.text;
+                              if (password.isEmpty) {
+                                setDialogState(() {
+                                  errorMessage = 'Admin Password required hai.';
+                                });
+                                return;
+                              }
+                              setDialogState(() {
+                                verifying = true;
+                                errorMessage = null;
+                              });
+                              try {
+                                final credential = EmailAuthProvider.credential(
+                                  email: email,
+                                  password: password,
+                                );
+                                await user.reauthenticateWithCredential(credential);
+                                if (dialogContext.mounted) {
+                                  Navigator.pop(dialogContext, true);
+                                }
+                              } catch (_) {
+                                setDialogState(() {
+                                  verifying = false;
+                                  errorMessage = 'Galat Admin Password.';
+                                });
+                              }
+                            },
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _field(
+                        'Admin Password',
+                        Icons.password_rounded,
+                      ).copyWith(
+                        suffixIcon: IconButton(
+                          onPressed: verifying
+                              ? null
+                              : () => setDialogState(() => obscure = !obscure),
+                          icon: Icon(
+                            obscure
+                                ? Icons.visibility_off_rounded
+                                : Icons.visibility_rounded,
+                            color: Colors.white54,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        errorMessage!,
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: verifying
+                      ? null
+                      : () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: verifying
+                      ? null
+                      : () async {
+                          final password = passwordController.text;
+                          if (password.isEmpty) {
+                            setDialogState(() {
+                              errorMessage = 'Admin Password required hai.';
+                            });
+                            return;
+                          }
+                          setDialogState(() {
+                            verifying = true;
+                            errorMessage = null;
+                          });
+                          try {
+                            final credential = EmailAuthProvider.credential(
+                              email: email,
+                              password: password,
+                            );
+                            await user.reauthenticateWithCredential(credential);
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext, true);
+                            }
+                          } catch (_) {
+                            setDialogState(() {
+                              verifying = false;
+                              errorMessage = 'Galat Admin Password.';
+                            });
+                          }
+                        },
+                  icon: verifying
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.verified_user_rounded, size: 18),
+                  label: Text(verifying ? 'Verifying...' : 'Verify & Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+    return confirmed == true;
   }
 
   Future<void> _pickAsset(String type) async {
@@ -8344,6 +8547,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
 
     final schoolName = _schoolNameController.text.trim();
     final principalName = _principalNameController.text.trim();
+    final schoolContactNo = _schoolContactController.text.trim();
 
     if (schoolName.isEmpty || principalName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -8355,6 +8559,9 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
       return;
     }
 
+    final passwordConfirmed = await _confirmAdminPasswordBeforeSave();
+    if (!passwordConfirmed || !mounted) return;
+
     setState(() {
       _saving = true;
       _error = null;
@@ -8365,6 +8572,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
         'action': 'save_school_profile',
         'schoolName': schoolName,
         'principalName': principalName,
+        'schoolContactNo': schoolContactNo,
         'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
       };
 
@@ -8400,13 +8608,22 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
       }
 
       final profile = _mergeSchoolProfile(Map<String, dynamic>.from(raw));
+      _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
 
-      await _schoolProfileCacheRef().set(
-        {
-          ...profile,
-          'cachedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
+      // Drive save is already complete. Firestore is only the fast cache,
+      // so do not keep the Save button waiting for a second network round-trip.
+      unawaited(
+        _schoolProfileCacheRef()
+            .set(
+              {
+                ...profile,
+                'cachedAt': FieldValue.serverTimestamp(),
+              },
+              SetOptions(merge: true),
+            )
+            .catchError((e) {
+              debugPrint('School profile Firestore cache warning: $e');
+            }),
       );
 
       if (!mounted) return;
@@ -8645,6 +8862,16 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                         decoration: _field(
                           'School Principal Name',
                           Icons.person_rounded,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _schoolContactController,
+                        keyboardType: TextInputType.phone,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _field(
+                          'School Contact No.',
+                          Icons.phone_rounded,
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -9491,124 +9718,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // =====================================================
-                // SETTINGS HERO
-                // =====================================================
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(20),
-                    onTap: () async {
-                      await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const SchoolSettingsScreen(),
-                        ),
-                      );
-                      if (mounted) setState(() {});
-                    },
-                    child:
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF123D38), Color(0xFF172229)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: const Color(0xFF00A884).withOpacity(0.20),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.20),
-                        blurRadius: 24,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF00A884).withOpacity(0.14),
-                          borderRadius: BorderRadius.circular(15),
-                          border: Border.all(
-                            color: const Color(0xFF00A884).withOpacity(0.28),
-                          ),
-                        ),
-                        child: const Icon(
-                          Icons.tune_rounded,
-                          color: Color(0xFF00D9A5),
-                          size: 26,
-                        ),
-                      ),
-                      const SizedBox(width: 15),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'School Control Settings',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 19,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            SizedBox(height: 5),
-                            Text(
-                              'School Name, Principal, Logo, Seal aur Signature manage karne ke liye click karein.',
-                              style: TextStyle(
-                                color: Colors.white60,
-                                fontSize: 12,
-                                height: 1.4,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 7,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF00A884).withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.shield_rounded,
-                              color: Color(0xFF00D9A5),
-                              size: 14,
-                            ),
-                            SizedBox(width: 5),
-                            Text(
-                              'OPEN',
-                              style: TextStyle(
-                                color: Color(0xFF00D9A5),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                  ),
-                ),
-
-                const SizedBox(height: 18),
-
                 // =====================================================
                 // ADMIN PROFILE
                 // =====================================================
