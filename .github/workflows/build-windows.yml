@@ -278,14 +278,24 @@ jobs:
           npm install firebase-admin@latest --no-audit --no-fund
 
           $script = @'
-          const admin = require("firebase-admin");
+          const {
+            initializeApp,
+            cert,
+          } = require("firebase-admin/app");
+
+          const {
+            getFirestore,
+            FieldValue,
+          } = require("firebase-admin/firestore");
 
           const serviceAccount =
             JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
-          admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
+          initializeApp({
+            credential: cert(serviceAccount),
           });
+
+          const db = getFirestore();
 
           const version =
             process.env.VERSION_NAME;
@@ -303,8 +313,7 @@ jobs:
             `https://github.com/${repository}/releases/download/${releaseTag}/${installerFile}`;
 
           async function main() {
-            await admin
-              .firestore()
+            await db
               .collection("app_config")
               .doc("windows_update")
               .set(
@@ -317,7 +326,7 @@ jobs:
                     `Vidya Saarthi Windows update ${version}`,
                   downloadUrl,
                   updatedAt:
-                    admin.firestore.FieldValue.serverTimestamp(),
+                    FieldValue.serverTimestamp(),
                 },
                 {
                   merge: true,
