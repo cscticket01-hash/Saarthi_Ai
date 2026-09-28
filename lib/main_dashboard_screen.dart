@@ -6094,6 +6094,66 @@ Future<void> _printIdCard() async {
   }
 }
 
+  Future<void> _confirmAdminLogoutFromHeader() async {
+    final shouldLogout = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF172229),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.logout_rounded, color: Colors.redAccent),
+            SizedBox(width: 10),
+            Text(
+              'Logout Admin?',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Logout karne ke baad School Login screen dikhegi.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.logout_rounded, size: 18),
+            label: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldLogout != true) return;
+
+    _clearPortalSession();
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (e) {
+      debugPrint('Admin header logout sign-out warning: $e');
+    }
+
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
   void _openAdminDrawerPage(Widget page) {
     Navigator.of(context).pop();
     Future<void>.delayed(Duration.zero, () async {
@@ -6394,37 +6454,133 @@ Future<void> _printIdCard() async {
           _buildPortalSessionTimer(_sessionSecondsRemaining),
           const SizedBox(width: 8),
 
-          // Visible Settings button at top-right
-          Tooltip(
-            message: 'Settings',
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const SettingsScreen(),
-                    ),
-                  );
-                },
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF00A884).withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: const Color(0xFF00A884).withOpacity(0.28),
-                    ),
+          // Header Settings menu: School Settings + protected controls + Logout.
+          PopupMenuButton<String>(
+            tooltip: 'Settings',
+            color: const Color(0xFF172229),
+            offset: const Offset(0, 48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(
+                color: Colors.white.withOpacity(0.08),
+              ),
+            ),
+            onSelected: (value) async {
+              if (value == 'school_settings') {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const SchoolSettingsScreen(),
                   ),
-                  child: const Icon(
-                    Icons.settings_rounded,
-                    color: Color(0xFF00A884),
-                    size: 21,
+                );
+                if (mounted) setState(() {});
+                return;
+              }
+
+              if (value == 'control_settings') {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const SettingsScreen(),
                   ),
+                );
+                if (mounted) setState(() {});
+                return;
+              }
+
+              if (value == 'logout') {
+                await _confirmAdminLogoutFromHeader();
+              }
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem<String>(
+                value: 'school_settings',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.school_rounded,
+                      color: Color(0xFF00D9A5),
+                      size: 19,
+                    ),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'School Settings',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Name, Logo, Seal & Signature',
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 9.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'control_settings',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.tune_rounded,
+                      color: Colors.orangeAccent,
+                      size: 19,
+                    ),
+                    SizedBox(width: 10),
+                    Text(
+                      'Control Settings',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.logout_rounded,
+                      color: Colors.redAccent,
+                      size: 19,
+                    ),
+                    SizedBox(width: 10),
+                    Text(
+                      'Logout',
+                      style: TextStyle(
+                        color: Colors.redAccent,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: const Color(0xFF00A884).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: const Color(0xFF00A884).withOpacity(0.28),
+                ),
+              ),
+              child: const Icon(
+                Icons.settings_rounded,
+                color: Color(0xFF00A884),
+                size: 21,
               ),
             ),
           ),
@@ -7469,112 +7625,6 @@ Widget _buildOverviewCards() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _adminPanel(
-  icon: Icons.school_rounded,
-  title: 'Teachers Directory',
-  subtitle: 'Staff profiles, subjects & class schedules',
-  accent: Colors.purpleAccent,
-  trailing: TextButton.icon(
-    onPressed: () {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const TeachersDirectoryScreen(),
-        ),
-      );
-    },
-    style: TextButton.styleFrom(
-      foregroundColor: Colors.purpleAccent,
-      backgroundColor: Colors.purpleAccent.withOpacity(0.08),
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 9,
-      ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-      ),
-    ),
-    icon: const Icon(
-      Icons.arrow_forward_rounded,
-      size: 16,
-    ),
-    label: const Text(
-      'Open Directory',
-      style: TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w700,
-      ),
-    ),
-  ),
-  child: StreamBuilder<QuerySnapshot>(
-    stream: FirebaseFirestore.instance
-        .collection('teachers_directory')
-        .snapshots(),
-    builder: (context, snapshot) {
-      final count =
-          snapshot.hasData ? snapshot.data!.docs.length : 0;
-
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Colors.purpleAccent.withOpacity(0.10),
-              const Color(0xFF00A884).withOpacity(0.05),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: Colors.purpleAccent.withOpacity(0.12),
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: Colors.purpleAccent.withOpacity(0.10),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(
-                Icons.groups_2_rounded,
-                color: Colors.purpleAccent,
-                size: 25,
-              ),
-            ),
-            const SizedBox(width: 13),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$count Teachers Registered',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Teacher details, photos aur weekly schedules manage karein.',
-                    style: TextStyle(
-                      color: Colors.white38,
-                      fontSize: 10.5,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    },
-  ),
-),
-        const SizedBox(height: 18),
         _adminPanel(
           icon: Icons.notifications_active_outlined,
           title: 'Published Notices',
@@ -9444,6 +9494,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // =====================================================
                 // SETTINGS HERO
                 // =====================================================
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const SchoolSettingsScreen(),
+                        ),
+                      );
+                      if (mounted) setState(() {});
+                    },
+                    child:
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(20),
@@ -9498,7 +9562,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                             SizedBox(height: 5),
                             Text(
-                              'Admin profile, cloud connection aur account security ek hi jagah manage karein.',
+                              'School Name, Principal, Logo, Seal aur Signature manage karne ke liye click karein.',
                               style: TextStyle(
                                 color: Colors.white60,
                                 fontSize: 12,
@@ -9527,7 +9591,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                             SizedBox(width: 5),
                             Text(
-                              'ADMIN',
+                              'OPEN',
                               style: TextStyle(
                                 color: Color(0xFF00D9A5),
                                 fontSize: 10,
@@ -9538,6 +9602,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                     ],
+                  ),
+                ),
                   ),
                 ),
 
@@ -9732,13 +9798,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         children: [
                           Expanded(child: profileInfo),
                           const SizedBox(width: 18),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              schoolSettingsButton,
-                              const SizedBox(height: 9),
-                              logoutButton,
-                            ],
+                          SizedBox(
+                            width: 190,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                schoolSettingsButton,
+                                const SizedBox(height: 9),
+                                logoutButton,
+                              ],
+                            ),
                           ),
                         ],
                       );
@@ -16064,6 +16133,398 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     ...List.generate(10, (index) => 'Class ${index + 1}'),
   ];
 
+
+  List<Map<String, dynamic>> _studentExamResults = <Map<String, dynamic>>[];
+  bool _studentExamResultsLoading = true;
+  final Set<String> _movingStudentIds = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _warmStudentExamResults();
+  }
+
+  Future<void> _warmStudentExamResults() async {
+    try {
+      final cached = _ExamCenterDataCache.snapshot;
+      final snapshot = cached ?? await _ExamCenterDataCache.refresh();
+      if (!mounted) return;
+      setState(() {
+        _studentExamResults =
+            List<Map<String, dynamic>>.from(snapshot.results);
+        _studentExamResultsLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Student result preload warning: $e');
+      if (!mounted) return;
+      setState(() => _studentExamResultsLoading = false);
+    }
+  }
+
+  String _normalizeStudentRoll(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    final number = int.tryParse(raw);
+    return number?.toString() ?? raw.toLowerCase();
+  }
+
+  int _studentClassNumber(dynamic value) {
+    final raw = value?.toString() ?? '';
+    return int.tryParse(raw.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+  }
+
+  Map<String, dynamic>? _latestExamResultForStudent(
+    String docId,
+    Map<String, dynamic> student,
+  ) {
+    final studentClass = student['class']?.toString().trim() ?? '';
+    final roll = _normalizeStudentRoll(student['rollNo']);
+
+    final matches = _studentExamResults.where((result) {
+      final resultStudentId = result['studentId']?.toString().trim() ?? '';
+      if (resultStudentId.isNotEmpty && resultStudentId == docId) {
+        return true;
+      }
+
+      return (result['studentClass']?.toString().trim() ?? '') == studentClass &&
+          _normalizeStudentRoll(result['rollNo']) == roll;
+    }).map((e) => Map<String, dynamic>.from(e)).toList();
+
+    matches.sort(
+      (a, b) => (b['timestamp'] as num? ?? 0)
+          .compareTo(a['timestamp'] as num? ?? 0),
+    );
+
+    if (matches.isNotEmpty) return matches.first;
+
+    final storedResult = student['lastExamResult']?.toString().trim() ?? '';
+    if (storedResult.isNotEmpty) {
+      return <String, dynamic>{
+        'result': storedResult,
+        'examName': student['lastExamName']?.toString() ?? 'Previous Exam',
+        'percentage': student['lastExamPercentage'] ?? 0,
+        'timestamp': student['lastExamTimestamp'] ?? 0,
+      };
+    }
+
+    return null;
+  }
+
+  Future<String> _studentBackendScriptUrl() async {
+    final configDoc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+
+    final scriptUrl =
+        configDoc.data()?['scriptUrl']?.toString().trim() ?? '';
+
+    if (scriptUrl.isEmpty) {
+      throw Exception(
+        'Google Apps Script URL Advanced Settings me saved nahi hai.',
+      );
+    }
+
+    return scriptUrl;
+  }
+
+  Future<Map<String, dynamic>> _postStudentClassChange({
+    required String oldClass,
+    required String newClass,
+    required String rollNo,
+    required String oldStudentId,
+    required String newStudentId,
+    required String movement,
+    Map<String, dynamic>? latestResult,
+  }) async {
+    final response = await http.post(
+      Uri.parse(await _studentBackendScriptUrl()),
+      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
+      body: jsonEncode({
+        'action': 'change_student_class',
+        'oldClass': oldClass,
+        'newClass': newClass,
+        'rollNo': rollNo,
+        'oldStudentId': oldStudentId,
+        'newStudentId': newStudentId,
+        'movement': movement,
+        'examName': latestResult?['examName']?.toString() ?? '',
+        'result': latestResult?['result']?.toString() ?? '',
+        'percentage': latestResult?['percentage'] ?? 0,
+        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Google class update failed: ${response.statusCode}');
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw Exception('Google class update response invalid hai.');
+    }
+
+    final result = Map<String, dynamic>.from(decoded);
+    if (result['success'] != true) {
+      throw Exception(result['message'] ?? 'Google class update failed');
+    }
+
+    return result;
+  }
+
+  Future<void> _changeStudentClass(
+    String docId,
+    Map<String, dynamic> student,
+    int direction,
+  ) async {
+    if (_movingStudentIds.contains(docId)) return;
+
+    final currentClass = student['class']?.toString().trim() ?? '';
+    final currentClassNo = _studentClassNumber(currentClass);
+    final targetClassNo = currentClassNo + direction;
+
+    if (currentClassNo < 1 || currentClassNo > 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Student class format valid nahi hai.'),
+        ),
+      );
+      return;
+    }
+
+    if (targetClassNo < 1 || targetClassNo > 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text(
+            direction > 0
+                ? 'Class 10 highest class hai. Is student ko aur promote nahi kiya ja sakta.'
+                : 'Class 1 lowest class hai. Is student ko aur demote nahi kiya ja sakta.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final targetClass = 'Class $targetClassNo';
+    final rollNo = student['rollNo']?.toString().trim() ?? '';
+    final studentName = student['name']?.toString().trim() ?? 'Student';
+    final latestResult = _latestExamResultForStudent(docId, student);
+    final resultStatus = latestResult?['result']?.toString().trim() ?? '';
+    final examName = latestResult?['examName']?.toString().trim() ?? '';
+    final percentage = (latestResult?['percentage'] as num?)?.toDouble();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF172229),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+        title: Row(
+          children: [
+            Icon(
+              direction > 0
+                  ? Icons.trending_up_rounded
+                  : Icons.trending_down_rounded,
+              color: direction > 0
+                  ? const Color(0xFF00D9A5)
+                  : Colors.orangeAccent,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                direction > 0 ? 'Promote Student?' : 'Demote Student?',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$studentName\n$currentClass  →  $targetClass',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D171C),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Text(
+                resultStatus.isEmpty
+                    ? 'Latest exam result: Not entered / not available'
+                    : 'Latest: ${examName.isEmpty ? 'Exam' : examName} • '
+                        '$resultStatus${percentage == null ? '' : ' • ${percentage.toStringAsFixed(1)}%'}',
+                style: TextStyle(
+                  color: resultStatus == 'PASS'
+                      ? const Color(0xFF00D9A5)
+                      : resultStatus == 'FAIL'
+                          ? Colors.redAccent
+                          : Colors.white54,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            if (direction > 0 && resultStatus == 'FAIL') ...[
+              const SizedBox(height: 10),
+              const Text(
+                'Warning: Latest result FAIL hai. Admin confirmation se phir bhi promote kiya ja sakta hai.',
+                style: TextStyle(
+                  color: Colors.orangeAccent,
+                  fontSize: 10.5,
+                  height: 1.35,
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            const Text(
+              'Class change Firestore aur Google Sheet dono me sync hoga. Purane exam result history delete nahi hogi.',
+              style: TextStyle(
+                color: Colors.white38,
+                fontSize: 10,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: direction > 0
+                  ? const Color(0xFF00A884)
+                  : Colors.orange.shade700,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: Icon(
+              direction > 0
+                  ? Icons.trending_up_rounded
+                  : Icons.trending_down_rounded,
+              size: 18,
+            ),
+            label: Text(direction > 0 ? 'Promote' : 'Demote'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final newDocId = '${targetClass}_Roll_$rollNo';
+    final oldRef = FirebaseFirestore.instance
+        .collection('students_directory')
+        .doc(docId);
+    final newRef = FirebaseFirestore.instance
+        .collection('students_directory')
+        .doc(newDocId);
+
+    setState(() => _movingStudentIds.add(docId));
+
+    bool backendChanged = false;
+    try {
+      final targetExisting = await newRef.get();
+      if (targetExisting.exists && newDocId != docId) {
+        throw Exception(
+          '$targetClass me Roll $rollNo already exist karta hai.',
+        );
+      }
+
+      await _postStudentClassChange(
+        oldClass: currentClass,
+        newClass: targetClass,
+        rollNo: rollNo,
+        oldStudentId: docId,
+        newStudentId: newDocId,
+        movement: direction > 0 ? 'PROMOTED' : 'DEMOTED',
+        latestResult: latestResult,
+      );
+      backendChanged = true;
+
+      final newData = Map<String, dynamic>.from(student)
+        ..['class'] = targetClass
+        ..['previousClass'] = currentClass
+        ..['classMovement'] = direction > 0 ? 'PROMOTED' : 'DEMOTED'
+        ..['classChangedBy'] =
+            FirebaseAuth.instance.currentUser?.email ?? 'Admin'
+        ..['classChangedAt'] = FieldValue.serverTimestamp();
+
+      if (latestResult != null) {
+        newData['lastExamResult'] =
+            latestResult['result']?.toString().trim() ?? '';
+        newData['lastExamName'] =
+            latestResult['examName']?.toString().trim() ?? '';
+        newData['lastExamPercentage'] = latestResult['percentage'] ?? 0;
+        newData['lastExamTimestamp'] = latestResult['timestamp'] ?? 0;
+      }
+
+      final batch = FirebaseFirestore.instance.batch();
+      batch.set(newRef, newData);
+      if (newDocId != docId) {
+        batch.delete(oldRef);
+      }
+      await batch.commit();
+
+      if (!mounted) return;
+      setState(() => _movingStudentIds.remove(docId));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text(
+            '$studentName ${direction > 0 ? 'promote' : 'demote'} hokar $targetClass me chala gaya.',
+          ),
+        ),
+      );
+    } catch (e) {
+      // Google Sheet changed but Firestore failed: best-effort rollback.
+      if (backendChanged) {
+        try {
+          await _postStudentClassChange(
+            oldClass: targetClass,
+            newClass: currentClass,
+            rollNo: rollNo,
+            oldStudentId: newDocId,
+            newStudentId: docId,
+            movement: 'ROLLBACK',
+            latestResult: latestResult,
+          );
+        } catch (rollbackError) {
+          debugPrint('Student class rollback warning: $rollbackError');
+        }
+      }
+
+      if (!mounted) return;
+      setState(() => _movingStudentIds.remove(docId));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Class change error: $e'),
+        ),
+      );
+    }
+  }
+
   Future<void> _deleteStudent(String docId) async {
     final passwordController = TextEditingController();
     bool obscureText = true;
@@ -16768,6 +17229,17 @@ if (result['success'] != true) {
                     final doc = docs[index];
                     final student = doc.data() as Map<String, dynamic>;
                     final photoUrl = student['photoUrl']?.toString();
+                    final latestResult =
+                        _latestExamResultForStudent(doc.id, student);
+                    final resultStatus =
+                        latestResult?['result']?.toString().trim() ?? '';
+                    final resultPercentage =
+                        (latestResult?['percentage'] as num?)?.toDouble();
+                    final resultExamName =
+                        latestResult?['examName']?.toString().trim() ?? '';
+                    final classNumber =
+                        _studentClassNumber(student['class']);
+                    final isMoving = _movingStudentIds.contains(doc.id);
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
@@ -16855,6 +17327,154 @@ if (result['success'] != true) {
                                 Text('Address: ${student['address'] ?? ''}, ${student['district'] ?? ''}, ${student['state'] ?? ''} - ${student['pinCode'] ?? ''}', style: const TextStyle(color: Colors.white60, fontSize: 11)),
                                 const SizedBox(height: 3),
                                 Text('Hostel: ${student['hostelFacility'] ?? 'No'} • Admission: ${student['joiningDate'] ?? 'N/A'} • DOB: ${student['dateOfBirth'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 9,
+                                        vertical: 7,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: resultStatus == 'PASS'
+                                            ? const Color(0xFF00A884)
+                                                .withOpacity(0.14)
+                                            : resultStatus == 'FAIL'
+                                                ? Colors.redAccent
+                                                    .withOpacity(0.12)
+                                                : Colors.white
+                                                    .withOpacity(0.05),
+                                        borderRadius: BorderRadius.circular(9),
+                                        border: Border.all(
+                                          color: resultStatus == 'PASS'
+                                              ? const Color(0xFF00D9A5)
+                                                  .withOpacity(0.30)
+                                              : resultStatus == 'FAIL'
+                                                  ? Colors.redAccent
+                                                      .withOpacity(0.28)
+                                                  : Colors.white12,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            resultStatus == 'PASS'
+                                                ? Icons.check_circle_rounded
+                                                : resultStatus == 'FAIL'
+                                                    ? Icons.cancel_rounded
+                                                    : Icons.fact_check_outlined,
+                                            color: resultStatus == 'PASS'
+                                                ? const Color(0xFF00D9A5)
+                                                : resultStatus == 'FAIL'
+                                                    ? Colors.redAccent
+                                                    : Colors.white38,
+                                            size: 15,
+                                          ),
+                                          const SizedBox(width: 5),
+                                          Text(
+                                            _studentExamResultsLoading &&
+                                                    latestResult == null
+                                                ? 'Result loading...'
+                                                : resultStatus.isEmpty
+                                                    ? 'Result: Not entered'
+                                                    : '${resultExamName.isEmpty ? 'Latest' : resultExamName}: $resultStatus'
+                                                        '${resultPercentage == null ? '' : ' • ${resultPercentage.toStringAsFixed(1)}%'}',
+                                            style: TextStyle(
+                                              color: resultStatus == 'PASS'
+                                                  ? const Color(0xFF00D9A5)
+                                                  : resultStatus == 'FAIL'
+                                                      ? Colors.redAccent
+                                                      : Colors.white54,
+                                              fontSize: 9.8,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    OutlinedButton.icon(
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor:
+                                            const Color(0xFF00D9A5),
+                                        side: BorderSide(
+                                          color: const Color(0xFF00A884)
+                                              .withOpacity(0.38),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 8,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(9),
+                                        ),
+                                      ),
+                                      onPressed: isMoving || classNumber >= 10
+                                          ? null
+                                          : () => _changeStudentClass(
+                                                doc.id,
+                                                Map<String, dynamic>.from(student),
+                                                1,
+                                              ),
+                                      icon: isMoving
+                                          ? const SizedBox(
+                                              width: 14,
+                                              height: 14,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Icon(
+                                              Icons.trending_up_rounded,
+                                              size: 16,
+                                            ),
+                                      label: const Text(
+                                        'Promote',
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                    OutlinedButton.icon(
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.orangeAccent,
+                                        side: BorderSide(
+                                          color: Colors.orangeAccent
+                                              .withOpacity(0.34),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 8,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(9),
+                                        ),
+                                      ),
+                                      onPressed: isMoving || classNumber <= 1
+                                          ? null
+                                          : () => _changeStudentClass(
+                                                doc.id,
+                                                Map<String, dynamic>.from(student),
+                                                -1,
+                                              ),
+                                      icon: const Icon(
+                                        Icons.trending_down_rounded,
+                                        size: 16,
+                                      ),
+                                      label: const Text(
+                                        'Demote',
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                                 const SizedBox(height: 8),
                                 Align(
                                   alignment: Alignment.centerLeft,
