@@ -66,11 +66,21 @@ if old_switch in text:
 # WINDOWS-ONLY ADVANCED SETTINGS CONNECTION BOXES
 # ============================================================
 
-state_anchor = '''  bool _loading = true;
+state_anchor = '''class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
+  final _gmail = TextEditingController();
+  final _script = TextEditingController();
+  String? _linkedGmail;
+  String? _linkedScript;
+  bool _loading = true;
   bool _saving = false;
 '''
 
-state_add = '''  bool _loading = true;
+state_add = '''class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
+  final _gmail = TextEditingController();
+  final _script = TextEditingController();
+  String? _linkedGmail;
+  String? _linkedScript;
+  bool _loading = true;
   bool _saving = false;
 
   // WINDOWS ONLY - external connection links
@@ -744,6 +754,11 @@ checks = {
 
     'Windows connection Firestore doc added':
         "doc('windows_external_connections')" in text,
+
+    'Windows connection fields in Advanced Settings':
+        text.find('final _firebaseConnectionLink = TextEditingController();',
+                  text.find('class _AdvancedSettingsScreenState'))
+        < text.find('class _AdvancedStudentUidSettingsPanel'),
 
     'Website source not overwritten':
         out != src,
