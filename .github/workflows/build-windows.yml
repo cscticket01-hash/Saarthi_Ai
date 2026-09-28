@@ -1,19 +1,10 @@
-name: Build Vidya Saarthi Windows Admin
+name: Test Windows Firebase Switching
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - 'lib/**'
-      - 'assets/**'
-      - 'pubspec.yaml'
-      - 'scripts/windows_admin_patch.py'
-      - '.github/workflows/build-windows.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-windows:
@@ -116,17 +107,6 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Windows app version: $version"
 
-      - name: Verify Windows Firebase Secret
-        shell: powershell
-        env:
-          WINDOWS_FIREBASE_API_KEY: ${{ secrets.WINDOWS_FIREBASE_API_KEY }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_FIREBASE_API_KEY)) {
-            throw "WINDOWS_FIREBASE_API_KEY GitHub secret missing. Broken Windows app build roka gaya."
-          }
-
-          Write-Host "WINDOWS_FIREBASE_API_KEY is configured."
-
       - name: Build Windows Admin App
         shell: powershell
         run: |
@@ -134,7 +114,6 @@ jobs:
             --release `
             -t lib/main_windows.dart `
             --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
-            --dart-define=WINDOWS_FIREBASE_API_KEY=${{ secrets.WINDOWS_FIREBASE_API_KEY }} `
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
       - name: Verify Windows Build
@@ -252,134 +231,3 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      # Permanent download URL for the in-app updater.
-      - name: Publish Windows GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: windows-v${{ steps.app_version.outputs.version }}
-          name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
-          make_latest: true
-          generate_release_notes: true
-          files: |
-            build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
-            build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
-
-      # Automatically creates/updates:
-      # Firestore -> app_config -> windows_update
-      - name: Publish Windows Update Metadata to Firestore
-        shell: powershell
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          VERSION_NAME: ${{ steps.app_version.outputs.version }}
-          RELEASE_TAG: windows-v${{ steps.app_version.outputs.version }}
-          INSTALLER_FILE: Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:FIREBASE_SERVICE_ACCOUNT)) {
-            throw "FIREBASE_SERVICE_ACCOUNT GitHub secret missing"
-          }
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path "build\update-publisher" `
-            | Out-Null
-
-          Push-Location "build\update-publisher"
-
-          npm init -y
-          npm install firebase-admin@latest --no-audit --no-fund
-
-          $script = @'
-          const {
-            initializeApp,
-            cert,
-          } = require("firebase-admin/app");
-
-          const {
-            getFirestore,
-            FieldValue,
-          } = require("firebase-admin/firestore");
-
-          const serviceAccount =
-            JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-
-          initializeApp({
-            credential: cert(serviceAccount),
-          });
-
-          const db = getFirestore();
-
-          const version =
-            process.env.VERSION_NAME;
-
-          const releaseTag =
-            process.env.RELEASE_TAG;
-
-          const installerFile =
-            process.env.INSTALLER_FILE;
-
-          const repository =
-            process.env.GITHUB_REPOSITORY;
-
-          const downloadUrl =
-            `https://github.com/${repository}/releases/download/${releaseTag}/${installerFile}`;
-
-          async function main() {
-            await db
-              .collection("app_config")
-              .doc("windows_update")
-              .set(
-                {
-                  enabled: true,
-                  latestVersion: version,
-                  minimumVersion: "1.0.0",
-                  forceUpdate: false,
-                  releaseNotes:
-                    `Vidya Saarthi Windows update ${version}`,
-                  downloadUrl,
-                  updatedAt:
-                    FieldValue.serverTimestamp(),
-                },
-                {
-                  merge: true,
-                }
-              );
-
-            console.log(
-              "Firestore windows_update published:",
-              version
-            );
-
-            console.log(
-              "Download URL:",
-              downloadUrl
-            );
-          }
-
-          main()
-            .then(() => process.exit(0))
-            .catch((error) => {
-              console.error(error);
-              process.exit(1);
-            });
-          '@
-
-          Set-Content `
-            -Path "publish-windows-update.cjs" `
-            -Value $script `
-            -Encoding UTF8
-
-          node "publish-windows-update.cjs"
-
-          Pop-Location
-
-      - name: Windows Update Summary
-        shell: powershell
-        run: |
-          Add-Content $env:GITHUB_STEP_SUMMARY "# Vidya Saarthi Windows Update"
-          Add-Content $env:GITHUB_STEP_SUMMARY ""
-          Add-Content $env:GITHUB_STEP_SUMMARY "✅ Windows installer built"
-          Add-Content $env:GITHUB_STEP_SUMMARY "✅ GitHub Release published"
-          Add-Content $env:GITHUB_STEP_SUMMARY "✅ Firestore app_config/windows_update updated"
-          Add-Content $env:GITHUB_STEP_SUMMARY ""
-          Add-Content $env:GITHUB_STEP_SUMMARY "Version: ${{ steps.app_version.outputs.version }}"
