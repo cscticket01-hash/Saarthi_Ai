@@ -66,6 +66,15 @@ if old_switch in text:
 # WINDOWS-ONLY ADVANCED SETTINGS CONNECTION BOXES
 # ============================================================
 
+# Never apply generic initState/input anchors outside this state class.
+try:
+    start = text.index('class _AdvancedSettingsScreenState')
+    end = text.index('class _AdvancedStudentUidSettingsPanel', start)
+except ValueError:
+    raise SystemExit('Dashboard does not match the current SETTINGS_FAST_FINAL handoff. No source was changed; use the current dashboard version.')
+prefix, suffix = text[:start], text[end:]
+text = text[start:end]
+
 state_anchor = '''class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   final _gmail = TextEditingController();
   final _script = TextEditingController();
@@ -671,20 +680,17 @@ ui_anchor = '''                      const SizedBox(height: 14),
 
 ui_add = '''                      const SizedBox(height: 14),
 
-                      _windowsExternalConnectionCard(
-                        type: 'firebase',
-                        title: 'Firebase Connection',
-                        description:
-                            'Windows app ke liye Firebase connection link save karein. '
-                            'Current runtime Firebase abhi change nahi hoga.',
-                        icon: Icons.local_fire_department_rounded,
-                        accent: Colors.orangeAccent,
-                        controller: _firebaseConnectionLink,
-                        linkedValue: _linkedFirebaseConnectionLink,
-                        editing: _editingFirebaseConnectionLink,
-                        hint: 'Vidya Saarthi Firebase Link',
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.local_fire_department_rounded, color: Colors.orangeAccent),
+                          title: const Text('Firebase Connection'),
+                          subtitle: Text('Active project: ${WindowsFirebaseConnection.projectId}'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                            builder: (_) => const WindowsFirebaseSetupScreen(protectCurrent: true),
+                          )),
+                        ),
                       ),
-
                       const SizedBox(height: 14),
 
                       _windowsExternalConnectionCard(
@@ -716,67 +722,17 @@ text = text.replace(
     1,
 )
 
-out.write_text(
-    text,
-    encoding='utf-8',
-)
-
-checks = {
-    'dart:html removed':
-        "import 'dart:html' as html;" not in text,
-
-    'Windows html shim active':
-        "import 'windows_html_shim.dart' as html;" in text,
-
-    'mobile scanner shim active':
-        "windows_mobile_scanner_shim.dart" in text,
-
-    'Admin default forced':
-        'bool _isAdminMode = true;' in text,
-
-    'Admin dashboard retained':
-        'class AdminDashboardScreen' in text,
-
-    'Exam Center retained':
-        'class ExamCenterScreen' in text,
-
-    'Student management retained':
-        'students_directory' in text,
-
-    'Firebase connection box added':
-        "title: 'Firebase Connection'" in text,
-
-    'Google Cloud box added':
-        "title: 'Google Cloud Console'" in text,
-
-    '30-second password dialog reused':
-        '_DriveUnlinkSecurityDialog()' in text,
-
-    'Windows connection Firestore doc added':
-        "doc('windows_external_connections')" in text,
-
-    'Windows connection fields in Advanced Settings':
-        text.find('final _firebaseConnectionLink = TextEditingController();',
-                  text.find('class _AdvancedSettingsScreenState'))
-        < text.find('class _AdvancedStudentUidSettingsPanel'),
-
-    'Website source not overwritten':
-        out != src,
-}
-
-failed = [
-    name
-    for name, ok in checks.items()
-    if not ok
-]
-
-if failed:
-    raise SystemExit(
-        'Windows patch validation failed: ' +
-        ', '.join(failed)
-    )
-
-print('Generated:', out)
-
-for name in checks:
-    print(name + ': OK')
+text = "import 'windows_firebase_connection.dart';\n" + prefix + text + suffix
+# Check declarations and connection methods are inside the same state, before writing.
+state = text[text.index('class _AdvancedSettingsScreenState'):text.index('class _AdvancedStudentUidSettingsPanel')]
+for marker in ['final _firebaseConnectionLink', 'final _googleCloudConsoleLink',
+               'Future<void> _loadWindowsExternalConnectionLinks', 'WindowsFirebaseSetupScreen(protectCurrent: true)']:
+    if marker not in state:
+        raise SystemExit('Windows settings patch incomplete: ' + marker)
+if "import 'dart:html' as html;" in text:
+    raise SystemExit('Browser import remains')
+# Enforce the same admin claim at legacy dashboard login entry points too.
+text = re.sub(r'FirebaseAuth\.instance\s*\.signInWithEmailAndPassword',
+              'WindowsFirebaseConnection.signInAdmin', text)
+out.write_text(text, encoding='utf-8')
+print('Generated Windows-only dashboard; website source unchanged:', out)
