@@ -13,7 +13,7 @@ on:
       - '.github/workflows/build-windows.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -44,44 +44,29 @@ jobs:
           if (!(Test-Path "lib\main_windows.dart")) { throw "lib/main_windows.dart missing" }
           if (!(Test-Path "lib\windows_html_shim.dart")) { throw "lib/windows_html_shim.dart missing" }
           if (!(Test-Path "lib\windows_mobile_scanner_shim.dart")) { throw "lib/windows_mobile_scanner_shim.dart missing" }
-          if (!(Test-Path "lib\windows_update_manager.dart")) { throw "lib/windows_update_manager.dart missing" }
           if (!(Test-Path "scripts\windows_admin_patch.py")) { throw "scripts/windows_admin_patch.py missing" }
 
       - name: Generate Windows-Compatible Dashboard
         shell: powershell
         run: python scripts/windows_admin_patch.py
 
-      # =========================================================
-      # WINDOWS-ONLY DEPENDENCY PREP
-      # Agora is not used by the Windows Admin source.
-      # Remove it only inside this GitHub runner so Android/Web
-      # pubspec in the repository stays unchanged.
-      # =========================================================
       - name: Prepare Windows-only Dependencies
         shell: powershell
         run: |
           $pubspec = Get-Content "pubspec.yaml" -Raw
 
-          # Agora is not used by the Windows Admin source and its Windows SDK
-          # download/extraction is unstable in hosted CI. Remove only in runner.
           $pubspec = [regex]::Replace(
             $pubspec,
             '(?m)^\s*agora_rtc_engine:\s*[^\r\n]+\r?\n',
             ''
           )
 
-          # mobile_scanner is only needed by mobile/web student QR flow.
-          # Windows Admin uses lib/windows_mobile_scanner_shim.dart instead,
-          # so remove the package only from the temporary Windows CI pubspec.
           $pubspec = [regex]::Replace(
             $pubspec,
             '(?m)^\s*mobile_scanner:\s*[^\r\n]+\r?\n',
             ''
           )
 
-          # The repository still uses the old 2024 FlutterFire Windows plugins.
-          # Newer MSVC toolchains reject their std::variant conversion code.
-          # Upgrade Firebase ONLY inside this Windows CI runner.
           $pubspec = [regex]::Replace(
             $pubspec,
             '(?m)^(\s*)firebase_core:\s*[^\r\n]+',
@@ -100,9 +85,6 @@ jobs:
             '${1}cloud_firestore: ^6.10.0'
           )
 
-          # printing 5.13.1 pins package:web ^0.5.1, while modern
-          # firebase_auth_web requires package:web ^1.x.
-          # Upgrade printing only inside Windows CI.
           $pubspec = [regex]::Replace(
             $pubspec,
             '(?m)^(\s*)printing:\s*[^\r\n]+',
@@ -124,25 +106,15 @@ jobs:
           flutter pub get
           flutter pub deps | Select-String "firebase_core|firebase_auth|cloud_firestore|printing|web "
 
-      - name: Read App Version
+      # Every successful Windows workflow gets a NEW version.
+      # Installed old app v1.0.0 will therefore detect the update.
+      - name: Set Windows App Version
         id: app_version
         shell: powershell
         run: |
-          $line = Select-String -Path pubspec.yaml -Pattern '^version:\s*([^+\s]+)' | Select-Object -First 1
-          if (-not $line) { throw "pubspec version not found" }
-          $version = $line.Matches[0].Groups[1].Value
+          $version = "1.0.${{ github.run_number }}"
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Windows app version: $version"
-
-      - name: Check Windows Firebase API Key
-        shell: powershell
-        env:
-          WINDOWS_FIREBASE_API_KEY: ${{ secrets.WINDOWS_FIREBASE_API_KEY }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_FIREBASE_API_KEY)) {
-            throw "GitHub secret WINDOWS_FIREBASE_API_KEY is missing."
-          }
-          Write-Host "WINDOWS_FIREBASE_API_KEY secret is configured."
 
       - name: Build Windows Admin App
         shell: powershell
@@ -151,7 +123,6 @@ jobs:
             --release `
             -t lib/main_windows.dart `
             --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
-            --dart-define=WINDOWS_FIREBASE_API_KEY=${{ secrets.WINDOWS_FIREBASE_API_KEY }} `
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
       - name: Verify Windows Build
@@ -159,8 +130,10 @@ jobs:
         run: |
           $release = "build\windows\x64\runner\Release"
           if (!(Test-Path $release)) { throw "Windows Release folder missing" }
+
           $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
           if (-not $exe) { throw "Windows EXE not found" }
+
           Write-Host "Built EXE: $($exe.FullName)"
 
       - name: Create Portable ZIP
@@ -168,14 +141,23 @@ jobs:
         run: |
           $release = "build\windows\x64\runner\Release"
           $zip = "build\Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip"
-          if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "$release\*" -DestinationPath $zip -CompressionLevel Optimal
+
+          if (Test-Path $zip) {
+            Remove-Item $zip -Force
+          }
+
+          Compress-Archive `
+            -Path "$release\*" `
+            -DestinationPath $zip `
+            -CompressionLevel Optimal
+
           Write-Host "Portable ZIP: $zip"
 
       - name: Install Inno Setup
         shell: powershell
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+
           if (!(Test-Path $iscc)) {
             choco install innosetup -y --no-progress
           }
@@ -185,7 +167,11 @@ jobs:
         run: |
           $release = (Resolve-Path "build\windows\x64\runner\Release").Path
           $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
-          if (-not $exe) { throw "EXE not found for installer" }
+
+          if (-not $exe) {
+            throw "EXE not found for installer"
+          }
+
           $outDir = (Resolve-Path "build").Path
           $version = "${{ steps.app_version.outputs.version }}"
 
@@ -218,20 +204,30 @@ jobs:
           Filename: "{app}\$($exe.Name)"; Description: "Launch Vidya Saarthi"; Flags: nowait postinstall skipifsilent
           "@
 
-          $iss | Out-File -FilePath "build\vidya_saarthi_windows.iss" -Encoding utf8
+          $iss | Out-File `
+            -FilePath "build\vidya_saarthi_windows.iss" `
+            -Encoding utf8
 
       - name: Build Setup EXE
         shell: powershell
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          if (!(Test-Path $iscc)) { throw "Inno Setup ISCC.exe missing" }
+
+          if (!(Test-Path $iscc)) {
+            throw "Inno Setup ISCC.exe missing"
+          }
+
           & $iscc "build\vidya_saarthi_windows.iss"
 
       - name: Verify Installer
         shell: powershell
         run: |
           $installer = "build\Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe"
-          if (!(Test-Path $installer)) { throw "Installer not created: $installer" }
+
+          if (!(Test-Path $installer)) {
+            throw "Installer not created: $installer"
+          }
+
           Write-Host "Installer ready: $installer"
 
       - name: Upload Windows Build Artifacts
@@ -241,5 +237,128 @@ jobs:
           path: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
             build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
-          retention-days: 14
+          retention-days: 30
           if-no-files-found: error
+
+      # Permanent download URL for the in-app updater.
+      - name: Publish Windows GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-v${{ steps.app_version.outputs.version }}
+          name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
+          make_latest: true
+          generate_release_notes: true
+          files: |
+            build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
+            build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
+
+      # Automatically creates/updates:
+      # Firestore -> app_config -> windows_update
+      - name: Publish Windows Update Metadata to Firestore
+        shell: powershell
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VERSION_NAME: ${{ steps.app_version.outputs.version }}
+          RELEASE_TAG: windows-v${{ steps.app_version.outputs.version }}
+          INSTALLER_FILE: Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:FIREBASE_SERVICE_ACCOUNT)) {
+            throw "FIREBASE_SERVICE_ACCOUNT GitHub secret missing"
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path "build\update-publisher" `
+            | Out-Null
+
+          Push-Location "build\update-publisher"
+
+          npm init -y
+          npm install firebase-admin@latest --no-audit --no-fund
+
+          $script = @'
+          const admin = require("firebase-admin");
+
+          const serviceAccount =
+            JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+
+          admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+          });
+
+          const version =
+            process.env.VERSION_NAME;
+
+          const releaseTag =
+            process.env.RELEASE_TAG;
+
+          const installerFile =
+            process.env.INSTALLER_FILE;
+
+          const repository =
+            process.env.GITHUB_REPOSITORY;
+
+          const downloadUrl =
+            `https://github.com/${repository}/releases/download/${releaseTag}/${installerFile}`;
+
+          async function main() {
+            await admin
+              .firestore()
+              .collection("app_config")
+              .doc("windows_update")
+              .set(
+                {
+                  enabled: true,
+                  latestVersion: version,
+                  minimumVersion: "1.0.0",
+                  forceUpdate: false,
+                  releaseNotes:
+                    `Vidya Saarthi Windows update ${version}`,
+                  downloadUrl,
+                  updatedAt:
+                    admin.firestore.FieldValue.serverTimestamp(),
+                },
+                {
+                  merge: true,
+                }
+              );
+
+            console.log(
+              "Firestore windows_update published:",
+              version
+            );
+
+            console.log(
+              "Download URL:",
+              downloadUrl
+            );
+          }
+
+          main()
+            .then(() => process.exit(0))
+            .catch((error) => {
+              console.error(error);
+              process.exit(1);
+            });
+          '@
+
+          Set-Content `
+            -Path "publish-windows-update.cjs" `
+            -Value $script `
+            -Encoding UTF8
+
+          node "publish-windows-update.cjs"
+
+          Pop-Location
+
+      - name: Windows Update Summary
+        shell: powershell
+        run: |
+          Add-Content $env:GITHUB_STEP_SUMMARY "# Vidya Saarthi Windows Update"
+          Add-Content $env:GITHUB_STEP_SUMMARY ""
+          Add-Content $env:GITHUB_STEP_SUMMARY "✅ Windows installer built"
+          Add-Content $env:GITHUB_STEP_SUMMARY "✅ GitHub Release published"
+          Add-Content $env:GITHUB_STEP_SUMMARY "✅ Firestore app_config/windows_update updated"
+          Add-Content $env:GITHUB_STEP_SUMMARY ""
+          Add-Content $env:GITHUB_STEP_SUMMARY "Version: ${{ steps.app_version.outputs.version }}"
