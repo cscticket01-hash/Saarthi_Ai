@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import 'main_dashboard_screen_windows.dart';
 import 'windows_html_shim.dart' as windows_html;
+import 'windows_update_manager.dart';
 
 const String _windowsAppVersion = String.fromEnvironment(
   'APP_VERSION',
@@ -81,7 +82,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           child: child ?? const SizedBox.shrink(),
         );
       },
-      home: const WindowsUpdateGate(),
+      home: const WindowsAdminLoginScreen(),
     );
   }
 }
@@ -466,6 +467,10 @@ class _WindowsAdminLoginScreenState extends State<WindowsAdminLoginScreen> {
     if (user == null || !mounted) return;
 
     _saveWindowsAdminPortalSession();
+
+    await WindowsUpdateManager.promptIfAvailable(context);
+    if (!mounted) return;
+
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => const AdminDashboardScreen(),
@@ -500,6 +505,10 @@ class _WindowsAdminLoginScreenState extends State<WindowsAdminLoginScreen> {
       _saveWindowsAdminPortalSession();
 
       if (!mounted) return;
+
+      await WindowsUpdateManager.promptIfAvailable(context);
+      if (!mounted) return;
+
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => const AdminDashboardScreen(),
