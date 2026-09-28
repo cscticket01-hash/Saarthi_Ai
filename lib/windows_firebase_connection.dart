@@ -199,7 +199,18 @@ class _WindowsFirebaseSetupScreenState extends State<WindowsFirebaseSetupScreen>
       _oldPassword.clear();
       if (mounted) setState(() => _saved = true);
     } catch (e) {
-      if (mounted) setState(() => _error = e is FirebaseAuthException ? 'Login failed: ${e.code}' : e.toString());
+      if (mounted) {
+        if (e is FirebaseAuthException) {
+          final detail = e.message?.trim();
+          setState(() {
+            _error = detail == null || detail.isEmpty
+                ? 'Login failed: ${e.code}. Firebase Auth settings, API key restriction ya network check karein.'
+                : 'Login failed: ${e.code} — $detail';
+          });
+        } else {
+          setState(() => _error = e.toString());
+        }
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
