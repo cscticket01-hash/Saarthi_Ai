@@ -1,0 +1,74 @@
+name: Set School Admin Claim
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: Firebase project ID
+        required: true
+        default: saarthi-ai-df12b
+        type: string
+      admin_uid:
+        description: Firebase Authentication User UID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  set-admin-claim:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.SCHOOL_SERVICE_ACCOUNT_JSON }}
+      FIREBASE_PROJECT_ID: ${{ inputs.project_id }}
+      FIREBASE_ADMIN_UID: ${{ inputs.admin_uid }}
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Firebase Admin SDK
+        run: npm install --no-save firebase-admin
+
+      - name: Set admin=true custom claim
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { initializeApp, cert } = require('firebase-admin/app');
+          const { getAuth } = require('firebase-admin/auth');
+
+          const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+          const projectId = process.env.FIREBASE_PROJECT_ID;
+          const uid = process.env.FIREBASE_ADMIN_UID;
+
+          if (!raw) throw new Error('Missing SCHOOL_SERVICE_ACCOUNT_JSON GitHub secret.');
+          if (!projectId) throw new Error('Missing Firebase project ID.');
+          if (!uid) throw new Error('Missing Firebase Authentication User UID.');
+
+          let serviceAccount;
+          try {
+            serviceAccount = JSON.parse(raw);
+          } catch (_) {
+            throw new Error('SCHOOL_SERVICE_ACCOUNT_JSON is not valid JSON.');
+          }
+
+          initializeApp({
+            credential: cert(serviceAccount),
+            projectId,
+          });
+
+          (async () => {
+            const auth = getAuth();
+            const user = await auth.getUser(uid);
+            await auth.setCustomUserClaims(uid, {
+              ...(user.customClaims || {}),
+              admin: true,
+            });
+            console.log('Admin claim enabled. Sign in again in the Windows app.');
+          })().catch((error) => {
+            console.error(error.message);
+            process.exitCode = 1;
+          });
+          NODE
