@@ -44,6 +44,7 @@ jobs:
           if (!(Test-Path "lib\main_windows.dart")) { throw "lib/main_windows.dart missing" }
           if (!(Test-Path "lib\windows_html_shim.dart")) { throw "lib/windows_html_shim.dart missing" }
           if (!(Test-Path "lib\windows_mobile_scanner_shim.dart")) { throw "lib/windows_mobile_scanner_shim.dart missing" }
+          if (!(Test-Path "lib\windows_update_manager.dart")) { throw "lib/windows_update_manager.dart missing" }
           if (!(Test-Path "scripts\windows_admin_patch.py")) { throw "scripts/windows_admin_patch.py missing" }
 
       - name: Generate Windows-Compatible Dashboard
