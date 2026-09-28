@@ -21,6 +21,14 @@ text = text.replace(
     1,
 )
 
+if "import 'windows_update_manager.dart';" not in text:
+    text = text.replace(
+        "import 'windows_html_shim.dart' as html;\n",
+        "import 'windows_html_shim.dart' as html;\n"
+        "import 'windows_update_manager.dart';\n",
+        1,
+    )
+
 if scanner_import in text:
     text = text.replace(
         scanner_import,
@@ -53,6 +61,38 @@ new_switch = '''  void _switchRole(bool isAdmin) {
 if old_switch in text:
     text = text.replace(old_switch, new_switch, 1)
 
+
+# Add Windows Update card to the normal Settings page.
+settings_anchor = """                const SizedBox(height: 16),
+
+                // =====================================================
+                // ADVANCED SETTINGS
+"""
+settings_replacement = """                const SizedBox(height: 16),
+
+                // =====================================================
+                // WINDOWS APP UPDATE
+                // =====================================================
+                const WindowsUpdateSettingsCard(),
+
+                const SizedBox(height: 16),
+
+                // =====================================================
+                // ADVANCED SETTINGS
+"""
+
+if settings_anchor not in text:
+    raise SystemExit(
+        'Windows Settings update-card anchor not found. Source changed; '
+        'patch stopped safely.'
+    )
+
+text = text.replace(
+    settings_anchor,
+    settings_replacement,
+    1,
+)
+
 out.write_text(text, encoding='utf-8')
 
 checks = {
@@ -61,6 +101,8 @@ checks = {
     'mobile scanner shim active': "windows_mobile_scanner_shim.dart" in text,
     'Admin default forced': 'bool _isAdminMode = true;' in text,
     'Admin dashboard retained': 'class AdminDashboardScreen' in text,
+    'Windows update import active': "import 'windows_update_manager.dart';" in text,
+    'Windows update Settings card active': 'WindowsUpdateSettingsCard' in text,
     'Exam Center retained': 'class ExamCenterScreen' in text,
     'Student management retained': 'students_directory' in text,
 }
