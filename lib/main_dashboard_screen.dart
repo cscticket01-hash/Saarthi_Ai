@@ -402,6 +402,267 @@ String _feeIdentityForStudent(
 }
 
 // ============================================================
+// SCHOOL PROFILE / BRANDING CACHE
+// Master copy is saved in Google Drive through Apps Script.
+// Firestore keeps a fast admin-side cache so dashboard/PDF UI is instant.
+// ============================================================
+
+const String _schoolProfileCacheDocId = 'school_profile_cache';
+
+Map<String, dynamic> _defaultSchoolProfile() => <String, dynamic>{
+      'schoolName': 'SARASWATI VIDYA NIKETAN, MADHABDHAM',
+      'principalName': 'Principal',
+      'logoUrl': '',
+      'logoFileId': '',
+      'sealUrl': '',
+      'sealFileId': '',
+      'principalSignatureUrl': '',
+      'principalSignatureFileId': '',
+    };
+
+DocumentReference<Map<String, dynamic>> _schoolProfileCacheRef() {
+  return FirebaseFirestore.instance
+      .collection('school_config')
+      .doc(_schoolProfileCacheDocId);
+}
+
+Map<String, dynamic> _mergeSchoolProfile(Map<String, dynamic>? raw) {
+  return <String, dynamic>{
+    ..._defaultSchoolProfile(),
+    ...?raw,
+  };
+}
+
+Future<String> _schoolProfileScriptUrl() async {
+  final doc = await FirebaseFirestore.instance
+      .collection('school_config')
+      .doc('google_drive_account')
+      .get();
+
+  final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
+  if (url.isEmpty) {
+    throw Exception(
+      'Google Drive backend Advanced Settings me connected nahi hai.',
+    );
+  }
+  return url;
+}
+
+Future<Map<String, dynamic>> _schoolProfileBackendPost(
+  Map<String, dynamic> body,
+) async {
+  final response = await http.post(
+    Uri.parse(await _schoolProfileScriptUrl()),
+    headers: const {'Content-Type': 'text/plain;charset=utf-8'},
+    body: jsonEncode(body),
+  );
+
+  if (response.statusCode != 200) {
+    throw Exception('Google backend error: ${response.statusCode}');
+  }
+
+  final decoded = jsonDecode(response.body);
+  if (decoded is! Map) {
+    throw Exception('Google backend response invalid hai.');
+  }
+
+  final result = Map<String, dynamic>.from(decoded);
+  if (result['success'] != true) {
+    throw Exception(result['message'] ?? 'Google backend operation failed');
+  }
+
+  return result;
+}
+
+Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
+  try {
+    final doc = await _schoolProfileCacheRef().get();
+    return _mergeSchoolProfile(doc.data());
+  } catch (_) {
+    return _defaultSchoolProfile();
+  }
+}
+
+Future<Map<String, dynamic>> _refreshSchoolProfileFromDrive() async {
+  final result = await _schoolProfileBackendPost(
+    const {'action': 'get_school_profile'},
+  );
+
+  final raw = result['profile'];
+  final profile = raw is Map
+      ? _mergeSchoolProfile(Map<String, dynamic>.from(raw))
+      : _defaultSchoolProfile();
+
+  await _schoolProfileCacheRef().set(
+    {
+      ...profile,
+      'cachedAt': FieldValue.serverTimestamp(),
+    },
+    SetOptions(merge: true),
+  );
+
+  return profile;
+}
+
+Future<Map<String, dynamic>> _loadSchoolProfile({
+  bool refreshFromDrive = false,
+}) async {
+  if (refreshFromDrive) {
+    try {
+      return await _refreshSchoolProfileFromDrive();
+    } catch (e) {
+      debugPrint('School profile Drive refresh warning: $e');
+    }
+  }
+  return _loadSchoolProfileCache();
+}
+
+String _schoolName(Map<String, dynamic> profile) {
+  final value = profile['schoolName']?.toString().trim() ?? '';
+  return value.isEmpty ? 'School' : value;
+}
+
+String _principalName(Map<String, dynamic> profile) {
+  final value = profile['principalName']?.toString().trim() ?? '';
+  return value.isEmpty ? 'Principal' : value;
+}
+
+Future<Uint8List?> _downloadImageBytes(String url) async {
+  final clean = url.trim();
+  if (clean.isEmpty) return null;
+
+  try {
+    final response = await http.get(Uri.parse(clean));
+    if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
+      return response.bodyBytes;
+    }
+  } catch (e) {
+    debugPrint('Image download warning: $e');
+  }
+  return null;
+}
+
+
+// ============================================================
+// EXAM CENTER MEMORY CACHE / PREFETCH
+// Opens the page immediately while refreshing in background.
+// ============================================================
+
+class _ExamCenterSnapshot {
+  const _ExamCenterSnapshot({
+    required this.exams,
+    required this.results,
+    required this.studentCounts,
+    required this.loadedAt,
+  });
+
+  final List<Map<String, dynamic>> exams;
+  final List<Map<String, dynamic>> results;
+  final Map<String, int> studentCounts;
+  final DateTime loadedAt;
+}
+
+class _ExamCenterDataCache {
+  static _ExamCenterSnapshot? snapshot;
+  static Future<_ExamCenterSnapshot>? _inFlight;
+
+  static Future<_ExamCenterSnapshot> refresh({bool force = false}) async {
+    final cached = snapshot;
+    if (!force && cached != null) {
+      final age = DateTime.now().difference(cached.loadedAt);
+      if (age < const Duration(seconds: 45)) {
+        return cached;
+      }
+    }
+
+    if (_inFlight != null) return _inFlight!;
+
+    final future = _fetch();
+    _inFlight = future;
+
+    try {
+      final value = await future;
+      snapshot = value;
+      return value;
+    } finally {
+      _inFlight = null;
+    }
+  }
+
+  static Future<_ExamCenterSnapshot> _fetch() async {
+    final configDoc = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('google_drive_account')
+        .get();
+
+    final scriptUrl = configDoc.data()?['scriptUrl']?.toString().trim() ?? '';
+    if (scriptUrl.isEmpty) {
+      throw Exception(
+        'Google Drive backend Advanced Settings me connected nahi hai.',
+      );
+    }
+
+    final response = await http.post(
+      Uri.parse(scriptUrl),
+      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
+      body: jsonEncode(const {'action': 'list_exam_center'}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Google backend error: ${response.statusCode}');
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw Exception('Google backend response invalid hai.');
+    }
+
+    final result = Map<String, dynamic>.from(decoded);
+    if (result['success'] != true) {
+      throw Exception(result['message'] ?? 'Exam Center load failed');
+    }
+
+    List<Map<String, dynamic>> convert(dynamic raw) => raw is List
+        ? raw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList()
+        : <Map<String, dynamic>>[];
+
+    final exams = convert(result['exams']);
+    final results = convert(result['results']);
+
+    final classes = exams
+        .map((e) => e['studentClass']?.toString().trim() ?? '')
+        .where((e) => e.isNotEmpty)
+        .toSet()
+        .toList();
+
+    final countEntries = await Future.wait<MapEntry<String, int>>(
+      classes.map((className) async {
+        try {
+          final snapshot = await FirebaseFirestore.instance
+              .collection('students_directory')
+              .where('class', isEqualTo: className)
+              .get();
+          return MapEntry(className, snapshot.docs.length);
+        } catch (_) {
+          return MapEntry(className, 0);
+        }
+      }),
+    );
+
+    return _ExamCenterSnapshot(
+      exams: exams,
+      results: results,
+      studentCounts: Map<String, int>.fromEntries(countEntries),
+      loadedAt: DateTime.now(),
+    );
+  }
+}
+
+
+// ============================================================
 // MAIN DASHBOARD
 // Opens directly to School Portal.
 // AI Chat / Chat history / AI navigation removed completely.
@@ -632,7 +893,8 @@ void _startInlineScanner() {
     final value = qrValue.trim();
 
     // New secure card format.
-    final isNewCard = value.contains('SVN_STUDENT_CARD');
+    final isNewCard = value.contains('VIDYA_SAARTHI_STUDENT_CARD') ||
+        value.contains('SVN_STUDENT_CARD');
 
     // Temporary support for previously printed cards.
     final isOldCard = value.contains('STUDENT VERIFICATION') &&
@@ -2736,7 +2998,7 @@ void _handleLoginBack(bool didPop) {
           const SizedBox(height: 14),
           Text(studentName, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
           const SizedBox(height: 5),
-          const Text('Saraswati Vidya Niketan', style: TextStyle(color: Colors.white54, fontSize: 12)),
+          const Text('Vidya Saarthi Student Portal', style: TextStyle(color: Colors.white54, fontSize: 12)),
           const SizedBox(height: 13),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
@@ -3338,6 +3600,8 @@ class AdminDashboardScreen extends StatefulWidget {
 }
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  final GlobalKey<ScaffoldState> _adminScaffoldKey = GlobalKey<ScaffoldState>();
+
 int _loginBackPressCount = 0;
 int _loginBackResetToken = 0;
 
@@ -3459,6 +3723,20 @@ void _handleLoginBack(bool didPop) {
   void initState() {
     super.initState();
     _startPortalInactivityTimer();
+
+    // Preload heavy/remote Admin data while dashboard is already visible.
+    // Exam Center then opens immediately with warm data.
+    Future<void>.microtask(() async {
+      try {
+        await Future.wait([
+          _ExamCenterDataCache.refresh(force: true),
+          _refreshSchoolProfileFromDrive(),
+        ]);
+        if (mounted) setState(() {});
+      } catch (e) {
+        debugPrint('Admin background preload warning: $e');
+      }
+    });
   }
 
   @override
@@ -4049,17 +4327,19 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
       : roll.toUpperCase();
 
   final studentId =
-      'SVN-${classNumber.isEmpty ? 'X' : classNumber}-$displayRoll';
+      'VS-${classNumber.isEmpty ? 'X' : classNumber}-$displayRoll';
 
   final docId = '${_directoryClass}_Roll_$roll';
 
   final uidQrLine = studentUid.isNotEmpty ? 'Student UID: $studentUid\n' : '';
 
   final qrData = '''
-SVN_STUDENT_CARD
+VIDYA_SAARTHI_STUDENT_CARD
 Record ID: $docId
 Student ID: $studentId
 $uidQrLine''';
+
+  final schoolProfile = await _loadSchoolProfile();
 
   return {
     'name': name,
@@ -4076,6 +4356,12 @@ $uidQrLine''';
     'showStudentUid': showStudentUid,
     'qrData': qrData,
     'class': _directoryClass,
+    'schoolName': _schoolName(schoolProfile),
+    'principalName': _principalName(schoolProfile),
+    'schoolLogoUrl': schoolProfile['logoUrl']?.toString() ?? '',
+    'schoolSealUrl': schoolProfile['sealUrl']?.toString() ?? '',
+    'principalSignatureUrl':
+        schoolProfile['principalSignatureUrl']?.toString() ?? '',
   };
 }
 
@@ -4099,6 +4385,17 @@ Future<void> _showIdCardPreview() async {
   final showStudentUid = data['showStudentUid'] == true;
   final qrData = data['qrData'].toString();
   final photoUrl = data['photoUrl']?.toString() ?? '';
+  final schoolName = data['schoolName']?.toString().trim().isNotEmpty == true
+      ? data['schoolName'].toString().trim()
+      : 'School';
+  final principalName =
+      data['principalName']?.toString().trim().isNotEmpty == true
+          ? data['principalName'].toString().trim()
+          : 'Principal';
+  final schoolLogoUrl = data['schoolLogoUrl']?.toString().trim() ?? '';
+  final schoolSealUrl = data['schoolSealUrl']?.toString().trim() ?? '';
+  final principalSignatureUrl =
+      data['principalSignatureUrl']?.toString().trim() ?? '';
 
   showDialog(
     context: context,
@@ -4223,55 +4520,55 @@ Future<void> _showIdCardPreview() async {
                                       ),
                                     ),
                                     child: ClipOval(
-                                      child: Image.asset(
-                                        'assets/school_logo.png',
-                                        fit: BoxFit.contain,
-                                      ),
+                                      child: schoolLogoUrl.isNotEmpty
+                                          ? Image.network(
+                                              schoolLogoUrl,
+                                              fit: BoxFit.contain,
+                                              webHtmlElementStrategy:
+                                                  WebHtmlElementStrategy.prefer,
+                                              errorBuilder: (_, __, ___) =>
+                                                  const Icon(
+                                                Icons.school_rounded,
+                                                color: Color(0xFF0B3558),
+                                                size: 32,
+                                              ),
+                                            )
+                                          : const Icon(
+                                              Icons.school_rounded,
+                                              color: Color(0xFF0B3558),
+                                              size: 32,
+                                            ),
                                     ),
                                   ),
 
                                   const SizedBox(width: 12),
 
-                                  const Expanded(
+                                  Expanded(
                                     child: Column(
                                       crossAxisAlignment:
-                                          CrossAxisAlignment
-                                              .start,
+                                          CrossAxisAlignment.start,
                                       mainAxisAlignment:
-                                          MainAxisAlignment
-                                              .center,
+                                          MainAxisAlignment.center,
                                       children: [
                                         Text(
-                                          'SARASWATI VIDYA NIKETAN',
-                                          style: TextStyle(
+                                          schoolName.toUpperCase(),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
                                             color: Colors.white,
-                                            fontSize: 16,
-                                            fontWeight:
-                                                FontWeight.w800,
-                                            letterSpacing: .4,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: .3,
                                           ),
                                         ),
-                                        SizedBox(height: 2),
-                                        Text(
-                                          'MADHABDHAM',
+                                        const SizedBox(height: 3),
+                                        const Text(
+                                          'STUDENT IDENTITY CARD',
                                           style: TextStyle(
-                                            color:
-                                                Color(0xFF98F3D6),
-                                            fontSize: 11,
-                                            fontWeight:
-                                                FontWeight.w700,
-                                            letterSpacing: 2,
-                                          ),
-                                        ),
-                                        SizedBox(height: 4),
-                                        Text(
-                                          'DISCIPLINE • KNOWLEDGE • VALUES',
-                                          style: TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 7.7,
-                                            fontWeight:
-                                                FontWeight.w600,
-                                            letterSpacing: .5,
+                                            color: Color(0xFF98F3D6),
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: 1.3,
                                           ),
                                         ),
                                       ],
@@ -4681,33 +4978,72 @@ Future<void> _showIdCardPreview() async {
 
                                           SizedBox(
                                             height: 43,
-                                            width: 100,
-                                            child: Image.asset(
-                                              'assets/principal_sign.png',
-                                              fit: BoxFit.contain,
+                                            width: 105,
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                if (schoolSealUrl.isNotEmpty)
+                                                  SizedBox(
+                                                    width: 34,
+                                                    height: 34,
+                                                    child: Image.network(
+                                                      schoolSealUrl,
+                                                      fit: BoxFit.contain,
+                                                      webHtmlElementStrategy:
+                                                          WebHtmlElementStrategy
+                                                              .prefer,
+                                                      errorBuilder:
+                                                          (_, __, ___) =>
+                                                              const SizedBox
+                                                                  .shrink(),
+                                                    ),
+                                                  ),
+                                                Expanded(
+                                                  child: principalSignatureUrl
+                                                          .isNotEmpty
+                                                      ? Image.network(
+                                                          principalSignatureUrl,
+                                                          fit: BoxFit.contain,
+                                                          webHtmlElementStrategy:
+                                                              WebHtmlElementStrategy
+                                                                  .prefer,
+                                                          errorBuilder:
+                                                              (_, __, ___) =>
+                                                                  const SizedBox
+                                                                      .shrink(),
+                                                        )
+                                                      : const SizedBox.shrink(),
+                                                ),
+                                              ],
                                             ),
                                           ),
 
                                           Container(
-                                            width: 95,
+                                            width: 100,
                                             height: 1,
-                                            color:
-                                                const Color(
-                                                    0xFF0B3558),
+                                            color: const Color(0xFF0B3558),
                                           ),
 
-                                          const SizedBox(
-                                              height: 2),
+                                          const SizedBox(height: 2),
 
+                                          Text(
+                                            principalName,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Color(0xFF0B3558),
+                                              fontSize: 6.2,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
                                           const Text(
                                             'PRINCIPAL',
                                             style: TextStyle(
-                                              color:
-                                                  Color(0xFF0B3558),
-                                              fontSize: 6.7,
-                                              fontWeight:
-                                                  FontWeight.w800,
-                                              letterSpacing: .8,
+                                              color: Color(0xFF0B3558),
+                                              fontSize: 5.6,
+                                              fontWeight: FontWeight.w700,
+                                              letterSpacing: .7,
                                             ),
                                           ),
                                         ],
@@ -4950,36 +5286,45 @@ Future<Uint8List> _buildIdCardPdf() async {
   final qrData = data['qrData'].toString();
   final photoUrl =
       data['photoUrl']?.toString() ?? '';
+  final schoolName = data['schoolName']?.toString().trim().isNotEmpty == true
+      ? data['schoolName'].toString().trim()
+      : 'School';
+  final principalName =
+      data['principalName']?.toString().trim().isNotEmpty == true
+          ? data['principalName'].toString().trim()
+          : 'Principal';
+  final schoolLogoUrl = data['schoolLogoUrl']?.toString().trim() ?? '';
+  final schoolSealUrl = data['schoolSealUrl']?.toString().trim() ?? '';
+  final principalSignatureUrl =
+      data['principalSignatureUrl']?.toString().trim() ?? '';
 
-  // ==========================================
-  // LOAD SCHOOL LOGO
-  // ==========================================
+  final logoNetworkBytes = await _downloadImageBytes(schoolLogoUrl);
+  final signNetworkBytes =
+      await _downloadImageBytes(principalSignatureUrl);
+  final sealNetworkBytes = await _downloadImageBytes(schoolSealUrl);
 
-  final logoBytes = await rootBundle.load(
-    'assets/school_logo.png',
-  );
+  final fallbackLogoBytes = await rootBundle.load('assets/school_logo.png');
+  final fallbackSignBytes =
+      await rootBundle.load('assets/principal_sign.png');
 
   final logoImage = pw.MemoryImage(
-    logoBytes.buffer.asUint8List(
-      logoBytes.offsetInBytes,
-      logoBytes.lengthInBytes,
-    ),
-  );
-
-  // ==========================================
-  // LOAD PRINCIPAL SIGNATURE
-  // ==========================================
-
-  final signBytes = await rootBundle.load(
-    'assets/principal_sign.png',
+    logoNetworkBytes ??
+        fallbackLogoBytes.buffer.asUint8List(
+          fallbackLogoBytes.offsetInBytes,
+          fallbackLogoBytes.lengthInBytes,
+        ),
   );
 
   final signImage = pw.MemoryImage(
-    signBytes.buffer.asUint8List(
-      signBytes.offsetInBytes,
-      signBytes.lengthInBytes,
-    ),
+    signNetworkBytes ??
+        fallbackSignBytes.buffer.asUint8List(
+          fallbackSignBytes.offsetInBytes,
+          fallbackSignBytes.lengthInBytes,
+        ),
   );
+
+  final pw.MemoryImage? sealImage =
+      sealNetworkBytes == null ? null : pw.MemoryImage(sealNetworkBytes);
 
   // ==========================================
   // LOAD STUDENT PHOTO
@@ -5097,7 +5442,8 @@ Future<Uint8List> _buildIdCardPdf() async {
                                 .start,
                         children: [
                           pw.Text(
-                            'SARASWATI VIDYA NIKETAN',
+                            schoolName.toUpperCase(),
+                            maxLines: 2,
                             style: pw.TextStyle(
                               color:
                                   PdfColors.white,
@@ -5110,13 +5456,12 @@ Future<Uint8List> _buildIdCardPdf() async {
                           pw.SizedBox(height: 1),
 
                           pw.Text(
-                            'MADHABDHAM',
+                            'STUDENT IDENTITY CARD',
                             style: pw.TextStyle(
                               color: teal,
-                              fontSize: 6,
-                              fontWeight:
-                                  pw.FontWeight.bold,
-                              letterSpacing: 1.2,
+                              fontSize: 5.4,
+                              fontWeight: pw.FontWeight.bold,
+                              letterSpacing: .8,
                             ),
                           ),
 
@@ -5461,17 +5806,33 @@ Future<Uint8List> _buildIdCardPdf() async {
                             pw.Spacer(),
 
                             pw.SizedBox(
-                              width: 44,
-                              height: 20,
-                              child: pw.Image(
-                                signImage,
-                                fit:
-                                    pw.BoxFit.contain,
+                              width: 52,
+                              height: 21,
+                              child: pw.Row(
+                                mainAxisAlignment:
+                                    pw.MainAxisAlignment.center,
+                                children: [
+                                  if (sealImage != null)
+                                    pw.SizedBox(
+                                      width: 17,
+                                      height: 17,
+                                      child: pw.Image(
+                                        sealImage,
+                                        fit: pw.BoxFit.contain,
+                                      ),
+                                    ),
+                                  pw.Expanded(
+                                    child: pw.Image(
+                                      signImage,
+                                      fit: pw.BoxFit.contain,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
 
                             pw.Container(
-                              width: 43,
+                              width: 48,
                               height: .5,
                               color: navy,
                             ),
@@ -5479,13 +5840,21 @@ Future<Uint8List> _buildIdCardPdf() async {
                             pw.SizedBox(height: 1),
 
                             pw.Text(
+                              principalName,
+                              maxLines: 1,
+                              style: pw.TextStyle(
+                                color: navy,
+                                fontSize: 3.2,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                            pw.Text(
                               'PRINCIPAL',
                               style: pw.TextStyle(
                                 color: navy,
-                                fontSize: 3.6,
-                                fontWeight:
-                                    pw.FontWeight.bold,
-                                letterSpacing: .5,
+                                fontSize: 3.0,
+                                fontWeight: pw.FontWeight.bold,
+                                letterSpacing: .4,
                               ),
                             ),
                           ],
@@ -5643,7 +6012,7 @@ Future<void> _downloadIdCard() async {
         html.AnchorElement(href: url)
           ..setAttribute(
             'download',
-            'SVN_ID_Card_${safeName}_Roll_$roll.pdf',
+            'Vidya_Saarthi_ID_Card_${safeName}_Roll_$roll.pdf',
           )
           ..style.display = 'none';
 
@@ -5695,7 +6064,7 @@ Future<void> _printIdCard() async {
         await _buildIdCardPdf();
 
     await Printing.layoutPdf(
-      name: 'SVN Student ID Card',
+      name: 'Vidya Saarthi Student ID Card',
       format: const PdfPageFormat(
         243,
         153,
@@ -5725,13 +6094,230 @@ Future<void> _printIdCard() async {
   }
 }
 
+  void _openAdminDrawerPage(Widget page) {
+    Navigator.of(context).pop();
+    Future<void>.delayed(Duration.zero, () async {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => page),
+      );
+    });
+  }
+
+  Widget _adminDrawerItem({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.07),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: color.withOpacity(0.16)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.13),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(icon, color: color, size: 20),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 9.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: color.withOpacity(.8),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdminDrawer() {
+    return Drawer(
+      width: 320,
+      backgroundColor: const Color(0xFF0B141A),
+      child: SafeArea(
+        child: Column(
+          children: [
+            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: _schoolProfileCacheRef().snapshots(),
+              builder: (context, snapshot) {
+                final profile = _mergeSchoolProfile(snapshot.data?.data());
+                final logoUrl = profile['logoUrl']?.toString().trim() ?? '';
+                return Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF123D38), Color(0xFF172229)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: const Color(0xFF00A884).withOpacity(.20),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 52,
+                        height: 52,
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: logoUrl.isNotEmpty
+                            ? Image.network(
+                                logoUrl,
+                                fit: BoxFit.contain,
+                                webHtmlElementStrategy:
+                                    WebHtmlElementStrategy.prefer,
+                                errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.school_rounded,
+                                  color: Color(0xFF00A884),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.school_rounded,
+                                color: Color(0xFF00A884),
+                                size: 30,
+                              ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _schoolName(profile),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            const Text(
+                              'ADMIN NAVIGATION',
+                              style: TextStyle(
+                                color: Color(0xFF00D9A5),
+                                fontSize: 8.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1.0,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            _adminDrawerItem(
+              icon: Icons.dashboard_rounded,
+              title: 'Dashboard',
+              subtitle: 'School overview & notices',
+              color: const Color(0xFF00D9A5),
+              onTap: () => Navigator.of(context).pop(),
+            ),
+            _adminDrawerItem(
+              icon: Icons.people_alt_rounded,
+              title: 'Student Records',
+              subtitle: 'Students, profiles & ID cards',
+              color: const Color(0xFF00A884),
+              onTap: () => _openAdminDrawerPage(const AllStudentsListScreen()),
+            ),
+            _adminDrawerItem(
+              icon: Icons.payments_rounded,
+              title: 'Fees Collection',
+              subtitle: 'Collect fees, receipts & dues',
+              color: Colors.greenAccent,
+              onTap: () => _openAdminDrawerPage(const FeesCollectionScreen()),
+            ),
+            _adminDrawerItem(
+              icon: Icons.fact_check_rounded,
+              title: 'Exam Center',
+              subtitle: 'Marks, results & report cards',
+              color: Colors.orangeAccent,
+              onTap: () => _openAdminDrawerPage(const ExamCenterScreen()),
+            ),
+            _adminDrawerItem(
+              icon: Icons.school_rounded,
+              title: 'Teachers',
+              subtitle: 'Directory, profiles & schedules',
+              color: Colors.purpleAccent,
+              onTap: () => _openAdminDrawerPage(const TeachersDirectoryScreen()),
+            ),
+            const Spacer(),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 8, 18, 18),
+              child: Text(
+                'Vidya Saarthi • School Management',
+                style: TextStyle(color: Colors.white24, fontSize: 9),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final adminEmail = FirebaseAuth.instance.currentUser?.email ?? 'School Administrator';
 
     return Scaffold(
+      key: _adminScaffoldKey,
       backgroundColor: const Color(0xFF0B141A),
+      drawer: _buildAdminDrawer(),
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         toolbarHeight: 72,
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -5740,28 +6326,35 @@ Future<void> _printIdCard() async {
         titleSpacing: 18,
         title: Row(
           children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF00A884), Color(0xFF00C896)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
                 borderRadius: BorderRadius.circular(13),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00A884).withOpacity(0.22),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
+                onTap: () => _adminScaffoldKey.currentState?.openDrawer(),
+                child: Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF00A884), Color(0xFF00C896)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(13),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00A884).withOpacity(0.22),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              child: const Icon(
-                Icons.admin_panel_settings_rounded,
-                color: Colors.white,
-                size: 23,
+                  child: const Icon(
+                    Icons.menu_rounded,
+                    color: Colors.white,
+                    size: 25,
+                  ),
+                ),
               ),
             ),
             const SizedBox(width: 12),
@@ -5839,9 +6432,20 @@ Future<void> _printIdCard() async {
         ],
       ),
       body: PopScope(
-        canPop: _loginBackPressCount >= 2,
+        canPop: false,
         onPopInvokedWithResult: (didPop, result) {
-          _handleLoginBack(didPop);
+          if (didPop || !mounted) return;
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              const SnackBar(
+                duration: Duration(seconds: 2),
+                backgroundColor: Color(0xFF1F2C34),
+                content: Text(
+                  'Login screen par jaane ke liye Settings se Logout karein.',
+                ),
+              ),
+            );
         },
         child: LayoutBuilder(
         builder: (context, constraints) {
@@ -5863,8 +6467,6 @@ Future<void> _printIdCard() async {
                     _buildVidyaSaarthiBrandHeader(),
                     const SizedBox(height: 16),
                     _buildAdminHero(adminEmail),
-                    const SizedBox(height: 16),
-                    _buildOverviewCards(),
                     const SizedBox(height: 22),
                     if (isWide)
                       Row(
@@ -6243,14 +6845,20 @@ Future<void> _printIdCard() async {
             ),
           ),
           const SizedBox(height: 13),
-          const Text(
-            'Welcome to SARASWATI VIDYA NIKETAN, MADHABDHAM',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              height: 1.2,
-            ),
+          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: _schoolProfileCacheRef().snapshots(),
+            builder: (context, snapshot) {
+              final profile = _mergeSchoolProfile(snapshot.data?.data());
+              return Text(
+                'Welcome to ${_schoolName(profile)}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  height: 1.2,
+                ),
+              );
+            },
           ),
           const SizedBox(height: 7),
           Text(
@@ -7548,6 +8156,557 @@ Widget _buildOverviewCards() {
 // ============================================================
 // SETTINGS SCREEN
 // ============================================================
+// ============================================================
+// SCHOOL SETTINGS
+// Text + Logo + Seal + Principal Signature are stored in Google Drive.
+// Firestore keeps only a fast cache of the Drive-backed profile.
+// ============================================================
+
+class SchoolSettingsScreen extends StatefulWidget {
+  const SchoolSettingsScreen({super.key});
+
+  @override
+  State<SchoolSettingsScreen> createState() => _SchoolSettingsScreenState();
+}
+
+class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
+  final TextEditingController _schoolNameController = TextEditingController();
+  final TextEditingController _principalNameController = TextEditingController();
+
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  String _logoUrl = '';
+  String _sealUrl = '';
+  String _signatureUrl = '';
+
+  Uint8List? _logoBytes;
+  Uint8List? _sealBytes;
+  Uint8List? _signatureBytes;
+
+  String _logoFileName = 'school_logo.png';
+  String _sealFileName = 'school_seal.png';
+  String _signatureFileName = 'principal_signature.png';
+
+  String _logoMimeType = 'image/png';
+  String _sealMimeType = 'image/png';
+  String _signatureMimeType = 'image/png';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _schoolNameController.dispose();
+    _principalNameController.dispose();
+    super.dispose();
+  }
+
+  String _mimeFromName(String name) {
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    return 'image/png';
+  }
+
+  void _applyProfile(Map<String, dynamic> profile) {
+    _schoolNameController.text = _schoolName(profile);
+    _principalNameController.text = _principalName(profile);
+    _logoUrl = profile['logoUrl']?.toString().trim() ?? '';
+    _sealUrl = profile['sealUrl']?.toString().trim() ?? '';
+    _signatureUrl =
+        profile['principalSignatureUrl']?.toString().trim() ?? '';
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      // Fast cached data first.
+      final cached = await _loadSchoolProfileCache();
+      if (mounted) {
+        setState(() => _applyProfile(cached));
+      }
+
+      // Then refresh source-of-truth from Drive.
+      final fresh = await _refreshSchoolProfileFromDrive();
+      if (!mounted) return;
+
+      setState(() {
+        _applyProfile(fresh);
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  Future<void> _pickAsset(String type) async {
+    final image = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 1600,
+    );
+    if (image == null) return;
+
+    final bytes = await image.readAsBytes();
+    if (!mounted) return;
+
+    final mime = _mimeFromName(image.name);
+
+    setState(() {
+      if (type == 'logo') {
+        _logoBytes = bytes;
+        _logoFileName = image.name;
+        _logoMimeType = mime;
+      } else if (type == 'seal') {
+        _sealBytes = bytes;
+        _sealFileName = image.name;
+        _sealMimeType = mime;
+      } else {
+        _signatureBytes = bytes;
+        _signatureFileName = image.name;
+        _signatureMimeType = mime;
+      }
+    });
+  }
+
+  String _dataUri(Uint8List bytes, String mime) {
+    return 'data:$mime;base64,${base64Encode(bytes)}';
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+
+    final schoolName = _schoolNameController.text.trim();
+    final principalName = _principalNameController.text.trim();
+
+    if (schoolName.isEmpty || principalName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text('School Name aur Principal Name required hai.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+
+    try {
+      final payload = <String, dynamic>{
+        'action': 'save_school_profile',
+        'schoolName': schoolName,
+        'principalName': principalName,
+        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      };
+
+      if (_logoBytes != null) {
+        payload.addAll({
+          'logoBase64': _dataUri(_logoBytes!, _logoMimeType),
+          'logoMimeType': _logoMimeType,
+          'logoFileName': _logoFileName,
+        });
+      }
+
+      if (_sealBytes != null) {
+        payload.addAll({
+          'sealBase64': _dataUri(_sealBytes!, _sealMimeType),
+          'sealMimeType': _sealMimeType,
+          'sealFileName': _sealFileName,
+        });
+      }
+
+      if (_signatureBytes != null) {
+        payload.addAll({
+          'principalSignatureBase64':
+              _dataUri(_signatureBytes!, _signatureMimeType),
+          'principalSignatureMimeType': _signatureMimeType,
+          'principalSignatureFileName': _signatureFileName,
+        });
+      }
+
+      final result = await _schoolProfileBackendPost(payload);
+      final raw = result['profile'];
+      if (raw is! Map) {
+        throw Exception('School profile response invalid hai.');
+      }
+
+      final profile = _mergeSchoolProfile(Map<String, dynamic>.from(raw));
+
+      await _schoolProfileCacheRef().set(
+        {
+          ...profile,
+          'cachedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _applyProfile(profile);
+        _logoBytes = null;
+        _sealBytes = null;
+        _signatureBytes = null;
+        _saving = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text(
+            'School Settings Google Drive me save ho gaya.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = e.toString();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('School Settings save error: $e'),
+        ),
+      );
+    }
+  }
+
+  Widget _assetCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Uint8List? selectedBytes,
+    required String currentUrl,
+    required VoidCallback onPick,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111B21),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 74,
+            height: 74,
+            padding: const EdgeInsets.all(5),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: selectedBytes != null
+                  ? Image.memory(selectedBytes, fit: BoxFit.contain)
+                  : currentUrl.isNotEmpty
+                      ? Image.network(
+                          currentUrl,
+                          fit: BoxFit.contain,
+                          webHtmlElementStrategy:
+                              WebHtmlElementStrategy.prefer,
+                          errorBuilder: (_, __, ___) => Icon(
+                            icon,
+                            color: const Color(0xFF00A884),
+                            size: 34,
+                          ),
+                        )
+                      : Icon(
+                          icon,
+                          color: const Color(0xFF00A884),
+                          size: 34,
+                        ),
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 10,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                OutlinedButton.icon(
+                  onPressed: _saving ? null : onPick,
+                  icon: const Icon(Icons.upload_rounded, size: 17),
+                  label: Text(
+                    selectedBytes != null || currentUrl.isNotEmpty
+                        ? 'Change'
+                        : 'Upload',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _field(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: const TextStyle(color: Colors.white54),
+      prefixIcon: Icon(icon, color: const Color(0xFF00A884)),
+      filled: true,
+      fillColor: const Color(0xFF0F191F),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: BorderSide(color: Colors.white.withOpacity(.07)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(13),
+        borderSide: const BorderSide(color: Color(0xFF00A884)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF172229),
+        elevation: 0,
+        title: const Text(
+          'School Settings',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh from Google Drive',
+            onPressed: _loading || _saving ? null : _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00A884)),
+            )
+          : SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 30),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 900),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF123D38), Color(0xFF172229)],
+                          ),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: const Color(0xFF00A884).withOpacity(.20),
+                          ),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(
+                              Icons.school_rounded,
+                              color: Color(0xFF00D9A5),
+                              size: 30,
+                            ),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Reusable School Identity',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  SizedBox(height: 4),
+                                  Text(
+                                    'Ye details aur files Google Drive me save hongi. School change karne ke liye code edit nahi karna padega.',
+                                    style: TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 11,
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _schoolNameController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _field(
+                          'School Name',
+                          Icons.account_balance_rounded,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _principalNameController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: _field(
+                          'School Principal Name',
+                          Icons.person_rounded,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final cards = <Widget>[
+                            _assetCard(
+                              title: 'School Logo',
+                              subtitle: 'ID Card / school branding ke liye.',
+                              icon: Icons.image_rounded,
+                              selectedBytes: _logoBytes,
+                              currentUrl: _logoUrl,
+                              onPick: () => _pickAsset('logo'),
+                            ),
+                            _assetCard(
+                              title: 'School Seal',
+                              subtitle: 'Official seal/stamp image.',
+                              icon: Icons.approval_rounded,
+                              selectedBytes: _sealBytes,
+                              currentUrl: _sealUrl,
+                              onPick: () => _pickAsset('seal'),
+                            ),
+                            _assetCard(
+                              title: 'Principal Signature',
+                              subtitle: 'ID cards / reports me principal signature.',
+                              icon: Icons.draw_rounded,
+                              selectedBytes: _signatureBytes,
+                              currentUrl: _signatureUrl,
+                              onPick: () => _pickAsset('signature'),
+                            ),
+                          ];
+
+                          if (constraints.maxWidth < 700) {
+                            return Column(
+                              children: [
+                                for (var i = 0; i < cards.length; i++) ...[
+                                  cards[i],
+                                  if (i != cards.length - 1)
+                                    const SizedBox(height: 10),
+                                ],
+                              ],
+                            );
+                          }
+
+                          return Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(child: cards[0]),
+                                  const SizedBox(width: 10),
+                                  Expanded(child: cards[1]),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              cards[2],
+                            ],
+                          );
+                        },
+                      ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          _error!,
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00A884),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(13),
+                            ),
+                          ),
+                          onPressed: _saving ? null : _save,
+                          icon: _saving
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.cloud_upload_rounded),
+                          label: Text(
+                            _saving
+                                ? 'Saving to Google Drive...'
+                                : 'SAVE SCHOOL SETTINGS TO GOOGLE DRIVE',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -8502,6 +9661,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ],
                       );
 
+                      final schoolSettingsButton = OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF00D9A5),
+                          side: BorderSide(
+                            color: const Color(0xFF00A884).withOpacity(0.55),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 13,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const SchoolSettingsScreen(),
+                            ),
+                          );
+                          if (mounted) setState(() {});
+                        },
+                        icon: const Icon(Icons.school_rounded, size: 18),
+                        label: const Text(
+                          'School Settings',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      );
+
                       final logoutButton = OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.redAccent,
@@ -8529,6 +9718,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           children: [
                             profileInfo,
                             const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: schoolSettingsButton,
+                            ),
+                            const SizedBox(height: 10),
                             SizedBox(width: double.infinity, child: logoutButton),
                           ],
                         );
@@ -8538,7 +9732,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         children: [
                           Expanded(child: profileInfo),
                           const SizedBox(width: 18),
-                          logoutButton,
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              schoolSettingsButton,
+                              const SizedBox(height: 9),
+                              logoutButton,
+                            ],
+                          ),
                         ],
                       );
                     },
@@ -9435,7 +10636,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     setState(() => _isSavingPayment = true);
 
     final now = DateTime.now();
-    final receiptNo = 'SVN-${now.year}${now.month.toString().padLeft(2, '0')}-${now.millisecondsSinceEpoch}';
+    final schoolProfile = await _loadSchoolProfile();
+    final receiptNo =
+        'VS-${now.year}${now.month.toString().padLeft(2, '0')}-${now.millisecondsSinceEpoch}';
     final totalPaid = oldPaid + amount;
     final balance = (expected - totalPaid).clamp(0, double.infinity).toDouble();
     final status = _feeStatus(expected, totalPaid);
@@ -9473,6 +10676,12 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'balance': balance,
       'status': status,
       'paymentMode': _paymentMode,
+      'schoolName': _schoolName(schoolProfile),
+      'principalName': _principalName(schoolProfile),
+      'schoolLogoUrl': schoolProfile['logoUrl']?.toString() ?? '',
+      'schoolSealUrl': schoolProfile['sealUrl']?.toString() ?? '',
+      'principalSignatureUrl':
+          schoolProfile['principalSignatureUrl']?.toString() ?? '',
       'collectedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
       'dateText': '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}',
       'timeText': '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
@@ -9603,8 +10812,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
     final driveUrl = data['driveUrl']?.toString() ?? '';
 
-    return 'SARASWATI VIDYA NIKETAN\n'
-        'MADHABDHAM, SRIGOURI\n\n'
+    final schoolName = data['schoolName']?.toString().trim().isNotEmpty == true
+        ? data['schoolName'].toString().trim()
+        : 'School';
+
+    return '$schoolName\n\n'
         'FEES RECEIPT\n'
         'Receipt No: ${data['receiptNo'] ?? ''}\n'
         'Date: ${data['dateText'] ?? ''} ${data['timeText'] ?? ''}\n'
@@ -9665,15 +10877,17 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
               pw.Text(
-                'SARASWATI VIDYA NIKETAN',
+                data['schoolName']?.toString().trim().isNotEmpty == true
+                    ? data['schoolName'].toString().trim()
+                    : 'School',
                 textAlign: pw.TextAlign.center,
                 style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
               ),
               pw.SizedBox(height: 3),
               pw.Text(
-                'MADHABDHAM, SRIGOURI',
+                'VIDYA SAARTHI • FEES RECEIPT',
                 textAlign: pw.TextAlign.center,
-                style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+                style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
               ),
               pw.SizedBox(height: 14),
               pw.Row(
@@ -17955,7 +19169,7 @@ class ExamCenterScreen extends StatefulWidget {
 }
 
 class _ExamCenterScreenState extends State<ExamCenterScreen> {
-  bool _loading = true;
+  bool _loading = false;
   bool _saving = false;
   String? _error;
 
@@ -17969,7 +19183,20 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+
+    final cached = _ExamCenterDataCache.snapshot;
+    if (cached != null) {
+      _exams = List<Map<String, dynamic>>.from(cached.exams);
+      _results = List<Map<String, dynamic>>.from(cached.results);
+      _studentCounts = Map<String, int>.from(cached.studentCounts);
+      _loading = false;
+    } else {
+      _loading = true;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load(silent: cached != null);
+    });
   }
 
   Future<String> _scriptUrl() async {
@@ -18027,37 +19254,24 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     return Map<String, int>.fromEntries(entries);
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load({bool silent = false}) async {
+    if (!silent && mounted) {
+      setState(() {
+        _loading = _exams.isEmpty && _results.isEmpty;
+        _error = null;
+      });
+    } else if (mounted) {
+      setState(() => _error = null);
+    }
 
     try {
-      final result = await _post({'action': 'list_exam_center'});
-
-      List<Map<String, dynamic>> convert(dynamic raw) => raw is List
-          ? raw
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList()
-          : <Map<String, dynamic>>[];
-
-      final exams = convert(result['exams']);
-      final results = convert(result['results']);
-
-      Map<String, int> counts = <String, int>{};
-      try {
-        counts = await _loadStudentCounts(exams);
-      } catch (e) {
-        debugPrint('Exam Center student count warning: $e');
-      }
+      final snapshot = await _ExamCenterDataCache.refresh(force: true);
 
       if (!mounted) return;
       setState(() {
-        _exams = exams;
-        _results = results;
-        _studentCounts = counts;
+        _exams = List<Map<String, dynamic>>.from(snapshot.exams);
+        _results = List<Map<String, dynamic>>.from(snapshot.results);
+        _studentCounts = Map<String, int>.from(snapshot.studentCounts);
         _loading = false;
       });
     } catch (e) {
