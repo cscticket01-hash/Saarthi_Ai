@@ -10,6 +10,12 @@ import 'dart:typed_data';
 
 final Document document = Document();
 final Window window = Window();
+String _schoolStorageNamespace = 'unconfigured';
+void setSchoolStorageNamespace(String projectId) {
+  _schoolStorageNamespace = projectId.isEmpty ? 'unconfigured' : projectId;
+  window.localStorage._values.clear();
+  window.localStorage._load();
+}
 
 class MouseEvent {}
 class Event {}
@@ -72,7 +78,7 @@ class _PersistentStorage extends MapBase<String, String> {
       dir.createSync(recursive: true);
     }
     return io.File(
-      '${dir.path}${io.Platform.pathSeparator}portal_session.json',
+      '${dir.path}${io.Platform.pathSeparator}portal_session_$_schoolStorageNamespace.json',
     );
   }
 
