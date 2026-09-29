@@ -9,12 +9,20 @@ import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_sync_engine.dart';
+import 'windows_update_manager.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await WindowsLocalStorage.initialize();
+
+  // Reload secure Local Admin credentials on every app start.
+  await WindowsLocalSecurity.initialize();
   await WindowsLocalSession.initialize();
+
+  // Clean old update installers from Windows TEMP.
+  await WindowsUpdateManager.cleanupOldInstallers();
+
   await FirebaseAuth.instance.bootstrapLocalUser();
   await WindowsSyncEngine.instance.initialize();
 
