@@ -1,180 +1,167 @@
-import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'dart:io';
 
-enum WindowsServiceType {
-  localStorage,
-  firebase,
-  googleDrive,
-}
+const String windowsAppVersion = String.fromEnvironment(
+  'APP_VERSION',
+  defaultValue: '2.0.0',
+);
 
-enum WindowsHealthState {
-  unknown,
-  checking,
-  healthy,
-  unhealthy,
-}
-
-class WindowsServiceHealth {
-  const WindowsServiceHealth({
-    required this.state,
-    required this.message,
-    required this.updatedAt,
+class WindowsUpdateInfo {
+  const WindowsUpdateInfo({
+    required this.latestVersion,
+    required this.downloadUrl,
+    required this.fileName,
+    required this.releaseNotes,
   });
 
-  final WindowsHealthState state;
-  final String message;
-  final DateTime updatedAt;
+  final String latestVersion;
+  final String downloadUrl;
+  final String fileName;
+  final String releaseNotes;
+
+  bool get updateAvailable =>
+      WindowsUpdateService.compareVersions(latestVersion, windowsAppVersion) > 0;
 }
 
-class WindowsServiceStatus extends ChangeNotifier {
-  WindowsServiceStatus._();
+class WindowsUpdateService {
+  WindowsUpdateService._();
 
-  static final WindowsServiceStatus instance =
-      WindowsServiceStatus._();
+  static const String _owner = 'cscticket01-hash';
+  static const String _repo = 'Saarthi_Ai';
 
-  final Map<WindowsServiceType, WindowsServiceHealth> _health = {
-    for (final type in WindowsServiceType.values)
-      type: WindowsServiceHealth(
-        state: WindowsHealthState.unknown,
-        message: 'Abhi test nahi hua.',
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
-      ),
-  };
-
-  WindowsServiceHealth health(WindowsServiceType type) =>
-      _health[type]!;
-
-  void checking(WindowsServiceType type, [String message = 'Checking...']) {
-    _set(type, WindowsHealthState.checking, message);
-  }
-
-  void healthy(WindowsServiceType type, [String message = 'Working']) {
-    _set(type, WindowsHealthState.healthy, message);
-  }
-
-  void unhealthy(WindowsServiceType type, String message) {
-    _set(type, WindowsHealthState.unhealthy, message);
-  }
-
-  void unknown(WindowsServiceType type, [String message = 'Abhi test nahi hua.']) {
-    _set(type, WindowsHealthState.unknown, message);
-  }
-
-  void _set(
-    WindowsServiceType type,
-    WindowsHealthState state,
-    String message,
-  ) {
-    final next = WindowsServiceHealth(
-      state: state,
-      message: message.trim().isEmpty ? state.name : message.trim(),
-      updatedAt: DateTime.now(),
+  static Future<WindowsUpdateInfo> check() async {
+    final uri = Uri.parse(
+      'https://api.github.com/repos/$_owner/$_repo/releases?per_page=20',
     );
 
-    final old = _health[type];
-    if (old?.state == next.state && old?.message == next.message) return;
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(uri);
+      request.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
+      request.headers.set(HttpHeaders.userAgentHeader, 'Vidya-Saarthi-Windows/$windowsAppVersion');
+      final response = await request.close().timeout(const Duration(seconds: 20));
+      final body = await utf8.decoder.bind(response).join();
 
-    _health[type] = next;
-    notifyListeners();
-  }
-}
-
-class WindowsStatusLed extends StatelessWidget {
-  const WindowsStatusLed({
-    super.key,
-    required this.service,
-    this.showLabel = true,
-    this.compact = false,
-  });
-
-  final WindowsServiceType service;
-  final bool showLabel;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: WindowsServiceStatus.instance,
-      builder: (context, _) {
-        final health = WindowsServiceStatus.instance.health(service);
-        final color = _color(health.state);
-        final label = _label(health.state);
-
-        return Tooltip(
-          message: health.message,
-          child: Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: compact ? 7 : 9,
-              vertical: compact ? 4 : 5,
-            ),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: color.withOpacity(0.35)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: compact ? 9 : 11,
-                  height: compact ? 9 : 11,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: color,
-                    boxShadow: [
-                      BoxShadow(
-                        color: color.withOpacity(0.58),
-                        blurRadius: health.state == WindowsHealthState.healthy ||
-                                health.state == WindowsHealthState.unhealthy
-                            ? 8
-                            : 3,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                ),
-                if (showLabel) ...[
-                  const SizedBox(width: 6),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: color,
-                      fontSize: compact ? 9 : 10,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: .35,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+      if (response.statusCode != 200) {
+        throw StateError(
+          'Update server response ${response.statusCode}. GitHub release public/accessibile hona chahiye.',
         );
-      },
+      }
+
+      final decoded = jsonDecode(body);
+      if (decoded is! List) {
+        throw StateError('Update response invalid hai.');
+      }
+
+      for (final release in decoded) {
+        if (release is! Map) continue;
+        final tag = release['tag_name']?.toString().trim() ?? '';
+        if (!tag.toLowerCase().startsWith('windows-v')) continue;
+
+        final latestVersion = tag.replaceFirst(
+          RegExp(r'^windows-v', caseSensitive: false),
+          '',
+        );
+        final notes = release['body']?.toString() ?? '';
+        final assets = release['assets'];
+
+        if (assets is! List) continue;
+        for (final item in assets) {
+          if (item is! Map) continue;
+          final name = item['name']?.toString() ?? '';
+          final candidate = item['browser_download_url']?.toString() ?? '';
+          if (name.toLowerCase().endsWith('.exe') &&
+              name.toLowerCase().contains('vidya_saarthi_setup') &&
+              candidate.startsWith('https://')) {
+            return WindowsUpdateInfo(
+              latestVersion: latestVersion,
+              downloadUrl: candidate,
+              fileName: name,
+              releaseNotes: notes,
+            );
+          }
+        }
+      }
+
+      throw StateError('Windows installer release nahi mila.');
+    } on SocketException {
+      throw StateError('Internet connection nahi mil raha.');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Future<File> download(
+    WindowsUpdateInfo update, {
+    void Function(double progress)? onProgress,
+  }) async {
+    final uri = Uri.parse(update.downloadUrl);
+    final client = HttpClient();
+
+    try {
+      final request = await client.getUrl(uri);
+      request.headers.set(HttpHeaders.userAgentHeader, 'Vidya-Saarthi-Windows/$windowsAppVersion');
+      final response = await request.close().timeout(const Duration(seconds: 30));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError('Update download failed: ${response.statusCode}');
+      }
+
+      final temp = Directory.systemTemp;
+      final target = File(
+        '${temp.path}${Platform.pathSeparator}${update.fileName}',
+      );
+      final sink = target.openWrite();
+      final total = response.contentLength;
+      var received = 0;
+
+      await for (final chunk in response) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (total > 0 && onProgress != null) {
+          onProgress(received / total);
+        }
+      }
+      await sink.flush();
+      await sink.close();
+
+      if (!await target.exists() || await target.length() == 0) {
+        throw StateError('Downloaded installer empty hai.');
+      }
+      return target;
+    } on SocketException {
+      throw StateError('Update download ke waqt internet connection fail hua.');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Future<void> launchInstaller(File installer) async {
+    if (!await installer.exists()) {
+      throw StateError('Downloaded installer nahi mila.');
+    }
+    await Process.start(
+      installer.path,
+      const <String>[],
+      mode: ProcessStartMode.detached,
     );
   }
 
-  Color _color(WindowsHealthState state) {
-    switch (state) {
-      case WindowsHealthState.healthy:
-        return const Color(0xFF00E59F);
-      case WindowsHealthState.unhealthy:
-        return const Color(0xFFFF4D5A);
-      case WindowsHealthState.checking:
-        return Colors.orangeAccent;
-      case WindowsHealthState.unknown:
-        return Colors.blueGrey;
-    }
-  }
+  static int compareVersions(String a, String b) {
+    List<int> parts(String value) => value
+        .replaceAll(RegExp(r'[^0-9.]'), '')
+        .split('.')
+        .where((e) => e.isNotEmpty)
+        .map((e) => int.tryParse(e) ?? 0)
+        .toList();
 
-  String _label(WindowsHealthState state) {
-    switch (state) {
-      case WindowsHealthState.healthy:
-        return 'WORKING';
-      case WindowsHealthState.unhealthy:
-        return 'ERROR';
-      case WindowsHealthState.checking:
-        return 'CHECKING';
-      case WindowsHealthState.unknown:
-        return 'UNKNOWN';
+    final av = parts(a);
+    final bv = parts(b);
+    final length = av.length > bv.length ? av.length : bv.length;
+    for (var i = 0; i < length; i++) {
+      final ai = i < av.length ? av[i] : 0;
+      final bi = i < bv.length ? bv[i] : 0;
+      if (ai != bi) return ai.compareTo(bi);
     }
+    return 0;
   }
 }
