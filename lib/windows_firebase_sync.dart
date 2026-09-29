@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'windows_local_settings.dart';
+import 'windows_local_firestore.dart';
 
 class WindowsFirebaseRemoteStatus {
   const WindowsFirebaseRemoteStatus({
@@ -31,6 +33,15 @@ class WindowsFirebaseConnectResult {
 
 class WindowsFirebaseRemote {
   WindowsFirebaseRemote._();
+
+  static FutureOr<void> Function()?
+      onConnectionChanged;
+
+  static Future<void> _notifyConnectionChanged() async {
+    final callback = onConnectionChanged;
+    if (callback == null) return;
+    await callback();
+  }
 
   static const FlutterSecureStorage _secure =
       FlutterSecureStorage();
@@ -172,6 +183,8 @@ class WindowsFirebaseRemote {
       key: _projectIdKey,
       value: projectId,
     );
+
+    await _notifyConnectionChanged();
 
     return WindowsFirebaseConnectResult(
       projectId: projectId,
@@ -365,6 +378,414 @@ class WindowsFirebaseRemote {
     await WindowsExternalConnections.save(
       firebaseLink: '',
     );
+
+    await _notifyConnectionChanged();
+  }
+
+  static Future<Map<String, Map<String, dynamic>>>
+      readCollection({
+    required String projectId,
+    required String idToken,
+    required String collection,
+  }) async {
+    final output =
+        <String, Map<String, dynamic>>{};
+
+    String? pageToken;
+
+    do {
+      final query = <String, String>{
+        'pageSize': '500',
+        if (pageToken != null &&
+            pageToken!.isNotEmpty)
+          'pageToken': pageToken!,
+      };
+
+      final uri = Uri.https(
+        'firestore.googleapis.com',
+        '/v1/projects/'
+        '${Uri.encodeComponent(projectId)}/'
+        'databases/(default)/documents/'
+        '${Uri.encodeComponent(collection)}',
+        query,
+      );
+
+      final response = await _request(
+        'GET',
+        uri,
+        bearerToken: idToken,
+      );
+
+      if (response.statusCode == 404) {
+        return output;
+      }
+
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300) {
+        throw StateError(
+          _firebaseErrorMessage(
+            response.body,
+            fallback:
+                'Firestore collection read failed: $collection',
+          ),
+        );
+      }
+
+      if (response.body.trim().isEmpty) {
+        break;
+      }
+
+      final decoded = jsonDecode(response.body);
+
+      if (decoded is! Map) {
+        throw StateError(
+          'Firestore collection response invalid hai.',
+        );
+      }
+
+      final documents = decoded['documents'];
+
+      if (documents is List) {
+        for (final raw in documents) {
+          if (raw is! Map) continue;
+
+          final document =
+              Map<String, dynamic>.from(raw);
+
+          final name =
+              document['name']?.toString() ?? '';
+
+          if (name.isEmpty) continue;
+
+          final id = Uri.decodeComponent(
+            name.split('/').last,
+          );
+
+          final fields = document['fields'];
+
+          output[id] = fields is Map
+              ? _decodeFirestoreFields(
+                  Map<String, dynamic>.from(fields),
+                )
+              : <String, dynamic>{};
+        }
+      }
+
+      pageToken =
+          decoded['nextPageToken']
+              ?.toString()
+              .trim();
+
+      if (pageToken != null &&
+          pageToken!.isEmpty) {
+        pageToken = null;
+      }
+    } while (pageToken != null);
+
+    return output;
+  }
+
+  static Future<void> writeDocument({
+    required String projectId,
+    required String idToken,
+    required String collection,
+    required String documentId,
+    required Map<String, dynamic> data,
+  }) async {
+    final documentName =
+        'projects/$projectId/'
+        'databases/(default)/documents/'
+        '$collection/$documentId';
+
+    final uri = Uri.parse(
+      'https://firestore.googleapis.com/v1/'
+      'projects/${Uri.encodeComponent(projectId)}/'
+      'databases/(default)/documents:commit',
+    );
+
+    final response = await _postJson(
+      uri,
+      <String, dynamic>{
+        'writes': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'update': <String, dynamic>{
+              'name': documentName,
+              'fields': _encodeFirestoreFields(data),
+            },
+          },
+        ],
+      },
+      bearerToken: idToken,
+    );
+
+    if (response.statusCode < 200 ||
+        response.statusCode >= 300) {
+      throw StateError(
+        _firebaseErrorMessage(
+          response.body,
+          fallback:
+              'Firestore document sync failed: '
+              '$collection/$documentId',
+        ),
+      );
+    }
+  }
+
+  static Future<void> deleteDocument({
+    required String projectId,
+    required String idToken,
+    required String collection,
+    required String documentId,
+  }) async {
+    final documentName =
+        'projects/$projectId/'
+        'databases/(default)/documents/'
+        '$collection/$documentId';
+
+    final uri = Uri.parse(
+      'https://firestore.googleapis.com/v1/'
+      'projects/${Uri.encodeComponent(projectId)}/'
+      'databases/(default)/documents:commit',
+    );
+
+    final response = await _postJson(
+      uri,
+      <String, dynamic>{
+        'writes': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'delete': documentName,
+          },
+        ],
+      },
+      bearerToken: idToken,
+    );
+
+    if (response.statusCode < 200 ||
+        response.statusCode >= 300) {
+      throw StateError(
+        _firebaseErrorMessage(
+          response.body,
+          fallback:
+              'Firestore delete sync failed: '
+              '$collection/$documentId',
+        ),
+      );
+    }
+  }
+
+  static Map<String, dynamic>
+      _encodeFirestoreFields(
+    Map<String, dynamic> data,
+  ) {
+    final output = <String, dynamic>{};
+
+    for (final entry in data.entries) {
+      output[entry.key] =
+          _encodeFirestoreValue(entry.value);
+    }
+
+    return output;
+  }
+
+  static Map<String, dynamic>
+      _decodeFirestoreFields(
+    Map<String, dynamic> fields,
+  ) {
+    final output = <String, dynamic>{};
+
+    for (final entry in fields.entries) {
+      if (entry.value is Map) {
+        output[entry.key] =
+            _decodeFirestoreValue(
+          Map<String, dynamic>.from(
+            entry.value as Map,
+          ),
+        );
+      }
+    }
+
+    return output;
+  }
+
+  static Map<String, dynamic>
+      _encodeFirestoreValue(
+    dynamic value,
+  ) {
+    if (value == null) {
+      return <String, dynamic>{
+        'nullValue': null,
+      };
+    }
+
+    if (value is bool) {
+      return <String, dynamic>{
+        'booleanValue': value,
+      };
+    }
+
+    if (value is int) {
+      return <String, dynamic>{
+        'integerValue': value.toString(),
+      };
+    }
+
+    if (value is double) {
+      return <String, dynamic>{
+        'doubleValue': value,
+      };
+    }
+
+    if (value is num) {
+      return <String, dynamic>{
+        'doubleValue': value.toDouble(),
+      };
+    }
+
+    if (value is Timestamp) {
+      return <String, dynamic>{
+        'timestampValue':
+            value.toDate().toUtc().toIso8601String(),
+      };
+    }
+
+    if (value is DateTime) {
+      return <String, dynamic>{
+        'timestampValue':
+            value.toUtc().toIso8601String(),
+      };
+    }
+
+    if (value is String) {
+      return <String, dynamic>{
+        'stringValue': value,
+      };
+    }
+
+    if (value is Iterable) {
+      return <String, dynamic>{
+        'arrayValue': <String, dynamic>{
+          'values': value
+              .map(_encodeFirestoreValue)
+              .toList(),
+        },
+      };
+    }
+
+    if (value is Map) {
+      final map =
+          Map<String, dynamic>.from(value);
+
+      return <String, dynamic>{
+        'mapValue': <String, dynamic>{
+          'fields': _encodeFirestoreFields(map),
+        },
+      };
+    }
+
+    return <String, dynamic>{
+      'stringValue': value.toString(),
+    };
+  }
+
+  static dynamic _decodeFirestoreValue(
+    Map<String, dynamic> value,
+  ) {
+    if (value.containsKey('nullValue')) {
+      return null;
+    }
+
+    if (value.containsKey('booleanValue')) {
+      return value['booleanValue'] == true;
+    }
+
+    if (value.containsKey('integerValue')) {
+      final raw =
+          value['integerValue']?.toString() ?? '';
+      return int.tryParse(raw) ?? 0;
+    }
+
+    if (value.containsKey('doubleValue')) {
+      final raw = value['doubleValue'];
+      if (raw is num) return raw.toDouble();
+      return double.tryParse(
+            raw?.toString() ?? '',
+          ) ??
+          0.0;
+    }
+
+    if (value.containsKey('timestampValue')) {
+      final raw =
+          value['timestampValue']?.toString() ?? '';
+      final parsed = DateTime.tryParse(raw);
+      return parsed == null
+          ? raw
+          : Timestamp.fromDate(parsed);
+    }
+
+    if (value.containsKey('stringValue')) {
+      return value['stringValue']
+              ?.toString() ??
+          '';
+    }
+
+    if (value.containsKey('bytesValue')) {
+      return value['bytesValue']
+              ?.toString() ??
+          '';
+    }
+
+    if (value.containsKey('referenceValue')) {
+      return value['referenceValue']
+              ?.toString() ??
+          '';
+    }
+
+    if (value.containsKey('geoPointValue')) {
+      final raw = value['geoPointValue'];
+      return raw is Map
+          ? Map<String, dynamic>.from(raw)
+          : <String, dynamic>{};
+    }
+
+    if (value.containsKey('arrayValue')) {
+      final raw = value['arrayValue'];
+
+      if (raw is Map) {
+        final values = raw['values'];
+
+        if (values is List) {
+          return values
+              .whereType<Map>()
+              .map(
+                (item) => _decodeFirestoreValue(
+                  Map<String, dynamic>.from(
+                    item,
+                  ),
+                ),
+              )
+              .toList();
+        }
+      }
+
+      return <dynamic>[];
+    }
+
+    if (value.containsKey('mapValue')) {
+      final raw = value['mapValue'];
+
+      if (raw is Map &&
+          raw['fields'] is Map) {
+        return _decodeFirestoreFields(
+          Map<String, dynamic>.from(
+            raw['fields'] as Map,
+          ),
+        );
+      }
+
+      return <String, dynamic>{};
+    }
+
+    return null;
   }
 
   static Future<Map<String, dynamic>> _signIn({
@@ -510,6 +931,61 @@ class WindowsFirebaseRemote {
               'Firestore access verify nahi hua.',
         ),
       );
+    }
+  }
+
+  static Future<_SimpleHttpResponse> _request(
+    String method,
+    Uri uri, {
+    String? bearerToken,
+    Map<String, String>? headers,
+    String? body,
+  }) async {
+    final client = HttpClient();
+
+    try {
+      final request =
+          await client.openUrl(method, uri);
+
+      if (bearerToken != null &&
+          bearerToken.isNotEmpty) {
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Bearer $bearerToken',
+        );
+      }
+
+      if (headers != null) {
+        for (final entry in headers.entries) {
+          request.headers.set(
+            entry.key,
+            entry.value,
+          );
+        }
+      }
+
+      if (body != null) {
+        request.write(body);
+      }
+
+      final response =
+          await request.close();
+
+      final responseBody =
+          await utf8.decoder
+              .bind(response)
+              .join();
+
+      return _SimpleHttpResponse(
+        statusCode: response.statusCode,
+        body: responseBody,
+      );
+    } on SocketException {
+      throw StateError(
+        'Internet connection nahi mil raha.',
+      );
+    } finally {
+      client.close(force: true);
     }
   }
 
