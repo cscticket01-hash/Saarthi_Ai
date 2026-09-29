@@ -71,44 +71,84 @@ class WindowsBackendBridge {
 
   static Future<bool> testRemote(Uri url) async {
     final status = WindowsServiceStatus.instance;
+
     status.checking(
       WindowsServiceType.googleDrive,
-      'Google Drive actual backend test chal raha hai...',
+      'Google Drive + Apps Script health check chal raha hai...',
     );
 
     try {
+      // Use the same real health endpoint that is verified in the browser.
+      // Existing Website / Android POST actions are untouched.
+      final healthUrl = url.replace(
+        queryParameters: <String, String>{
+          ...url.queryParameters,
+          'action': 'health_check',
+          '_t': DateTime.now().millisecondsSinceEpoch.toString(),
+        },
+      );
+
       final response = await http
-          .post(
-            url,
+          .get(
+            healthUrl,
             headers: const {
-              'Content-Type': 'text/plain;charset=utf-8',
+              'Accept': 'application/json',
+              'Cache-Control': 'no-cache',
             },
-            body: jsonEncode(const {'action': 'get_school_profile'}),
           )
           .timeout(const Duration(seconds: 25));
 
-      if (response.statusCode != 200) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         status.unhealthy(
           WindowsServiceType.googleDrive,
-          'Google backend HTTP ${response.statusCode}.',
+          'Google health check HTTP ${response.statusCode}.',
         );
         return false;
       }
 
       final decoded = jsonDecode(response.body);
+
       if (decoded is! Map) {
-        throw const FormatException('Backend JSON invalid hai.');
+        throw const FormatException(
+          'Google health-check response JSON map nahi hai.',
+        );
       }
+
+      final data = Map<String, dynamic>.from(decoded);
+
+      final success = data['success'] == true;
+      final working = data['working'] == true;
+      final rootAccessible = data['rootFolderAccessible'] != false;
+
+      if (!success || !working || !rootAccessible) {
+        final message =
+            data['error']?.toString().trim().isNotEmpty == true
+                ? data['error'].toString()
+                : data['message']?.toString().trim().isNotEmpty == true
+                    ? data['message'].toString()
+                    : 'Google Drive health check failed.';
+
+        status.unhealthy(
+          WindowsServiceType.googleDrive,
+          message,
+        );
+        return false;
+      }
+
+      final version = data['version']?.toString().trim() ?? '';
 
       status.healthy(
         WindowsServiceType.googleDrive,
-        'Google Drive / Apps Script actual request successful.',
+        version.isEmpty
+            ? 'Google Apps Script + Google Drive actual health check successful.'
+            : 'Google Apps Script + Google Drive working • $version',
       );
+
       return true;
     } catch (e) {
       status.unhealthy(
         WindowsServiceType.googleDrive,
-        'Google Drive test fail: $e',
+        'Google Drive health check fail: $e',
       );
       return false;
     }
