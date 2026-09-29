@@ -524,9 +524,11 @@ class WindowsSyncEngine {
     String scriptUrl,
     Map<String, dynamic> body,
   ) async {
-    final response = await http
+    final baseUri = Uri.parse(scriptUrl);
+
+    var response = await http
         .post(
-          Uri.parse(scriptUrl),
+          baseUri,
           headers: const <String, String>{
             'Content-Type': 'text/plain;charset=utf-8',
             'Cache-Control': 'no-cache',
@@ -534,6 +536,30 @@ class WindowsSyncEngine {
           body: jsonEncode(body),
         )
         .timeout(const Duration(seconds: 30));
+
+    // Google Apps Script Web Apps can answer POST with HTTP 302 and put
+    // the actual JSON response behind the Location URL. package:http
+    // does not reliably follow this POST redirect on Windows, so follow
+    // it explicitly as GET.
+    if (_isGoogleAppsScriptRedirect(response.statusCode)) {
+      final location = response.headers['location']?.trim() ?? '';
+
+      if (location.isEmpty) {
+        throw StateError(
+          'Google sync identity redirect URL missing hai.',
+        );
+      }
+
+      response = await http
+          .get(
+            baseUri.resolve(location),
+            headers: const <String, String>{
+              'Accept': 'application/json',
+              'Cache-Control': 'no-cache',
+            },
+          )
+          .timeout(const Duration(seconds: 30));
+    }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(
@@ -556,6 +582,14 @@ class WindowsSyncEngine {
     }
 
     return result;
+  }
+
+  bool _isGoogleAppsScriptRedirect(int statusCode) {
+    return statusCode == 301 ||
+        statusCode == 302 ||
+        statusCode == 303 ||
+        statusCode == 307 ||
+        statusCode == 308;
   }
 
   String _newSchoolSyncId() {
