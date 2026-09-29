@@ -49,6 +49,7 @@ jobs:
             "lib\windows_local_auth.dart",
             "lib\windows_local_settings.dart",
             "lib\windows_settings_panel.dart",
+            "lib\windows_firebase_sync.dart",
             "scripts\windows_admin_patch.py"
           )
 
