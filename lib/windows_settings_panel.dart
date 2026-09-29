@@ -1,36 +1,31 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
+import 'windows_firebase_sync.dart';
 import 'windows_local_auth.dart';
 import 'windows_local_settings.dart';
-import 'windows_firebase_sync.dart';
+import 'windows_local_storage.dart';
+import 'windows_service_status.dart';
+import 'windows_update_service.dart';
 
 class WindowsSettingsPanel extends StatefulWidget {
   const WindowsSettingsPanel({super.key});
 
   @override
-  State<WindowsSettingsPanel> createState() =>
-      _WindowsSettingsPanelState();
+  State<WindowsSettingsPanel> createState() => _WindowsSettingsPanelState();
 }
 
-class _WindowsSettingsPanelState
-    extends State<WindowsSettingsPanel> {
+class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
   final _firebase = TextEditingController();
   final _firebaseEmail = TextEditingController();
   final _firebasePassword = TextEditingController();
-  final _cloud = TextEditingController();
 
   bool _loading = true;
-  bool _savingFirebase = false;
-  bool _testingFirebase = false;
-  bool _disconnectingFirebase = false;
-  bool _savingCloud = false;
-  bool _firebasePasswordObscure = true;
-
-  String? _savedFirebase;
-  String? _savedCloud;
-  bool _firebaseConnected = false;
-  String _firebaseProjectId = '';
-  String _firebaseStatusText = 'NOT CONNECTED';
+  bool _firebaseBusy = false;
+  bool _disconnectBusy = false;
+  bool _obscure = true;
+  String _projectId = '';
 
   @override
   void initState() {
@@ -43,1084 +38,928 @@ class _WindowsSettingsPanelState
     _firebase.dispose();
     _firebaseEmail.dispose();
     _firebasePassword.dispose();
-    _cloud.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
-    final data =
-        await WindowsExternalConnections.load();
+    final local = await WindowsExternalConnections.load();
+    final remote = await WindowsFirebaseRemote.status();
+    _firebase.text = local['firebaseLink']?.toString() ?? '';
+    _firebaseEmail.text = remote.email;
+    _projectId = remote.projectId;
 
-    if (!mounted) return;
-
-    setState(() {
-      _savedFirebase =
-          data['firebaseLink']?.toString().trim();
-
-      _savedCloud =
-          data['googleCloudConsoleLink']
-              ?.toString()
-              .trim();
-
-      _firebase.text = _savedFirebase ?? '';
-      _cloud.text = _savedCloud ?? '';
-    });
-
-    final remoteStatus =
-        await WindowsFirebaseRemote.status();
-
-    if (!mounted) return;
-
-    setState(() {
-      _firebaseConnected =
-          remoteStatus.authenticated;
-      _firebaseProjectId =
-          remoteStatus.projectId;
-      _firebaseEmail.text =
-          remoteStatus.email;
-
-      if (_firebaseConnected) {
-        _firebaseStatusText =
-            'CONNECTED • ${remoteStatus.projectId}';
-      } else if (_savedFirebase?.isNotEmpty == true) {
-        _firebaseStatusText =
-            'LINK SAVED • VERIFY REQUIRED';
-      } else {
-        _firebaseStatusText =
-            'NOT CONNECTED';
+    if (remote.authenticated) {
+      WindowsServiceStatus.instance.checking(
+        WindowsServiceType.firebase,
+        'Saved Firebase connection actual test chal raha hai...',
+      );
+      try {
+        final result = await WindowsFirebaseRemote.testSavedConnection();
+        _projectId = result.projectId;
+        _firebaseEmail.text = result.email;
+        WindowsServiceStatus.instance.healthy(
+          WindowsServiceType.firebase,
+          'Firebase Auth + Firestore actual request successful.',
+        );
+      } catch (e) {
+        WindowsServiceStatus.instance.unhealthy(
+          WindowsServiceType.firebase,
+          'Firebase actual test fail: $e',
+        );
       }
+    } else {
+      WindowsServiceStatus.instance.unhealthy(
+        WindowsServiceType.firebase,
+        'Firebase connected nahi hai.',
+      );
+    }
 
-      _loading = false;
-    });
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<bool> _unlock() async {
-    if (!WindowsLocalSecurity.configured) {
-      if (!mounted) return false;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
-          content: Text(
-            'Pehle Local Settings Lock configure karein.',
-          ),
-        ),
-      );
-
-      return false;
-    }
-
     final controller = TextEditingController();
-    bool obscure = true;
     String? error;
+    bool obscure = true;
 
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor:
-                  const Color(0xFF172229),
-              title: const Text(
-                'Unlock Settings',
-                style: TextStyle(
-                  color: Colors.white,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF172229),
+          title: const Text(
+            'Local Settings Lock',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: TextField(
+              controller: controller,
+              obscureText: obscure,
+              autofocus: true,
+              onSubmitted: (_) {
+                final ok = WindowsLocalSecurity.verifyPassword(controller.text);
+                if (ok) {
+                  Navigator.pop(dialogContext, true);
+                } else {
+                  setDialogState(() => error = 'Galat Local Password.');
+                }
+              },
+              decoration: InputDecoration(
+                labelText: 'Local Password',
+                errorText: error,
+                prefixIcon: const Icon(Icons.lock_outline_rounded),
+                suffixIcon: IconButton(
+                  onPressed: () => setDialogState(() => obscure = !obscure),
+                  icon: Icon(obscure ? Icons.visibility_off : Icons.visibility),
                 ),
               ),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize:
-                      MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: controller,
-                      obscureText: obscure,
-                      autofocus: true,
-                      onSubmitted: (_) {
-                        final ok =
-                            WindowsLocalSecurity
-                                .verifyPassword(
-                          controller.text,
-                        );
-
-                        if (ok) {
-                          Navigator.pop(
-                            dialogContext,
-                            true,
-                          );
-                        } else {
-                          setDialogState(() {
-                            error =
-                                'Galat Settings Password.';
-                          });
-                        }
-                      },
-                      decoration: InputDecoration(
-                        labelText:
-                            'Settings Password',
-                        errorText: error,
-                        suffixIcon: IconButton(
-                          onPressed: () {
-                            setDialogState(() {
-                              obscure = !obscure;
-                            });
-                          },
-                          icon: Icon(
-                            obscure
-                                ? Icons.visibility_off
-                                : Icons.visibility,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () =>
-                      Navigator.pop(
-                    dialogContext,
-                    false,
-                  ),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final ok =
-                        WindowsLocalSecurity
-                            .verifyPassword(
-                      controller.text,
-                    );
-
-                    if (ok) {
-                      Navigator.pop(
-                        dialogContext,
-                        true,
-                      );
-                    } else {
-                      setDialogState(() {
-                        error =
-                            'Galat Settings Password.';
-                      });
-                    }
-                  },
-                  child: const Text('Unlock'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final ok = WindowsLocalSecurity.verifyPassword(controller.text);
+                if (ok) {
+                  Navigator.pop(dialogContext, true);
+                } else {
+                  setDialogState(() => error = 'Galat Local Password.');
+                }
+              },
+              child: const Text('Unlock'),
+            ),
+          ],
+        ),
+      ),
     );
 
     controller.dispose();
-
     return result == true;
   }
 
   Future<void> _changeLock() async {
-    if (!await _unlock()) return;
-    if (!mounted) return;
-
-    final currentPassword =
-        TextEditingController();
-    final id = TextEditingController(
-      text: WindowsLocalSecurity.adminId,
-    );
-    final password =
-        TextEditingController();
-    final confirm =
-        TextEditingController();
-
+    final current = TextEditingController();
+    final id = TextEditingController(text: WindowsLocalSecurity.adminId);
+    final password = TextEditingController();
+    final confirm = TextEditingController();
     String? error;
     bool obscure = true;
 
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor:
-                  const Color(0xFF172229),
-              title: const Text(
-                'Change Local Settings Lock',
-                style: TextStyle(
-                  color: Colors.white,
-                ),
-              ),
-              content: SizedBox(
-                width: 460,
-                child: Column(
-                  mainAxisSize:
-                      MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: currentPassword,
-                      obscureText: true,
-                      decoration:
-                          const InputDecoration(
-                        labelText:
-                            'Current Settings Password',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: id,
-                      decoration:
-                          const InputDecoration(
-                        labelText:
-                            'Local Admin ID',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: password,
-                      obscureText: obscure,
-                      decoration: InputDecoration(
-                        labelText:
-                            'New Settings Password',
-                        suffixIcon: IconButton(
-                          onPressed: () {
-                            setDialogState(() {
-                              obscure = !obscure;
-                            });
-                          },
-                          icon: Icon(
-                            obscure
-                                ? Icons.visibility_off
-                                : Icons.visibility,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: confirm,
-                      obscureText: obscure,
-                      decoration:
-                          const InputDecoration(
-                        labelText:
-                            'Confirm Password',
-                      ),
-                    ),
-                    if (error != null) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        error!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () =>
-                      Navigator.pop(
-                    dialogContext,
-                    false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF172229),
+          title: const Text(
+            'Change Local ID / Password',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: SizedBox(
+            width: 470,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: current,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Current Local Password',
                   ),
-                  child: const Text('Cancel'),
                 ),
-                FilledButton(
-                  onPressed: () async {
-                    if (password.text !=
-                        confirm.text) {
-                      setDialogState(() {
-                        error =
-                            'Password match nahi kar raha.';
-                      });
-                      return;
-                    }
-
-                    try {
-                      await WindowsLocalSecurity
-                          .change(
-                        currentPassword:
-                            currentPassword.text,
-                        newAdminId:
-                            id.text,
-                        newPassword:
-                            password.text,
-                      );
-                    } catch (e) {
-                      setDialogState(() {
-                        error = e
-                            .toString()
-                            .replaceFirst(
-                              'Bad state: ',
-                              '',
-                            );
-                      });
-                      return;
-                    }
-
-                    await FirebaseAuth.instance
-                        .refreshLocalUser();
-
-                    if (dialogContext.mounted) {
-                      Navigator.pop(
-                        dialogContext,
-                        true,
-                      );
-                    }
-                  },
-                  child: const Text('Save'),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: id,
+                  decoration: const InputDecoration(labelText: 'Local Admin ID'),
                 ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: password,
+                  obscureText: obscure,
+                  decoration: InputDecoration(
+                    labelText: 'New Password',
+                    suffixIcon: IconButton(
+                      onPressed: () => setDialogState(() => obscure = !obscure),
+                      icon: Icon(obscure ? Icons.visibility_off : Icons.visibility),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: confirm,
+                  obscureText: obscure,
+                  decoration: const InputDecoration(labelText: 'Confirm Password'),
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 10),
+                  Text(error!, style: const TextStyle(color: Colors.redAccent)),
+                ],
               ],
-            );
-          },
-        );
-      },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                if (password.text != confirm.text) {
+                  setDialogState(() => error = 'Password match nahi kar raha.');
+                  return;
+                }
+                try {
+                  await WindowsLocalSecurity.change(
+                    currentPassword: current.text,
+                    newAdminId: id.text,
+                    newPassword: password.text,
+                  );
+                  await FirebaseAuth.instance.refreshLocalUser();
+                  if (dialogContext.mounted) Navigator.pop(dialogContext, true);
+                } catch (e) {
+                  setDialogState(() {
+                    error = e.toString().replaceFirst('Bad state: ', '');
+                  });
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
     );
 
-    currentPassword.dispose();
+    current.dispose();
     id.dispose();
     password.dispose();
     confirm.dispose();
 
     if (saved == true && mounted) {
       setState(() {});
-
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          backgroundColor:
-              Color(0xFF00A884),
-          content: Text(
-            'Local Settings Lock update ho gaya.',
-          ),
+          backgroundColor: Color(0xFF00A884),
+          content: Text('Local ID / Password update ho gaya.'),
         ),
       );
     }
   }
 
   Future<void> _connectFirebase() async {
-    if (_savingFirebase) return;
+    if (_firebaseBusy) return;
     if (!await _unlock()) return;
 
     final link = _firebase.text.trim();
     final email = _firebaseEmail.text.trim();
     final password = _firebasePassword.text;
 
-    if (link.isEmpty ||
-        email.isEmpty ||
-        password.isEmpty) {
+    if (link.isEmpty || email.isEmpty || password.isEmpty) {
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Colors.orangeAccent,
-          content: Text(
-            'Firebase Link, Admin Email aur Password tino bharein.',
-          ),
+          content: Text('Firebase URL, Admin Email aur Password tino bharein.'),
         ),
       );
       return;
     }
 
-    setState(() {
-      _savingFirebase = true;
-      _firebaseStatusText = 'VERIFYING...';
-    });
+    setState(() => _firebaseBusy = true);
+    WindowsServiceStatus.instance.checking(
+      WindowsServiceType.firebase,
+      'Firebase Auth + Firestore verify ho raha hai...',
+    );
 
     try {
-      final result =
-          await WindowsFirebaseRemote.connectAndVerify(
+      final result = await WindowsFirebaseRemote.connectAndVerify(
         firebaseLink: link,
         email: email,
         password: password,
       );
-
       _firebasePassword.clear();
-
+      _projectId = result.projectId;
+      _firebaseEmail.text = result.email;
+      WindowsServiceStatus.instance.healthy(
+        WindowsServiceType.firebase,
+        'Firebase Auth + Firestore actual request successful.',
+      );
       if (!mounted) return;
-
-      setState(() {
-        _savedFirebase = link;
-        _firebaseConnected = true;
-        _firebaseProjectId =
-            result.projectId;
-        _firebaseEmail.text =
-            result.email;
-        _firebaseStatusText =
-            'CONNECTED • ${result.projectId}';
-      });
-
+      setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor:
-              const Color(0xFF00A884),
-          content: Text(
-            'Firebase successfully connected: ${result.projectId}',
-          ),
+          backgroundColor: const Color(0xFF00A884),
+          content: Text('Firebase connected: ${result.projectId}'),
         ),
       );
     } catch (e) {
+      WindowsServiceStatus.instance.unhealthy(
+        WindowsServiceType.firebase,
+        'Firebase connection fail: $e',
+      );
       if (!mounted) return;
-
-      setState(() {
-        _firebaseConnected = false;
-        _firebaseStatusText =
-            'CONNECTION FAILED';
-      });
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: Colors.redAccent,
           content: Text(
-            e
-                .toString()
-                .replaceFirst(
-                  'Bad state: ',
-                  '',
-                )
-                .replaceFirst(
-                  'FormatException: ',
-                  '',
-                ),
+            e.toString()
+                .replaceFirst('Bad state: ', '')
+                .replaceFirst('FormatException: ', ''),
           ),
         ),
       );
     } finally {
-      if (mounted) {
-        setState(() {
-          _savingFirebase = false;
-        });
-      }
+      if (mounted) setState(() => _firebaseBusy = false);
     }
   }
 
   Future<void> _testFirebase() async {
-    if (_testingFirebase) return;
-
-    setState(() {
-      _testingFirebase = true;
-      _firebaseStatusText =
-          'TESTING CONNECTION...';
-    });
-
+    if (_firebaseBusy) return;
+    setState(() => _firebaseBusy = true);
+    WindowsServiceStatus.instance.checking(
+      WindowsServiceType.firebase,
+      'Firebase actual connection test chal raha hai...',
+    );
     try {
-      final result =
-          await WindowsFirebaseRemote
-              .testSavedConnection();
-
-      if (!mounted) return;
-
-      setState(() {
-        _firebaseConnected = true;
-        _firebaseProjectId =
-            result.projectId;
-        _firebaseEmail.text =
-            result.email;
-        _firebaseStatusText =
-            'CONNECTED • ${result.projectId}';
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Color(0xFF00A884),
-          content: Text(
-            'Firebase Auth + Firestore connection OK.',
-          ),
-        ),
+      final result = await WindowsFirebaseRemote.testSavedConnection();
+      _projectId = result.projectId;
+      _firebaseEmail.text = result.email;
+      WindowsServiceStatus.instance.healthy(
+        WindowsServiceType.firebase,
+        'Firebase Auth + Firestore actual request successful.',
       );
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        _firebaseConnected = false;
-        _firebaseStatusText =
-            'CONNECTION FAILED';
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content: Text(
-            e
-                .toString()
-                .replaceFirst(
-                  'Bad state: ',
-                  '',
-                ),
-          ),
-        ),
-      );
-    } finally {
       if (mounted) {
-        setState(() {
-          _testingFirebase = false;
-        });
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Color(0xFF00A884),
+            content: Text('Firebase actual connection OK.'),
+          ),
+        );
       }
+    } catch (e) {
+      WindowsServiceStatus.instance.unhealthy(
+        WindowsServiceType.firebase,
+        'Firebase actual test fail: $e',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(e.toString().replaceFirst('Bad state: ', '')),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _firebaseBusy = false);
     }
   }
 
   Future<void> _disconnectFirebase() async {
-    if (_disconnectingFirebase) return;
+    if (_disconnectBusy) return;
     if (!await _unlock()) return;
-
     if (!mounted) return;
 
-    final confirmed = await showDialog<bool>(
+    final yes = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor:
-              const Color(0xFF172229),
-          title: const Text(
-            'Disconnect Firebase?',
-            style: TextStyle(
-              color: Colors.white,
-            ),
-          ),
-          content: const Text(
-            'Sirf is Windows PC ka Firebase connection remove hoga. '
-            'Local school data delete nahi hoga aur Firebase ke existing cloud data ko bhi delete nahi kiya jayega.',
-            style: TextStyle(
-              color: Colors.white70,
-              height: 1.45,
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () =>
-                  Navigator.pop(
-                dialogContext,
-                false,
-              ),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.pop(
-                dialogContext,
-                true,
-              ),
-              child: const Text(
-                'Disconnect',
-              ),
-            ),
-          ],
-        );
-      },
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF172229),
+        title: const Text('Disconnect Firebase?', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Sirf Firebase connection remove hoga. Local school data delete nahi hoga.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Disconnect')),
+        ],
+      ),
     );
+    if (yes != true) return;
 
-    if (confirmed != true) return;
-
-    setState(() {
-      _disconnectingFirebase = true;
-    });
-
+    setState(() => _disconnectBusy = true);
     try {
       await WindowsFirebaseRemote.disconnect();
-
       _firebase.clear();
       _firebaseEmail.clear();
       _firebasePassword.clear();
-
-      if (!mounted) return;
-
-      setState(() {
-        _savedFirebase = null;
-        _firebaseConnected = false;
-        _firebaseProjectId = '';
-        _firebaseStatusText =
-            'NOT CONNECTED';
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Colors.orangeAccent,
-          content: Text(
-            'Firebase connection remove ho gaya. Local app/data safe hai.',
-          ),
-        ),
+      _projectId = '';
+      WindowsServiceStatus.instance.unhealthy(
+        WindowsServiceType.firebase,
+        'Firebase disconnected.',
       );
+      if (mounted) setState(() {});
     } finally {
-      if (mounted) {
-        setState(() {
-          _disconnectingFirebase =
-              false;
-        });
-      }
-    }
-  }
-
-  Future<void> _saveCloud() async {
-    if (_savingCloud) return;
-    if (!await _unlock()) return;
-
-    setState(() => _savingCloud = true);
-
-    try {
-      await WindowsExternalConnections.save(
-        googleCloudConsoleLink:
-            _cloud.text,
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        _savedCloud =
-            _cloud.text.trim();
-      });
-
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          backgroundColor:
-              Color(0xFF00A884),
-          content: Text(
-            'Google Cloud Console link locally save ho gaya.',
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        SnackBar(
-          backgroundColor:
-              Colors.redAccent,
-          content: Text(
-            e
-                .toString()
-                .replaceFirst(
-                  'FormatException: ',
-                  '',
-                ),
-          ),
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() =>
-            _savingCloud = false);
-      }
+      if (mounted) setState(() => _disconnectBusy = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Card(
+      return const Center(
         child: Padding(
-          padding: EdgeInsets.all(20),
-          child: Center(
-            child:
-                CircularProgressIndicator(),
-          ),
+          padding: EdgeInsets.all(24),
+          child: CircularProgressIndicator(),
         ),
       );
     }
 
     return Column(
       children: [
-        _securityCard(),
+        _localLockCard(),
         const SizedBox(height: 14),
         _firebaseCard(),
-        const SizedBox(height: 14),
-        _cloudCard(),
       ],
     );
   }
 
-  Widget _securityCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(
-                  Icons.lock_rounded,
-                  color:
-                      Color(0xFF00D9A5),
+  Widget _localLockCard() {
+    return _panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.lock_rounded, color: Color(0xFF00D9A5)),
+              SizedBox(width: 9),
+              Text(
+                'Local Settings Lock',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
                 ),
-                SizedBox(width: 10),
-                Text(
-                  'Local Settings Lock',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight:
-                        FontWeight.w900,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Admin ID: ${WindowsLocalSecurity.adminId}',
-              style: const TextStyle(
-                color: Colors.white70,
               ),
-            ),
-            const SizedBox(height: 5),
-            const Text(
-              'Ye ID/Password sirf is Windows PC ke protected settings ke liye hai. Firebase se koi relation nahi.',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 11,
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 14),
-            OutlinedButton.icon(
-              onPressed: _changeLock,
-              icon: const Icon(
-                Icons.password_rounded,
-              ),
-              label: const Text(
-                'Change Local ID / Password',
-              ),
-            ),
-          ],
-        ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Admin ID: ${WindowsLocalSecurity.adminId}',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Ye ID/Password isi Windows PC ke protected settings aur Local Logout/Login ke liye hai. Firebase se koi relation nahi.',
+            style: TextStyle(color: Colors.white38, fontSize: 10.5, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _changeLock,
+            icon: const Icon(Icons.manage_accounts_rounded, size: 18),
+            label: const Text('Change Local ID / Password'),
+          ),
+        ],
       ),
     );
   }
 
   Widget _firebaseCard() {
-    final connected =
-        _firebaseConnected;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons
-                      .local_fire_department_rounded,
-                  color: connected
-                      ? const Color(
-                          0xFF00D9A5,
-                        )
-                      : Colors
-                          .orangeAccent,
-                ),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text(
-                    'Firebase Connection',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight:
-                          FontWeight.w900,
-                    ),
+    return _panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.local_fire_department_rounded, color: Colors.orangeAccent),
+              SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  'Firebase Connection',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-                Text(
-                  _firebaseStatusText,
-                  style: TextStyle(
-                    color: connected
-                        ? const Color(
-                            0xFF00D9A5,
-                          )
-                        : Colors
-                            .orangeAccent,
-                    fontSize: 10,
-                    fontWeight:
-                        FontWeight.w800,
+              ),
+              WindowsStatusLed(service: WindowsServiceType.firebase),
+            ],
+          ),
+          if (_projectId.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Project: $_projectId',
+              style: const TextStyle(
+                color: Color(0xFF00D9A5),
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          const SizedBox(height: 13),
+          TextField(
+            controller: _firebase,
+            maxLines: 2,
+            enabled: !_firebaseBusy,
+            decoration: const InputDecoration(
+              labelText: 'Firebase URL',
+              hintText: 'vidyasaarthi://firebase?config=...',
+              prefixIcon: Icon(Icons.link_rounded),
+            ),
+          ),
+          const SizedBox(height: 11),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 650;
+              final email = TextField(
+                controller: _firebaseEmail,
+                enabled: !_firebaseBusy,
+                decoration: const InputDecoration(
+                  labelText: 'Admin Email',
+                  prefixIcon: Icon(Icons.email_outlined),
+                ),
+              );
+              final password = TextField(
+                controller: _firebasePassword,
+                obscureText: _obscure,
+                enabled: !_firebaseBusy,
+                onSubmitted: (_) => _connectFirebase(),
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  prefixIcon: const Icon(Icons.lock_outline_rounded),
+                  suffixIcon: IconButton(
+                    onPressed: () => setState(() => _obscure = !_obscure),
+                    icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
+                  ),
+                ),
+              );
+
+              if (compact) {
+                return Column(
+                  children: [email, const SizedBox(height: 10), password],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: email),
+                  const SizedBox(width: 10),
+                  Expanded(child: password),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _firebaseBusy ? null : _connectFirebase,
+              icon: _firebaseBusy
+                  ? const SizedBox(
+                      width: 17,
+                      height: 17,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.link_rounded),
+              label: Text(_firebaseBusy ? 'Verifying...' : 'Connect & Verify'),
+            ),
+          ),
+          const SizedBox(height: 9),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _firebaseBusy ? null : _testFirebase,
+                  icon: const Icon(Icons.verified_rounded, size: 18),
+                  label: const Text('Test Actual Connection'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _disconnectBusy ? null : _disconnectFirebase,
+                  icon: const Icon(Icons.link_off_rounded, size: 18),
+                  label: const Text('Disconnect'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'LED GREEN tabhi hoga jab Firebase Auth + Firestore actual request successful ho. Password save nahi hota.',
+            style: TextStyle(color: Colors.white38, fontSize: 10, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _panel({required Widget child}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111B21),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(.06)),
+      ),
+      child: child,
+    );
+  }
+}
+
+class WindowsLocalStorageCard extends StatefulWidget {
+  const WindowsLocalStorageCard({super.key});
+
+  @override
+  State<WindowsLocalStorageCard> createState() => _WindowsLocalStorageCardState();
+}
+
+class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
+  String _path = '';
+  bool _busy = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final path = await WindowsLocalStorage.currentPath();
+    await WindowsLocalStorage.healthCheck();
+    if (mounted) {
+      setState(() {
+        _path = path;
+        _busy = false;
+      });
+    }
+  }
+
+  Future<void> _backup() async {
+    setState(() => _busy = true);
+    try {
+      final path = await WindowsLocalStorage.createBackup();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text('Backup ready: $path'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: Colors.redAccent, content: Text('Backup error: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _changeLocation() async {
+    final controller = TextEditingController(text: _path);
+    String? error;
+    final next = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF172229),
+          title: const Text('Change Local Storage Location', style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: 570,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Example: D:\\VidyaSaarthiData\nCurrent database aur LocalFiles new HDD/folder me COPY honge. Old copy safety ke liye rahegi.',
+                  style: TextStyle(color: Colors.white54, fontSize: 11, height: 1.45),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'New Folder Path',
+                    errorText: error,
+                    prefixIcon: const Icon(Icons.folder_open_rounded),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            const Text(
-              'Windows app ka main database local PC me hi rahega. '
-              'Yahan school ka Firebase connect hoga taaki next step me cloud sync use kiya ja sake.',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 11,
-                height: 1.4,
-              ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.isEmpty) {
+                  setDialogState(() => error = 'Folder path daalein.');
+                  return;
+                }
+                Navigator.pop(ctx, value);
+              },
+              child: const Text('Move / Use This Folder'),
             ),
-            if (_firebaseProjectId
-                .isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Project: $_firebaseProjectId',
-                style: const TextStyle(
-                  color:
-                      Color(0xFF00D9A5),
-                  fontSize: 11,
-                  fontWeight:
-                      FontWeight.w700,
-                ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (next == null || next.trim().isEmpty) return;
+
+    setState(() => _busy = true);
+    try {
+      await WindowsLocalStorage.changeLocation(next);
+      await _refresh();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text('Local storage location safely change ho gaya.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(backgroundColor: Colors.redAccent, content: Text('Storage change error: $e')),
+      );
+      setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _settingsStyleCard(
+      icon: Icons.storage_rounded,
+      iconColor: const Color(0xFF00D9A5),
+      title: 'Local Storage',
+      subtitle: 'Offline school database / HDD location',
+      trailing: const WindowsStatusLed(service: WindowsServiceType.localStorage),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F191F),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: SelectableText(
+              _path.isEmpty ? 'Loading...' : _path,
+              style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+            ),
+          ),
+          const SizedBox(height: 11),
+          Wrap(
+            spacing: 9,
+            runSpacing: 9,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _busy ? null : WindowsLocalStorage.openFolder,
+                icon: const Icon(Icons.folder_open_rounded, size: 18),
+                label: const Text('Open Folder'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _backup,
+                icon: const Icon(Icons.backup_rounded, size: 18),
+                label: const Text('Backup Data'),
+              ),
+              FilledButton.icon(
+                onPressed: _busy ? null : _changeLocation,
+                icon: const Icon(Icons.drive_file_move_rounded, size: 18),
+                label: const Text('Change HDD / Folder'),
+              ),
+              IconButton(
+                tooltip: 'Re-test local storage',
+                onPressed: _busy ? null : _refresh,
+                icon: const Icon(Icons.refresh_rounded),
               ),
             ],
-            const SizedBox(height: 14),
-            TextField(
-              controller: _firebase,
-              maxLines: 3,
-              enabled:
-                  !_savingFirebase &&
-                  !_testingFirebase,
-              decoration:
-                  const InputDecoration(
-                labelText:
-                    'vidyasaarthi://firebase?config=...',
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'LED RED hua to folder/disk/permission/database me problem hai. HDD change karne par existing local data new location me copy karke hi switch hoga.',
+            style: TextStyle(color: Colors.white38, fontSize: 10, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class WindowsAppUpdateCard extends StatefulWidget {
+  const WindowsAppUpdateCard({super.key});
+
+  @override
+  State<WindowsAppUpdateCard> createState() => _WindowsAppUpdateCardState();
+}
+
+class _WindowsAppUpdateCardState extends State<WindowsAppUpdateCard> {
+  bool _checking = false;
+  bool _downloading = false;
+  double? _progress;
+  WindowsUpdateInfo? _update;
+  String? _message;
+
+  Future<void> _check() async {
+    if (_checking || _downloading) return;
+    setState(() {
+      _checking = true;
+      _message = null;
+      _update = null;
+    });
+    try {
+      final update = await WindowsUpdateService.check();
+      if (!mounted) return;
+      setState(() {
+        _update = update;
+        _message = update.updateAvailable
+            ? 'New version ${update.latestVersion} available.'
+            : 'App already latest version par hai.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _message = e.toString().replaceFirst('Bad state: ', ''));
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _install() async {
+    final update = _update;
+    if (update == null || !update.updateAvailable || _downloading) return;
+    setState(() {
+      _downloading = true;
+      _progress = 0;
+    });
+    try {
+      final installer = await WindowsUpdateService.download(
+        update,
+        onProgress: (value) {
+          if (mounted) setState(() => _progress = value);
+        },
+      );
+      await WindowsUpdateService.launchInstaller(installer);
+      if (!mounted) return;
+      setState(() => _message = 'Installer open ho gaya. Setup complete karein.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _message = 'Update error: $e');
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _settingsStyleCard(
+      icon: Icons.system_update_alt_rounded,
+      iconColor: const Color(0xFF4DA3FF),
+      title: 'App Update',
+      subtitle: 'Windows master app update • Current v$windowsAppVersion',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_message != null) ...[
+            Text(
+              _message!,
+              style: TextStyle(
+                color: _message!.toLowerCase().contains('error')
+                    ? Colors.redAccent
+                    : Colors.white70,
+                fontSize: 11,
               ),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller:
-                  _firebaseEmail,
-              keyboardType:
-                  TextInputType.emailAddress,
-              enabled:
-                  !_savingFirebase &&
-                  !_testingFirebase,
-              decoration:
-                  const InputDecoration(
-                labelText:
-                    'Firebase Admin Email',
-                prefixIcon: Icon(
-                  Icons.email_outlined,
+            const SizedBox(height: 10),
+          ],
+          if (_downloading) ...[
+            LinearProgressIndicator(value: _progress),
+            const SizedBox(height: 10),
+          ],
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _checking || _downloading ? null : _check,
+                  icon: _checking
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh_rounded, size: 18),
+                  label: Text(_checking ? 'Checking...' : 'Check for Update'),
                 ),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller:
-                  _firebasePassword,
-              obscureText:
-                  _firebasePasswordObscure,
-              enabled:
-                  !_savingFirebase &&
-                  !_testingFirebase,
-              onSubmitted: (_) =>
-                  _connectFirebase(),
-              decoration:
-                  InputDecoration(
-                labelText:
-                    'Firebase Password',
-                helperText:
-                    'Password save nahi hoga. Secure refresh token save hoga.',
-                prefixIcon:
-                    const Icon(
-                  Icons
-                      .lock_outline_rounded,
-                ),
-                suffixIcon: IconButton(
-                  onPressed: () {
-                    setState(() {
-                      _firebasePasswordObscure =
-                          !_firebasePasswordObscure;
-                    });
-                  },
-                  icon: Icon(
-                    _firebasePasswordObscure
-                        ? Icons
-                            .visibility_off
-                        : Icons
-                            .visibility,
+              if (_update?.updateAvailable == true) ...[
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _downloading ? null : _install,
+                    icon: const Icon(Icons.download_rounded, size: 18),
+                    label: Text(
+                      _downloading
+                          ? 'Downloading ${((_progress ?? 0) * 100).toStringAsFixed(0)}%'
+                          : 'Download & Install',
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child:
-                  FilledButton.icon(
-                onPressed:
-                    _savingFirebase
-                        ? null
-                        : _connectFirebase,
-                icon: _savingFirebase
-                    ? const SizedBox(
-                        width: 17,
-                        height: 17,
-                        child:
-                            CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color:
-                              Colors.white,
-                        ),
-                      )
-                    : const Icon(
-                        Icons.link_rounded,
-                      ),
-                label: Text(
-                  _savingFirebase
-                      ? 'Verifying Firebase...'
-                      : 'Connect & Verify Firebase',
-                ),
-              ),
-            ),
-            if (_savedFirebase
-                    ?.isNotEmpty ==
-                true) ...[
-              const SizedBox(height: 10),
-              Row(
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Widget _settingsStyleCard({
+  required IconData icon,
+  required Color iconColor,
+  required String title,
+  required String subtitle,
+  required Widget child,
+  Widget? trailing,
+}) {
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: const Color(0xFF172229),
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: Colors.white.withOpacity(.06)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, color: iconColor, size: 25),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child:
-                        OutlinedButton.icon(
-                      onPressed:
-                          _testingFirebase ||
-                                  _savingFirebase
-                              ? null
-                              : _testFirebase,
-                      icon: _testingFirebase
-                          ? const SizedBox(
-                              width: 15,
-                              height: 15,
-                              child:
-                                  CircularProgressIndicator(
-                                strokeWidth:
-                                    2,
-                              ),
-                            )
-                          : const Icon(
-                              Icons
-                                  .verified_rounded,
-                            ),
-                      label: Text(
-                        _testingFirebase
-                            ? 'Testing...'
-                            : 'Test Connection',
-                      ),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(
-                    width: 10,
-                  ),
-                  Expanded(
-                    child:
-                        OutlinedButton.icon(
-                      onPressed:
-                          _disconnectingFirebase
-                              ? null
-                              : _disconnectFirebase,
-                      icon: const Icon(
-                        Icons
-                            .link_off_rounded,
-                      ),
-                      label: Text(
-                        _disconnectingFirebase
-                            ? 'Removing...'
-                            : 'Disconnect',
-                      ),
-                    ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Colors.white38, fontSize: 10),
                   ),
                 ],
               ),
-            ],
+            ),
+            if (trailing != null) trailing,
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _cloudCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(
-                  Icons.cloud_rounded,
-                  color:
-                      Color(0xFF4DA3FF),
-                ),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text(
-                    'Google Cloud Console',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight:
-                          FontWeight.w900,
-                    ),
-                  ),
-                ),
-                Text(
-                  _savedCloud?.isNotEmpty ==
-                          true
-                      ? 'SAVED'
-                      : 'NOT SAVED',
-                  style: TextStyle(
-                    color:
-                        _savedCloud
-                                    ?.isNotEmpty ==
-                                true
-                            ? const Color(
-                                0xFF00D9A5,
-                              )
-                            : Colors
-                                .orangeAccent,
-                    fontSize: 10,
-                    fontWeight:
-                        FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'School ka own Google Cloud Console project link yahan locally save karein.',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 11,
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _cloud,
-              decoration:
-                  const InputDecoration(
-                labelText:
-                    'https://console.cloud.google.com/...',
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed:
-                    _savingCloud
-                        ? null
-                        : _saveCloud,
-                icon: const Icon(
-                  Icons.save_rounded,
-                ),
-                label: Text(
-                  _savingCloud
-                      ? 'Saving...'
-                      : 'Save Google Cloud Link',
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+        const SizedBox(height: 14),
+        child,
+      ],
+    ),
+  );
 }
