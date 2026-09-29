@@ -86,16 +86,57 @@ if timer_call in text:
     )
 
 # ============================================================
-# FIX WINDOWS DRAWER / GREY LEFT OVERLAY BEHAVIOUR
+# WINDOWS ADMIN NAVIGATION
+#
+# Do NOT use Flutter Scaffold.drawer on Windows.
+# On some Windows runs the Drawer route can appear as a blank grey panel.
+# Website source is untouched; only generated Windows source changes.
 # ============================================================
 replace_once(
     """      drawer: _buildAdminDrawer(),
       appBar: AppBar(""",
-    """      drawer: _buildAdminDrawer(),
-      drawerEnableOpenDragGesture: false,
-      drawerScrimColor: Colors.black.withOpacity(0.62),
-      appBar: AppBar(""",
-    'Admin drawer scaffold',
+    """      appBar: AppBar(""",
+    'Remove native Windows Scaffold drawer',
+)
+
+replace_once(
+    """                onTap: () => _adminScaffoldKey.currentState?.openDrawer(),""",
+    """                onTap: () {
+                  showGeneralDialog<void>(
+                    context: context,
+                    barrierDismissible: true,
+                    barrierLabel: 'Admin navigation',
+                    barrierColor: Colors.black.withOpacity(0.62),
+                    transitionDuration: const Duration(milliseconds: 140),
+                    pageBuilder: (
+                      dialogContext,
+                      animation,
+                      secondaryAnimation,
+                    ) {
+                      return SafeArea(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: _buildAdminDrawer(),
+                        ),
+                      );
+                    },
+                    transitionBuilder: (
+                      dialogContext,
+                      animation,
+                      secondaryAnimation,
+                      child,
+                    ) {
+                      return FadeTransition(
+                        opacity: CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOut,
+                        ),
+                        child: child,
+                      );
+                    },
+                  );
+                },""",
+    'Windows admin navigation modal',
 )
 
 # ============================================================
@@ -309,6 +350,9 @@ checks = {
     'app update card': 'const WindowsAppUpdateCard()' in text,
     'Firebase settings panel': 'const WindowsSettingsPanel()' in text,
     'Google Drive live LED': 'WindowsServiceType.googleDrive' in text,
+    'native Windows Scaffold drawer removed': 'drawer: _buildAdminDrawer()' not in text,
+    'Windows admin navigation modal': "barrierLabel: 'Admin navigation'" in text,
+    'old openDrawer call removed': 'currentState?.openDrawer()' not in text,
     'Google Cloud box absent in generated injection': 'Google Cloud Console' not in text,
     'Admin dashboard retained': 'class AdminDashboardScreen' in text,
     'School Settings retained': 'class SchoolSettingsScreen' in text,
