@@ -1,7 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 const String windowsAppVersion = String.fromEnvironment(
@@ -41,6 +40,11 @@ class WindowsUpdateCheckResult {
 
 class WindowsUpdateManager {
   WindowsUpdateManager._();
+
+  static const String _githubOwner = 'cscticket01-hash';
+  static const String _githubRepo = 'Saarthi_Ai';
+  static const String _windowsReleaseTagPrefix = 'windows-v';
+  static const String _windowsInstallerPrefix = 'Vidya_Saarthi_Setup_';
 
   static const String _tempInstallerPrefix = 'Vidya_Saarthi_Update_';
   static const String _tempInstallerSuffix = '.exe';
@@ -135,72 +139,145 @@ for (\$i = 0; \$i -lt 30; \$i++) {
     return 0;
   }
 
-  static Future<WindowsUpdateCheckResult> checkForUpdate() async {
-    if (FirebaseAuth.instance.currentUser == null) {
-      return const WindowsUpdateCheckResult(
-        message: 'Update check ke liye Admin login required hai.',
+  static Future<Map<String, dynamic>> _fetchLatestGitHubRelease() async {
+    HttpClient? client;
+
+    try {
+      client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 12);
+
+      final uri = Uri.https(
+        'api.github.com',
+        '/repos/$_githubOwner/$_githubRepo/releases/latest',
       );
+
+      final request = await client.getUrl(uri);
+      request.headers.set(
+        HttpHeaders.userAgentHeader,
+        'Vidya-Saarthi-Windows/$windowsAppVersion',
+      );
+      request.headers.set(
+        HttpHeaders.acceptHeader,
+        'application/vnd.github+json',
+      );
+      request.headers.set(
+        'X-GitHub-Api-Version',
+        '2022-11-28',
+      );
+
+      final response = await request.close().timeout(
+        const Duration(seconds: 15),
+      );
+
+      final body = await utf8.decoder.bind(response).join();
+
+      if (response.statusCode == 404) {
+        throw const HttpException(
+          'GitHub latest Windows release nahi mila. '
+          'Repository/release public hona chahiye.',
+        );
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(
+          'GitHub update check failed: HTTP ${response.statusCode}',
+        );
+      }
+
+      final decoded = jsonDecode(body);
+      if (decoded is! Map) {
+        throw const FormatException(
+          'GitHub release response invalid hai.',
+        );
+      }
+
+      return Map<String, dynamic>.from(decoded);
+    } finally {
+      client?.close(force: true);
     }
+  }
 
-    final doc = await FirebaseFirestore.instance
-        .collection('app_config')
-        .doc('windows_update')
-        .get()
-        .timeout(const Duration(seconds: 10));
+  static Future<WindowsUpdateCheckResult> checkForUpdate() async {
+    final release = await _fetchLatestGitHubRelease();
 
-    if (!doc.exists) {
+    final tag = release['tag_name']?.toString().trim() ?? '';
+    final draft = release['draft'] == true;
+    final prerelease = release['prerelease'] == true;
+
+    if (draft || prerelease) {
       return const WindowsUpdateCheckResult(
         configFound: false,
+        message: 'Latest GitHub release production Windows release nahi hai.',
+      );
+    }
+
+    if (!tag.startsWith(_windowsReleaseTagPrefix)) {
+      return WindowsUpdateCheckResult(
+        configFound: false,
         message:
-            'Windows update configuration abhi set nahi hai. '
-            'Firestore: app_config/windows_update',
+            'Latest GitHub release Windows tag nahi hai: '
+            '${tag.isEmpty ? 'missing tag' : tag}',
       );
     }
 
-    final data = doc.data() ?? <String, dynamic>{};
-
-    if (data['enabled'] == false) {
-      return const WindowsUpdateCheckResult(
-        message: 'Windows auto update abhi disabled hai.',
-      );
-    }
-
-    final latest = data['latestVersion']?.toString().trim() ?? '';
-    final minimum = data['minimumVersion']?.toString().trim() ?? '';
-    final downloadUrl = data['downloadUrl']?.toString().trim() ?? '';
-    final releaseNotes = data['releaseNotes']?.toString().trim() ?? '';
-    final configuredForce = data['forceUpdate'] == true;
+    final latest =
+        tag.substring(_windowsReleaseTagPrefix.length).trim();
 
     if (latest.isEmpty) {
       return const WindowsUpdateCheckResult(
-        message: 'Update config me latestVersion missing hai.',
+        configFound: false,
+        message: 'GitHub Windows release version missing hai.',
       );
     }
 
     if (compareVersions(latest, windowsAppVersion) <= 0) {
       return WindowsUpdateCheckResult(
-        message: 'App up to date hai. Installed version $windowsAppVersion.',
+        message:
+            'App up to date hai. Installed version $windowsAppVersion.',
       );
+    }
+
+    String downloadUrl = '';
+
+    final assets = release['assets'];
+    if (assets is List) {
+      for (final rawAsset in assets) {
+        if (rawAsset is! Map) continue;
+
+        final asset = Map<String, dynamic>.from(rawAsset);
+        final name = asset['name']?.toString().trim() ?? '';
+        final url =
+            asset['browser_download_url']?.toString().trim() ?? '';
+
+        if (name.startsWith(_windowsInstallerPrefix) &&
+            name.toLowerCase().endsWith('.exe') &&
+            url.isNotEmpty) {
+          downloadUrl = url;
+          break;
+        }
+      }
     }
 
     if (downloadUrl.isEmpty) {
       return WindowsUpdateCheckResult(
+        configFound: false,
         message:
-            'Version $latest available hai, lekin downloadUrl configure nahi hai.',
+            'Windows v$latest GitHub release mil gaya, '
+            'lekin setup EXE asset nahi mila.',
       );
     }
 
-    final belowMinimum = minimum.isNotEmpty &&
-        compareVersions(windowsAppVersion, minimum) < 0;
+    final releaseNotes =
+        release['body']?.toString().trim() ?? '';
 
     return WindowsUpdateCheckResult(
       message: 'New Windows update available: $latest',
       info: WindowsUpdateInfo(
         latestVersion: latest,
-        minimumVersion: minimum,
+        minimumVersion: '',
         downloadUrl: downloadUrl,
         releaseNotes: releaseNotes,
-        forceUpdate: configuredForce || belowMinimum,
+        forceUpdate: false,
       ),
     );
   }
