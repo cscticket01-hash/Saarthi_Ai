@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'main_dashboard_screen_windows.dart';
@@ -6,6 +8,7 @@ import 'windows_local_auth.dart';
 import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
+import 'windows_sync_engine.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,12 +16,14 @@ Future<void> main() async {
   await WindowsLocalStorage.initialize();
   await WindowsLocalSession.initialize();
   await FirebaseAuth.instance.bootstrapLocalUser();
+  await WindowsSyncEngine.instance.initialize();
 
   if (WindowsLocalSession.loggedOut) {
     await FirebaseAuth.instance.signOut();
   }
 
-  windows_html.setSchoolStorageNamespace('local');
+  // WindowsSyncEngine has already selected the connection-scoped
+  // storage namespace. Never force all schools back into one 'local' bucket.
   runApp(const VidyaSaarthiWindowsApp());
 }
 
