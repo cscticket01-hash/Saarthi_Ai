@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'windows_local_storage.dart';
+import 'windows_service_status.dart';
+
 class Timestamp {
   Timestamp.fromDate(DateTime value)
       : _value = value.toUtc();
@@ -564,23 +567,8 @@ class _LocalJsonDatabase {
 
   Future<void> _writeTail = Future<void>.value();
 
-  File get _file {
-    final base =
-        Platform.environment['APPDATA'] ??
-        Platform.environment['LOCALAPPDATA'];
+  Future<File> _file() => WindowsLocalStorage.databaseFile();
 
-    if (base == null) {
-      throw StateError(
-        'Windows application data folder unavailable.',
-      );
-    }
-
-    return File(
-      '$base${Platform.pathSeparator}'
-      'VidyaSaarthi${Platform.pathSeparator}'
-      'local_database_v1.json',
-    );
-  }
 
   Stream<void> changesFor(
     String collection,
@@ -817,8 +805,13 @@ class _LocalJsonDatabase {
   }
 
   Future<Map<String, dynamic>> _readRoot() async {
+    final file = await _file();
     try {
-      if (!await _file.exists()) {
+      if (!await file.exists()) {
+        WindowsServiceStatus.instance.healthy(
+          WindowsServiceType.localStorage,
+          'Local database ready: ${file.path}',
+        );
         return <String, dynamic>{
           'version': 1,
           'collections': <String, dynamic>{},
@@ -826,43 +819,47 @@ class _LocalJsonDatabase {
       }
 
       final decoded = jsonDecode(
-        await _file.readAsString(),
+        await file.readAsString(),
       );
 
       if (decoded is Map) {
-        final root =
-            Map<String, dynamic>.from(decoded);
-
+        final root = Map<String, dynamic>.from(decoded);
         root.putIfAbsent(
           'collections',
           () => <String, dynamic>{},
         );
-
+        WindowsServiceStatus.instance.healthy(
+          WindowsServiceType.localStorage,
+          'Local database read OK: ${file.path}',
+        );
         return root;
       }
-    } catch (_) {
-      final backup = File('${_file.path}.bak');
+      throw const FormatException('Local database root invalid hai.');
+    } catch (primaryError) {
+      WindowsServiceStatus.instance.unhealthy(
+        WindowsServiceType.localStorage,
+        'Local database read problem: $primaryError',
+      );
 
+      final backup = File('${file.path}.bak');
       try {
         if (await backup.exists()) {
           final decoded = jsonDecode(
             await backup.readAsString(),
           );
-
           if (decoded is Map) {
-            return Map<String, dynamic>.from(
-              decoded,
-            );
+            return Map<String, dynamic>.from(decoded);
           }
         }
       } catch (_) {}
-    }
 
-    return <String, dynamic>{
-      'version': 1,
-      'collections': <String, dynamic>{},
-    };
+      return <String, dynamic>{
+        'version': 1,
+        'collections': <String, dynamic>{},
+      };
+    }
   }
+
 
   Map<String, dynamic> _collections(
     Map<String, dynamic> root,
@@ -879,30 +876,39 @@ class _LocalJsonDatabase {
   Future<void> _writeRoot(
     Map<String, dynamic> root,
   ) async {
-    await _file.parent.create(
-      recursive: true,
-    );
+    final file = await _file();
+    try {
+      await file.parent.create(recursive: true);
 
-    final pending =
-        File('${_file.path}.pending');
-    final backup =
-        File('${_file.path}.bak');
+      final pending = File('${file.path}.pending');
+      final backup = File('${file.path}.bak');
 
-    await pending.writeAsString(
-      jsonEncode(root),
-      flush: true,
-    );
+      await pending.writeAsString(
+        jsonEncode(root),
+        flush: true,
+      );
 
-    if (await _file.exists()) {
-      try {
-        await _file.copy(backup.path);
-      } catch (_) {}
+      if (await file.exists()) {
+        try {
+          await file.copy(backup.path);
+        } catch (_) {}
+        await file.delete();
+      }
 
-      await _file.delete();
+      await pending.rename(file.path);
+      WindowsServiceStatus.instance.healthy(
+        WindowsServiceType.localStorage,
+        'Local database write OK: ${file.path}',
+      );
+    } catch (e) {
+      WindowsServiceStatus.instance.unhealthy(
+        WindowsServiceType.localStorage,
+        'Local database write problem: $e',
+      );
+      rethrow;
     }
-
-    await pending.rename(_file.path);
   }
+
 }
 
 Map<String, dynamic> _encodeMap(
