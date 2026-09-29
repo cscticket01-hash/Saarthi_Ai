@@ -45,6 +45,7 @@ import 'windows_local_settings.dart';
 import 'windows_service_status.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
+import 'windows_future_modules.dart';
 """
 first_import_end = text.find('\n') + 1
 text = text[:first_import_end] + extra_imports + text[first_import_end:]
@@ -140,6 +141,77 @@ replace_once(
                 },""",
     'Windows admin navigation modal',
 )
+
+# ============================================================
+# WINDOWS-ONLY EXTRA DRAWER MODULES
+# ============================================================
+drawer_start = text.find('  Widget _buildAdminDrawer() {')
+drawer_end = text.find('  @override\n  Widget build(BuildContext context) {', drawer_start)
+if drawer_start == -1 or drawer_end == -1:
+    raise SystemExit('Windows drawer boundaries missing')
+
+drawer_section = text[drawer_start:drawer_end]
+
+drawer_old = """            _adminDrawerItem(
+              icon: Icons.school_rounded,
+              title: 'Teachers',
+              subtitle: 'Directory, profiles & schedules',
+              color: Colors.purpleAccent,
+              onTap: () => _openAdminDrawerPage(const TeachersDirectoryScreen()),
+            ),
+            const Spacer(),
+"""
+
+drawer_new = """            _adminDrawerItem(
+              icon: Icons.school_rounded,
+              title: 'Teachers',
+              subtitle: 'Directory, profiles & schedules',
+              color: Colors.purpleAccent,
+              onTap: () => _openAdminDrawerPage(const TeachersDirectoryScreen()),
+            ),
+            _adminDrawerItem(
+              icon: Icons.account_balance_wallet_rounded,
+              title: 'School Expenses',
+              subtitle: 'Expense entry & reports • Live tomorrow',
+              color: Colors.amberAccent,
+              onTap: () => _openAdminDrawerPage(
+                const WindowsSchoolExpensesScreen(),
+              ),
+            ),
+            _adminDrawerItem(
+              icon: Icons.fact_check_rounded,
+              title: 'Attendance',
+              subtitle: 'Student & teacher attendance • Live tomorrow',
+              color: const Color(0xFF69C2FF),
+              onTap: () => _openAdminDrawerPage(
+                const WindowsAttendanceScreen(),
+              ),
+            ),
+            _adminDrawerItem(
+              icon: Icons.dashboard_customize_rounded,
+              title: 'Templates',
+              subtitle: 'ID cards, report cards & receipts',
+              color: const Color(0xFFCE93D8),
+              onTap: () => _openAdminDrawerPage(
+                const WindowsTemplatesScreen(),
+              ),
+            ),
+            const SizedBox(height: 16),
+"""
+if drawer_old not in drawer_section:
+    raise SystemExit('Windows extra drawer items anchor missing')
+drawer_section = drawer_section.replace(drawer_old, drawer_new, 1)
+
+old_column = """      child: SafeArea(
+        child: Column(
+          children: ["""
+new_list = """      child: SafeArea(
+        child: ListView(
+          children: ["""
+if old_column not in drawer_section:
+    raise SystemExit('Windows drawer scroll anchor missing')
+drawer_section = drawer_section.replace(old_column, new_list, 1)
+text = text[:drawer_start] + drawer_section + text[drawer_end:]
 
 # ============================================================
 # LOCAL LOGOUT - Firebase connection is NOT removed.
@@ -389,6 +461,35 @@ advanced_section = advanced_section.replace(
 text = text[:advanced_state_start] + advanced_section + text[drive_dialog_start:]
 
 # ============================================================
+# GOOGLE DRIVE UNLINK PASSWORD RELIABILITY (WINDOWS ONLY)
+# Use secure Local Admin password directly instead of a stale currentUser.
+# ============================================================
+drive_security_start = text.find('class _DriveUnlinkSecurityDialogState')
+drive_security_end = text.find('\nclass ', drive_security_start + 10)
+if drive_security_start == -1:
+    raise SystemExit('Drive unlink security dialog missing')
+if drive_security_end == -1:
+    drive_security_end = len(text)
+
+drive_security = text[drive_security_start:drive_security_end]
+old_drive_verify = """      final user = FirebaseAuth.instance.currentUser;
+      final email = user?.email?.trim() ?? '';
+      if (user == null || email.isEmpty) {
+        throw Exception('Admin unavailable');
+      }
+      await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(email: email, password: pass),
+      );"""
+new_drive_verify = """      await WindowsLocalSecurity.initialize();
+      if (!WindowsLocalSecurity.verifyPassword(pass)) {
+        throw Exception('Invalid Local Admin password');
+      }"""
+if old_drive_verify not in drive_security:
+    raise SystemExit('Drive unlink password verify anchor missing')
+drive_security = drive_security.replace(old_drive_verify, new_drive_verify, 1)
+text = text[:drive_security_start] + drive_security + text[drive_security_end:]
+
+# ============================================================
 # ADVANCED SETTINGS
 # Existing Google Drive stays. Add live LED and Windows Local/Firebase panel.
 # Google Cloud separate box is intentionally absent.
@@ -497,6 +598,11 @@ checks = {
     'Google Drive live LED': 'WindowsServiceType.googleDrive' in text,
     'Google save uses isolated engine': 'WindowsSyncEngine.instance.changeGoogleConnection' in text,
     'Google unlink uses isolated engine': 'WindowsSyncEngine.instance.disconnectGoogle' in text,
+    'Google unlink Local Admin verification': 'WindowsLocalSecurity.verifyPassword(pass)' in text,
+    'School Expenses drawer': 'const WindowsSchoolExpensesScreen()' in text,
+    'Attendance drawer': 'const WindowsAttendanceScreen()' in text,
+    'Templates drawer': 'const WindowsTemplatesScreen()' in text,
+    'Future modules import': "import 'windows_future_modules.dart';" in text,
     'native Windows Scaffold drawer removed': 'drawer: _buildAdminDrawer()' not in text,
     'Windows admin navigation modal': "barrierLabel: 'Admin navigation'" in text,
     'old openDrawer call removed': 'currentState?.openDrawer()' not in text,
