@@ -10,6 +10,7 @@ import 'main_dashboard_screen_windows.dart';
 import 'windows_html_shim.dart' as windows_html;
 import 'windows_update_manager.dart';
 import 'windows_firebase_connection.dart';
+import 'windows_offline_home.dart';
 
 const String _windowsAppVersion = String.fromEnvironment(
   'APP_VERSION',
@@ -64,7 +65,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
         );
       },
       home: WindowsFirebaseConnection.current == null
-          ? const WindowsFirebaseSetupScreen()
+          ? const WindowsOfflineHomeScreen()
           : const WindowsAdminLoginScreen(),
     );
   }
