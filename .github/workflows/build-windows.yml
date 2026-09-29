@@ -13,7 +13,7 @@ on:
       - '.github/workflows/build-windows.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -48,8 +48,13 @@ jobs:
             "lib\windows_local_firestore.dart",
             "lib\windows_local_auth.dart",
             "lib\windows_local_settings.dart",
+            "lib\windows_local_storage.dart",
+            "lib\windows_local_session.dart",
+            "lib\windows_service_status.dart",
+            "lib\windows_backend_bridge.dart",
             "lib\windows_settings_panel.dart",
             "lib\windows_firebase_sync.dart",
+            "lib\windows_update_service.dart",
             "scripts\windows_admin_patch.py"
           )
 
@@ -68,8 +73,8 @@ jobs:
         run: |
           $pubspec = Get-Content "pubspec.yaml" -Raw
 
-          # These packages are not used by the generated local-first
-          # Windows source. Remove them only inside this CI runner.
+          # Website/Android pubspec repository me untouched rahega.
+          # Windows runner me Firebase Flutter packages ki jagah local/REST adapters use hote hain.
           $removePackages = @(
             "agora_rtc_engine",
             "mobile_scanner",
@@ -84,9 +89,6 @@ jobs:
           }
 
           Set-Content -Path "pubspec.yaml" -Value $pubspec -Encoding UTF8
-
-          Write-Host "===== WINDOWS LOCAL PUBSPEC ====="
-          Select-String -Path "pubspec.yaml" -Pattern "firebase_core:|firebase_auth:|cloud_firestore:|agora_rtc_engine:|mobile_scanner:|flutter_secure_storage:|printing:"
 
       - name: Ensure Windows Secure Storage Dependency
         shell: powershell
@@ -107,11 +109,11 @@ jobs:
         id: app_version
         shell: powershell
         run: |
-          $version = "2.0.${{ github.run_number }}"
+          $version = "2.1.${{ github.run_number }}"
           "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Windows local app version: $version"
+          Write-Host "Windows app version: $version"
 
-      - name: Build Windows Local App
+      - name: Build Windows App
         shell: powershell
         run: |
           flutter build windows `
@@ -124,17 +126,9 @@ jobs:
         shell: powershell
         run: |
           $release = "build\windows\x64\runner\Release"
-
-          if (!(Test-Path $release)) {
-            throw "Windows Release folder missing"
-          }
-
+          if (!(Test-Path $release)) { throw "Windows Release folder missing" }
           $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
-
-          if (-not $exe) {
-            throw "Windows EXE not found"
-          }
-
+          if (-not $exe) { throw "Windows EXE not found" }
           Write-Host "Built EXE: $($exe.FullName)"
 
       - name: Create Portable ZIP
@@ -142,23 +136,16 @@ jobs:
         run: |
           $release = "build\windows\x64\runner\Release"
           $zip = "build\Vidya_Saarthi_Windows_Local_${{ steps.app_version.outputs.version }}.zip"
-
-          if (Test-Path $zip) {
-            Remove-Item $zip -Force
-          }
-
+          if (Test-Path $zip) { Remove-Item $zip -Force }
           Compress-Archive `
             -Path "$release\*" `
             -DestinationPath $zip `
             -CompressionLevel Optimal
 
-          Write-Host "Portable ZIP: $zip"
-
       - name: Install Inno Setup
         shell: powershell
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-
           if (!(Test-Path $iscc)) {
             choco install innosetup -y --no-progress
           }
@@ -168,10 +155,7 @@ jobs:
         run: |
           $release = (Resolve-Path "build\windows\x64\runner\Release").Path
           $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
-
-          if (-not $exe) {
-            throw "EXE not found for installer"
-          }
+          if (-not $exe) { throw "EXE not found for installer" }
 
           $outDir = (Resolve-Path "build").Path
           $version = "${{ steps.app_version.outputs.version }}"
@@ -205,27 +189,34 @@ jobs:
           Filename: "{app}\$($exe.Name)"; Description: "Launch Vidya Saarthi"; Flags: nowait postinstall skipifsilent
           "@
 
-          $iss | Out-File `
-            -FilePath "build\vidya_saarthi_windows.iss" `
-            -Encoding utf8
+          $iss | Out-File -FilePath "build\vidya_saarthi_windows.iss" -Encoding utf8
 
       - name: Build Setup EXE
         shell: powershell
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-
           & $iscc "build\vidya_saarthi_windows.iss"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Inno Setup failed"
-          }
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Vidya-Saarthi-Windows-Local-${{ steps.app_version.outputs.version }}
+          name: Vidya-Saarthi-Windows-${{ steps.app_version.outputs.version }}
           path: |
             build/Vidya_Saarthi_Windows_Local_${{ steps.app_version.outputs.version }}.zip
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish Windows Update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-v${{ steps.app_version.outputs.version }}
+          name: Vidya Saarthi Windows ${{ steps.app_version.outputs.version }}
+          body: |
+            Vidya Saarthi Windows master app update.
+            Local school data is stored separately and is not removed by app updates.
+          files: |
+            build/Vidya_Saarthi_Windows_Local_${{ steps.app_version.outputs.version }}.zip
+            build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
+          make_latest: false
