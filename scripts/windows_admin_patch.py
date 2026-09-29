@@ -45,7 +45,6 @@ import 'windows_local_settings.dart';
 import 'windows_service_status.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
-import 'windows_future_modules.dart';
 """
 first_import_end = text.find('\n') + 1
 text = text[:first_import_end] + extra_imports + text[first_import_end:]
@@ -580,6 +579,626 @@ text = text.replace(
 )
 
 # ============================================================
+# WINDOWS-ONLY FUTURE MODULES
+# Keep these screens inside generated main_dashboard_screen_windows.dart
+# so no separate windows_future_modules.dart is needed.
+# ============================================================
+future_modules_code = r"""
+class WindowsSchoolExpensesScreen extends StatelessWidget {
+  const WindowsSchoolExpensesScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => const _ComingSoonModule(
+        title: 'School Expenses',
+        subtitle: 'Daily expenses, categories, vouchers and reports',
+        icon: Icons.account_balance_wallet_rounded,
+        accent: Color(0xFFFFB74D),
+        cards: <_ModuleCardData>[
+          _ModuleCardData(Icons.add_card_rounded, 'Add Expense', 'Date, category, amount, paid-to and notes'),
+          _ModuleCardData(Icons.category_rounded, 'Expense Categories', 'Electricity, salary, transport, maintenance and more'),
+          _ModuleCardData(Icons.receipt_long_rounded, 'Voucher & Attachment', 'Keep expense proof with each entry'),
+          _ModuleCardData(Icons.analytics_rounded, 'Expense Reports', 'Daily, monthly and category-wise totals'),
+        ],
+      );
+}
+
+class WindowsAttendanceScreen extends StatelessWidget {
+  const WindowsAttendanceScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => const _ComingSoonModule(
+        title: 'Attendance',
+        subtitle: 'Student and teacher attendance centre',
+        icon: Icons.fact_check_rounded,
+        accent: Color(0xFF69C2FF),
+        cards: <_ModuleCardData>[
+          _ModuleCardData(Icons.groups_rounded, 'Student Attendance', 'Class-wise present, absent and late records'),
+          _ModuleCardData(Icons.badge_rounded, 'Teacher Attendance', 'Teacher entry, exit and attendance history'),
+          _ModuleCardData(Icons.qr_code_scanner_rounded, 'Quick Scan', 'Future QR / UID attendance workflow'),
+          _ModuleCardData(Icons.insights_rounded, 'Attendance Reports', 'Daily, monthly and individual reports'),
+        ],
+      );
+}
+
+class _ModuleCardData {
+  const _ModuleCardData(this.icon, this.title, this.subtitle);
+  final IconData icon;
+  final String title;
+  final String subtitle;
+}
+
+class _ComingSoonModule extends StatelessWidget {
+  const _ComingSoonModule({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.accent,
+    required this.cards,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color accent;
+  final List<_ModuleCardData> cards;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(title: Text(title), backgroundColor: const Color(0xFF111B21)),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(22),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1180),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF172229),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: accent.withOpacity(.28)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 58,
+                        height: 58,
+                        decoration: BoxDecoration(
+                          color: accent.withOpacity(.12),
+                          borderRadius: BorderRadius.circular(17),
+                        ),
+                        child: Icon(icon, color: accent, size: 28),
+                      ),
+                      const SizedBox(width: 15),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                            const SizedBox(height: 4),
+                            Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11.5)),
+                          ],
+                        ),
+                      ),
+                      const _LiveTomorrowBadge(),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final w = constraints.maxWidth >= 760 ? (constraints.maxWidth - 14) / 2 : constraints.maxWidth;
+                    return Wrap(
+                      spacing: 14,
+                      runSpacing: 14,
+                      children: cards
+                          .map((item) => SizedBox(
+                                width: w,
+                                child: Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF111B21),
+                                    borderRadius: BorderRadius.circular(17),
+                                    border: Border.all(color: Colors.white.withOpacity(.06)),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(item.icon, color: accent, size: 25),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(item.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13)),
+                                            const SizedBox(height: 3),
+                                            Text(item.subtitle, style: const TextStyle(color: Colors.white38, fontSize: 10.5, height: 1.35)),
+                                          ],
+                                        ),
+                                      ),
+                                      const Icon(Icons.lock_clock_rounded, color: Colors.white24),
+                                    ],
+                                  ),
+                                ),
+                              ))
+                          .toList(),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveTomorrowBadge extends StatelessWidget {
+  const _LiveTomorrowBadge();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.orangeAccent.withOpacity(.10),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.orangeAccent.withOpacity(.28)),
+        ),
+        child: const Text('LIVE TOMORROW', style: TextStyle(color: Colors.orangeAccent, fontSize: 9.5, fontWeight: FontWeight.w900)),
+      );
+}
+
+enum _CardOrientation { portrait, landscape }
+
+class _TemplateSpec {
+  const _TemplateSpec(this.code, this.name, this.orientation, this.primary, this.accent, this.variant);
+  final String code;
+  final String name;
+  final _CardOrientation orientation;
+  final Color primary;
+  final Color accent;
+  final int variant;
+}
+
+class WindowsTemplatesScreen extends StatefulWidget {
+  const WindowsTemplatesScreen({super.key});
+
+  @override
+  State<WindowsTemplatesScreen> createState() => _WindowsTemplatesScreenState();
+}
+
+class _WindowsTemplatesScreenState extends State<WindowsTemplatesScreen> {
+  int section = 0;
+
+  static const templates = <_TemplateSpec>[
+    _TemplateSpec('P1', 'Emerald Scholar', _CardOrientation.portrait, Color(0xFF075E54), Color(0xFF00D9A5), 0),
+    _TemplateSpec('P2', 'Royal Academy', _CardOrientation.portrait, Color(0xFF172554), Color(0xFFFFC857), 1),
+    _TemplateSpec('P3', 'Fresh Campus', _CardOrientation.portrait, Color(0xFF176B3A), Color(0xFF7CFF9D), 2),
+    _TemplateSpec('P4', 'Classic Maroon', _CardOrientation.portrait, Color(0xFF6B1D2B), Color(0xFFFFD7A8), 3),
+    _TemplateSpec('L1', 'Teal Horizon', _CardOrientation.landscape, Color(0xFF004D4D), Color(0xFF00D9A5), 4),
+    _TemplateSpec('L2', 'Midnight Tech', _CardOrientation.landscape, Color(0xFF111A3A), Color(0xFF5DE1FF), 5),
+    _TemplateSpec('L3', 'Purple Motion', _CardOrientation.landscape, Color(0xFF4B286D), Color(0xFFCE93D8), 6),
+    _TemplateSpec('L4', 'Orange Slate', _CardOrientation.landscape, Color(0xFF2B2F33), Color(0xFFFF9E40), 7),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(title: const Text('Templates'), backgroundColor: const Color(0xFF111B21)),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(22),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1380),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _header(),
+                const SizedBox(height: 18),
+                _categories(),
+                const SizedBox(height: 22),
+                if (section == 0) _idCards() else _futureSection(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _header() => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(22),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(colors: [Color(0xFF123D38), Color(0xFF172229)]),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: const Color(0xFF00D9A5).withOpacity(.20)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.dashboard_customize_rounded, color: Color(0xFF00D9A5), size: 34),
+            SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('School Print Templates', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                  SizedBox(height: 4),
+                  Text('ID cards, report cards and receipts in one library.', style: TextStyle(color: Colors.white54, fontSize: 11.5)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Widget _categories() {
+    const data = [
+      (Icons.badge_rounded, 'ID Card Templates', '8 templates ready now'),
+      (Icons.description_rounded, 'Report Card Templates', 'Live tomorrow'),
+      (Icons.receipt_long_rounded, 'Receipt Templates', 'Live tomorrow'),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth >= 900 ? (constraints.maxWidth - 24) / 3 : constraints.maxWidth;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: List.generate(data.length, (i) {
+            final item = data[i];
+            final selected = section == i;
+            return SizedBox(
+              width: w,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(17),
+                onTap: () => setState(() => section = i),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: selected ? const Color(0xFF15322F) : const Color(0xFF111B21),
+                    borderRadius: BorderRadius.circular(17),
+                    border: Border.all(color: selected ? const Color(0xFF00D9A5).withOpacity(.35) : Colors.white.withOpacity(.06)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(item.$1, color: selected ? const Color(0xFF00D9A5) : Colors.white38),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.$2, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12.5)),
+                            Text(item.$3, style: const TextStyle(color: Colors.white38, fontSize: 9.5)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+
+  Widget _idCards() {
+    final portraits = templates.where((e) => e.orientation == _CardOrientation.portrait).toList();
+    final landscapes = templates.where((e) => e.orientation == _CardOrientation.landscape).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _title('Portrait ID Cards', '4 vertical templates'),
+        const SizedBox(height: 12),
+        _templateWrap(portraits, portrait: true),
+        const SizedBox(height: 28),
+        _title('Landscape ID Cards', '4 horizontal templates'),
+        const SizedBox(height: 12),
+        _templateWrap(landscapes, portrait: false),
+      ],
+    );
+  }
+
+  Widget _title(String title, String subtitle) => Row(
+        children: [
+          const Icon(Icons.auto_awesome_rounded, color: Color(0xFF00D9A5), size: 19),
+          const SizedBox(width: 8),
+          Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16)),
+          const SizedBox(width: 8),
+          Text(subtitle, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+        ],
+      );
+
+  Widget _templateWrap(List<_TemplateSpec> list, {required bool portrait}) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = portrait
+            ? (constraints.maxWidth >= 1180 ? (constraints.maxWidth - 42) / 4 : constraints.maxWidth >= 620 ? (constraints.maxWidth - 14) / 2 : constraints.maxWidth)
+            : (constraints.maxWidth >= 900 ? (constraints.maxWidth - 14) / 2 : constraints.maxWidth);
+        return Wrap(
+          spacing: 14,
+          runSpacing: 14,
+          children: list.map((spec) => SizedBox(width: w, child: _TemplateTile(spec: spec, onPreview: () => _preview(spec)))).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _futureSection() => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(28),
+        decoration: BoxDecoration(
+          color: const Color(0xFF111B21),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white.withOpacity(.06)),
+        ),
+        child: Column(
+          children: [
+            Icon(section == 1 ? Icons.description_rounded : Icons.receipt_long_rounded, color: Colors.orangeAccent, size: 46),
+            const SizedBox(height: 10),
+            Text(section == 1 ? 'Report Card Templates' : 'Receipt Templates', style: const TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 6),
+            const Text('Section ready hai. Designs next live update me add honge.', style: TextStyle(color: Colors.white54, fontSize: 11)),
+            const SizedBox(height: 12),
+            const _LiveTomorrowBadge(),
+          ],
+        ),
+      );
+
+  Future<void> _preview(_TemplateSpec spec) => showDialog<void>(
+        context: context,
+        builder: (ctx) {
+          final portrait = spec.orientation == _CardOrientation.portrait;
+          return Dialog(
+            backgroundColor: const Color(0xFF0B141A),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(child: Text('${spec.code} • ${spec.name}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 17))),
+                      IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close_rounded, color: Colors.white54)),
+                    ],
+                  ),
+                  SizedBox(
+                    width: portrait ? 350 : 620,
+                    child: AspectRatio(aspectRatio: portrait ? .63 : 1.58, child: _IdCard(spec: spec, large: true)),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+}
+
+class _TemplateTile extends StatelessWidget {
+  const _TemplateTile({required this.spec, required this.onPreview});
+  final _TemplateSpec spec;
+  final VoidCallback onPreview;
+
+  @override
+  Widget build(BuildContext context) {
+    final portrait = spec.orientation == _CardOrientation.portrait;
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111B21),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(spec.code, style: TextStyle(color: spec.accent, fontWeight: FontWeight.w900)),
+              const SizedBox(width: 8),
+              Expanded(child: Text(spec.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800))),
+              Text(portrait ? 'PORTRAIT' : 'LANDSCAPE', style: const TextStyle(color: Colors.white30, fontSize: 8, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 11),
+          Center(
+            child: SizedBox(
+              width: portrait ? 180 : double.infinity,
+              child: AspectRatio(aspectRatio: portrait ? .63 : 1.58, child: _IdCard(spec: spec)),
+            ),
+          ),
+          const SizedBox(height: 11),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onPreview,
+              icon: const Icon(Icons.visibility_rounded, size: 17),
+              label: const Text('Preview'),
+              style: OutlinedButton.styleFrom(foregroundColor: spec.accent, side: BorderSide(color: spec.accent.withOpacity(.35))),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IdCard extends StatelessWidget {
+  const _IdCard({required this.spec, this.large = false});
+  final _TemplateSpec spec;
+  final bool large;
+
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+        borderRadius: BorderRadius.circular(large ? 20 : 13),
+        child: Container(
+          color: Colors.white,
+          child: spec.orientation == _CardOrientation.portrait ? _portrait() : _landscape(),
+        ),
+      );
+
+  Widget _header() => Container(
+        padding: EdgeInsets.symmetric(horizontal: large ? 14 : 8, vertical: large ? 10 : 5),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: spec.variant.isEven ? [spec.primary, spec.accent] : [spec.accent, spec.primary],
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: large ? 34 : 21,
+              height: large ? 34 : 21,
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(7)),
+              child: Icon(Icons.school_rounded, color: spec.primary, size: large ? 22 : 14),
+            ),
+            SizedBox(width: large ? 9 : 5),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('SARASWATI VIDYA NIKETAN', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white, fontSize: large ? 12 : 6.8, fontWeight: FontWeight.w900)),
+                  Text('STUDENT IDENTITY CARD • 2026-27', style: TextStyle(color: Colors.white.withOpacity(.82), fontSize: large ? 7.5 : 4.4, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Widget _portrait() => Column(
+        children: [
+          _header(),
+          SizedBox(height: large ? 12 : 6),
+          Container(
+            width: large ? 88 : 50,
+            height: large ? 102 : 58,
+            decoration: BoxDecoration(
+              color: spec.primary.withOpacity(.08),
+              borderRadius: BorderRadius.circular(large ? 14 : 8),
+              border: Border.all(color: spec.primary.withOpacity(.24)),
+            ),
+            child: Icon(Icons.person_rounded, color: spec.primary.withOpacity(.65), size: large ? 58 : 34),
+          ),
+          SizedBox(height: large ? 8 : 4),
+          Text('ANANYA DAS', style: TextStyle(color: spec.primary, fontSize: large ? 15 : 8.2, fontWeight: FontWeight.w900)),
+          Text('Class 8 • Roll 012', style: TextStyle(color: Colors.black54, fontSize: large ? 9 : 5.3, fontWeight: FontWeight.w700)),
+          SizedBox(height: large ? 9 : 4),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: large ? 16 : 8),
+            child: Column(children: [_row('ID No.', 'SVN-8-012'), _row('DOB', '18/08/2013'), _row('Contact', '98XXXXXX12')]),
+          ),
+          const Spacer(),
+          Padding(
+            padding: EdgeInsets.all(large ? 12 : 6),
+            child: Row(
+              children: [
+                _MiniQr(size: large ? 43 : 25, color: spec.primary),
+                SizedBox(width: large ? 8 : 4),
+                Expanded(child: Text('Principal Signature', style: TextStyle(color: Colors.black38, fontSize: large ? 7 : 4.2))),
+              ],
+            ),
+          ),
+        ],
+      );
+
+  Widget _landscape() => Column(
+        children: [
+          _header(),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.all(large ? 13 : 7),
+              child: Row(
+                children: [
+                  Container(
+                    width: large ? 116 : 62,
+                    decoration: BoxDecoration(
+                      color: spec.primary.withOpacity(.07),
+                      borderRadius: BorderRadius.circular(large ? 14 : 8),
+                      border: Border.all(color: spec.primary.withOpacity(.20)),
+                    ),
+                    child: Icon(Icons.person_rounded, color: spec.primary.withOpacity(.65), size: large ? 72 : 38),
+                  ),
+                  SizedBox(width: large ? 14 : 8),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('ANANYA DAS', style: TextStyle(color: spec.primary, fontSize: large ? 18 : 9.5, fontWeight: FontWeight.w900)),
+                        SizedBox(height: large ? 8 : 3),
+                        _row('Class', '8 • Section A'),
+                        _row('Roll', '012'),
+                        _row('Student ID', 'SVN-8-012'),
+                        _row('DOB', '18/08/2013'),
+                      ],
+                    ),
+                  ),
+                  _MiniQr(size: large ? 58 : 32, color: spec.primary),
+                ],
+              ),
+            ),
+          ),
+          Container(height: large ? 8 : 4, color: spec.accent),
+        ],
+      );
+
+  Widget _row(String label, String value) => Padding(
+        padding: EdgeInsets.only(bottom: large ? 4 : 1.5),
+        child: Row(
+          children: [
+            SizedBox(width: large ? 62 : 34, child: Text(label, style: TextStyle(color: Colors.black45, fontSize: large ? 8 : 4.4, fontWeight: FontWeight.w700))),
+            Expanded(child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.black87, fontSize: large ? 8.5 : 4.8, fontWeight: FontWeight.w800))),
+          ],
+        ),
+      );
+}
+
+class _MiniQr extends StatelessWidget {
+  const _MiniQr({required this.size, required this.color});
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(width: size, height: size, child: CustomPaint(painter: _MiniQrPainter(color)));
+}
+
+class _MiniQrPainter extends CustomPainter {
+  const _MiniQrPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const cells = 9;
+    final cell = size.width / cells;
+    final paint = Paint()..color = color;
+    for (var y = 0; y < cells; y++) {
+      for (var x = 0; x < cells; x++) {
+        final finder = (x < 3 && y < 3) || (x >= 6 && y < 3) || (x < 3 && y >= 6);
+        final pattern = ((x * 7 + y * 11 + x * y) % 5) < 2;
+        if (finder || pattern) {
+          canvas.drawRect(Rect.fromLTWH(x * cell, y * cell, cell * .86, cell * .86), paint);
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniQrPainter oldDelegate) => oldDelegate.color != color;
+}
+"""
+
+if 'class WindowsSchoolExpensesScreen' not in text:
+    text += "\n\n" + future_modules_code + "\n"
+
+# ============================================================
 # VALIDATION
 # ============================================================
 checks = {
@@ -602,11 +1221,15 @@ checks = {
     'School Expenses drawer': 'const WindowsSchoolExpensesScreen()' in text,
     'Attendance drawer': 'const WindowsAttendanceScreen()' in text,
     'Templates drawer': 'const WindowsTemplatesScreen()' in text,
-    'Future modules import': "import 'windows_future_modules.dart';" in text,
+    'Future modules embedded': 'class WindowsTemplatesScreen' in text,
     'native Windows Scaffold drawer removed': 'drawer: _buildAdminDrawer()' not in text,
     'Windows admin navigation modal': "barrierLabel: 'Admin navigation'" in text,
     'old openDrawer call removed': 'currentState?.openDrawer()' not in text,
     'Google Cloud box absent in generated injection': 'Google Cloud Console' not in text,
+    'School Expenses screen embedded': 'class WindowsSchoolExpensesScreen' in text,
+    'Attendance screen embedded': 'class WindowsAttendanceScreen' in text,
+    'Templates screen embedded': 'class WindowsTemplatesScreen' in text,
+    '8 ID templates embedded': all(code in text for code in ["'P1'", "'P2'", "'P3'", "'P4'", "'L1'", "'L2'", "'L3'", "'L4'"]),
     'Admin dashboard retained': 'class AdminDashboardScreen' in text,
     'School Settings retained': 'class SchoolSettingsScreen' in text,
     'Exam Center retained': 'class ExamCenterScreen' in text,
