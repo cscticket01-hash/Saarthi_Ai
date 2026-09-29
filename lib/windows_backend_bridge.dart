@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -5,11 +6,36 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import 'windows_local_firestore.dart';
+import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_service_status.dart';
 
 class WindowsBackendBridge {
   WindowsBackendBridge._();
+
+  static FutureOr<void> Function()?
+      onRemoteAvailable;
+
+  static const Set<String> _mutatingActions =
+      <String>{
+    'add_student',
+    'edit_student',
+    'delete_student',
+    'change_student_class',
+    'add_teacher',
+    'edit_teacher',
+    'delete_teacher',
+    'update_teacher_schedule',
+    'save_fee_payment',
+    'upload_student_document',
+    'delete_student_document',
+    'save_exam',
+    'save_exam_result',
+    'mark_attendance',
+    'mark_student_attendance',
+    'mark_teacher_attendance',
+    'save_school_profile',
+  };
 
   static Future<http.Response> post(
     Uri url, {
@@ -23,12 +49,42 @@ class WindowsBackendBridge {
       'Google Drive / Apps Script request chal raha hai...',
     );
 
+    // Hard isolation guard: a stale page/profile is never allowed to send a
+    // request to an old school's Apps Script after the active Drive changes.
+    final activeUrl = await WindowsExternalConnections.googleScriptUrl();
+    if (activeUrl.isEmpty || _normalizedUrl(activeUrl) != _normalizedUrl(url.toString())) {
+      status.unhealthy(
+        WindowsServiceType.googleDrive,
+        'Inactive/old Google backend blocked by school isolation.',
+      );
+      return _localFallback(
+        body,
+        remoteError: 'Inactive Google backend blocked',
+      );
+    }
+
+    Object? requestBody = body;
+    try {
+      final decoded = _decodeBody(body);
+      final schoolSyncId = FirebaseFirestore.instance
+              .activeProfileIdentity['schoolSyncId']
+              ?.toString()
+              .trim() ??
+          '';
+      if (schoolSyncId.isNotEmpty) {
+        decoded['_windowsSchoolSyncId'] = schoolSyncId;
+        requestBody = jsonEncode(decoded);
+      }
+    } catch (_) {
+      // Keep the original body; normal validation/fallback will handle it.
+    }
+
     try {
       final response = await http
           .post(
             url,
             headers: headers,
-            body: body,
+            body: requestBody,
             encoding: encoding,
           )
           .timeout(const Duration(seconds: 30));
@@ -37,10 +93,31 @@ class WindowsBackendBridge {
         try {
           final decoded = jsonDecode(response.body);
           if (decoded is Map) {
+            final result = Map<String, dynamic>.from(decoded);
+            final code = result['code']?.toString().trim().toUpperCase() ?? '';
+
+            if (code == 'SCHOOL_SYNC_ID_MISMATCH') {
+              status.unhealthy(
+                WindowsServiceType.googleDrive,
+                'Google backend blocked: School Sync ID mismatch.',
+              );
+              return response;
+            }
+
             status.healthy(
               WindowsServiceType.googleDrive,
               'Google backend actual response OK (${response.statusCode}).',
             );
+
+            final callback = onRemoteAvailable;
+            if (callback != null) {
+              Future<void>.microtask(() async {
+                try {
+                  await callback();
+                } catch (_) {}
+              });
+            }
+
             return response;
           }
         } catch (_) {}
@@ -49,15 +126,22 @@ class WindowsBackendBridge {
           WindowsServiceType.googleDrive,
           'Google backend response JSON invalid hai.',
         );
-        return _localFallback(body, remoteError: 'Invalid JSON response');
+        return _localFallback(requestBody, remoteError: 'Invalid JSON response');
       }
 
       status.unhealthy(
         WindowsServiceType.googleDrive,
         'Google backend HTTP ${response.statusCode}. Local fallback active hai.',
       );
+
+      await _queueFailedMutation(
+        url,
+        headers: headers,
+        body: requestBody,
+      );
+
       return _localFallback(
-        body,
+        requestBody,
         remoteError: 'HTTP ${response.statusCode}',
       );
     } catch (e) {
@@ -65,8 +149,210 @@ class WindowsBackendBridge {
         WindowsServiceType.googleDrive,
         'Google backend unavailable: $e. Local fallback active hai.',
       );
-      return _localFallback(body, remoteError: e.toString());
+
+      await _queueFailedMutation(
+        url,
+        headers: headers,
+        body: requestBody,
+      );
+
+      return _localFallback(requestBody, remoteError: e.toString());
     }
+  }
+
+  static Future<int> pendingMutationCount() async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('_windows_google_outbox')
+        .get();
+    return snapshot.docs.length;
+  }
+
+  static Future<int> flushPending() async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('_windows_google_outbox')
+        .get();
+
+    if (snapshot.docs.isEmpty) {
+      return 0;
+    }
+
+    var completed = 0;
+    final activeUrl = await WindowsExternalConnections.googleScriptUrl();
+
+    final docs = snapshot.docs.toList()
+      ..sort((a, b) {
+        final av = _millis(a.data()['queuedAt']);
+        final bv = _millis(b.data()['queuedAt']);
+        return av.compareTo(bv);
+      });
+
+    for (final queued in docs) {
+      final data = queued.data();
+      final urlText =
+          data['url']?.toString().trim() ?? '';
+      final bodyData = data['body'];
+
+      if (urlText.isEmpty || bodyData is! Map) {
+        await queued.reference.delete();
+        completed++;
+        continue;
+      }
+
+      if (activeUrl.isEmpty ||
+          _normalizedUrl(urlText) != _normalizedUrl(activeUrl)) {
+        // Queue belongs to a different Drive profile. Never replay it into
+        // the currently active school's backend.
+        continue;
+      }
+
+      final headersRaw = data['headers'];
+      final headers = <String, String>{};
+
+      if (headersRaw is Map) {
+        for (final entry in headersRaw.entries) {
+          headers[entry.key.toString()] =
+              entry.value.toString();
+        }
+      }
+
+      try {
+        final response = await http
+            .post(
+              Uri.parse(urlText),
+              headers: headers.isEmpty
+                  ? const {
+                      'Content-Type':
+                          'text/plain;charset=utf-8',
+                    }
+                  : headers,
+              body: jsonEncode(
+                Map<String, dynamic>.from(
+                  bodyData,
+                ),
+              ),
+            )
+            .timeout(
+              const Duration(seconds: 30),
+            );
+
+        if (response.statusCode < 200 ||
+            response.statusCode >= 300) {
+          break;
+        }
+
+        final decoded = jsonDecode(response.body);
+
+        if (decoded is! Map) {
+          break;
+        }
+
+        final result =
+            Map<String, dynamic>.from(decoded);
+
+        final action =
+            data['action']?.toString() ?? '';
+
+        if (!_replayApplied(action, result)) {
+          break;
+        }
+
+        await queued.reference.delete();
+        completed++;
+      } catch (_) {
+        break;
+      }
+    }
+
+    return completed;
+  }
+
+  static Future<void> _queueFailedMutation(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  }) async {
+    Map<String, dynamic> decoded;
+
+    try {
+      decoded = _decodeBody(body);
+    } catch (_) {
+      return;
+    }
+
+    final action =
+        decoded['action']?.toString().trim() ?? '';
+
+    if (!_mutatingActions.contains(action)) {
+      return;
+    }
+
+    final reference = FirebaseFirestore.instance
+        .collection('_windows_google_outbox')
+        .doc();
+
+    await reference.set(
+      <String, dynamic>{
+        'action': action,
+        'url': url.toString(),
+        'headers': headers ??
+            const <String, String>{
+              'Content-Type':
+                  'text/plain;charset=utf-8',
+            },
+        'body': decoded,
+        'queuedAt': FieldValue.serverTimestamp(),
+      },
+    );
+  }
+
+  static bool _replayApplied(
+    String action,
+    Map<String, dynamic> result,
+  ) {
+    if (result['success'] == true) {
+      return true;
+    }
+
+    final code =
+        result['code']?.toString().toUpperCase() ??
+            '';
+    final message =
+        result['message']?.toString().toLowerCase() ??
+            '';
+
+    if (action == 'add_student' &&
+        (code == 'STUDENT_ALREADY_EXISTS' ||
+            message.contains('already exist'))) {
+      return true;
+    }
+
+    if (action.startsWith('delete_') &&
+        (message.contains('nahi mila') ||
+            message.contains('not found') ||
+            message.contains('already deleted'))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  static int _millis(dynamic value) {
+    if (value is Timestamp) {
+      return value.millisecondsSinceEpoch;
+    }
+
+    if (value is DateTime) {
+      return value.millisecondsSinceEpoch;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        0;
   }
 
   static Future<bool> testRemote(Uri url) async {
@@ -201,6 +487,9 @@ class WindowsBackendBridge {
     Map<String, dynamic> body,
   ) async {
     switch (action) {
+      case 'windows_sync_snapshot':
+        return _localSyncSnapshot();
+
       case 'get_school_profile':
         final doc = await FirebaseFirestore.instance
             .collection('school_config')
@@ -348,6 +637,69 @@ class WindowsBackendBridge {
     }
   }
 
+  static Future<Map<String, dynamic>>
+      _localSyncSnapshot() async {
+    Future<List<Map<String, dynamic>>> read(
+      String collection, {
+      String idField = 'id',
+    }) async {
+      final snapshot = await FirebaseFirestore.instance
+          .collection(collection)
+          .get();
+
+      return snapshot.docs.map((doc) {
+        final data =
+            Map<String, dynamic>.from(doc.data());
+        data.putIfAbsent(idField, () => doc.id);
+        return data;
+      }).toList();
+    }
+
+    final profile = await FirebaseFirestore.instance
+        .collection('school_config')
+        .doc('school_profile_cache')
+        .get();
+
+    return <String, dynamic>{
+      'success': true,
+      'windowsLocalFallback': true,
+      'students': await read(
+        'students_directory',
+        idField: 'documentId',
+      ),
+      'teachers': await read(
+        'teachers_directory',
+        idField: 'documentId',
+      ),
+      'feePayments': await read(
+        'fee_payments',
+        idField: 'paymentId',
+      ),
+      'documents': await read(
+        '_local_student_documents',
+        idField: 'documentId',
+      ),
+      'studentAttendance': await read(
+        '_local_student_attendance',
+        idField: 'attendanceId',
+      ),
+      'teacherAttendance': await read(
+        '_local_teacher_attendance',
+        idField: 'attendanceId',
+      ),
+      'exams': await read(
+        '_local_exam_center_exams',
+        idField: 'examId',
+      ),
+      'results': await read(
+        '_local_exam_center_results',
+        idField: 'documentId',
+      ),
+      'schoolProfile':
+          profile.data() ?? <String, dynamic>{},
+    };
+  }
+
   static Future<Map<String, dynamic>> _saveLocalStudentDocument(
     Map<String, dynamic> body,
   ) async {
@@ -365,8 +717,12 @@ class WindowsBackendBridge {
     final safeName = _safeFileName(body['fileName']?.toString() ?? '$documentId.bin');
 
     final root = await WindowsLocalStorage.localFilesDirectory();
+    final profileFolder = Directory(
+      '${root.path}${Platform.pathSeparator}'
+      '${_safeFileName(FirebaseFirestore.instance.activeProfileId)}',
+    );
     final studentFolder = Directory(
-      '${root.path}${Platform.pathSeparator}${_safeFileName(studentId)}',
+      '${profileFolder.path}${Platform.pathSeparator}${_safeFileName(studentId)}',
     );
     await studentFolder.create(recursive: true);
     final file = File(
@@ -444,6 +800,13 @@ class WindowsBackendBridge {
     final encoded = marker >= 0 ? clean.substring(marker + 7) : clean;
     if (encoded.isEmpty) return const <int>[];
     return base64Decode(encoded);
+  }
+
+  static String _normalizedUrl(String input) {
+    final value = input.trim();
+    final uri = Uri.tryParse(value);
+    if (uri == null) return value;
+    return uri.replace(fragment: '').toString();
   }
 
   static String _safeFileName(String input) {
