@@ -41,8 +41,10 @@ replace_once(
 
 extra_imports = """import 'windows_settings_panel.dart';
 import 'windows_local_session.dart';
+import 'windows_local_settings.dart';
 import 'windows_service_status.dart';
 import 'windows_backend_bridge.dart';
+import 'windows_sync_engine.dart';
 """
 first_import_end = text.find('\n') + 1
 text = text[:first_import_end] + extra_imports + text[first_import_end:]
@@ -226,6 +228,78 @@ settings_section = settings_section.replace(
                           'Local Logout',""",
     1,
 )
+
+# The normal Settings page and Advanced Settings must use the SAME global
+# Windows connection selector. Direct local-Firestore connection writes would
+# otherwise write a new Drive URL into the previous school's local profile.
+settings_fetch_old = """      final doc = await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .get();
+
+      if (!mounted) return;
+
+      if (doc.exists) {
+        final data = doc.data() ?? {};
+        setState(() {
+          _linkedGmail = data['email']?.toString();
+          _linkedScriptUrl = data['scriptUrl']?.toString();
+          _gmailController.text = _linkedGmail ?? '';
+          _scriptUrlController.text = _linkedScriptUrl ?? '';
+        });
+      }"""
+settings_fetch_new = """      final data = await WindowsExternalConnections.load();
+
+      if (!mounted) return;
+
+      setState(() {
+        _linkedGmail = data['googleEmail']?.toString();
+        _linkedScriptUrl = data['googleScriptUrl']?.toString();
+        _gmailController.text = _linkedGmail ?? '';
+        _scriptUrlController.text = _linkedScriptUrl ?? '';
+      });"""
+if settings_fetch_old not in settings_section:
+    raise SystemExit('Windows Settings Google load patch point missing')
+settings_section = settings_section.replace(
+    settings_fetch_old,
+    settings_fetch_new,
+    1,
+)
+
+settings_save_old = """      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .set({
+        'email': email,
+        'scriptUrl': scriptUrl,
+        'status': 'connected',
+        'linkedAt': DateTime.now().millisecondsSinceEpoch,
+      });"""
+settings_save_new = """      await WindowsSyncEngine.instance.changeGoogleConnection(
+        email: email,
+        scriptUrl: scriptUrl,
+      );"""
+if settings_save_old not in settings_section:
+    raise SystemExit('Windows Settings Google save patch point missing')
+settings_section = settings_section.replace(
+    settings_save_old,
+    settings_save_new,
+    1,
+)
+
+settings_unlink_old = """      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .delete();"""
+settings_unlink_new = """      await WindowsSyncEngine.instance.disconnectGoogle();"""
+if settings_unlink_old not in settings_section:
+    raise SystemExit('Windows Settings Google unlink patch point missing')
+settings_section = settings_section.replace(
+    settings_unlink_old,
+    settings_unlink_new,
+    1,
+)
+
 text = text[:settings_section_start] + settings_section + text[advanced_class_start:]
 
 # App Update + Local Storage cards directly below Admin Profile / Local Logout.
@@ -244,6 +318,75 @@ settings_cards_add = """                const SizedBox(height: 16),
                 // ADVANCED SETTINGS
 """
 replace_once(settings_cards_anchor, settings_cards_add, 'Settings update/storage cards')
+
+# ============================================================
+# SCHOOL-ISOLATED GOOGLE CONNECTION (ADVANCED SETTINGS)
+# ============================================================
+advanced_state_start = text.find('class _AdvancedSettingsScreenState')
+drive_dialog_start = text.find('class _DriveUnlinkSecurityDialog', advanced_state_start)
+if advanced_state_start == -1 or drive_dialog_start == -1:
+    raise SystemExit('Advanced Settings Google boundaries missing')
+advanced_section = text[advanced_state_start:drive_dialog_start]
+
+advanced_load_old = """      final doc = await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .get();
+      final data = doc.data() ?? <String, dynamic>{};"""
+advanced_load_new = """      final data = await WindowsExternalConnections.load();"""
+if advanced_load_old not in advanced_section:
+    raise SystemExit('Advanced Google load patch point missing')
+advanced_section = advanced_section.replace(
+    advanced_load_old,
+    advanced_load_new,
+    1,
+)
+advanced_section = advanced_section.replace(
+    "_linkedGmail = data['email']?.toString().trim();",
+    "_linkedGmail = data['googleEmail']?.toString().trim();",
+    1,
+)
+advanced_section = advanced_section.replace(
+    "_linkedScript = data['scriptUrl']?.toString().trim();",
+    "_linkedScript = data['googleScriptUrl']?.toString().trim();",
+    1,
+)
+
+advanced_save_old = """      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .set({
+        'email': email,
+        'scriptUrl': url,
+        'status': 'connected',
+        'linkedAt': DateTime.now().millisecondsSinceEpoch,
+      });"""
+advanced_save_new = """      await WindowsSyncEngine.instance.changeGoogleConnection(
+        email: email,
+        scriptUrl: url,
+      );"""
+if advanced_save_old not in advanced_section:
+    raise SystemExit('Advanced Google save patch point missing')
+advanced_section = advanced_section.replace(
+    advanced_save_old,
+    advanced_save_new,
+    1,
+)
+
+advanced_unlink_old = """      await FirebaseFirestore.instance
+          .collection('school_config')
+          .doc('google_drive_account')
+          .delete();"""
+advanced_unlink_new = """      await WindowsSyncEngine.instance.disconnectGoogle();"""
+if advanced_unlink_old not in advanced_section:
+    raise SystemExit('Advanced Google unlink patch point missing')
+advanced_section = advanced_section.replace(
+    advanced_unlink_old,
+    advanced_unlink_new,
+    1,
+)
+
+text = text[:advanced_state_start] + advanced_section + text[drive_dialog_start:]
 
 # ============================================================
 # ADVANCED SETTINGS
@@ -344,12 +487,16 @@ checks = {
     'Windows local Firestore': "import 'windows_local_firestore.dart';" in text,
     'Windows local Auth': "import 'windows_local_auth.dart';" in text,
     'Windows backend bridge': "import 'windows_backend_bridge.dart';" in text,
+    'Windows master sync engine': "import 'windows_sync_engine.dart';" in text,
+    'Windows external connections': "import 'windows_local_settings.dart';" in text,
     'all Google POST calls bridged': 'http.post(' not in text and re.search(r'http\s*\.\s*post\s*\(', text) is None,
     'local logout route': "'/local-login'" in text,
     'local storage card': 'const WindowsLocalStorageCard()' in text,
     'app update card': 'const WindowsAppUpdateCard()' in text,
     'Firebase settings panel': 'const WindowsSettingsPanel()' in text,
     'Google Drive live LED': 'WindowsServiceType.googleDrive' in text,
+    'Google save uses isolated engine': 'WindowsSyncEngine.instance.changeGoogleConnection' in text,
+    'Google unlink uses isolated engine': 'WindowsSyncEngine.instance.disconnectGoogle' in text,
     'native Windows Scaffold drawer removed': 'drawer: _buildAdminDrawer()' not in text,
     'Windows admin navigation modal': "barrierLabel: 'Admin navigation'" in text,
     'old openDrawer call removed': 'currentState?.openDrawer()' not in text,
