@@ -80,14 +80,12 @@ class WindowsBackendBridge {
     }
 
     try {
-      final response = await http
-          .post(
-            url,
-            headers: headers,
-            body: requestBody,
-            encoding: encoding,
-          )
-          .timeout(const Duration(seconds: 30));
+      final response = await _postAppsScriptFollowingRedirect(
+        url,
+        headers: headers,
+        body: requestBody,
+        encoding: encoding,
+      );
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -160,6 +158,48 @@ class WindowsBackendBridge {
     }
   }
 
+  static Future<http.Response> _postAppsScriptFollowingRedirect(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    var response = await http
+        .post(
+          url,
+          headers: headers,
+          body: body,
+          encoding: encoding,
+        )
+        .timeout(const Duration(seconds: 30));
+
+    if (_isRedirect(response.statusCode)) {
+      final location = response.headers['location']?.trim() ?? '';
+
+      if (location.isNotEmpty) {
+        response = await http
+            .get(
+              url.resolve(location),
+              headers: const <String, String>{
+                'Accept': 'application/json',
+                'Cache-Control': 'no-cache',
+              },
+            )
+            .timeout(const Duration(seconds: 30));
+      }
+    }
+
+    return response;
+  }
+
+  static bool _isRedirect(int statusCode) {
+    return statusCode == 301 ||
+        statusCode == 302 ||
+        statusCode == 303 ||
+        statusCode == 307 ||
+        statusCode == 308;
+  }
+
   static Future<int> pendingMutationCount() async {
     final snapshot = await FirebaseFirestore.instance
         .collection('_windows_google_outbox')
@@ -216,24 +256,21 @@ class WindowsBackendBridge {
       }
 
       try {
-        final response = await http
-            .post(
-              Uri.parse(urlText),
-              headers: headers.isEmpty
-                  ? const {
-                      'Content-Type':
-                          'text/plain;charset=utf-8',
-                    }
-                  : headers,
-              body: jsonEncode(
-                Map<String, dynamic>.from(
-                  bodyData,
-                ),
-              ),
-            )
-            .timeout(
-              const Duration(seconds: 30),
-            );
+        final response =
+            await _postAppsScriptFollowingRedirect(
+          Uri.parse(urlText),
+          headers: headers.isEmpty
+              ? const <String, String>{
+                  'Content-Type':
+                      'text/plain;charset=utf-8',
+                }
+              : headers,
+          body: jsonEncode(
+            Map<String, dynamic>.from(
+              bodyData,
+            ),
+          ),
+        );
 
         if (response.statusCode < 200 ||
             response.statusCode >= 300) {
