@@ -161,6 +161,8 @@ class WindowsExternalConnections {
 
   static Future<void> save({
     String? firebaseLink,
+    String? googleScriptUrl,
+    String? googleEmail,
   }) async {
     final existing = await load();
 
@@ -182,6 +184,31 @@ class WindowsExternalConnections {
       }
     }
 
+    if (googleScriptUrl != null) {
+      final value = googleScriptUrl.trim();
+
+      if (value.isEmpty) {
+        existing.remove('googleScriptUrl');
+        existing.remove('googleEmail');
+        existing.remove('googleUpdatedAt');
+      } else {
+        _validateGoogleScriptUrl(value);
+        existing['googleScriptUrl'] = value;
+        if (googleEmail != null) {
+          existing['googleEmail'] = googleEmail.trim();
+        }
+        existing['googleUpdatedAt'] =
+            DateTime.now().millisecondsSinceEpoch;
+      }
+    } else if (googleEmail != null) {
+      final email = googleEmail.trim();
+      if (email.isEmpty) {
+        existing.remove('googleEmail');
+      } else {
+        existing['googleEmail'] = email;
+      }
+    }
+
     await _file.parent.create(recursive: true);
     final pending = File('${_file.path}.pending');
     await pending.writeAsString(jsonEncode(existing), flush: true);
@@ -191,10 +218,37 @@ class WindowsExternalConnections {
     await pending.rename(_file.path);
   }
 
+  static Future<String> googleScriptUrl() async {
+    final data = await load();
+    return data['googleScriptUrl']?.toString().trim() ?? '';
+  }
+
+  static Future<String> googleEmail() async {
+    final data = await load();
+    return data['googleEmail']?.toString().trim() ?? '';
+  }
+
   static Map<String, dynamic> decodeFirebaseLink(
     String input,
   ) {
     return _validateFirebaseLink(input.trim());
+  }
+
+  static void validateGoogleScriptUrl(String input) {
+    _validateGoogleScriptUrl(input.trim());
+  }
+
+  static void _validateGoogleScriptUrl(String value) {
+    final uri = Uri.tryParse(value);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'script.google.com' ||
+        !uri.path.contains('/macros/s/') ||
+        !uri.path.endsWith('/exec')) {
+      throw const FormatException(
+        'Valid Google Apps Script /exec URL daalein.',
+      );
+    }
   }
 
   static Map<String, dynamic> _validateFirebaseLink(
@@ -248,9 +302,9 @@ class WindowsExternalConnections {
       'messagingSenderId',
       'projectId',
     ]) {
-      final value = config[key];
+      final fieldValue = config[key];
 
-      if (value is! String || value.trim().isEmpty) {
+      if (fieldValue is! String || fieldValue.trim().isEmpty) {
         throw FormatException(
           'Firebase config me $key missing hai.',
         );
@@ -267,6 +321,4 @@ class WindowsExternalConnections {
 
     return config;
   }
-
-
 }
