@@ -137,16 +137,8 @@ class FirebaseAuth {
   }
 
   Future<void> signOut() async {
-    // Windows local-first build me app logout se local security credentials
-    // remove nahi hote. Dashboard offline available rehta hai.
-    if (WindowsLocalSecurity.configured) {
-      _currentUser = User(
-        email: WindowsLocalSecurity.adminId,
-        displayName: WindowsLocalSecurity.adminId,
-      );
-    } else {
-      _currentUser = null;
-    }
+    // Session logout only. Local ID/password secure storage me rehte hain.
+    _currentUser = null;
   }
 
   Stream<User?> authStateChanges() async* {
