@@ -280,6 +280,15 @@ class DocumentReference<T> {
     );
   }
 
+  Stream<DocumentSnapshot<T>> snapshots() async* {
+    yield await get();
+
+    await for (final _ in firestore._database
+        .changesFor(collectionPath)) {
+      yield await get();
+    }
+  }
+
   Future<void> set(
     T data, [
     SetOptions? options,
