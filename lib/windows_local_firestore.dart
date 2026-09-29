@@ -6,6 +6,34 @@ import 'dart:math';
 import 'windows_local_storage.dart';
 import 'windows_service_status.dart';
 
+
+typedef WindowsLocalTrackedMutationCallback =
+    FutureOr<void> Function();
+
+class WindowsLocalFirestoreSyncControl {
+  WindowsLocalFirestoreSyncControl._();
+
+  static const Object _zoneKey =
+      #vidyaSaarthiRemoteSyncWrite;
+
+  static WindowsLocalTrackedMutationCallback?
+      onTrackedMutation;
+
+  static bool get trackingEnabled =>
+      Zone.current[_zoneKey] != true;
+
+  static Future<T> runWithoutSyncTracking<T>(
+    Future<T> Function() action,
+  ) {
+    return runZoned<Future<T>>(
+      action,
+      zoneValues: <Object, Object?>{
+        _zoneKey: true,
+      },
+    );
+  }
+}
+
 class Timestamp {
   Timestamp.fromDate(DateTime value)
       : _value = value.toUtc();
@@ -55,6 +83,22 @@ class FirebaseFirestore {
 
   final _LocalJsonDatabase _database =
       _LocalJsonDatabase();
+
+  String get activeProfileId =>
+      _database.activeProfileId;
+
+  Map<String, dynamic> get activeProfileIdentity =>
+      _database.activeProfileIdentity;
+
+  Future<void> switchProfile(
+    String profileId, {
+    Map<String, dynamic>? identity,
+  }) {
+    return _database.switchProfile(
+      profileId,
+      identity: identity,
+    );
+  }
 
   CollectionReference<Map<String, dynamic>> collection(
     String path,
@@ -569,6 +613,56 @@ class _LocalJsonDatabase {
 
   Future<File> _file() => WindowsLocalStorage.databaseFile();
 
+  String _activeProfileId = 'unbound';
+  Map<String, dynamic> _activeIdentity = const <String, dynamic>{};
+
+  String get activeProfileId => _activeProfileId;
+
+  Map<String, dynamic> get activeProfileIdentity =>
+      Map<String, dynamic>.from(_activeIdentity);
+
+  Future<void> switchProfile(
+    String profileId, {
+    Map<String, dynamic>? identity,
+  }) async {
+    final clean = _safeProfileId(profileId);
+    final nextIdentity = identity == null
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(identity);
+
+    if (_activeProfileId == clean &&
+        _jsonStableMap(_activeIdentity) ==
+            _jsonStableMap(nextIdentity)) {
+      return;
+    }
+
+    _activeProfileId = clean;
+    _activeIdentity = nextIdentity;
+
+    // Persist only profile metadata. Existing school data is never copied
+    // between profiles. This is the core cross-school isolation guarantee.
+    final root = await _readRoot();
+    final profiles = _profiles(root);
+    final rawProfile = profiles[clean];
+    final profile = rawProfile is Map
+        ? Map<String, dynamic>.from(rawProfile)
+        : <String, dynamic>{};
+    profile.putIfAbsent('collections', () => <String, dynamic>{});
+    profile['identity'] = _encodeMap(nextIdentity);
+    profile['lastOpenedAt'] = DateTime.now().toUtc().millisecondsSinceEpoch;
+    profiles[clean] = profile;
+    root['profiles'] = profiles;
+    root['activeProfileHint'] = clean;
+    await _writeRoot(root);
+
+    // Every existing StreamBuilder must immediately reload from the new
+    // profile, otherwise the previous school's cards could stay on screen.
+    for (final controller in _signals.values) {
+      if (!controller.isClosed) {
+        controller.add(null);
+      }
+    }
+  }
 
   Stream<void> changesFor(
     String collection,
@@ -695,6 +789,7 @@ class _LocalJsonDatabase {
         final root = await _readRoot();
         final collections = _collections(root);
         final touched = <String>{};
+        var trackedMutation = false;
 
         for (final operation in operations) {
           touched.add(operation.collection);
@@ -767,9 +862,22 @@ class _LocalJsonDatabase {
               docs[operation.documentId] = current;
               break;
           }
+
+          if (WindowsLocalFirestoreSyncControl.trackingEnabled &&
+              _shouldTrackForFirebase(operation.collection)) {
+            _recordFirebaseOutbox(
+              collections,
+              operation,
+              docs,
+            );
+            trackedMutation = true;
+          }
         }
 
-        root['collections'] = collections;
+        _storeCollections(
+          root,
+          collections,
+        );
 
         await _writeRoot(root);
 
@@ -782,6 +890,19 @@ class _LocalJsonDatabase {
           }
         }
 
+        if (trackedMutation) {
+          final callback =
+              WindowsLocalFirestoreSyncControl
+                  .onTrackedMutation;
+          if (callback != null) {
+            Future<void>.microtask(() async {
+              try {
+                await callback();
+              } catch (_) {}
+            });
+          }
+        }
+
         completer.complete();
       } catch (error, stack) {
         completer.completeError(error, stack);
@@ -789,6 +910,67 @@ class _LocalJsonDatabase {
     });
 
     return completer.future;
+  }
+
+  bool _shouldTrackForFirebase(
+    String collection,
+  ) {
+    if (collection.startsWith('_windows_')) {
+      return false;
+    }
+
+    if (collection.startsWith('_local_')) {
+      return false;
+    }
+
+    return true;
+  }
+
+  void _recordFirebaseOutbox(
+    Map<String, dynamic> collections,
+    _WriteOperation operation,
+    Map<String, dynamic> finalDocs,
+  ) {
+    final rawQueue = collections.putIfAbsent(
+      '_windows_firebase_outbox',
+      () => <String, dynamic>{},
+    );
+
+    final queue = Map<String, dynamic>.from(
+      rawQueue as Map,
+    );
+
+    collections['_windows_firebase_outbox'] =
+        queue;
+
+    final key = base64Url
+        .encode(
+          utf8.encode(
+            '${operation.collection}\\n'
+            '${operation.documentId}',
+          ),
+        )
+        .replaceAll('=', '');
+
+    final isDelete =
+        operation.type == _WriteType.delete;
+
+    queue[key] = <String, dynamic>{
+      'collection': operation.collection,
+      'documentId': operation.documentId,
+      'operation': isDelete ? 'delete' : 'set',
+      if (!isDelete &&
+          finalDocs[operation.documentId] is Map)
+        'data': Map<String, dynamic>.from(
+          finalDocs[operation.documentId] as Map,
+        ),
+      'queuedAt': <String, dynamic>{
+        '__vidya_type': 'timestamp',
+        'ms': DateTime.now()
+            .toUtc()
+            .millisecondsSinceEpoch,
+      },
+    };
   }
 
   void _applyFields(
@@ -813,8 +995,8 @@ class _LocalJsonDatabase {
           'Local database ready: ${file.path}',
         );
         return <String, dynamic>{
-          'version': 1,
-          'collections': <String, dynamic>{},
+          'version': 2,
+          'profiles': <String, dynamic>{},
         };
       }
 
@@ -824,10 +1006,7 @@ class _LocalJsonDatabase {
 
       if (decoded is Map) {
         final root = Map<String, dynamic>.from(decoded);
-        root.putIfAbsent(
-          'collections',
-          () => <String, dynamic>{},
-        );
+        _upgradeRootInMemory(root);
         WindowsServiceStatus.instance.healthy(
           WindowsServiceType.localStorage,
           'Local database read OK: ${file.path}',
@@ -848,29 +1027,115 @@ class _LocalJsonDatabase {
             await backup.readAsString(),
           );
           if (decoded is Map) {
-            return Map<String, dynamic>.from(decoded);
+            final root = Map<String, dynamic>.from(decoded);
+            _upgradeRootInMemory(root);
+            return root;
           }
         }
       } catch (_) {}
 
       return <String, dynamic>{
-        'version': 1,
-        'collections': <String, dynamic>{},
+        'version': 2,
+        'profiles': <String, dynamic>{},
       };
     }
   }
 
+  void _upgradeRootInMemory(
+    Map<String, dynamic> root,
+  ) {
+    final profilesRaw = root['profiles'];
+    final profiles = profilesRaw is Map
+        ? Map<String, dynamic>.from(profilesRaw)
+        : <String, dynamic>{};
+
+    // v1 used one global `collections` map. Never attach that old data to a
+    // newly selected school because it may belong to a demo/another school.
+    // Preserve it under a quarantined legacy profile instead of deleting it.
+    final legacyCollections = root['collections'];
+    if (legacyCollections is Map && legacyCollections.isNotEmpty) {
+      profiles.putIfAbsent(
+        'legacy_v1_quarantine',
+        () => <String, dynamic>{
+          'identity': <String, dynamic>{
+            'mode': 'legacy-quarantine',
+            'note': 'Pre-isolation data preserved; never auto-activated.',
+          },
+          'collections': Map<String, dynamic>.from(legacyCollections),
+        },
+      );
+    }
+
+    root.remove('collections');
+    root['version'] = 2;
+    root['profiles'] = profiles;
+  }
+
+  Map<String, dynamic> _profiles(
+    Map<String, dynamic> root,
+  ) {
+    final value = root['profiles'];
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
+    }
+    return <String, dynamic>{};
+  }
 
   Map<String, dynamic> _collections(
     Map<String, dynamic> root,
   ) {
-    final value = root['collections'];
+    final profiles = _profiles(root);
+    final rawProfile = profiles[_activeProfileId];
+    if (rawProfile is! Map) {
+      return <String, dynamic>{};
+    }
 
+    final profile = Map<String, dynamic>.from(rawProfile);
+    final value = profile['collections'];
     if (value is Map) {
       return Map<String, dynamic>.from(value);
     }
-
     return <String, dynamic>{};
+  }
+
+  void _storeCollections(
+    Map<String, dynamic> root,
+    Map<String, dynamic> collections,
+  ) {
+    final profiles = _profiles(root);
+    final rawProfile = profiles[_activeProfileId];
+    final profile = rawProfile is Map
+        ? Map<String, dynamic>.from(rawProfile)
+        : <String, dynamic>{};
+
+    profile['collections'] = collections;
+    profile['identity'] = _encodeMap(_activeIdentity);
+    profile['lastWriteAt'] = DateTime.now().toUtc().millisecondsSinceEpoch;
+    profiles[_activeProfileId] = profile;
+    root['profiles'] = profiles;
+    root['version'] = 2;
+    root['activeProfileHint'] = _activeProfileId;
+  }
+
+  String _safeProfileId(String input) {
+    final value = input.trim();
+    if (value.isEmpty) return 'unbound';
+    return value.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '_');
+  }
+
+  String _jsonStableMap(Map<String, dynamic> value) {
+    dynamic clean(dynamic input) {
+      if (input is Map) {
+        final keys = input.keys.map((e) => e.toString()).toList()..sort();
+        return <String, dynamic>{
+          for (final key in keys) key: clean(input[key]),
+        };
+      }
+      if (input is Iterable) return input.map(clean).toList();
+      return input;
+    }
+
+    return jsonEncode(clean(value));
   }
 
   Future<void> _writeRoot(
