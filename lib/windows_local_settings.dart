@@ -161,15 +161,19 @@ class WindowsExternalConnections {
 
   static Future<void> save({
     String? firebaseLink,
-    String? googleCloudConsoleLink,
   }) async {
     final existing = await load();
+
+    // Google Cloud Console ka separate Windows setting intentionally removed.
+    existing.remove('googleCloudConsoleLink');
+    existing.remove('googleCloudUpdatedAt');
 
     if (firebaseLink != null) {
       final value = firebaseLink.trim();
 
       if (value.isEmpty) {
         existing.remove('firebaseLink');
+        existing.remove('firebaseUpdatedAt');
       } else {
         _validateFirebaseLink(value);
         existing['firebaseLink'] = value;
@@ -178,32 +182,12 @@ class WindowsExternalConnections {
       }
     }
 
-    if (googleCloudConsoleLink != null) {
-      final value = googleCloudConsoleLink.trim();
-
-      if (value.isEmpty) {
-        existing.remove('googleCloudConsoleLink');
-      } else {
-        _validateGoogleCloudConsoleLink(value);
-        existing['googleCloudConsoleLink'] = value;
-        existing['googleCloudUpdatedAt'] =
-            DateTime.now().millisecondsSinceEpoch;
-      }
-    }
-
     await _file.parent.create(recursive: true);
-
     final pending = File('${_file.path}.pending');
-
-    await pending.writeAsString(
-      jsonEncode(existing),
-      flush: true,
-    );
-
+    await pending.writeAsString(jsonEncode(existing), flush: true);
     if (await _file.exists()) {
       await _file.delete();
     }
-
     await pending.rename(_file.path);
   }
 
@@ -284,18 +268,5 @@ class WindowsExternalConnections {
     return config;
   }
 
-  static void _validateGoogleCloudConsoleLink(
-    String value,
-  ) {
-    final uri = Uri.tryParse(value);
 
-    if (uri == null ||
-        uri.scheme != 'https' ||
-        uri.host.toLowerCase() !=
-            'console.cloud.google.com') {
-      throw const FormatException(
-        'Valid https://console.cloud.google.com/... link daalein.',
-      );
-    }
-  }
 }
