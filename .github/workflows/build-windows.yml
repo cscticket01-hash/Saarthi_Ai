@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: vidya-saarthi-windows-release
+  cancel-in-progress: false
+
 jobs:
   build-windows:
     runs-on: windows-2022
@@ -166,10 +170,54 @@ jobs:
       - name: Set Windows App Version
         id: app_version
         shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $version = "1.0.${{ github.run_number }}"
+          # Existing installed production app is v2.1.63.
+          # First release made by this workflow becomes v2.1.64.
+          # After that, latest windows-v2.1.X GitHub Release is detected
+          # and the patch number is increased automatically.
+          $major = 2
+          $minor = 1
+          $baselinePatch = 63
+          $latestPatch = $baselinePatch
+
+          try {
+            $headers = @{
+              'Accept' = 'application/vnd.github+json'
+              'Authorization' = "Bearer $env:GH_TOKEN"
+              'X-GitHub-Api-Version' = '2022-11-28'
+              'User-Agent' = 'Vidya-Saarthi-Windows-Build'
+            }
+
+            $uri = "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100"
+            $releases = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+
+            foreach ($release in $releases) {
+              $tag = [string]$release.tag_name
+
+              if ($tag -match '^windows-v2\.1\.(\d+)$') {
+                $patch = [int]$Matches[1]
+
+                if ($patch -gt $latestPatch) {
+                  $latestPatch = $patch
+                }
+              }
+            }
+          }
+          catch {
+            Write-Host "GitHub release version lookup warning: $($_.Exception.Message)"
+            Write-Host "Safe baseline v2.1.63 use hoga."
+          }
+
+          $nextPatch = $latestPatch + 1
+          $version = "$major.$minor.$nextPatch"
+
           "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Windows app version: $version"
+
+          Write-Host "Latest production Windows version: 2.1.$latestPatch"
+          Write-Host "NEW Windows app version: $version"
+          Write-Host "Release tag will be: windows-v$version"
 
       - name: Build Windows Admin App
         shell: powershell
