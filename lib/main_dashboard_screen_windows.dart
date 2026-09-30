@@ -4131,14 +4131,16 @@ void _handleLoginBack(bool didPop) {
 
                           setDlgState(() => isSaving = true);
 
-                          final docId = '${selectedClass}_Roll_$roll';
+                          // One permanent student identity:
+                          // Class 1 + Roll 1/01/001 all use the SAME document ID.
+                          final normalizedNewRoll = normalizeRoll(roll);
+                          final docId = '${selectedClass}_Roll_$normalizedNewRoll';
                           String finalPhotoUrl = '';
                           bool driveSaved = false;
 
                           try {
                             // Duplicate protection:
                             // 1, 01, 001, 0001 ko same roll maana jayega.
-                            final normalizedNewRoll = normalizeRoll(roll);
 
                             final existingStudents =
                                 await FirebaseFirestore.instance
@@ -4192,7 +4194,7 @@ void _handleLoginBack(bool didPop) {
                                   'name': name,
                                   'parentName': parent,
                                   'studentClass': selectedClass,
-                                  'roll': roll,
+                                  'roll': normalizedNewRoll,
                                   'contact': contact,
                                   'photoBase64': base64Image,
                                   'hostelFacility': hostelFacility,
@@ -4240,7 +4242,7 @@ void _handleLoginBack(bool didPop) {
                               'name': name,
                               'parentName': parent,
                               'class': selectedClass,
-                              'rollNo': roll,
+                              'rollNo': normalizedNewRoll,
                               'parentContact': contact,
                               'photoUrl': finalPhotoUrl,
                               'hostelFacility': hostelFacility,
@@ -16774,6 +16776,88 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     return int.tryParse(raw.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
   }
 
+  String _studentDirectoryIdentity(Map<String, dynamic> student) {
+    final classNumber = _studentClassNumber(student['class']);
+    final roll = _normalizeStudentRoll(student['rollNo']);
+
+    if (classNumber > 0 && roll.isNotEmpty) {
+      return 'class:$classNumber|roll:$roll';
+    }
+
+    final name = student['name']?.toString().trim().toLowerCase() ?? '';
+    final contact = (student['parentContact'] ?? '')
+        .toString()
+        .replaceAll(RegExp(r'\D'), '');
+    return 'name:$name|contact:$contact';
+  }
+
+  String _studentDirectoryDate(dynamic value) {
+    if (value == null) return 'N/A';
+
+    DateTime? date;
+    if (value is DateTime) {
+      date = value;
+    } else if (value is int) {
+      date = DateTime.fromMillisecondsSinceEpoch(value);
+    }
+
+    final raw = value.toString().trim();
+    if (raw.isEmpty) return 'N/A';
+
+    date ??= DateTime.tryParse(raw);
+
+    if (date == null) {
+      final simple = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$')
+          .firstMatch(raw);
+      if (simple != null) {
+        final day = int.tryParse(simple.group(1) ?? '');
+        final month = int.tryParse(simple.group(2) ?? '');
+        final year = int.tryParse(simple.group(3) ?? '');
+        if (day != null && month != null && year != null) {
+          date = DateTime(year, month, day);
+        }
+      }
+    }
+
+    if (date == null) {
+      final verbose = RegExp(
+        r'^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+'
+        r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+'
+        r'(\d{1,2})\s+(\d{4})',
+        caseSensitive: false,
+      ).firstMatch(raw);
+
+      if (verbose != null) {
+        const months = <String, int>{
+          'jan': 1,
+          'feb': 2,
+          'mar': 3,
+          'apr': 4,
+          'may': 5,
+          'jun': 6,
+          'jul': 7,
+          'aug': 8,
+          'sep': 9,
+          'oct': 10,
+          'nov': 11,
+          'dec': 12,
+        };
+        final month = months[(verbose.group(1) ?? '').toLowerCase()];
+        final day = int.tryParse(verbose.group(2) ?? '');
+        final year = int.tryParse(verbose.group(3) ?? '');
+        if (month != null && day != null && year != null) {
+          date = DateTime(year, month, day);
+        }
+      }
+    }
+
+    if (date == null) return raw;
+
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year.toString().padLeft(4, '0')}';
+  }
+
   Map<String, dynamic>? _latestExamResultForStudent(
     String docId,
     Map<String, dynamic> student,
@@ -17215,60 +17299,129 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     if (confirm != true) return;
 
     try {
-      final studentDoc = await FirebaseFirestore.instance.collection('students_directory').doc(docId).get();
+      final studentsRef =
+          FirebaseFirestore.instance.collection('students_directory');
+      final studentDoc = await studentsRef.doc(docId).get();
 
-      if (!studentDoc.exists) throw Exception('Student Firestore me nahi mila.');
+      if (!studentDoc.exists) {
+        throw Exception('Student Firestore me nahi mila.');
+      }
 
       final data = studentDoc.data()!;
-      final studentClass = data['class']?.toString() ?? '';
-      final rollNo = data['rollNo']?.toString() ?? '';
+      final studentClass = data['class']?.toString().trim() ?? '';
+      final normalizedRoll = _normalizeStudentRoll(data['rollNo']);
+      final classNumber = _studentClassNumber(studentClass);
+
+      if (classNumber <= 0 || normalizedRoll.isEmpty) {
+        throw Exception('Student Class / Roll valid nahi hai.');
+      }
+
+      // IMPORTANT: agar kisi purane failed request ka add/edit Google outbox
+      // me pada ho, delete ke baad woh student ko dobara create na kare.
+      final googleOutbox = await FirebaseFirestore.instance
+          .collection('_windows_google_outbox')
+          .get();
+
+      for (final queued in googleOutbox.docs) {
+        final queuedData = queued.data();
+        final action = queuedData['action']?.toString().trim() ?? '';
+        if (action != 'add_student' &&
+            action != 'edit_student' &&
+            action != 'change_student_class') {
+          continue;
+        }
+
+        final rawBody = queuedData['body'];
+        if (rawBody is! Map) continue;
+        final body = Map<String, dynamic>.from(rawBody);
+        final queuedClass =
+            (body['studentClass'] ?? body['class'] ?? body['oldClass'])
+                ?.toString() ??
+            '';
+        final queuedRoll =
+            _normalizeStudentRoll(body['roll'] ?? body['rollNo']);
+
+        if (_studentClassNumber(queuedClass) == classNumber &&
+            queuedRoll == normalizedRoll) {
+          await queued.reference.delete();
+        }
+      }
 
       final scriptUrl = await _windowsGoogleScriptUrl();
 
-Future<Map<String, dynamic>> deleteFromGoogle(String rollValue) async {
-  final response = await WindowsBackendBridge.post(
-    Uri.parse(scriptUrl),
-    headers: {'Content-Type': 'text/plain;charset=utf-8'},
-    body: jsonEncode({
-      'action': 'delete_student',
-      'studentClass': studentClass.trim(),
-      'roll': rollValue.trim(),
-    }),
-  );
+      Future<Map<String, dynamic>> deleteFromGoogle() async {
+        final response = await WindowsBackendBridge.post(
+          Uri.parse(scriptUrl),
+          headers: const {'Content-Type': 'text/plain;charset=utf-8'},
+          body: jsonEncode({
+            'action': 'delete_student',
+            'studentClass': 'Class $classNumber',
+            'roll': normalizedRoll,
+          }),
+        );
 
-  if (response.statusCode != 200) {
-    throw Exception('Google delete failed: ${response.statusCode}');
-  }
+        if (response.statusCode != 200) {
+          throw Exception('Google delete failed: ${response.statusCode}');
+        }
 
-  return Map<String, dynamic>.from(jsonDecode(response.body));
-}
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map) {
+          throw Exception('Google delete response invalid hai.');
+        }
+        return Map<String, dynamic>.from(decoded);
+      }
 
-Map<String, dynamic> result = await deleteFromGoogle(rollNo);
+      // Current Apps Script one matching row per call delete karta hai.
+      // Purane duplicate rows ho to sab remove hon, isliye alreadyDeleted
+      // milne tak repeat karte hain (safety cap 20).
+      var googleFullyDeleted = false;
+      for (var attempt = 0; attempt < 20; attempt++) {
+        final result = await deleteFromGoogle();
+        if (result['success'] != true) {
+          throw Exception(
+            result['message'] ?? 'Student Google Sheet delete failed.',
+          );
+        }
+        if (result['alreadyDeleted'] == true) {
+          googleFullyDeleted = true;
+          break;
+        }
+      }
 
-// Google Sheet me 01 kabhi number 1 ban jata hai.
-// Original Roll se na mile to numeric Roll se retry karega.
-if (result['success'] != true) {
-  final rollNumber = int.tryParse(rollNo);
+      if (!googleFullyDeleted) {
+        throw Exception('Student duplicate cleanup limit exceed hua.');
+      }
 
-  if (rollNumber != null) {
-    final normalizedRoll = rollNumber.toString();
+      // Same student ke saare legacy aliases (Roll_1 / Roll_01 / etc.)
+      // local profile se delete karo. Tracked delete Firebase ke saare alias
+      // documents ko bhi next sync me delete karega.
+      final allStudents = await studentsRef.get();
+      var deletedCount = 0;
 
-    if (normalizedRoll != rollNo) {
-      result = await deleteFromGoogle(normalizedRoll);
-    }
-  }
-}
+      for (final student in allStudents.docs) {
+        final studentData = student.data();
+        final sameClass =
+            _studentClassNumber(studentData['class']) == classNumber;
+        final sameRoll =
+            _normalizeStudentRoll(studentData['rollNo']) == normalizedRoll;
 
-if (result['success'] != true) {
-  throw Exception(
-    result['message'] ?? 'Student Google Sheet me nahi mila.',
-  );
-}
+        if (sameClass && sameRoll) {
+          await student.reference.delete();
+          deletedCount++;
+        }
+      }
 
-      await FirebaseFirestore.instance.collection('students_directory').doc(docId).delete();
+      if (deletedCount == 0) {
+        await studentsRef.doc(docId).delete();
+      }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Student permanently delete ho gaya!')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Student permanently delete ho gaya!'),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Delete error: $e')));
@@ -17767,7 +17920,38 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                   );
                 }
 
-                final docs = snapshot.data!.docs.toList();
+                final rawDocs = snapshot.data!.docs.toList();
+
+                // Same Class + same Roll is one student. Old/synced duplicate
+                // documents are not shown twice in Student Directory.
+                final uniqueByStudent = <String, dynamic>{};
+                for (final doc in rawDocs) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final key = _studentDirectoryIdentity(data);
+                  final existing = uniqueByStudent[key];
+
+                  if (existing == null) {
+                    uniqueByStudent[key] = doc;
+                    continue;
+                  }
+
+                  final expectedId =
+                      '${data['class']}_Roll_${data['rollNo']}';
+                  final existingData =
+                      existing.data() as Map<String, dynamic>;
+                  final existingExpectedId =
+                      '${existingData['class']}_Roll_${existingData['rollNo']}';
+
+                  final currentIsCanonical = doc.id == expectedId;
+                  final existingIsCanonical =
+                      existing.id == existingExpectedId;
+
+                  if (currentIsCanonical && !existingIsCanonical) {
+                    uniqueByStudent[key] = doc;
+                  }
+                }
+
+                final docs = uniqueByStudent.values.toList();
                 docs.sort((a, b) {
                   final aData = a.data() as Map<String, dynamic>;
                   final bData = b.data() as Map<String, dynamic>;
@@ -17897,7 +18081,15 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                 const SizedBox(height: 3),
                                 Text('Address: ${student['address'] ?? ''}, ${student['district'] ?? ''}, ${student['state'] ?? ''} - ${student['pinCode'] ?? ''}', style: const TextStyle(color: Colors.white60, fontSize: 11)),
                                 const SizedBox(height: 3),
-                                Text('Hostel: ${student['hostelFacility'] ?? 'No'} • Admission: ${student['joiningDate'] ?? 'N/A'} • DOB: ${student['dateOfBirth'] ?? 'N/A'}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                                Text(
+                                  'Hostel: ${student['hostelFacility'] ?? 'No'} • '
+                                  'Admission: ${_studentDirectoryDate(student['joiningDate'])} • '
+                                  'DOB: ${_studentDirectoryDate(student['dateOfBirth'])}',
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 11,
+                                  ),
+                                ),
                                 const SizedBox(height: 8),
                                 Wrap(
                                   spacing: 8,
