@@ -9780,7 +9780,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   Future<void> _openAnalyticsSettings() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => const SettingsScreen(),
+        builder: (_) => const AdminSettingsScreen(),
       ),
     );
 
@@ -11466,14 +11466,49 @@ errorBuilder: (_, __, ___) => Icon(
 }
 
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: const Color(0xFF172229),
+        titleSpacing: 6,
+        title: const Text(
+          'Settings',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 30),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 920),
+            child: const WindowsAppUpdateCard(),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+/// Full protected settings opened from the School Analytics gear.
+/// App Update intentionally lives only in the dashboard Settings screen.
+class AdminSettingsScreen extends StatefulWidget {
+  const AdminSettingsScreen({super.key});
+
+  @override
+  State<AdminSettingsScreen> createState() => _AdminSettingsScreenState();
+}
+
+class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   final TextEditingController _gmailController = TextEditingController();
   final TextEditingController _scriptUrlController = TextEditingController();
   final TextEditingController _uidStartController =
@@ -12310,8 +12345,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 16),
-                const WindowsAppUpdateCard(),
                 const SizedBox(height: 16),
                 const WindowsLocalStorageCard(),
                 const SizedBox(height: 16),
