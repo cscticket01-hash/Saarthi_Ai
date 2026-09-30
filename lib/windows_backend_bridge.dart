@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
+import 'windows_runtime_flags.dart';
 import 'windows_service_status.dart';
 
 class WindowsBackendBridge {
@@ -80,12 +81,12 @@ class WindowsBackendBridge {
     }
 
     try {
-      final response = await _postAppsScriptFollowingRedirect(
+      final response = await _postFollowingAppsScriptRedirects(
         url,
         headers: headers,
         body: requestBody,
         encoding: encoding,
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -158,48 +159,6 @@ class WindowsBackendBridge {
     }
   }
 
-  static Future<http.Response> _postAppsScriptFollowingRedirect(
-    Uri url, {
-    Map<String, String>? headers,
-    Object? body,
-    Encoding? encoding,
-  }) async {
-    var response = await http
-        .post(
-          url,
-          headers: headers,
-          body: body,
-          encoding: encoding,
-        )
-        .timeout(const Duration(seconds: 30));
-
-    if (_isRedirect(response.statusCode)) {
-      final location = response.headers['location']?.trim() ?? '';
-
-      if (location.isNotEmpty) {
-        response = await http
-            .get(
-              url.resolve(location),
-              headers: const <String, String>{
-                'Accept': 'application/json',
-                'Cache-Control': 'no-cache',
-              },
-            )
-            .timeout(const Duration(seconds: 30));
-      }
-    }
-
-    return response;
-  }
-
-  static bool _isRedirect(int statusCode) {
-    return statusCode == 301 ||
-        statusCode == 302 ||
-        statusCode == 303 ||
-        statusCode == 307 ||
-        statusCode == 308;
-  }
-
   static Future<int> pendingMutationCount() async {
     final snapshot = await FirebaseFirestore.instance
         .collection('_windows_google_outbox')
@@ -256,21 +215,17 @@ class WindowsBackendBridge {
       }
 
       try {
-        final response =
-            await _postAppsScriptFollowingRedirect(
+        final response = await _postFollowingAppsScriptRedirects(
           Uri.parse(urlText),
           headers: headers.isEmpty
-              ? const <String, String>{
-                  'Content-Type':
-                      'text/plain;charset=utf-8',
+              ? const {
+                  'Content-Type': 'text/plain;charset=utf-8',
                 }
               : headers,
           body: jsonEncode(
-            Map<String, dynamic>.from(
-              bodyData,
-            ),
+            Map<String, dynamic>.from(bodyData),
           ),
-        );
+        ).timeout(const Duration(seconds: 30));
 
         if (response.statusCode < 200 ||
             response.statusCode >= 300) {
@@ -392,6 +347,65 @@ class WindowsBackendBridge {
         0;
   }
 
+  static Future<http.Response> _postFollowingAppsScriptRedirects(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    final client = http.Client();
+    try {
+      Future<http.Response> sendPost(Uri target) async {
+        final request = http.Request('POST', target);
+        if (headers != null) request.headers.addAll(headers);
+        if (body is String) {
+          request.body = body;
+          if (encoding != null) request.encoding = encoding;
+        } else if (body is List<int>) {
+          request.bodyBytes = body;
+        } else if (body is Map<String, String>) {
+          request.bodyFields = body;
+          if (encoding != null) request.encoding = encoding;
+        } else if (body != null) {
+          request.body = body.toString();
+          if (encoding != null) request.encoding = encoding;
+        }
+        request.followRedirects = false;
+        final streamed = await client.send(request);
+        return http.Response.fromStream(streamed);
+      }
+
+      Future<http.Response> sendGet(Uri target) async {
+        final request = http.Request('GET', target);
+        request.headers['Accept'] = 'application/json,text/plain,*/*';
+        request.followRedirects = false;
+        final streamed = await client.send(request);
+        return http.Response.fromStream(streamed);
+      }
+
+      var current = url;
+      var response = await sendPost(current);
+      for (var redirectCount = 0; redirectCount < 8; redirectCount++) {
+        final code = response.statusCode;
+        final isRedirect = code == 301 ||
+            code == 302 ||
+            code == 303 ||
+            code == 307 ||
+            code == 308;
+        if (!isRedirect) return response;
+        final location = response.headers['location']?.trim() ?? '';
+        if (location.isEmpty) return response;
+        current = current.resolve(location);
+        response = (code == 301 || code == 302 || code == 303)
+            ? await sendGet(current)
+            : await sendPost(current);
+      }
+      return response;
+    } finally {
+      client.close();
+    }
+  }
+
   static Future<bool> testRemote(Uri url) async {
     final status = WindowsServiceStatus.instance;
 
@@ -482,6 +496,18 @@ class WindowsBackendBridge {
     required String remoteError,
   }) async {
     try {
+      if (!await WindowsRuntimeFlags.localStorageEnabled()) {
+        return http.Response(
+          jsonEncode({
+            'success': false,
+            'message': 'Local Data OFF hai; local fallback/save disabled.',
+            'windowsLocalFallback': false,
+            'remoteError': remoteError,
+          }),
+          200,
+          headers: const {'content-type': 'application/json'},
+        );
+      }
       final body = _decodeBody(rawBody);
       final action = body['action']?.toString().trim() ?? '';
       final result = await _handleLocal(action, body);
