@@ -202,8 +202,20 @@ Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $locator = New-Object Windows.Devices.Geolocation.Geolocator
 $locator.DesiredAccuracyInMeters = 20
 $op = $locator.GetGeopositionAsync()
-while ($op.Status -eq 0) { Start-Sleep -Milliseconds 100 }
-$pos = $op.GetResults().Coordinate.Point.Position
+$asTaskMethod = [System.WindowsRuntimeSystemExtensions].GetMethods() |
+  Where-Object {
+    $_.Name -eq 'AsTask' -and
+    $_.IsGenericMethodDefinition -and
+    $_.GetGenericArguments().Count -eq 1 -and
+    $_.GetParameters().Count -eq 1 -and
+    $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
+  } |
+  Select-Object -First 1
+if ($null -eq $asTaskMethod) {
+  throw 'Windows Runtime AsTask method unavailable.'
+}
+$task = $asTaskMethod.MakeGenericMethod([Windows.Devices.Geolocation.Geoposition]).Invoke($null, [object[]]@($op))
+$pos = $task.GetAwaiter().GetResult().Coordinate.Point.Position
 Write-Output ($pos.Latitude.ToString([System.Globalization.CultureInfo]::InvariantCulture) + "," + $pos.Longitude.ToString([System.Globalization.CultureInfo]::InvariantCulture))''';
   final result = await Process.run(
     'powershell.exe',
@@ -218,6 +230,39 @@ Write-Output ($pos.Latitude.ToString([System.Globalization.CultureInfo]::Invaria
   final lng = double.tryParse(parts[1]);
   if (lat == null || lng == null) throw StateError('Windows GPS coordinates invalid hain.');
   return (latitude: lat, longitude: lng);
+}
+
+({double latitude, double longitude})? _windowsParseCoordinates(String raw) {
+  final values = RegExp(r'[-+]?(?:\d+(?:\.\d+)?|\.\d+)')
+      .allMatches(raw)
+      .map((match) => double.tryParse(match.group(0)!))
+      .whereType<double>()
+      .toList();
+
+  for (var index = 0; index + 1 < values.length; index++) {
+    final latitude = values[index];
+    final longitude = values[index + 1];
+    if (latitude >= -90 && latitude <= 90 &&
+        longitude >= -180 && longitude <= 180) {
+      return (latitude: latitude, longitude: longitude);
+    }
+  }
+
+  return null;
+}
+
+Future<void> _openGoogleMapsForSchoolLocation(String query) async {
+  final cleanQuery = query.trim().isEmpty ? 'school' : query.trim();
+  final uri = Uri.https(
+    'www.google.com',
+    '/maps/search/',
+    <String, String>{
+      'api': '1',
+      'query': cleanQuery,
+    },
+  );
+
+  await Process.start('explorer.exe', <String>[uri.toString()]);
 }
 
 double _windowsDistanceMeters(double lat1, double lng1, double lat2, double lng2) {
@@ -629,8 +674,10 @@ Map<String, dynamic>? _schoolProfileMemoryCache;
 String? _schoolProfileScriptUrlMemoryCache;
 
 Map<String, dynamic> _defaultSchoolProfile() => <String, dynamic>{
-      'schoolName': 'SARASWATI VIDYA NIKETAN, MADHABDHAM',
-      'principalName': 'Principal',
+      // Fresh installations must start unbound. The school identity is filled
+      // only after the administrator saves the selected school's profile.
+      'schoolName': '',
+      'principalName': '',
       'schoolContactNo': '',
       'logoUrl': '',
       'logoFileId': '',
@@ -744,12 +791,12 @@ Future<Map<String, dynamic>> _loadSchoolProfile({
 
 String _schoolName(Map<String, dynamic> profile) {
   final value = profile['schoolName']?.toString().trim() ?? '';
-  return value.isEmpty ? 'School' : value;
+  return value;
 }
 
 String _principalName(Map<String, dynamic> profile) {
   final value = profile['principalName']?.toString().trim() ?? '';
-  return value.isEmpty ? 'Principal' : value;
+  return value;
 }
 
 Future<Uint8List?> _downloadImageBytes(String url) async {
@@ -4692,11 +4739,11 @@ Future<void> _showIdCardPreview() async {
   final photoUrl = data['photoUrl']?.toString() ?? '';
   final schoolName = data['schoolName']?.toString().trim().isNotEmpty == true
       ? data['schoolName'].toString().trim()
-      : 'School';
+      : '';
   final principalName =
       data['principalName']?.toString().trim().isNotEmpty == true
           ? data['principalName'].toString().trim()
-          : 'Principal';
+          : '';
   final schoolLogoUrl = data['schoolLogoUrl']?.toString().trim() ?? '';
   final schoolSealUrl = data['schoolSealUrl']?.toString().trim() ?? '';
   final principalSignatureUrl =
@@ -5582,11 +5629,11 @@ Future<Uint8List> _buildIdCardPdf() async {
       data['photoUrl']?.toString() ?? '';
   final schoolName = data['schoolName']?.toString().trim().isNotEmpty == true
       ? data['schoolName'].toString().trim()
-      : 'School';
+      : '';
   final principalName =
       data['principalName']?.toString().trim().isNotEmpty == true
           ? data['principalName'].toString().trim()
-          : 'Principal';
+          : '';
   final schoolLogoUrl = data['schoolLogoUrl']?.toString().trim() ?? '';
   final schoolSealUrl = data['schoolSealUrl']?.toString().trim() ?? '';
   final principalSignatureUrl =
@@ -7510,8 +7557,9 @@ errorBuilder: (_, __, ___) => const Icon(
             stream: _schoolProfileCacheRef().snapshots(),
             builder: (context, snapshot) {
               final profile = _mergeSchoolProfile(snapshot.data?.data());
+              final schoolName = _schoolName(profile);
               return Text(
-                'Welcome to ${_schoolName(profile)}',
+                schoolName.isEmpty ? 'Welcome' : 'Welcome to $schoolName',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 22,
@@ -10602,6 +10650,38 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
         profile['attendanceRadiusMeters']?.toString() ?? '200';
   }
 
+  Future<void> _pasteGoogleMapsCoordinates() async {
+    final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+    final raw = clipboard?.text?.trim() ?? '';
+    final coordinates = _windowsParseCoordinates(raw);
+
+    if (coordinates == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orangeAccent,
+          content: Text(
+            'Google Maps se latitude, longitude copy karke paste karein.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _schoolLatitudeController.text = coordinates.latitude.toStringAsFixed(7);
+      _schoolLongitudeController.text = coordinates.longitude.toStringAsFixed(7);
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: Color(0xFF00A884),
+        content: Text('Google Maps coordinates fill ho gaye. Ab Save karein.'),
+      ),
+    );
+  }
+
   Future<void> _load() async {
     // Never block the screen with a full-page loader.
     try {
@@ -11343,26 +11423,70 @@ errorBuilder: (_, __, ___) => Icon(
                               ],
                             ),
                             const SizedBox(height: 10),
-                            OutlinedButton.icon(
-                              onPressed: _saving
-                                  ? null
-                                  : () async {
-                                      try {
-                                        final pos = await _windowsCurrentPosition();
-                                        if (!mounted) return;
-                                        setState(() {
-                                          _schoolLatitudeController.text = pos.latitude.toStringAsFixed(7);
-                                          _schoolLongitudeController.text = pos.longitude.toStringAsFixed(7);
-                                        });
-                                      } catch (e) {
-                                        if (!mounted) return;
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(backgroundColor: Colors.redAccent, content: Text('$e')),
-                                        );
-                                      }
-                                    },
-                              icon: const Icon(Icons.gps_fixed_rounded),
-                              label: const Text('Use This Windows PC Location'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: _saving
+                                      ? null
+                                      : () async {
+                                          try {
+                                            await _openGoogleMapsForSchoolLocation(
+                                              _schoolNameController.text,
+                                            );
+                                          } catch (e) {
+                                            if (!mounted) return;
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(
+                                                backgroundColor: Colors.redAccent,
+                                                content: Text('Google Maps open nahi hua: $e'),
+                                              ),
+                                            );
+                                          }
+                                        },
+                                  icon: const Icon(Icons.map_rounded),
+                                  label: const Text('Open Google Maps'),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: _saving ? null : _pasteGoogleMapsCoordinates,
+                                  icon: const Icon(Icons.content_paste_rounded),
+                                  label: const Text('Paste Map Coordinates'),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: _saving
+                                      ? null
+                                      : () async {
+                                          try {
+                                            final pos = await _windowsCurrentPosition();
+                                            if (!mounted) return;
+                                            setState(() {
+                                              _schoolLatitudeController.text = pos.latitude.toStringAsFixed(7);
+                                              _schoolLongitudeController.text = pos.longitude.toStringAsFixed(7);
+                                            });
+                                          } catch (e) {
+                                            if (!mounted) return;
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(
+                                                backgroundColor: Colors.redAccent,
+                                                content: Text('$e'),
+                                              ),
+                                            );
+                                          }
+                                        },
+                                  icon: const Icon(Icons.gps_fixed_rounded),
+                                  label: const Text('Use This Windows PC Location'),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Google Maps me school point par right-click karke coordinates copy karein, phir “Paste Map Coordinates” dabayein.',
+                              style: TextStyle(
+                                color: Colors.white38,
+                                fontSize: 10,
+                                height: 1.35,
+                              ),
                             ),
                           ],
                         ),
@@ -13407,7 +13531,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
     final schoolName = data['schoolName']?.toString().trim().isNotEmpty == true
         ? data['schoolName'].toString().trim()
-        : 'School';
+        : '';
 
     return '$schoolName\n\n'
         'FEES RECEIPT\n'
@@ -13472,7 +13596,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               pw.Text(
                 data['schoolName']?.toString().trim().isNotEmpty == true
                     ? data['schoolName'].toString().trim()
-                    : 'School',
+                    : '',
                 textAlign: pw.TextAlign.center,
                 style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
               ),
