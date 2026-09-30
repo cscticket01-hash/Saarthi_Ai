@@ -9575,7 +9575,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       await WindowsSyncEngine.instance.disconnectGoogle();
-      await WindowsAppRestart.restart(reason: 'Google Drive disconnected');
 
       if (!mounted) return;
 
@@ -18517,7 +18516,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     setState(() => _saving = true);
     try {
       await WindowsSyncEngine.instance.disconnectGoogle();
-      await WindowsAppRestart.restart(reason: 'Google Drive disconnected');
       if (!mounted) return;
       setState(() {
         _linkedGmail = null;
