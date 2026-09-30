@@ -9,6 +9,7 @@ import 'windows_firebase_sync.dart';
 import 'windows_html_shim.dart' as windows_html;
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
+import 'windows_runtime_flags.dart';
 
 class WindowsSyncEngine {
   WindowsSyncEngine._();
@@ -82,23 +83,43 @@ class WindowsSyncEngine {
         ? status.projectId.trim()
         : '';
 
-    // When one school Firebase is replaced by another, deselect the old
-    // Drive immediately. The old Drive/profile is NOT deleted; it can be
-    // selected again later. This prevents a half-switched demo/school pair.
-    if (nextProject.isNotEmpty &&
-        nextProject != _activeFirebaseProject) {
-      final selectedDrive = await WindowsExternalConnections.googleScriptUrl();
-      if (selectedDrive.isNotEmpty) {
-        await WindowsExternalConnections.save(
-          googleScriptUrl: '',
-          googleEmail: '',
-        );
-      }
+    final previousProject = _activeFirebaseProject.trim();
+    final selectedDrive = await WindowsExternalConnections.googleScriptUrl();
+
+    // Switching an already-active School A Firebase to School B must never
+    // silently keep School A Drive. First-time Firebase connection is
+    // different: if the user already entered a Drive link, both explicit
+    // settings may be paired now.
+    if (previousProject.isNotEmpty &&
+        nextProject.isNotEmpty &&
+        nextProject != previousProject &&
+        selectedDrive.isNotEmpty) {
+      await WindowsExternalConnections.save(
+        googleScriptUrl: '',
+        googleEmail: '',
+      );
     }
 
+    final mayPairFirstFirebase = previousProject.isEmpty &&
+        nextProject.isNotEmpty &&
+        selectedDrive.isNotEmpty;
+
     await activateCurrentConnections(
-      allowPairing: false,
+      allowPairing: mayPairFirstFirebase,
     );
+  }
+
+  Future<void> localStorageModeChanged() async {
+    final enabled = await WindowsRuntimeFlags.localStorageEnabled();
+    if (!enabled) {
+      // Forget only the OFF-mode in-memory mirror. Existing disk data stays
+      // untouched and will be available again when Local Data is turned ON.
+      await FirebaseFirestore.instance.resetVolatileSession();
+    }
+    await activateCurrentConnections(allowPairing: false);
+    if (!_syncBlocked) {
+      await syncNow();
+    }
   }
 
   void scheduleSoon({
@@ -138,6 +159,21 @@ class WindowsSyncEngine {
       throw StateError(
         'Google Drive / Apps Script actual health check fail hua.',
       );
+    }
+
+    final firebaseStatus = await WindowsFirebaseRemote.status();
+    final firebaseReady = firebaseStatus.authenticated &&
+        firebaseStatus.projectId.trim().isNotEmpty;
+
+    // User may enter Google first. Save it as a pending connection, but do
+    // not expose/sync any school data until Firebase is also verified.
+    if (!firebaseReady) {
+      await WindowsExternalConnections.save(
+        googleScriptUrl: cleanUrl,
+        googleEmail: cleanEmail,
+      );
+      await activateCurrentConnections(allowPairing: false);
+      return;
     }
 
     // Explicit Drive Save is the pairing event. This is important: changing
@@ -245,6 +281,27 @@ class WindowsSyncEngine {
         .trim();
     final googleEmail =
         savedConnections['googleEmail']?.toString().trim() ?? '';
+
+    // REMOTE SCHOOL GATE:
+    // Firebase + Google are one pair. A single connection is never allowed
+    // to populate the Windows school UI. If Local Storage is ON, only the
+    // independent local_device profile is visible; if OFF, the app uses an
+    // empty volatile profile and writes nothing to disk.
+    if (projectId.isEmpty || googleUrl.isEmpty) {
+      final localEnabled = await WindowsRuntimeFlags.localStorageEnabled();
+      return _ResolvedSyncProfile(
+        profileId: localEnabled ? 'local_device' : 'remote_gate_empty',
+        schoolSyncId: '',
+        firebaseProjectId: '',
+        googleUrl: '',
+        googleEmail: '',
+        googleBackendId: '',
+        blocked: true,
+        message: localEnabled
+            ? 'Remote school data hidden: Firebase + Google dono connect karein. Local Data ON hai.'
+            : 'Remote school data hidden: Firebase + Google dono connect karein. Local Data OFF hai.',
+      );
+    }
 
     String idToken = '';
     String firebaseSyncId = '';
@@ -524,11 +581,9 @@ class WindowsSyncEngine {
     String scriptUrl,
     Map<String, dynamic> body,
   ) async {
-    final baseUri = Uri.parse(scriptUrl);
-
-    var response = await http
+    final response = await http
         .post(
-          baseUri,
+          Uri.parse(scriptUrl),
           headers: const <String, String>{
             'Content-Type': 'text/plain;charset=utf-8',
             'Cache-Control': 'no-cache',
@@ -536,30 +591,6 @@ class WindowsSyncEngine {
           body: jsonEncode(body),
         )
         .timeout(const Duration(seconds: 30));
-
-    // Google Apps Script Web Apps can answer POST with HTTP 302 and put
-    // the actual JSON response behind the Location URL. package:http
-    // does not reliably follow this POST redirect on Windows, so follow
-    // it explicitly as GET.
-    if (_isGoogleAppsScriptRedirect(response.statusCode)) {
-      final location = response.headers['location']?.trim() ?? '';
-
-      if (location.isEmpty) {
-        throw StateError(
-          'Google sync identity redirect URL missing hai.',
-        );
-      }
-
-      response = await http
-          .get(
-            baseUri.resolve(location),
-            headers: const <String, String>{
-              'Accept': 'application/json',
-              'Cache-Control': 'no-cache',
-            },
-          )
-          .timeout(const Duration(seconds: 30));
-    }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(
@@ -582,14 +613,6 @@ class WindowsSyncEngine {
     }
 
     return result;
-  }
-
-  bool _isGoogleAppsScriptRedirect(int statusCode) {
-    return statusCode == 301 ||
-        statusCode == 302 ||
-        statusCode == 303 ||
-        statusCode == 307 ||
-        statusCode == 308;
   }
 
   String _newSchoolSyncId() {
