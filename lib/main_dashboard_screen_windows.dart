@@ -29,6 +29,24 @@ import 'windows_mobile_scanner_shim.dart';
 // ============================================================
 // WINDOWS LANGUAGE / SCHOOL IDENTITY / QR HELPERS
 // ============================================================
+
+/// Single source of truth for the Google Apps Script connection on Windows.
+/// Advanced Settings saves Google connection in WindowsExternalConnections,
+/// so Windows feature screens must NOT read the old Firestore
+/// school_config/google_drive_account document.
+Future<String> _windowsGoogleScriptUrl({bool required = true}) async {
+  final connection = await WindowsExternalConnections.load();
+  final url = connection['googleScriptUrl']?.toString().trim() ?? '';
+
+  if (required && url.isEmpty) {
+    throw Exception(
+      'Google Drive / Apps Script Advanced Settings me connected nahi hai.',
+    );
+  }
+
+  return url;
+}
+
 const String _windowsLanguageKey = 'vidya_windows_language_v1';
 
 String _windowsLanguage() {
@@ -651,17 +669,7 @@ Future<String> _schoolProfileScriptUrl() async {
   final cachedUrl = _schoolProfileScriptUrlMemoryCache?.trim() ?? '';
   if (cachedUrl.isNotEmpty) return cachedUrl;
 
-  final doc = await FirebaseFirestore.instance
-      .collection('school_config')
-      .doc('google_drive_account')
-      .get();
-
-  final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
-  if (url.isEmpty) {
-    throw Exception(
-      'Google Drive backend Advanced Settings me connected nahi hai.',
-    );
-  }
+  final url = await _windowsGoogleScriptUrl();
 
   _schoolProfileScriptUrlMemoryCache = url;
   return url;
@@ -819,17 +827,7 @@ class _ExamCenterDataCache {
   }
 
   static Future<_ExamCenterSnapshot> _fetch() async {
-    final configDoc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
-
-    final scriptUrl = configDoc.data()?['scriptUrl']?.toString().trim() ?? '';
-    if (scriptUrl.isEmpty) {
-      throw Exception(
-        'Google Drive backend Advanced Settings me connected nahi hai.',
-      );
-    }
+    final scriptUrl = await _windowsGoogleScriptUrl();
 
     final response = await WindowsBackendBridge.post(
       Uri.parse(scriptUrl),
@@ -4186,17 +4184,10 @@ void _handleLoginBack(bool didPop) {
                               return;
                             }
 
-                            final configDoc =
-                                await FirebaseFirestore.instance
-                                    .collection('school_config')
-                                    .doc('google_drive_account')
-                                    .get();
+                            final scriptUrl =
+                                await _windowsGoogleScriptUrl(required: false);
 
-                            final scriptUrl = configDoc.data()?['scriptUrl']
-                                ?.toString()
-                                .trim();
-
-                            if (scriptUrl != null && scriptUrl.isNotEmpty) {
+                            if (scriptUrl.isNotEmpty) {
                               final base64Image =
                                   selectedPhotoBytes != null
                                       ? base64Encode(selectedPhotoBytes!)
@@ -11160,15 +11151,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
   }
 
   Future<String> _getGoogleScriptUrl() async {
-    final configDoc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
-    final scriptUrl = configDoc.data()?['scriptUrl']?.toString().trim() ?? '';
-    if (scriptUrl.isEmpty) {
-      throw Exception('Google Apps Script URL Settings me saved nahi hai.');
-    }
-    return scriptUrl;
+    return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>> _saveFeeToGoogleDrive({
@@ -13085,21 +13068,7 @@ class _TeachersDirectoryScreenState
   // ============================================================
 
   Future<String> _getTeacherScriptUrl() async {
-    final configDoc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
-
-    final scriptUrl =
-        configDoc.data()?['scriptUrl']?.toString().trim() ?? '';
-
-    if (scriptUrl.isEmpty) {
-      throw Exception(
-        'Google Apps Script URL Settings me saved nahi hai.',
-      );
-    }
-
-    return scriptUrl;
+    return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>> _callTeacherApi(
@@ -16879,21 +16848,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
   }
 
   Future<String> _studentBackendScriptUrl() async {
-    final configDoc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
-
-    final scriptUrl =
-        configDoc.data()?['scriptUrl']?.toString().trim() ?? '';
-
-    if (scriptUrl.isEmpty) {
-      throw Exception(
-        'Google Apps Script URL Advanced Settings me saved nahi hai.',
-      );
-    }
-
-    return scriptUrl;
+    return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>> _postStudentClassChange({
@@ -17304,10 +17259,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       final studentClass = data['class']?.toString() ?? '';
       final rollNo = data['rollNo']?.toString() ?? '';
 
-      final configDoc = await FirebaseFirestore.instance.collection('school_config').doc('google_drive_account').get();
-      final scriptUrl = configDoc.data()?['scriptUrl']?.toString();
-
-      if (scriptUrl == null || scriptUrl.isEmpty) throw Exception('Google Apps Script URL Settings me saved nahi hai.');
+      final scriptUrl = await _windowsGoogleScriptUrl();
 
 Future<Map<String, dynamic>> deleteFromGoogle(String rollValue) async {
   final response = await WindowsBackendBridge.post(
@@ -17657,20 +17609,8 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                               setDialogState(() => saving = true);
 
                               try {
-                                final configDoc = await FirebaseFirestore.instance
-                                    .collection('school_config')
-                                    .doc('google_drive_account')
-                                    .get();
-
-                                final scriptUrl = configDoc.data()?['scriptUrl']
-                                    ?.toString()
-                                    .trim();
-
-                                if (scriptUrl == null || scriptUrl.isEmpty) {
-                                  throw Exception(
-                                    'Google Apps Script URL Settings me saved nahi hai.',
-                                  );
-                                }
+                                final scriptUrl =
+                                    await _windowsGoogleScriptUrl();
 
                                 final studentClass =
                                     data['class']?.toString() ?? '';
@@ -19563,16 +19503,7 @@ class _StudentDocumentsScreenState
   }
 
   Future<String> _scriptUrl() async {
-    final doc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
-    final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
-    if (url.isEmpty) {
-      throw Exception(
-          'Google Drive backend Advanced Settings me connected nahi hai.');
-    }
-    return url;
+    return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
@@ -20056,16 +19987,7 @@ class _FeeTransactionHistoryScreenState
   }
 
   Future<String> _scriptUrl() async {
-    final doc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
-    final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
-    if (url.isEmpty) {
-      throw Exception(
-          'Google Drive backend Advanced Settings me connected nahi hai.');
-    }
-    return url;
+    return _windowsGoogleScriptUrl();
   }
 
   Future<void> _load() async {
@@ -20486,17 +20408,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   }
 
   Future<String> _scriptUrl() async {
-    final doc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
-    final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
-    if (url.isEmpty) {
-      throw Exception(
-        'Google Drive backend Advanced Settings me connected nahi hai.',
-      );
-    }
-    return url;
+    return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
@@ -22233,16 +22145,7 @@ class _ExamMarksEntryScreenState
   }
 
   Future<String> _scriptUrl() async {
-    final doc = await FirebaseFirestore.instance
-        .collection('school_config')
-        .doc('google_drive_account')
-        .get();
-    final url = doc.data()?['scriptUrl']?.toString().trim() ?? '';
-    if (url.isEmpty) {
-      throw Exception(
-          'Google Drive backend Advanced Settings me connected nahi hai.');
-    }
-    return url;
+    return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
