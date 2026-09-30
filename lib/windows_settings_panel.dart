@@ -8,6 +8,8 @@ import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_service_status.dart';
 import 'windows_update_service.dart';
+import 'windows_app_restart.dart';
+import 'windows_runtime_flags.dart';
 
 class WindowsSettingsPanel extends StatefulWidget {
   const WindowsSettingsPanel({super.key});
@@ -296,6 +298,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           content: Text('Firebase connected: ${result.projectId}'),
         ),
       );
+      await WindowsAppRestart.restart(reason: 'Firebase connection changed');
     } catch (e) {
       WindowsServiceStatus.instance.unhealthy(
         WindowsServiceType.firebase,
@@ -393,6 +396,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
         'Firebase disconnected.',
       );
       if (mounted) setState(() {});
+      await WindowsAppRestart.restart(reason: 'Firebase disconnected');
     } finally {
       if (mounted) setState(() => _disconnectBusy = false);
     }
@@ -612,6 +616,7 @@ class WindowsLocalStorageCard extends StatefulWidget {
 class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
   String _path = '';
   bool _busy = true;
+  bool _localStorageEnabled = true;
 
   @override
   void initState() {
@@ -621,10 +626,14 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
 
   Future<void> _refresh() async {
     final path = await WindowsLocalStorage.currentPath();
-    await WindowsLocalStorage.healthCheck();
+    final localEnabled = await WindowsRuntimeFlags.localStorageEnabled();
+    if (localEnabled) {
+      await WindowsLocalStorage.healthCheck();
+    }
     if (mounted) {
       setState(() {
         _path = path;
+        _localStorageEnabled = localEnabled;
         _busy = false;
       });
     }
@@ -735,6 +744,25 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: _localStorageEnabled,
+            title: const Text('Local Storage Test Switch', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+            subtitle: Text(
+              _localStorageEnabled
+                  ? 'ON: local fallback/cache enabled.'
+                  : 'OFF: local fallback disabled for testing. Restart recommended.',
+              style: const TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+            onChanged: _busy
+                ? null
+                : (value) async {
+                    await WindowsRuntimeFlags.setLocalStorageEnabled(value);
+                    if (!mounted) return;
+                    setState(() => _localStorageEnabled = value);
+                  },
+          ),
+          const SizedBox(height: 8),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
