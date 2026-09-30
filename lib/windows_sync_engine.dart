@@ -1031,42 +1031,7 @@ class WindowsSyncEngine {
       sourceName: 'students',
       collection: 'students_directory',
       rawList: result['students'],
-      idFor: (item) {
-        final direct =
-            item['documentId']
-                    ?.toString()
-                    .trim() ??
-                '';
-
-        if (direct.isNotEmpty) {
-          return direct;
-        }
-
-        final studentClass =
-            item['class']
-                    ?.toString()
-                    .trim() ??
-                item['studentClass']
-                    ?.toString()
-                    .trim() ??
-                '';
-
-        final roll =
-            item['rollNo']
-                    ?.toString()
-                    .trim() ??
-                item['roll']
-                    ?.toString()
-                    .trim() ??
-                '';
-
-        if (studentClass.isEmpty ||
-            roll.isEmpty) {
-          return '';
-        }
-
-        return '${studentClass}_Roll_$roll';
-      },
+      idFor: (item) => _canonicalStudentDocumentId(item),
       coreFirebaseCollection: true,
     );
 
@@ -1226,6 +1191,10 @@ class WindowsSyncEngine {
       );
     }
 
+    if (collection == 'students_directory' && remoteIds.isNotEmpty) {
+      await _cleanupStudentAliases(remoteIds);
+    }
+
     if (!deleteMissing) {
       return;
     }
@@ -1270,6 +1239,58 @@ class WindowsSyncEngine {
         },
       ),
     );
+  }
+
+  String _normalizeStudentRoll(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return '';
+
+    if (RegExp(r'^\d+$').hasMatch(raw)) {
+      final normalized = raw.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+      return normalized.isEmpty ? '0' : normalized;
+    }
+
+    return raw.toLowerCase();
+  }
+
+  int _studentClassNumber(dynamic value) {
+    final raw = value?.toString() ?? '';
+    return int.tryParse(raw.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+  }
+
+  String _canonicalStudentDocumentId(Map<String, dynamic> item) {
+    final classValue = item['class'] ?? item['studentClass'];
+    final rollValue = item['rollNo'] ?? item['roll'];
+    final classNumber = _studentClassNumber(classValue);
+    final roll = _normalizeStudentRoll(rollValue);
+
+    if (classNumber <= 0 || roll.isEmpty) {
+      return '';
+    }
+
+    return 'Class ${classNumber}_Roll_$roll';
+  }
+
+  Future<void> _cleanupStudentAliases(Set<String> canonicalRemoteIds) async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('students_directory')
+        .get();
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final canonicalId = _canonicalStudentDocumentId(data);
+
+      if (canonicalId.isEmpty ||
+          !canonicalRemoteIds.contains(canonicalId) ||
+          doc.id == canonicalId) {
+        continue;
+      }
+
+      // This is a real tracked delete on purpose. It removes old Firebase
+      // aliases such as Class 1_Roll_01 after the canonical Roll_1 record
+      // has been imported from Google.
+      await doc.reference.delete();
+    }
   }
 
   Future<void> _mergeGoogleDocument({
