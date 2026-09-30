@@ -1,4 +1,4 @@
-name: Build Vidya Saarthi Windows Local
+name: Build Vidya Saarthi Windows Admin
 
 on:
   workflow_dispatch:
@@ -9,7 +9,6 @@ on:
       - 'lib/**'
       - 'assets/**'
       - 'pubspec.yaml'
-      - 'scripts/windows_admin_patch.py'
       - '.github/workflows/build-windows.yml'
 
 permissions:
@@ -37,65 +36,41 @@ jobs:
         shell: powershell
         run: flutter create --platforms=windows --no-pub .
 
-      - name: Verify Windows Local Source Files
+      - name: Verify Dedicated Windows Source
         shell: powershell
         run: |
           $required = @(
-            "lib\main_dashboard_screen.dart",
-            "lib\main_windows.dart",
-            "lib\windows_html_shim.dart",
-            "lib\windows_mobile_scanner_shim.dart",
-            "lib\windows_local_firestore.dart",
-            "lib\windows_local_auth.dart",
-            "lib\windows_local_settings.dart",
-            "lib\windows_local_storage.dart",
-            "lib\windows_local_session.dart",
-            "lib\windows_service_status.dart",
-            "lib\windows_backend_bridge.dart",
-            "lib\windows_settings_panel.dart",
-            "lib\windows_firebase_sync.dart",
-            "lib\windows_update_service.dart",
-            "scripts\windows_admin_patch.py"
+            'lib\main_windows.dart',
+            'lib\main_dashboard_screen_windows.dart',
+            'lib\windows_html_shim.dart',
+            'lib\windows_mobile_scanner_shim.dart',
+            'lib\windows_local_firestore.dart',
+            'lib\windows_local_auth.dart',
+            'lib\windows_local_session.dart',
+            'lib\windows_local_settings.dart',
+            'lib\windows_local_storage.dart',
+            'lib\windows_settings_panel.dart',
+            'lib\windows_firebase_sync.dart',
+            'lib\windows_service_status.dart',
+            'lib\windows_update_service.dart',
+            'lib\windows_backend_bridge.dart',
+            'lib\windows_sync_engine.dart',
+            'lib\windows_runtime_flags.dart',
+            'lib\windows_app_restart.dart',
+            'lib\windows_update_manager.dart'
           )
-
           foreach ($file in $required) {
-            if (!(Test-Path $file)) {
-              throw "$file missing"
-            }
+            if (!(Test-Path $file)) { throw "Missing Windows source: $file" }
           }
-
-      - name: Generate Windows Local Dashboard
-        shell: powershell
-        run: python scripts/windows_admin_patch.py
+          Write-Host 'Dedicated Windows dashboard source verified.'
 
       - name: Prepare Windows-only Dependencies
         shell: powershell
         run: |
-          $pubspec = Get-Content "pubspec.yaml" -Raw
-
-          # Website/Android pubspec repository me untouched rahega.
-          # Windows runner me Firebase Flutter packages ki jagah local/REST adapters use hote hain.
-          $removePackages = @(
-            "agora_rtc_engine",
-            "mobile_scanner",
-            "firebase_core",
-            "firebase_auth",
-            "cloud_firestore"
-          )
-
-          foreach ($package in $removePackages) {
-            $pattern = "(?m)^\s*" + [regex]::Escape($package) + ":\s*[^\r\n]+\r?\n"
-            $pubspec = [regex]::Replace($pubspec, $pattern, "")
-          }
-
-          Set-Content -Path "pubspec.yaml" -Value $pubspec -Encoding UTF8
-
-      - name: Ensure Windows Secure Storage Dependency
-        shell: powershell
-        run: |
-          if (-not (Select-String -Path "pubspec.yaml" -Pattern "^\s*flutter_secure_storage:" -Quiet)) {
-            flutter pub add "flutter_secure_storage:^9.2.4"
-          }
+          $pubspec = Get-Content 'pubspec.yaml' -Raw
+          $pubspec = [regex]::Replace($pubspec, '(?m)^\s*agora_rtc_engine:\s*[^\r\n]+\r?\n', '')
+          $pubspec = [regex]::Replace($pubspec, '(?m)^\s*mobile_scanner:\s*[^\r\n]+\r?\n', '')
+          Set-Content -Path 'pubspec.yaml' -Value $pubspec -Encoding UTF8
 
       - name: Clean Flutter
         shell: powershell
@@ -109,11 +84,11 @@ jobs:
         id: app_version
         shell: powershell
         run: |
-          $version = "2.1.${{ github.run_number }}"
+          $version = "1.0.${{ github.run_number }}"
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Windows app version: $version"
 
-      - name: Build Windows App
+      - name: Build Windows Admin App
         shell: powershell
         run: |
           flutter build windows `
@@ -125,41 +100,34 @@ jobs:
       - name: Verify Windows Build
         shell: powershell
         run: |
-          $release = "build\windows\x64\runner\Release"
-          if (!(Test-Path $release)) { throw "Windows Release folder missing" }
+          $release = 'build\windows\x64\runner\Release'
+          if (!(Test-Path $release)) { throw 'Windows Release folder missing' }
           $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
-          if (-not $exe) { throw "Windows EXE not found" }
+          if (-not $exe) { throw 'Windows EXE not found' }
           Write-Host "Built EXE: $($exe.FullName)"
 
       - name: Create Portable ZIP
         shell: powershell
         run: |
-          $release = "build\windows\x64\runner\Release"
-          $zip = "build\Vidya_Saarthi_Windows_Local_${{ steps.app_version.outputs.version }}.zip"
+          $release = 'build\windows\x64\runner\Release'
+          $zip = 'build\Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip'
           if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive `
-            -Path "$release\*" `
-            -DestinationPath $zip `
-            -CompressionLevel Optimal
+          Compress-Archive -Path "$release\*" -DestinationPath $zip -CompressionLevel Optimal
 
       - name: Install Inno Setup
         shell: powershell
         run: |
-          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          if (!(Test-Path $iscc)) {
-            choco install innosetup -y --no-progress
-          }
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $iscc)) { choco install innosetup -y --no-progress }
 
       - name: Create Windows Installer Script
         shell: powershell
         run: |
-          $release = (Resolve-Path "build\windows\x64\runner\Release").Path
+          $release = (Resolve-Path 'build\windows\x64\runner\Release').Path
           $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
-          if (-not $exe) { throw "EXE not found for installer" }
-
-          $outDir = (Resolve-Path "build").Path
-          $version = "${{ steps.app_version.outputs.version }}"
-
+          if (-not $exe) { throw 'EXE not found for installer' }
+          $outDir = (Resolve-Path 'build').Path
+          $version = '${{ steps.app_version.outputs.version }}'
           $iss = @"
           [Setup]
           AppId={{9B6E3770-2F58-4D10-A468-38C588A4E24B}
@@ -188,35 +156,31 @@ jobs:
           [Run]
           Filename: "{app}\$($exe.Name)"; Description: "Launch Vidya Saarthi"; Flags: nowait postinstall skipifsilent
           "@
-
-          $iss | Out-File -FilePath "build\vidya_saarthi_windows.iss" -Encoding utf8
+          $iss | Out-File -FilePath 'build\vidya_saarthi_windows.iss' -Encoding utf8
 
       - name: Build Setup EXE
         shell: powershell
         run: |
-          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          & $iscc "build\vidya_saarthi_windows.iss"
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          & $iscc 'build\vidya_saarthi_windows.iss'
 
-      - name: Upload Windows Artifacts
+      - name: Upload Windows Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Vidya-Saarthi-Windows-${{ steps.app_version.outputs.version }}
           path: |
-            build/Vidya_Saarthi_Windows_Local_${{ steps.app_version.outputs.version }}.zip
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
+            build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
+          retention-days: 30
           if-no-files-found: error
-          retention-days: 14
 
-      - name: Publish Windows Update Release
+      - name: Publish Windows GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: windows-v${{ steps.app_version.outputs.version }}
-          name: Vidya Saarthi Windows ${{ steps.app_version.outputs.version }}
-          body: |
-            Vidya Saarthi Windows master app update.
-            Local school data is stored separately and is not removed by app updates.
+          name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
+          make_latest: true
+          generate_release_notes: true
           files: |
-            build/Vidya_Saarthi_Windows_Local_${{ steps.app_version.outputs.version }}.zip
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
-          make_latest: false
+            build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
