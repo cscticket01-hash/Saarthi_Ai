@@ -211,7 +211,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
         }
       }
 
-      throw const StateError(
+      throw StateError(
         'Koi production windows-v... GitHub Release nahi mila.',
       );
     } finally {
