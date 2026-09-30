@@ -10,6 +10,7 @@ import 'windows_service_status.dart';
 import 'windows_update_service.dart';
 import 'windows_app_restart.dart';
 import 'windows_runtime_flags.dart';
+import 'windows_connection_center.dart';
 
 class WindowsSettingsPanel extends StatefulWidget {
   const WindowsSettingsPanel({super.key});
@@ -738,8 +739,8 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
     return _settingsStyleCard(
       icon: Icons.storage_rounded,
       iconColor: const Color(0xFF00D9A5),
-      title: 'Local Storage',
-      subtitle: 'Offline school database / HDD location',
+      title: 'Local Data',
+      subtitle: 'Device data ON/OFF + optional HDD location',
       trailing: const WindowsStatusLed(service: WindowsServiceType.localStorage),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -747,19 +748,45 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
           SwitchListTile.adaptive(
             contentPadding: EdgeInsets.zero,
             value: _localStorageEnabled,
-            title: const Text('Local Storage Test Switch', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+            title: const Text('Local Data', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
             subtitle: Text(
               _localStorageEnabled
-                  ? 'ON: local fallback/cache enabled.'
-                  : 'OFF: local fallback disabled for testing. Restart recommended.',
+                  ? 'ON: device local data show/save hoga; active school profile se isolated rahega.'
+                  : 'OFF: local school data disk par read/save nahi hoga; remote Firebase + Google mode chalega.',
               style: const TextStyle(color: Colors.white38, fontSize: 10),
             ),
             onChanged: _busy
                 ? null
                 : (value) async {
-                    await WindowsRuntimeFlags.setLocalStorageEnabled(value);
-                    if (!mounted) return;
-                    setState(() => _localStorageEnabled = value);
+                    setState(() => _busy = true);
+                    try {
+                      await WindowsRuntimeFlags.setLocalStorageEnabled(value);
+                      await WindowsConnectionCenter.localStorageModeChanged();
+                      if (!mounted) return;
+                      setState(() {
+                        _localStorageEnabled = value;
+                        _busy = false;
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          backgroundColor: const Color(0xFF00A884),
+                          content: Text(
+                            value
+                                ? 'Local Data ON: device local data enabled.'
+                                : 'Local Data OFF: disk cache/save disabled. Remote data only.',
+                          ),
+                        ),
+                      );
+                    } catch (e) {
+                      if (!mounted) return;
+                      setState(() => _busy = false);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          backgroundColor: Colors.redAccent,
+                          content: Text('Local Data switch error: $e'),
+                        ),
+                      );
+                    }
                   },
           ),
           const SizedBox(height: 8),
@@ -813,128 +840,109 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
   }
 }
 
-class WindowsAppUpdateCard extends StatefulWidget {
+class WindowsAppUpdateCard extends StatelessWidget {
   const WindowsAppUpdateCard({super.key});
 
-  @override
-  State<WindowsAppUpdateCard> createState() => _WindowsAppUpdateCardState();
-}
-
-class _WindowsAppUpdateCardState extends State<WindowsAppUpdateCard> {
-  bool _checking = false;
-  bool _downloading = false;
-  double? _progress;
-  WindowsUpdateInfo? _update;
-  String? _message;
-
   Future<void> _check() async {
-    if (_checking || _downloading) return;
-    setState(() {
-      _checking = true;
-      _message = null;
-      _update = null;
-    });
     try {
-      final update = await WindowsUpdateService.check();
-      if (!mounted) return;
-      setState(() {
-        _update = update;
-        _message = update.updateAvailable
-            ? 'New version ${update.latestVersion} available.'
-            : 'App already latest version par hai.';
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _message = e.toString().replaceFirst('Bad state: ', ''));
-    } finally {
-      if (mounted) setState(() => _checking = false);
+      await WindowsUpdateService.checkAndRemember();
+    } catch (_) {
+      // Global state already contains the user-visible error.
     }
   }
 
   Future<void> _install() async {
-    final update = _update;
-    if (update == null || !update.updateAvailable || _downloading) return;
-    setState(() {
-      _downloading = true;
-      _progress = 0;
-    });
     try {
-      final installer = await WindowsUpdateService.download(
-        update,
-        onProgress: (value) {
-          if (mounted) setState(() => _progress = value);
-        },
-      );
-      await WindowsUpdateService.launchInstaller(installer);
-      if (!mounted) return;
-      setState(() => _message = 'Installer open ho gaya. Setup complete karein.');
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _message = 'Update error: $e');
-    } finally {
-      if (mounted) setState(() => _downloading = false);
+      await WindowsUpdateService.startDownloadAndInstall();
+    } catch (_) {
+      // Global state already contains the user-visible error.
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return _settingsStyleCard(
-      icon: Icons.system_update_alt_rounded,
-      iconColor: const Color(0xFF4DA3FF),
-      title: 'App Update',
-      subtitle: 'Windows master app update • Current v$windowsAppVersion',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_message != null) ...[
-            Text(
-              _message!,
-              style: TextStyle(
-                color: _message!.toLowerCase().contains('error')
-                    ? Colors.redAccent
-                    : Colors.white70,
-                fontSize: 11,
-              ),
-            ),
-            const SizedBox(height: 10),
-          ],
-          if (_downloading) ...[
-            LinearProgressIndicator(value: _progress),
-            const SizedBox(height: 10),
-          ],
-          Row(
+    return ValueListenableBuilder<WindowsUpdateRuntimeState>(
+      valueListenable: WindowsUpdateService.state,
+      builder: (context, state, _) {
+        final update = state.update;
+        final progressText = state.progress == null
+            ? ''
+            : ' ${(state.progress! * 100).clamp(0, 100).toStringAsFixed(0)}%';
+
+        return _settingsStyleCard(
+          icon: Icons.system_update_alt_rounded,
+          iconColor: const Color(0xFF4DA3FF),
+          title: 'App Update',
+          subtitle: 'Windows master app update • Current v$windowsAppVersion',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _checking || _downloading ? null : _check,
-                  icon: _checking
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh_rounded, size: 18),
-                  label: Text(_checking ? 'Checking...' : 'Check for Update'),
-                ),
-              ),
-              if (_update?.updateAvailable == true) ...[
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _downloading ? null : _install,
-                    icon: const Icon(Icons.download_rounded, size: 18),
-                    label: Text(
-                      _downloading
-                          ? 'Downloading ${((_progress ?? 0) * 100).toStringAsFixed(0)}%'
-                          : 'Download & Install',
-                    ),
+              if (state.message.isNotEmpty) ...[
+                Text(
+                  state.message,
+                  style: TextStyle(
+                    color: state.phase == WindowsUpdatePhase.error
+                        ? Colors.redAccent
+                        : Colors.white70,
+                    fontSize: 11,
                   ),
                 ),
+                const SizedBox(height: 10),
               ],
+              if (state.downloading || state.launching) ...[
+                LinearProgressIndicator(
+                  value: state.launching ? 1 : state.progress,
+                  minHeight: 7,
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  state.launching
+                      ? 'Download complete. Installer open ho raha hai...'
+                      : 'Downloading$progressText • Page change karne par bhi download continue rahega.',
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 10,
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: state.busy ? null : _check,
+                      icon: state.checking
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh_rounded, size: 18),
+                      label: Text(state.checking ? 'Checking...' : 'Check for Update'),
+                    ),
+                  ),
+                  if (update?.updateAvailable == true) ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: state.busy ? null : _install,
+                        icon: const Icon(Icons.download_rounded, size: 18),
+                        label: Text(
+                          state.downloading
+                              ? 'Downloading$progressText'
+                              : state.launching
+                                  ? 'Opening Installer...'
+                                  : 'Download & Install',
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
