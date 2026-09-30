@@ -399,7 +399,7 @@ class WindowsSectionLocks {
     required String newPassword,
   }) async {
     if (!await verify(sectionKey: sectionKey, password: currentPassword)) {
-      throw const StateError('Current section password galat hai.');
+      throw StateError('Current section password galat hai.');
     }
 
     _validatePassword(newPassword);
@@ -414,7 +414,7 @@ class WindowsSectionLocks {
     required bool value,
   }) async {
     if (value && !(await configured(sectionKey))) {
-      throw const StateError('Pehle section password add karein.');
+      throw StateError('Pehle section password add karein.');
     }
 
     await _secure.write(
