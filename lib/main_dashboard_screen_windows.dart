@@ -16,6 +16,7 @@ import 'package:pdf/pdf.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -273,6 +274,293 @@ double _windowsDistanceMeters(double lat1, double lng1, double lat2, double lng2
   final a = sin(dLat / 2) * sin(dLat / 2) +
       cos(rad(lat1)) * cos(rad(lat2)) * sin(dLng / 2) * sin(dLng / 2);
   return earth * 2 * atan2(sqrt(a), sqrt(1 - a));
+}
+
+// ============================================================
+// WINDOWS SECTION PASSWORD LOCKS
+// These passwords are independent from the Firebase app-login password and
+// from the existing Local Settings Lock.
+// ============================================================
+
+const String _windowsAdminSectionLock = 'admin_section';
+const String _windowsStudentRecordsLock = 'student_records';
+const String _windowsFeesCollectionLock = 'fees_collection';
+const String _windowsSchoolExpensesLock = 'school_expenses';
+const String _windowsAttendanceLock = 'attendance';
+
+class _WindowsSectionLockDefinition {
+  const _WindowsSectionLockDefinition({
+    required this.key,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+  });
+
+  final String key;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+}
+
+const List<_WindowsSectionLockDefinition> _windowsSectionLockDefinitions = [
+  _WindowsSectionLockDefinition(
+    key: _windowsAdminSectionLock,
+    title: 'Admin Section',
+    subtitle: 'App open hone ke baad full management panel unlock karein.',
+    icon: Icons.admin_panel_settings_rounded,
+    color: Color(0xFF00D9A5),
+  ),
+  _WindowsSectionLockDefinition(
+    key: _windowsStudentRecordsLock,
+    title: 'Student Records',
+    subtitle: 'Students, profiles aur ID cards ko protect karein.',
+    icon: Icons.people_alt_rounded,
+    color: Color(0xFF00A884),
+  ),
+  _WindowsSectionLockDefinition(
+    key: _windowsFeesCollectionLock,
+    title: 'Fees Collection',
+    subtitle: 'Fee collection, receipts aur dues ko protect karein.',
+    icon: Icons.payments_rounded,
+    color: Colors.greenAccent,
+  ),
+  _WindowsSectionLockDefinition(
+    key: _windowsSchoolExpensesLock,
+    title: 'School Expenses',
+    subtitle: 'Expense entry, ledger aur reports ko protect karein.',
+    icon: Icons.account_balance_wallet_rounded,
+    color: Colors.amberAccent,
+  ),
+  _WindowsSectionLockDefinition(
+    key: _windowsAttendanceLock,
+    title: 'Attendance',
+    subtitle: 'Student/Teacher QR attendance ko protect karein.',
+    icon: Icons.fact_check_rounded,
+    color: Color(0xFF69C2FF),
+  ),
+];
+
+class WindowsSectionLocks {
+  WindowsSectionLocks._();
+
+  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+
+  static String _passwordKey(String sectionKey) {
+    return 'vidya_saarthi_windows_section_password_v1_$sectionKey';
+  }
+
+  static String _enabledKey(String sectionKey) {
+    return 'vidya_saarthi_windows_section_password_enabled_v1_$sectionKey';
+  }
+
+  static Future<bool> configured(String sectionKey) async {
+    final value = await _secure.read(key: _passwordKey(sectionKey));
+    return value?.trim().isNotEmpty ?? false;
+  }
+
+  static Future<bool> enabled(String sectionKey) async {
+    if (!await configured(sectionKey)) return false;
+
+    final value = await _secure.read(key: _enabledKey(sectionKey));
+    // A configured lock without an old enabled flag remains protected.
+    return value == null || value == 'true';
+  }
+
+  static Future<bool> verify({
+    required String sectionKey,
+    required String password,
+  }) async {
+    final stored = await _secure.read(key: _passwordKey(sectionKey));
+    return stored != null && stored.isNotEmpty && stored == password;
+  }
+
+  static Future<void> addPassword({
+    required String sectionKey,
+    required String password,
+  }) async {
+    _validatePassword(password);
+
+    await _secure.write(
+      key: _passwordKey(sectionKey),
+      value: password,
+    );
+    // Adding a password turns that section lock ON by default.
+    await _secure.write(
+      key: _enabledKey(sectionKey),
+      value: 'true',
+    );
+  }
+
+  static Future<void> changePassword({
+    required String sectionKey,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    if (!await verify(sectionKey: sectionKey, password: currentPassword)) {
+      throw const StateError('Current section password galat hai.');
+    }
+
+    _validatePassword(newPassword);
+    await _secure.write(
+      key: _passwordKey(sectionKey),
+      value: newPassword,
+    );
+  }
+
+  static Future<void> setEnabled({
+    required String sectionKey,
+    required bool value,
+  }) async {
+    if (value && !(await configured(sectionKey))) {
+      throw const StateError('Pehle section password add karein.');
+    }
+
+    await _secure.write(
+      key: _enabledKey(sectionKey),
+      value: value ? 'true' : 'false',
+    );
+  }
+
+  static void _validatePassword(String password) {
+    if (password.trim().length < 6) {
+      throw const FormatException(
+        'Section password kam se kam 6 characters ka hona chahiye.',
+      );
+    }
+  }
+}
+
+Future<bool> _requireWindowsSectionPassword(
+  BuildContext context,
+  String sectionKey,
+  String sectionTitle,
+) async {
+  if (!await WindowsSectionLocks.enabled(sectionKey)) return true;
+  if (!context.mounted) return false;
+
+  final controller = TextEditingController();
+  String? error;
+  bool verifying = false;
+
+  final result = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> verifyPassword() async {
+            if (verifying) return;
+
+            final password = controller.text;
+            if (password.isEmpty) {
+              setDialogState(() => error = 'Password required hai.');
+              return;
+            }
+
+            setDialogState(() {
+              verifying = true;
+              error = null;
+            });
+
+            final valid = await WindowsSectionLocks.verify(
+              sectionKey: sectionKey,
+              password: password,
+            );
+
+            if (!dialogContext.mounted) return;
+            if (valid) {
+              Navigator.of(dialogContext).pop(true);
+              return;
+            }
+
+            setDialogState(() {
+              verifying = false;
+              error = 'Galat $sectionTitle password.';
+            });
+          }
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF172229),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+            title: Row(
+              children: [
+                const Icon(
+                  Icons.lock_rounded,
+                  color: Color(0xFF00D9A5),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '$sectionTitle Password',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 420,
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                obscureText: true,
+                enabled: !verifying,
+                onSubmitted: (_) => verifyPassword(),
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Enter $sectionTitle Password',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  errorText: error,
+                  prefixIcon: const Icon(
+                    Icons.password_rounded,
+                    color: Color(0xFF00A884),
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF0F191F),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: verifying
+                    ? null
+                    : () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                onPressed: verifying ? null : verifyPassword,
+                icon: verifying
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.lock_open_rounded, size: 17),
+                label: const Text('Unlock'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  controller.dispose();
+  return result == true;
 }
 
 
@@ -1012,6 +1300,20 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
 
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
+
+        final adminSectionUnlocked = await _requireWindowsSectionPassword(
+          context,
+          _windowsAdminSectionLock,
+          'Admin Section',
+        );
+        if (!adminSectionUnlocked) {
+          _clearPortalSession();
+          await FirebaseAuth.instance.signOut();
+          if (mounted) {
+            setState(() => _isRestoringSession = false);
+          }
+          return;
+        }
 
         await Navigator.of(context).push(
           MaterialPageRoute(
@@ -1801,6 +2103,17 @@ errorBuilder: (context, error, stackTrace) {
           email: idText,
           password: password,
         );
+
+        final adminSectionUnlocked = await _requireWindowsSectionPassword(
+          context,
+          _windowsAdminSectionLock,
+          'Admin Section',
+        );
+        if (!adminSectionUnlocked) {
+          _clearPortalSession();
+          await FirebaseAuth.instance.signOut();
+          return;
+        }
 
         _savePortalSession(role: 'admin');
 
@@ -6711,14 +7024,45 @@ Future<void> _printIdCard() async {
     );
   }
 
-  void _openAdminDrawerPage(Widget page) {
+  void _openAdminDrawerPage(
+    Widget page, {
+    String? sectionKey,
+    String? sectionTitle,
+  }) {
     Navigator.of(context).pop();
     Future<void>.delayed(Duration.zero, () async {
       if (!mounted) return;
+
+      if (sectionKey != null) {
+        final unlocked = await _requireWindowsSectionPassword(
+          context,
+          sectionKey,
+          sectionTitle ?? 'Protected Section',
+        );
+        if (!unlocked || !mounted) return;
+      }
+
       await Navigator.of(context).push(
         MaterialPageRoute<void>(builder: (_) => page),
       );
     });
+  }
+
+  Future<void> _openAdminModule(
+    Widget page, {
+    required String sectionKey,
+    required String sectionTitle,
+  }) async {
+    final unlocked = await _requireWindowsSectionPassword(
+      context,
+      sectionKey,
+      sectionTitle,
+    );
+    if (!unlocked || !mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => page),
+    );
   }
 
   Widget _adminDrawerItem({
@@ -6909,14 +7253,22 @@ errorBuilder: (_, __, ___) => const Icon(
               title: windowsTr('students'),
               subtitle: 'Students, profiles & ID cards',
               color: const Color(0xFF00A884),
-              onTap: () => _openAdminDrawerPage(const AllStudentsListScreen()),
+              onTap: () => _openAdminDrawerPage(
+                const AllStudentsListScreen(),
+                sectionKey: _windowsStudentRecordsLock,
+                sectionTitle: 'Student Records',
+              ),
             ),
             _adminDrawerItem(
               icon: Icons.payments_rounded,
               title: windowsTr('fees'),
               subtitle: 'Collect fees, receipts & dues',
               color: Colors.greenAccent,
-              onTap: () => _openAdminDrawerPage(const FeesCollectionScreen()),
+              onTap: () => _openAdminDrawerPage(
+                const FeesCollectionScreen(),
+                sectionKey: _windowsFeesCollectionLock,
+                sectionTitle: 'Fees Collection',
+              ),
             ),
             _adminDrawerItem(
               icon: Icons.fact_check_rounded,
@@ -6939,6 +7291,8 @@ errorBuilder: (_, __, ___) => const Icon(
               color: Colors.amberAccent,
               onTap: () => _openAdminDrawerPage(
                 const WindowsSchoolExpensesScreen(),
+                sectionKey: _windowsSchoolExpensesLock,
+                sectionTitle: 'School Expenses',
               ),
             ),
             _adminDrawerItem(
@@ -6948,6 +7302,8 @@ errorBuilder: (_, __, ___) => const Icon(
               color: const Color(0xFF69C2FF),
               onTap: () => _openAdminDrawerPage(
                 const WindowsAttendanceScreen(),
+                sectionKey: _windowsAttendanceLock,
+                sectionTitle: 'Attendance',
               ),
             ),
             _adminDrawerItem(
@@ -7626,14 +7982,11 @@ Widget _buildOverviewCards() {
                     ? 'Loading student count...'
                     : 'Total Students: $count',
                 accent: const Color(0xFF00A884),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const AllStudentsListScreen(),
-                    ),
-                  );
-                },
+                onTap: () => _openAdminModule(
+                  const AllStudentsListScreen(),
+                  sectionKey: _windowsStudentRecordsLock,
+                  sectionTitle: 'Student Records',
+                ),
               );
             },
           ),
@@ -7644,14 +7997,11 @@ Widget _buildOverviewCards() {
             title: windowsTr('fees'),
             subtitle: 'Collect fees, receipts & dues',
             accent: Colors.greenAccent,
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const FeesCollectionScreen(),
-                ),
-              );
-            },
+            onTap: () => _openAdminModule(
+              const FeesCollectionScreen(),
+              sectionKey: _windowsFeesCollectionLock,
+              sectionTitle: 'Fees Collection',
+            ),
           ),
               
           _overviewCard(
@@ -9737,10 +10087,10 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                     title: 'Student Records',
                     subtitle: 'Students, profiles & ID cards',
                     color: const Color(0xFF00A884),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const AllStudentsListScreen(),
-                      ),
+                    onTap: () => _openAnalyticsModule(
+                      const AllStudentsListScreen(),
+                      sectionKey: _windowsStudentRecordsLock,
+                      sectionTitle: 'Student Records',
                     ),
                   ),
                   _analyticsSidebarItem(
@@ -9748,10 +10098,10 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                     title: 'Fees Collection',
                     subtitle: 'Collect fees, receipts & dues',
                     color: Colors.greenAccent,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const FeesCollectionScreen(),
-                      ),
+                    onTap: () => _openAnalyticsModule(
+                      const FeesCollectionScreen(),
+                      sectionKey: _windowsFeesCollectionLock,
+                      sectionTitle: 'Fees Collection',
                     ),
                   ),
                   _analyticsSidebarItem(
@@ -9781,10 +10131,10 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                     title: 'School Expenses',
                     subtitle: 'Expense entry, ledger & reports',
                     color: Colors.amberAccent,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const WindowsSchoolExpensesScreen(),
-                      ),
+                    onTap: () => _openAnalyticsModule(
+                      const WindowsSchoolExpensesScreen(),
+                      sectionKey: _windowsSchoolExpensesLock,
+                      sectionTitle: 'School Expenses',
                     ),
                   ),
                   _analyticsSidebarItem(
@@ -9792,10 +10142,10 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                     title: 'Attendance',
                     subtitle: 'QR entry/exit + geofence',
                     color: const Color(0xFF69C2FF),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const WindowsAttendanceScreen(),
-                      ),
+                    onTap: () => _openAnalyticsModule(
+                      const WindowsAttendanceScreen(),
+                      sectionKey: _windowsAttendanceLock,
+                      sectionTitle: 'Attendance',
                     ),
                   ),
                   _analyticsSidebarItem(
@@ -9835,6 +10185,23 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     if (!mounted) return;
     await _loadAnalytics();
     setState(() {});
+  }
+
+  Future<void> _openAnalyticsModule(
+    Widget page, {
+    required String sectionKey,
+    required String sectionTitle,
+  }) async {
+    final unlocked = await _requireWindowsSectionPassword(
+      context,
+      sectionKey,
+      sectionTitle,
+    );
+    if (!unlocked || !mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => page),
+    );
   }
 
   @override
@@ -20869,6 +21236,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                       const SizedBox(height: 14),
                       const WindowsSettingsPanel(),
                       const SizedBox(height: 14),
+                      const _WindowsSectionPasswordLocksPanel(),
+                      const SizedBox(height: 14),
                       const _AdvancedStudentUidSettingsPanel(),
                     ],
                   ),
@@ -20880,6 +21249,466 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 }
 
 
+
+class _WindowsSectionPasswordLocksPanel extends StatefulWidget {
+  const _WindowsSectionPasswordLocksPanel();
+
+  @override
+  State<_WindowsSectionPasswordLocksPanel> createState() =>
+      _WindowsSectionPasswordLocksPanelState();
+}
+
+class _WindowsSectionPasswordLocksPanelState
+    extends State<_WindowsSectionPasswordLocksPanel> {
+  final Map<String, bool> _configured = <String, bool>{};
+  final Map<String, bool> _enabled = <String, bool>{};
+  String? _busyKey;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final configured = <String, bool>{};
+    final enabled = <String, bool>{};
+
+    try {
+      for (final definition in _windowsSectionLockDefinitions) {
+        configured[definition.key] =
+            await WindowsSectionLocks.configured(definition.key);
+        enabled[definition.key] =
+            await WindowsSectionLocks.enabled(definition.key);
+      }
+    } catch (e) {
+      debugPrint('Section lock settings load warning: $e');
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _configured
+        ..clear()
+        ..addAll(configured);
+      _enabled
+        ..clear()
+        ..addAll(enabled);
+      _loading = false;
+      _busyKey = null;
+    });
+  }
+
+  Future<void> _editPassword(
+    _WindowsSectionLockDefinition definition,
+  ) async {
+    final isChange = _configured[definition.key] == true;
+    final current = TextEditingController();
+    final next = TextEditingController();
+    final confirm = TextEditingController();
+    String? error;
+    bool saving = false;
+    bool obscure = true;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> save() async {
+              if (saving) return;
+
+              if (isChange && current.text.isEmpty) {
+                setDialogState(() => error = 'Current password required hai.');
+                return;
+              }
+              if (next.text.trim().length < 6) {
+                setDialogState(
+                  () => error = 'Password kam se kam 6 characters ka ho.',
+                );
+                return;
+              }
+              if (next.text != confirm.text) {
+                setDialogState(() => error = 'Password match nahi kar raha.');
+                return;
+              }
+
+              setDialogState(() {
+                saving = true;
+                error = null;
+              });
+
+              try {
+                if (isChange) {
+                  await WindowsSectionLocks.changePassword(
+                    sectionKey: definition.key,
+                    currentPassword: current.text,
+                    newPassword: next.text,
+                  );
+                } else {
+                  await WindowsSectionLocks.addPassword(
+                    sectionKey: definition.key,
+                    password: next.text,
+                  );
+                }
+
+                if (!dialogContext.mounted) return;
+                Navigator.of(dialogContext).pop(true);
+              } catch (e) {
+                if (!dialogContext.mounted) return;
+                setDialogState(() {
+                  saving = false;
+                  error = e.toString().replaceFirst('FormatException: ', '');
+                });
+              }
+            }
+
+            InputDecoration field(String label) {
+              return InputDecoration(
+                labelText: label,
+                labelStyle: const TextStyle(color: Colors.white54),
+                prefixIcon: const Icon(
+                  Icons.password_rounded,
+                  color: Color(0xFF00A884),
+                ),
+                suffixIcon: IconButton(
+                  onPressed: saving
+                      ? null
+                      : () => setDialogState(() => obscure = !obscure),
+                  icon: Icon(
+                    obscure
+                        ? Icons.visibility_off_rounded
+                        : Icons.visibility_rounded,
+                    color: Colors.white54,
+                  ),
+                ),
+                filled: true,
+                fillColor: const Color(0xFF0F191F),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF172229),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              title: Row(
+                children: [
+                  Icon(definition.icon, color: definition.color),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      isChange
+                          ? 'Change ${definition.title} Password'
+                          : 'Add ${definition.title} Password',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 470,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isChange) ...[
+                      TextField(
+                        controller: current,
+                        obscureText: obscure,
+                        enabled: !saving,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: field('Current Password'),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    TextField(
+                      controller: next,
+                      obscureText: obscure,
+                      enabled: !saving,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: field('New Password'),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: confirm,
+                      obscureText: obscure,
+                      enabled: !saving,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: field('Confirm Password'),
+                    ),
+                    if (error != null) ...[
+                      const SizedBox(height: 9),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          error!,
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton.icon(
+                  onPressed: saving ? null : save,
+                  icon: saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.save_rounded, size: 17),
+                  label: Text(isChange ? 'Change Password' : 'Add Password'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    current.dispose();
+    next.dispose();
+    confirm.dispose();
+
+    if (saved == true && mounted) {
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text(
+            '${definition.title} password save ho gaya aur lock ON hai.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggle(
+    _WindowsSectionLockDefinition definition,
+    bool value,
+  ) async {
+    if (_busyKey != null) return;
+
+    if (value && _configured[definition.key] != true) {
+      await _editPassword(definition);
+      return;
+    }
+
+    setState(() => _busyKey = definition.key);
+    try {
+      await WindowsSectionLocks.setEnabled(
+        sectionKey: definition.key,
+        value: value,
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busyKey = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Lock update error: $e'),
+        ),
+      );
+    }
+  }
+
+  Widget _status(bool enabled) {
+    final color = enabled ? const Color(0xFF00D9A5) : Colors.white38;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.24)),
+      ),
+      child: Text(
+        enabled ? 'ON' : 'OFF',
+        style: TextStyle(
+          color: color,
+          fontSize: 9,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+
+  Widget _row(_WindowsSectionLockDefinition definition) {
+    final configured = _configured[definition.key] == true;
+    final enabled = _enabled[definition.key] == true;
+    final busy = _busyKey == definition.key;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F191F),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: definition.color.withOpacity(0.16)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: definition.color.withOpacity(0.11),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(definition.icon, color: definition.color, size: 20),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      definition.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      definition.subtitle,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _status(enabled),
+              const SizedBox(width: 5),
+              Switch(
+                value: enabled,
+                activeColor: definition.color,
+                onChanged: _loading || busy
+                    ? null
+                    : (value) => _toggle(definition, value),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _loading || busy
+                    ? null
+                    : () => _editPassword(definition),
+                icon: Icon(
+                  configured ? Icons.key_rounded : Icons.add_rounded,
+                  size: 16,
+                ),
+                label: Text(
+                  configured ? 'Change Password' : 'Add Password',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: definition.color,
+                  side: BorderSide(
+                    color: definition.color.withOpacity(0.45),
+                  ),
+                ),
+              ),
+              if (!configured)
+                const Text(
+                  'Password not set',
+                  style: TextStyle(color: Colors.white30, fontSize: 10),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.lock_rounded, color: Colors.orangeAccent),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Section Password Locks',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          const Text(
+            'Ye passwords App Open/Firebase password aur Local Settings Lock se completely independent hain. Password ON hone par section kholte waqt alag password maanga jayega.',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 10.5,
+              height: 1.45,
+            ),
+          ),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.only(top: 18),
+              child: Center(
+                child: CircularProgressIndicator(color: Color(0xFF00D9A5)),
+              ),
+            )
+          else
+            for (final definition in _windowsSectionLockDefinitions)
+              _row(definition),
+        ],
+      ),
+    );
+  }
+}
 
 class _AdvancedStudentUidSettingsPanel extends StatefulWidget {
   const _AdvancedStudentUidSettingsPanel();
