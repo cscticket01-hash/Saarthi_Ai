@@ -6439,13 +6439,17 @@ Future<void> _printIdCard() async {
 
     _clearPortalSession();
     try {
+      await WindowsLocalSession.logout();
       await FirebaseAuth.instance.signOut();
     } catch (e) {
       debugPrint('Admin header logout sign-out warning: $e');
     }
 
     if (!mounted) return;
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    Navigator.of(context).pushNamedAndRemoveUntil(
+      '/local-login',
+      (route) => false,
+    );
   }
 
   /// Opens the protected Analytics page only after the currently signed-in
@@ -6907,6 +6911,21 @@ errorBuilder: (_, __, ___) => const Icon(
               onTap: () => _openAdminDrawerPage(
                 const WindowsTemplatesScreen(),
               ),
+            ),
+            _adminDrawerItem(
+              icon: Icons.logout_rounded,
+              title: 'Logout',
+              subtitle: 'Sign out from this Admin Console',
+              color: Colors.redAccent,
+              onTap: () {
+                Navigator.of(context).pop();
+                Future<void>.delayed(
+                  const Duration(milliseconds: 160),
+                  () {
+                    if (mounted) _confirmAdminLogoutFromHeader();
+                  },
+                );
+              },
             ),
             const SizedBox(height: 16),
             const Padding(
@@ -8754,6 +8773,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     'Dec',
   ];
 
+  // January-based year selection: January 2027 automatically becomes 2027-28.
   final List<int> _availableYears = <int>[
     DateTime.now().year,
     DateTime.now().year - 1,
@@ -9004,6 +9024,55 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     return '';
   }
 
+  String _analyticsStudentIdentity(Map<String, dynamic> data) {
+    String valueFor(List<String> keys) {
+      for (final key in keys) {
+        final value = _normalizeIdentityPart(data[key]);
+        if (value.isNotEmpty) return value;
+      }
+      return '';
+    }
+
+    final profileParts = <String>[
+      valueFor(const ['name', 'studentName']),
+      valueFor(const ['parentName', 'fatherName', 'guardianName']),
+      valueFor(const ['dateOfBirth', 'dob']),
+      valueFor(const ['class', 'studentClass']),
+      valueFor(const ['rollNo', 'roll', 'rollNumber']),
+      valueFor(const ['parentContact', 'fatherContact', 'guardianContact']),
+    ];
+    final meaningfulParts = profileParts.where((value) => value.isNotEmpty);
+
+    // Student records can be duplicated with different Firestore document IDs.
+    // Prefer the stable profile fingerprint so one real student is counted once.
+    if (meaningfulParts.length >= 2) {
+      return 'profile:${profileParts.join('|')}';
+    }
+
+    final uid = valueFor(const [
+      'uniqueStudentId',
+      'studentUid',
+      'studentUidTest',
+      'studentId',
+      'admissionNo',
+      'admissionNumber',
+    ]);
+    if (uid.isNotEmpty) return 'uid:$uid';
+
+    final documentId = valueFor(const ['_analyticsDocId']);
+    return documentId.isEmpty ? 'record:${data.hashCode}' : 'doc:$documentId';
+  }
+
+  List<Map<String, dynamic>> _analyticsUniqueStudents(
+    List<Map<String, dynamic>> records,
+  ) {
+    final unique = <String, Map<String, dynamic>>{};
+    for (final record in records) {
+      unique.putIfAbsent(_analyticsStudentIdentity(record), () => record);
+    }
+    return unique.values.toList();
+  }
+
   Future<void> _loadAnalytics() async {
     if (mounted) {
       setState(() {
@@ -9021,10 +9090,14 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         _analyticsGet('fee_ledger'),
       ]);
 
-      final students = snapshots[0]?.docs
-              .map((doc) => doc.data())
+      final rawStudents = snapshots[0]?.docs
+              .map((doc) => <String, dynamic>{
+                    ...doc.data(),
+                    '_analyticsDocId': doc.id,
+                  })
               .toList() ??
           <Map<String, dynamic>>[];
+      final students = _analyticsUniqueStudents(rawStudents);
       final teachers = snapshots[1]?.docs
               .map((doc) => doc.data())
               .toList() ??
@@ -9704,6 +9777,18 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     );
   }
 
+  Future<void> _openAnalyticsSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const SettingsScreen(),
+      ),
+    );
+
+    if (!mounted) return;
+    await _loadAnalytics();
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = _data;
@@ -9834,20 +9919,32 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              Container(
-                                width: 42,
-                                height: 42,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF00A884).withOpacity(.12),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: const Color(0xFF00A884).withOpacity(.25),
-                                  ),
+                              IconButton(
+                                tooltip: 'Admin Settings',
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints.tightFor(
+                                  width: 42,
+                                  height: 42,
                                 ),
-                                child: const Icon(
-                                  Icons.settings_rounded,
-                                  color: Color(0xFF00D9A5),
-                                  size: 20,
+                                splashRadius: 21,
+                                onPressed: () async {
+                                  await _openAnalyticsSettings();
+                                },
+                                icon: Container(
+                                  width: 42,
+                                  height: 42,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF00A884).withOpacity(.12),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: const Color(0xFF00A884).withOpacity(.25),
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.settings_rounded,
+                                    color: Color(0xFF00D9A5),
+                                    size: 20,
+                                  ),
                                 ),
                               ),
                             ],
@@ -11990,69 +12087,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _confirmLogout() async {
-    final shouldLogout = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF172229),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-        ),
-        title: const Row(
-          children: [
-            Icon(Icons.logout_rounded, color: Colors.redAccent),
-            SizedBox(width: 10),
-            Text(
-              'Local Logout?',
-              style: TextStyle(color: Colors.white, fontSize: 17),
-            ),
-          ],
-        ),
-        content: const Text(
-          'Is Windows app ka local session lock hoga. Firebase/Google Drive connection remove nahi hoga.',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.pop(ctx, true),
-            icon: const Icon(Icons.logout_rounded, size: 18),
-            label: const Text('Local Logout'),
-          ),
-        ],
-      ),
-    );
-
-    if (shouldLogout != true) return;
-
-    _clearPortalSession();
-
-    try {
-      await WindowsLocalSession.logout();
-      await FirebaseAuth.instance.signOut();
-      if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil(
-        '/local-login',
-        (route) => false,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Local logout error: $e'),
-        ),
-      );
-    }
-  }
-
   String _profileInitial(User? user) {
     final name = user?.displayName?.trim() ?? '';
     if (name.isNotEmpty) return name.substring(0, 1).toUpperCase();
@@ -12244,28 +12278,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       );
 
-                      final logoutButton = OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.redAccent,
-                          side: BorderSide(
-                            color: Colors.redAccent.withOpacity(0.55),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 13,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        onPressed: _confirmLogout,
-                        icon: const Icon(Icons.logout_rounded, size: 18),
-                        label: const Text(
-                          'Local Logout',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      );
-
                       if (compact) {
                         return Column(
                           children: [
@@ -12275,8 +12287,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               width: double.infinity,
                               child: schoolSettingsButton,
                             ),
-                            const SizedBox(height: 10),
-                            SizedBox(width: double.infinity, child: logoutButton),
                           ],
                         );
                       }
@@ -12291,8 +12301,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 schoolSettingsButton,
-                                const SizedBox(height: 9),
-                                logoutButton,
                               ],
                             ),
                           ),
