@@ -68,9 +68,78 @@ jobs:
         shell: powershell
         run: |
           $pubspec = Get-Content 'pubspec.yaml' -Raw
-          $pubspec = [regex]::Replace($pubspec, '(?m)^\s*agora_rtc_engine:\s*[^\r\n]+\r?\n', '')
-          $pubspec = [regex]::Replace($pubspec, '(?m)^\s*mobile_scanner:\s*[^\r\n]+\r?\n', '')
+
+          # Windows Admin uses dedicated local shims + REST connection code.
+          # Native FlutterFire plugins are NOT used by the Windows source.
+          # Remove them only from this temporary GitHub Actions runner copy.
+          # Repository pubspec.yaml, Android and Website stay unchanged.
+          $removePackages = @(
+            'agora_rtc_engine',
+            'mobile_scanner',
+            'firebase_core',
+            'firebase_auth',
+            'firebase_messaging',
+            'firebase_storage',
+            'firebase_analytics',
+            'firebase_database',
+            'firebase_crashlytics',
+            'firebase_app_check',
+            'firebase_remote_config',
+            'firebase_functions',
+            'firebase_performance',
+            'cloud_firestore'
+          )
+
+          foreach ($package in $removePackages) {
+            $pattern = "(?m)^\s*" + [regex]::Escape($package) + ":\s*[^\r\n]+\r?\n"
+            $pubspec = [regex]::Replace($pubspec, $pattern, '')
+          }
+
           Set-Content -Path 'pubspec.yaml' -Value $pubspec -Encoding UTF8
+
+          Write-Host '===== WINDOWS CI REMOVED NATIVE FIREBASE/MOBILE PLUGINS ====='
+          Select-String -Path 'pubspec.yaml' -Pattern `
+            'firebase_|cloud_firestore:|agora_rtc_engine:|mobile_scanner:' `
+            -ErrorAction SilentlyContinue
+
+      - name: Verify Windows Source Does Not Import Native FlutterFire
+        shell: powershell
+        run: |
+          $windowsSources = @(
+            'lib\main_windows.dart',
+            'lib\main_dashboard_screen_windows.dart',
+            'lib\windows_settings_panel.dart',
+            'lib\windows_firebase_sync.dart',
+            'lib\windows_local_firestore.dart',
+            'lib\windows_local_auth.dart',
+            'lib\windows_backend_bridge.dart',
+            'lib\windows_sync_engine.dart',
+            'lib\windows_update_manager.dart'
+          )
+
+          $bad = @()
+
+          foreach ($file in $windowsSources) {
+            if (!(Test-Path $file)) {
+              throw "Missing Windows source: $file"
+            }
+
+            $matches = Select-String `
+              -Path $file `
+              -Pattern "package:firebase_|package:cloud_firestore" `
+              -ErrorAction SilentlyContinue
+
+            if ($matches) {
+              $bad += $matches
+            }
+          }
+
+          if ($bad.Count -gt 0) {
+            $bad | ForEach-Object { Write-Host $_ }
+            throw 'Windows source still imports native FlutterFire. Use Windows local/REST shims instead.'
+          }
+
+          Write-Host 'Windows source native FlutterFire imports: NONE'
 
       - name: Clean Flutter
         shell: powershell
@@ -78,7 +147,21 @@ jobs:
 
       - name: Get Dependencies
         shell: powershell
-        run: flutter pub get
+        run: |
+          flutter pub get
+
+          Write-Host '===== CHECK WINDOWS PLUGIN GRAPH ====='
+          $deps = flutter pub deps
+
+          $nativeFirebase = $deps | Select-String `
+            'firebase_auth |cloud_firestore |firebase_core |firebase_messaging |firebase_storage '
+
+          if ($nativeFirebase) {
+            $nativeFirebase | ForEach-Object { Write-Host $_ }
+            throw 'Native FlutterFire dependency still present in Windows CI dependency graph.'
+          }
+
+          Write-Host 'Native FlutterFire dependency graph: CLEAN'
 
       - name: Set Windows App Version
         id: app_version
