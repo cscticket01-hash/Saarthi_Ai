@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'main_dashboard_screen_windows.dart';
@@ -6,6 +8,8 @@ import 'windows_local_auth.dart';
 import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
+import 'windows_connection_center.dart';
+import 'windows_update_service.dart' as update_service;
 import 'windows_update_manager.dart';
 
 Future<void> main() async {
@@ -23,6 +27,15 @@ Future<void> main() async {
 
   windows_html.setSchoolStorageNamespace('local');
   runApp(const VidyaSaarthiWindowsApp());
+
+  // App-level connection engine: Firebase + Google Drive/Apps Script become
+  // the single active school profile for every Windows feature screen.
+  // This runs independently of any individual page lifecycle.
+  unawaited(
+    WindowsConnectionCenter.initialize().catchError((Object error) {
+      debugPrint('Windows connection center background init warning: $error');
+    }),
+  );
 }
 
 class VidyaSaarthiWindowsApp extends StatelessWidget {
@@ -47,7 +60,14 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
         return Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: (_) => windows_html.document.dispatchClick(),
-          child: child ?? const SizedBox.shrink(),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: child ?? const SizedBox.shrink(),
+              ),
+              const _WindowsGlobalUpdateProgress(),
+            ],
+          ),
         );
       },
       routes: {
@@ -59,6 +79,96 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           : WindowsLocalSession.loggedOut
               ? const WindowsLocalLoginScreen()
               : const WindowsLocalDashboardGate(),
+    );
+  }
+}
+
+class _WindowsGlobalUpdateProgress extends StatelessWidget {
+  const _WindowsGlobalUpdateProgress();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<update_service.WindowsUpdateRuntimeState>(
+      valueListenable: update_service.WindowsUpdateService.state,
+      builder: (context, state, _) {
+        if (!state.downloading && !state.launching) {
+          return const SizedBox.shrink();
+        }
+
+        final percent = state.progress == null
+            ? null
+            : (state.progress! * 100).clamp(0, 100).toStringAsFixed(0);
+
+        return IgnorePointer(
+          child: Align(
+            alignment: Alignment.topRight,
+            child: SafeArea(
+              child: Container(
+                width: 310,
+                margin: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF172229),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.white10),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black38,
+                      blurRadius: 16,
+                      offset: Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.system_update_alt_rounded,
+                          color: Color(0xFF4DA3FF),
+                          size: 19,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            state.launching
+                                ? 'Update ready'
+                                : 'App update downloading${percent == null ? '' : ' • $percent%'}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(
+                      value: state.launching ? 1 : state.progress,
+                      minHeight: 5,
+                      color: const Color(0xFF4DA3FF),
+                      backgroundColor: Colors.white10,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      state.message,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 9.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
