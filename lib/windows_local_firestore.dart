@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'windows_local_storage.dart';
+import 'windows_runtime_flags.dart';
 import 'windows_service_status.dart';
 
 
@@ -99,6 +100,8 @@ class FirebaseFirestore {
       identity: identity,
     );
   }
+
+  Future<void> resetVolatileSession() => _database.resetVolatileSession();
 
   CollectionReference<Map<String, dynamic>> collection(
     String path,
@@ -616,6 +619,15 @@ class _LocalJsonDatabase {
   String _activeProfileId = 'unbound';
   Map<String, dynamic> _activeIdentity = const <String, dynamic>{};
 
+  // Local Storage OFF = no school database is read from or written to disk.
+  // Remote data can still be mirrored into this in-memory root for the
+  // current app session, so Firebase + Google features remain usable without
+  // leaving a local database behind on the PC.
+  Map<String, dynamic> _memoryRoot = <String, dynamic>{
+    'version': 2,
+    'profiles': <String, dynamic>{},
+  };
+
   String get activeProfileId => _activeProfileId;
 
   Map<String, dynamic> get activeProfileIdentity =>
@@ -987,6 +999,10 @@ class _LocalJsonDatabase {
   }
 
   Future<Map<String, dynamic>> _readRoot() async {
+    if (!await WindowsRuntimeFlags.localStorageEnabled()) {
+      return _cloneRoot(_memoryRoot);
+    }
+
     final file = await _file();
     try {
       if (!await file.exists()) {
@@ -1038,6 +1054,31 @@ class _LocalJsonDatabase {
         'version': 2,
         'profiles': <String, dynamic>{},
       };
+    }
+  }
+
+  Map<String, dynamic> _cloneRoot(Map<String, dynamic> source) {
+    try {
+      final decoded = jsonDecode(jsonEncode(source));
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {}
+    return <String, dynamic>{
+      'version': 2,
+      'profiles': <String, dynamic>{},
+    };
+  }
+
+  /// Clears only the non-persistent session cache used while Local Storage is
+  /// OFF. Disk data is never deleted by this method.
+  Future<void> resetVolatileSession() async {
+    _memoryRoot = <String, dynamic>{
+      'version': 2,
+      'profiles': <String, dynamic>{},
+    };
+    for (final controller in _signals.values) {
+      if (!controller.isClosed) controller.add(null);
     }
   }
 
@@ -1141,6 +1182,11 @@ class _LocalJsonDatabase {
   Future<void> _writeRoot(
     Map<String, dynamic> root,
   ) async {
+    if (!await WindowsRuntimeFlags.localStorageEnabled()) {
+      _memoryRoot = _cloneRoot(root);
+      return;
+    }
+
     final file = await _file();
     try {
       await file.parent.create(recursive: true);
