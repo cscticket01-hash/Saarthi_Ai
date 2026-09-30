@@ -6448,6 +6448,218 @@ Future<void> _printIdCard() async {
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
+  /// Opens the protected Analytics page only after the currently signed-in
+  /// Firebase Admin re-authenticates successfully. No password is stored.
+  Future<void> _openAdminAnalyticsGate() async {
+    final user = FirebaseAuth.instance.currentUser;
+    final email = user?.email?.trim() ?? '';
+
+    if (user == null || email.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Admin login session nahi mila.'),
+        ),
+      );
+      return;
+    }
+
+    final passwordController = TextEditingController();
+    var obscurePassword = true;
+    var verifying = false;
+    String? errorMessage;
+
+    final verified = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> verifyPassword() async {
+              final password = passwordController.text;
+              if (password.isEmpty || verifying) {
+                if (password.isEmpty) {
+                  setDialogState(() {
+                    errorMessage = 'Admin Password required hai.';
+                  });
+                }
+                return;
+              }
+
+              setDialogState(() {
+                verifying = true;
+                errorMessage = null;
+              });
+
+              try {
+                final credential = EmailAuthProvider.credential(
+                  email: email,
+                  password: password,
+                );
+                await user.reauthenticateWithCredential(credential);
+
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop(true);
+                }
+              } on FirebaseAuthException catch (e) {
+                if (!dialogContext.mounted) return;
+                setDialogState(() {
+                  verifying = false;
+                  errorMessage =
+                      e.code == 'too-many-requests'
+                          ? 'Bahut attempts ho gaye. Thodi der baad try karein.'
+                          : 'Galat Admin Password.';
+                });
+              } catch (_) {
+                if (!dialogContext.mounted) return;
+                setDialogState(() {
+                  verifying = false;
+                  errorMessage = 'Admin Password verify nahi hua.';
+                });
+              }
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF172229),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: const Row(
+                children: [
+                  Icon(
+                    Icons.analytics_rounded,
+                    color: Color(0xFF00D9A5),
+                  ),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Admin Password',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'School Analytics kholne ke liye Admin Password enter karein.',
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11.5,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    TextField(
+                      controller: passwordController,
+                      autofocus: true,
+                      obscureText: obscurePassword,
+                      enabled: !verifying,
+                      onSubmitted: (_) => verifyPassword(),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Admin Password',
+                        labelStyle: const TextStyle(color: Colors.white54),
+                        prefixIcon: const Icon(
+                          Icons.lock_outline_rounded,
+                          color: Color(0xFF00D9A5),
+                        ),
+                        suffixIcon: IconButton(
+                          onPressed: verifying
+                              ? null
+                              : () => setDialogState(
+                                    () => obscurePassword = !obscurePassword,
+                                  ),
+                          icon: Icon(
+                            obscurePassword
+                                ? Icons.visibility_off_rounded
+                                : Icons.visibility_rounded,
+                            color: Colors.white54,
+                          ),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF0F191F),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: errorMessage == null
+                                ? Colors.white10
+                                : Colors.redAccent,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(
+                            color: Color(0xFF00D9A5),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        errorMessage!,
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: verifying
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: verifying ? null : verifyPassword,
+                  icon: verifying
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.lock_open_rounded, size: 18),
+                  label: Text(verifying ? 'Verifying...' : 'Continue'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    passwordController.dispose();
+
+    if (verified != true || !mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const AdminAnalyticsScreen(),
+      ),
+    );
+  }
+
   void _openAdminDrawerPage(Widget page) {
     Navigator.of(context).pop();
     Future<void>.delayed(Duration.zero, () async {
@@ -6538,23 +6750,44 @@ Future<void> _printIdCard() async {
               builder: (context, snapshot) {
                 final profile = _mergeSchoolProfile(snapshot.data?.data());
                 final logoUrl = profile['logoUrl']?.toString().trim() ?? '';
-                return Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.all(12),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF123D38), Color(0xFF172229)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
+                return Material(
+                  color: Colors.transparent,
+                  child: InkWell(
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: const Color(0xFF00A884).withOpacity(.20),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
+                    onTap: () {
+                      // Close the drawer first, then show the password gate.
+                      Navigator.of(context).pop();
+                      Future<void>.delayed(
+                        const Duration(milliseconds: 160),
+                        () {
+                          if (mounted) _openAdminAnalyticsGate();
+                        },
+                      );
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF123D38), Color(0xFF172229)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: const Color(0xFF00D9A5).withOpacity(.42),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF00D9A5).withOpacity(.08),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
                       Container(
                         width: 52,
                         height: 52,
@@ -6606,7 +6839,9 @@ errorBuilder: (_, __, ___) => const Icon(
                           ],
                         ),
                       ),
-                    ],
+                        ],
+                      ),
+                    ),
                   ),
                 );
               },
@@ -8451,6 +8686,1731 @@ errorBuilder: (_, __, ___) => const ColoredBox(
     );
   }
 
+}
+
+// ============================================================
+// PROTECTED ADMIN ANALYTICS
+// ============================================================
+
+class _AdminAnalyticsPair {
+  const _AdminAnalyticsPair({this.pass = 0, this.fail = 0});
+
+  final double pass;
+  final double fail;
+}
+
+class _AdminAnalyticsData {
+  const _AdminAnalyticsData({
+    required this.totalStudents,
+    required this.totalTeachers,
+    required this.totalFees,
+    required this.totalExpenses,
+    required this.passStudents,
+    required this.failStudents,
+    required this.studentAttendance,
+    required this.teacherAttendance,
+    required this.attendanceTrend,
+    required this.feesByMonth,
+    required this.expensesByMonth,
+    required this.passFailByMonth,
+    required this.admissionsByMonth,
+  });
+
+  final int totalStudents;
+  final int totalTeachers;
+  final double totalFees;
+  final double totalExpenses;
+  final int passStudents;
+  final int failStudents;
+  final double studentAttendance;
+  final double teacherAttendance;
+  final List<double> attendanceTrend;
+  final List<double> feesByMonth;
+  final List<double> expensesByMonth;
+  final List<_AdminAnalyticsPair> passFailByMonth;
+  final List<double> admissionsByMonth;
+}
+
+class AdminAnalyticsScreen extends StatefulWidget {
+  const AdminAnalyticsScreen({super.key});
+
+  @override
+  State<AdminAnalyticsScreen> createState() => _AdminAnalyticsScreenState();
+}
+
+class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
+  static const List<String> _monthLabels = <String>[
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+
+  final List<int> _availableYears = <int>[
+    DateTime.now().year,
+    DateTime.now().year - 1,
+    DateTime.now().year - 2,
+  ];
+
+  late int _selectedYear;
+  bool _loading = true;
+  String? _error;
+  _AdminAnalyticsData? _data;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedYear = _availableYears.first;
+    _loadAnalytics();
+  }
+
+  Future<QuerySnapshot<Map<String, dynamic>>?> _analyticsGet(
+    String collection,
+  ) async {
+    try {
+      return await FirebaseFirestore.instance.collection(collection).get();
+    } catch (e) {
+      debugPrint('Analytics $collection read skipped: $e');
+      return null;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _analyticsLoadExpenses() async {
+    try {
+      final url = await _windowsGoogleScriptUrl();
+      final response = await WindowsBackendBridge.post(
+        Uri.parse(url),
+        headers: const {'Content-Type': 'text/plain;charset=utf-8'},
+        body: jsonEncode(const {'action': 'list_school_expenses'}),
+      );
+
+      if (response.statusCode != 200) return <Map<String, dynamic>>[];
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map || decoded['expenses'] is! List) {
+        return <Map<String, dynamic>>[];
+      }
+
+      return (decoded['expenses'] as List)
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    } catch (e) {
+      debugPrint('Analytics expenses read skipped: $e');
+      return <Map<String, dynamic>>[];
+    }
+  }
+
+  double _analyticsNumber(dynamic value) {
+    if (value is num) return value.toDouble();
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) return 0;
+    return double.tryParse(
+          text.replaceAll(',', '').replaceAll('₹', '').replaceAll('%', ''),
+        ) ??
+        0;
+  }
+
+  double _analyticsAmount(
+    Map<String, dynamic> data,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      if (data.containsKey(key)) {
+        final value = _analyticsNumber(data[key]);
+        if (value != 0) return value;
+      }
+    }
+    return 0;
+  }
+
+  DateTime? _analyticsDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+
+    if (value is num) {
+      final number = value.toInt();
+      if (number > 100000000000) {
+        return DateTime.fromMillisecondsSinceEpoch(number);
+      }
+      if (number > 1000000000) {
+        return DateTime.fromMillisecondsSinceEpoch(number * 1000);
+      }
+    }
+
+    if (value is Map) {
+      final seconds = value['seconds'] ?? value['_seconds'];
+      if (seconds is num) {
+        return DateTime.fromMillisecondsSinceEpoch(seconds.toInt() * 1000);
+      }
+    }
+
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) return null;
+
+    final parsed = DateTime.tryParse(text);
+    if (parsed != null) return parsed;
+
+    final dmy = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$')
+        .firstMatch(text);
+    if (dmy != null) {
+      return DateTime(
+        int.parse(dmy.group(3)!),
+        int.parse(dmy.group(2)!),
+        int.parse(dmy.group(1)!),
+      );
+    }
+
+    return null;
+  }
+
+  int? _analyticsMonthToken(String token) {
+    final text = token.trim();
+    if (text.isEmpty) return null;
+
+    final yearMonth = RegExp(r'^(\d{4})[-/](\d{1,2})').firstMatch(text);
+    if (yearMonth != null) {
+      final year = int.tryParse(yearMonth.group(1) ?? '');
+      final month = int.tryParse(yearMonth.group(2) ?? '');
+      if (year == _selectedYear && month != null && month >= 1 && month <= 12) {
+        return month - 1;
+      }
+      return null;
+    }
+
+    final numeric = int.tryParse(text);
+    if (numeric != null && numeric >= 1 && numeric <= 12) return numeric - 1;
+
+    final lower = text.toLowerCase();
+    for (var index = 0; index < _monthLabels.length; index++) {
+      if (lower.startsWith(_monthLabels[index].toLowerCase())) return index;
+    }
+    return null;
+  }
+
+  int? _analyticsMonth(
+    Map<String, dynamic> data, {
+    List<String>? keys,
+  }) {
+    final candidates = keys ?? const <String>[
+      'month',
+      'timestamp',
+      'createdAt',
+      'updatedAt',
+      'date',
+      'dateText',
+      'paymentDate',
+      'paidAt',
+      'admissionDate',
+    ];
+
+    for (final key in candidates) {
+      final value = data[key];
+      if (value == null) continue;
+
+      final tokenMonth = _analyticsMonthToken(value.toString());
+      if (tokenMonth != null && value is String && value.length <= 7) {
+        return tokenMonth;
+      }
+      if (tokenMonth != null && value is num && value >= 1 && value <= 12) {
+        return tokenMonth;
+      }
+
+      final date = _analyticsDate(value);
+      if (date != null && date.year == _selectedYear) return date.month - 1;
+    }
+    return null;
+  }
+
+  double? _analyticsAttendance(
+    Map<String, dynamic> data,
+    List<String> directKeys,
+  ) {
+    for (final key in directKeys) {
+      if (!data.containsKey(key)) continue;
+      var value = _analyticsNumber(data[key]);
+      if (value > 0 && value <= 1) value *= 100;
+      if (value >= 0 && value <= 100) return value;
+    }
+
+    final present = _analyticsAmount(
+      data,
+      const ['presentDays', 'daysPresent', 'present', 'attendancePresent'],
+    );
+    final total = _analyticsAmount(
+      data,
+      const ['totalDays', 'workingDays', 'attendanceDays', 'daysTotal'],
+    );
+    if (total > 0) return (present / total * 100).clamp(0, 100).toDouble();
+    return null;
+  }
+
+  List<double> _analyticsAttendanceTrend(
+    List<Map<String, dynamic>> records,
+    double average,
+    List<String> historyKeys,
+  ) {
+    final values = List<double>.filled(12, 0);
+    final counts = List<int>.filled(12, 0);
+
+    for (final record in records) {
+      dynamic history;
+      for (final key in historyKeys) {
+        if (record[key] is Map) {
+          history = record[key];
+          break;
+        }
+      }
+      if (history is! Map) continue;
+
+      for (final entry in history.entries) {
+        final month = _analyticsMonthToken(entry.key.toString());
+        final value = _analyticsNumber(entry.value);
+        if (month == null || value <= 0) continue;
+        values[month] += value <= 1 ? value * 100 : value;
+        counts[month]++;
+      }
+    }
+
+    for (var index = 0; index < values.length; index++) {
+      if (counts[index] > 0) {
+        values[index] /= counts[index];
+      } else if (average > 0) {
+        // Existing records without monthly history still show the current
+        // attendance average instead of inventing a different percentage.
+        values[index] = average;
+      }
+    }
+    return values;
+  }
+
+  String _analyticsStatus(Map<String, dynamic> data) {
+    for (final key in const [
+      'result',
+      'status',
+      'lastExamResult',
+      'lastResult',
+    ]) {
+      final value = data[key]?.toString().trim().toUpperCase() ?? '';
+      if (value == 'PASS' || value == 'FAIL') return value;
+    }
+    return '';
+  }
+
+  Future<void> _loadAnalytics() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    try {
+      final snapshots =
+          await Future.wait<QuerySnapshot<Map<String, dynamic>>?>([
+        _analyticsGet('students_directory'),
+        _analyticsGet('teachers_directory'),
+        _analyticsGet('fee_payments'),
+        _analyticsGet('fee_ledger'),
+      ]);
+
+      final students = snapshots[0]?.docs
+              .map((doc) => doc.data())
+              .toList() ??
+          <Map<String, dynamic>>[];
+      final teachers = snapshots[1]?.docs
+              .map((doc) => doc.data())
+              .toList() ??
+          <Map<String, dynamic>>[];
+      var feeRecords = snapshots[2]?.docs
+              .map((doc) => doc.data())
+              .toList() ??
+          <Map<String, dynamic>>[];
+      if (feeRecords.isEmpty) {
+        feeRecords = snapshots[3]?.docs
+                .map((doc) => doc.data())
+                .toList() ??
+            <Map<String, dynamic>>[];
+      }
+
+      final expenses = await _analyticsLoadExpenses();
+
+      _ExamCenterSnapshot? examSnapshot;
+      try {
+        examSnapshot = await _ExamCenterDataCache.refresh(force: true);
+      } catch (e) {
+        debugPrint('Analytics exam data skipped: $e');
+      }
+
+      final feesByMonth = List<double>.filled(12, 0);
+      var totalFees = 0.0;
+      for (final record in feeRecords) {
+        final amount = _analyticsAmount(
+          record,
+          const [
+            'installmentAmount',
+            'amount',
+            'paidAmount',
+            'totalPaid',
+            'paid',
+          ],
+        );
+        totalFees += amount;
+        final month = _analyticsMonth(record);
+        if (month != null) feesByMonth[month] += amount;
+      }
+
+      final expensesByMonth = List<double>.filled(12, 0);
+      var totalExpenses = 0.0;
+      for (final record in expenses) {
+        final amount = _analyticsAmount(record, const ['amount', 'value']);
+        totalExpenses += amount;
+        final month = _analyticsMonth(record);
+        if (month != null) expensesByMonth[month] += amount;
+      }
+
+      var passStudents = 0;
+      var failStudents = 0;
+      final passFailByMonth = List<_AdminAnalyticsPair>.generate(
+        12,
+        (_) => const _AdminAnalyticsPair(),
+      );
+
+      final examResults = examSnapshot?.results ?? <Map<String, dynamic>>[];
+      for (final result in examResults) {
+        final status = _analyticsStatus(result);
+        final passed = status == 'PASS';
+        final failed = status == 'FAIL';
+        if (passed) passStudents++;
+        if (failed) failStudents++;
+        final month = _analyticsMonth(result);
+        if (month != null) {
+          final old = passFailByMonth[month];
+          passFailByMonth[month] = _AdminAnalyticsPair(
+            pass: old.pass + (passed ? 1 : 0),
+            fail: old.fail + (failed ? 1 : 0),
+          );
+        }
+      }
+
+      // If Exam Center has not produced results yet, use the latest result
+      // fields already mirrored in the student records when available.
+      if (passStudents == 0 && failStudents == 0) {
+        for (final student in students) {
+          final status = _analyticsStatus(student);
+          if (status == 'PASS') passStudents++;
+          if (status == 'FAIL') failStudents++;
+        }
+      }
+
+      final studentAttendanceValues = students
+          .map(
+            (item) => _analyticsAttendance(
+              item,
+              const [
+                'attendancePercentage',
+                'attendancePercent',
+                'attendanceRate',
+                'studentAttendance',
+              ],
+            ),
+          )
+          .whereType<double>()
+          .toList();
+      final teacherAttendanceValues = teachers
+          .map(
+            (item) => _analyticsAttendance(
+              item,
+              const [
+                'attendancePercentage',
+                'attendancePercent',
+                'attendanceRate',
+                'teacherAttendance',
+              ],
+            ),
+          )
+          .whereType<double>()
+          .toList();
+
+      double average(List<double> values) => values.isEmpty
+          ? 0
+          : values.reduce((a, b) => a + b) / values.length;
+
+      final studentAttendance = average(studentAttendanceValues);
+      final teacherAttendance = average(teacherAttendanceValues);
+
+      final admissionsByMonth = List<double>.filled(12, 0);
+      for (final student in students) {
+        final month = _analyticsMonth(
+          student,
+          keys: const [
+            'admissionDate',
+            'admissionDateText',
+            'createdAt',
+            'timestamp',
+          ],
+        );
+        if (month != null) admissionsByMonth[month]++;
+      }
+
+      final result = _AdminAnalyticsData(
+        totalStudents: students.length,
+        totalTeachers: teachers.length,
+        totalFees: totalFees,
+        totalExpenses: totalExpenses,
+        passStudents: passStudents,
+        failStudents: failStudents,
+        studentAttendance: studentAttendance,
+        teacherAttendance: teacherAttendance,
+        attendanceTrend: _analyticsAttendanceTrend(
+          students,
+          studentAttendance,
+          const ['attendanceHistory', 'monthlyAttendance', 'attendanceByMonth'],
+        ),
+        feesByMonth: feesByMonth,
+        expensesByMonth: expensesByMonth,
+        passFailByMonth: passFailByMonth,
+        admissionsByMonth: admissionsByMonth,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _data = result;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Admin Analytics load error: $e');
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Analytics data load nahi ho paaya: $e';
+      });
+    }
+  }
+
+  String _money(double value) {
+    if (value >= 10000000) return '₹${(value / 10000000).toStringAsFixed(2)}Cr';
+    if (value >= 100000) return '₹${(value / 100000).toStringAsFixed(2)}L';
+    if (value >= 1000) return '₹${(value / 1000).toStringAsFixed(1)}K';
+    return '₹${value.toStringAsFixed(0)}';
+  }
+
+  String _academicYear(int year) {
+    final next = ((year + 1) % 100).toString().padLeft(2, '0');
+    return '$year-$next';
+  }
+
+  String _trend(List<double> values, {bool percentage = false}) {
+    final nonZero = values.where((value) => value > 0).toList();
+    if (nonZero.length < 2) return '—';
+    final first = nonZero.first;
+    final last = nonZero.last;
+    if (first == 0) return '—';
+    final change = ((last - first) / first) * 100;
+    final prefix = change >= 0 ? '▲ +' : '▼ ';
+    return '$prefix${change.abs().toStringAsFixed(1)}%';
+  }
+
+  Color _trendColor(String value) => value.startsWith('▼')
+      ? Colors.redAccent
+      : const Color(0xFF00D9A5);
+
+  Widget _metricCard({
+    required double width,
+    required String title,
+    required String value,
+    required String subtitle,
+    required String trend,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      width: width,
+      constraints: const BoxConstraints(minHeight: 100),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D2027),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(.25)),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(.05),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 43,
+            height: 43,
+            decoration: BoxDecoration(
+              color: color.withOpacity(.13),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(icon, color: color, size: 22),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white30,
+                          fontSize: 8.5,
+                        ),
+                      ),
+                    ),
+                    if (trend != '—')
+                      Text(
+                        trend,
+                        style: TextStyle(
+                          color: _trendColor(trend),
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chartCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    required String trend,
+    required Widget chart,
+    Widget? footer,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(13, 12, 13, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D2027),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: color.withOpacity(.20)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(.13),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 18),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 9,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (trend != '—')
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _trendColor(trend).withOpacity(.10),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _trendColor(trend).withOpacity(.25),
+                    ),
+                  ),
+                  child: Text(
+                    trend,
+                    style: TextStyle(
+                      color: _trendColor(trend),
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 7),
+              _analyticsDropdownPill(),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(height: 190, child: chart),
+          if (footer != null) ...[
+            const SizedBox(height: 2),
+            footer,
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _analyticsDropdownPill() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF12313A),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Monthly',
+            style: TextStyle(color: Colors.white70, fontSize: 9),
+          ),
+          SizedBox(width: 3),
+          Icon(Icons.keyboard_arrow_down_rounded, size: 14, color: Colors.white54),
+        ],
+      ),
+    );
+  }
+
+  Widget _legend(String label, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white54, fontSize: 9),
+        ),
+      ],
+    );
+  }
+
+  Widget _analyticsSidebarItem({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+            decoration: BoxDecoration(
+              color: color.withOpacity(.07),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: color.withOpacity(.16)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 37,
+                  height: 37,
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(.13),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(icon, color: color, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 9,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: color.withOpacity(.85),
+                  size: 20,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _analyticsSidebar() {
+    return Container(
+      width: 286,
+      color: const Color(0xFF06131A),
+      child: SafeArea(
+        child: Column(
+          children: [
+            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: _schoolProfileCacheRef().snapshots(),
+              builder: (context, snapshot) {
+                final profile = _mergeSchoolProfile(snapshot.data?.data());
+                final logoUrl = profile['logoUrl']?.toString().trim() ?? '';
+                return Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF123D38), Color(0xFF172229)],
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: const Color(0xFF00D9A5).withOpacity(.35),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 50,
+                        height: 50,
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(13),
+                        ),
+                        child: logoUrl.isEmpty
+                            ? const Icon(
+                                Icons.school_rounded,
+                                color: Color(0xFF00A884),
+                                size: 29,
+                              )
+                            : Image.network(
+                                logoUrl,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.school_rounded,
+                                  color: Color(0xFF00A884),
+                                ),
+                              ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _schoolName(profile),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            const Text(
+                              'ADMIN NAVIGATION',
+                              style: TextStyle(
+                                color: Color(0xFF00D9A5),
+                                fontSize: 8,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  _analyticsSidebarItem(
+                    icon: Icons.dashboard_rounded,
+                    title: 'Dashboard',
+                    subtitle: 'School overview & notices',
+                    color: const Color(0xFF00D9A5),
+                    onTap: () => Navigator.of(context).pop(),
+                  ),
+                  _analyticsSidebarItem(
+                    icon: Icons.people_alt_rounded,
+                    title: 'Student Records',
+                    subtitle: 'Students, profiles & ID cards',
+                    color: const Color(0xFF00A884),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const AllStudentsListScreen(),
+                      ),
+                    ),
+                  ),
+                  _analyticsSidebarItem(
+                    icon: Icons.payments_rounded,
+                    title: 'Fees Collection',
+                    subtitle: 'Collect fees, receipts & dues',
+                    color: Colors.greenAccent,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const FeesCollectionScreen(),
+                      ),
+                    ),
+                  ),
+                  _analyticsSidebarItem(
+                    icon: Icons.fact_check_rounded,
+                    title: 'Exam Center',
+                    subtitle: 'Marks, results & report cards',
+                    color: Colors.orangeAccent,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const ExamCenterScreen(),
+                      ),
+                    ),
+                  ),
+                  _analyticsSidebarItem(
+                    icon: Icons.school_rounded,
+                    title: 'Teachers',
+                    subtitle: 'Directory, profiles & schedules',
+                    color: Colors.purpleAccent,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const TeachersDirectoryScreen(),
+                      ),
+                    ),
+                  ),
+                  _analyticsSidebarItem(
+                    icon: Icons.account_balance_wallet_rounded,
+                    title: 'School Expenses',
+                    subtitle: 'Expense entry, ledger & reports',
+                    color: Colors.amberAccent,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const WindowsSchoolExpensesScreen(),
+                      ),
+                    ),
+                  ),
+                  _analyticsSidebarItem(
+                    icon: Icons.fact_check_rounded,
+                    title: 'Attendance',
+                    subtitle: 'QR entry/exit + geofence',
+                    color: const Color(0xFF69C2FF),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const WindowsAttendanceScreen(),
+                      ),
+                    ),
+                  ),
+                  _analyticsSidebarItem(
+                    icon: Icons.dashboard_customize_rounded,
+                    title: 'Templates',
+                    subtitle: 'ID cards, report cards & receipts',
+                    color: const Color(0xFFCE93D8),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const WindowsTemplatesScreen(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 8, 18, 18),
+              child: Text(
+                'Vidya Saarthi • School Management',
+                style: TextStyle(color: Colors.white24, fontSize: 9),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = _data;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF06151B),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF071A21),
+        elevation: 0,
+        title: const Text(
+          'Admin Analytics',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh analytics',
+            onPressed: _loading ? null : _loadAnalytics,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final horizontal = constraints.maxWidth < 700 ? 12.0 : 22.0;
+          final content = SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(horizontal, 18, horizontal, 30),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1450),
+                child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                  stream: _schoolProfileCacheRef().snapshots(),
+                  builder: (context, profileSnapshot) {
+                    final profile = _mergeSchoolProfile(
+                      profileSnapshot.data?.data(),
+                    );
+                    final schoolName = _schoolName(profile);
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [
+                                Color(0xFF0A2830),
+                                Color(0xFF07181F),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(21),
+                            border: Border.all(
+                              color: const Color(0xFF00D9A5).withOpacity(.22),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 54,
+                                height: 54,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00A884).withOpacity(.14),
+                                  borderRadius: BorderRadius.circular(15),
+                                ),
+                                child: const Icon(
+                                  Icons.analytics_rounded,
+                                  color: Color(0xFF00D9A5),
+                                  size: 29,
+                                ),
+                              ),
+                              const SizedBox(width: 13),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'School Analytics',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      schoolName.toUpperCase(),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 10,
+                                        letterSpacing: 1.3,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              DropdownButtonHideUnderline(
+                                child: DropdownButton<int>(
+                                  value: _selectedYear,
+                                  dropdownColor: const Color(0xFF12272F),
+                                  icon: const Icon(
+                                    Icons.keyboard_arrow_down_rounded,
+                                    color: Color(0xFF00D9A5),
+                                  ),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  items: _availableYears
+                                      .map(
+                                        (year) => DropdownMenuItem<int>(
+                                          value: year,
+                                          child: Text(_academicYear(year)),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (value) {
+                                    if (value == null || value == _selectedYear) {
+                                      return;
+                                    }
+                                    setState(() => _selectedYear = value);
+                                    _loadAnalytics();
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00A884).withOpacity(.12),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: const Color(0xFF00A884).withOpacity(.25),
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.settings_rounded,
+                                  color: Color(0xFF00D9A5),
+                                  size: 20,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        if (_loading)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 100),
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                color: Color(0xFF00D9A5),
+                              ),
+                            ),
+                          )
+                        else if (data == null)
+                          Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(40),
+                              child: Text(
+                                _error ?? 'Analytics data available nahi hai.',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.white54),
+                              ),
+                            ),
+                          )
+                        else ...[
+                          _buildMetrics(data, constraints.maxWidth),
+                          const SizedBox(height: 16),
+                          _buildCharts(data, constraints.maxWidth),
+                        ],
+                        if (_error != null && !_loading)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Text(
+                              _error!,
+                              style: const TextStyle(
+                                color: Colors.orangeAccent,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+
+          if (constraints.maxWidth >= 1000) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _analyticsSidebar(),
+                Expanded(child: content),
+              ],
+            );
+          }
+
+          return content;
+        },
+      ),
+    );
+  }
+
+  Widget _buildMetrics(_AdminAnalyticsData data, double maxWidth) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 1200
+            ? 4
+            : (constraints.maxWidth >= 700 ? 2 : 1);
+        final gap = 12.0;
+        final width = columns == 1
+            ? constraints.maxWidth
+            : (constraints.maxWidth - gap * (columns - 1)) / columns;
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            _metricCard(
+              width: width,
+              title: 'Total Students',
+              value: '${data.totalStudents}',
+              subtitle: 'Live student records',
+              trend: _trend(data.admissionsByMonth),
+              icon: Icons.groups_rounded,
+              color: const Color(0xFF00D9D0),
+            ),
+            _metricCard(
+              width: width,
+              title: 'Total Teachers',
+              value: '${data.totalTeachers}',
+              subtitle: 'Teacher directory',
+              trend: '—',
+              icon: Icons.person_rounded,
+              color: Colors.purpleAccent,
+            ),
+            _metricCard(
+              width: width,
+              title: 'Total Student Fees Collection',
+              value: _money(data.totalFees),
+              subtitle: 'Fee payments recorded',
+              trend: _trend(data.feesByMonth),
+              icon: Icons.account_balance_wallet_rounded,
+              color: Colors.greenAccent,
+            ),
+            _metricCard(
+              width: width,
+              title: 'Total School Expenses',
+              value: _money(data.totalExpenses),
+              subtitle: 'Expense entries recorded',
+              trend: _trend(data.expensesByMonth),
+              icon: Icons.monetization_on_rounded,
+              color: Colors.amberAccent,
+            ),
+            _metricCard(
+              width: width,
+              title: 'Total Students Pass',
+              value: '${data.passStudents}',
+              subtitle: 'Exam results',
+              trend: _trend(data.passFailByMonth.map((e) => e.pass).toList()),
+              icon: Icons.school_rounded,
+              color: const Color(0xFF00D9A5),
+            ),
+            _metricCard(
+              width: width,
+              title: 'Total Students Fail',
+              value: '${data.failStudents}',
+              subtitle: 'Exam results',
+              trend: _trend(data.passFailByMonth.map((e) => e.fail).toList()),
+              icon: Icons.school_outlined,
+              color: Colors.redAccent,
+            ),
+            _metricCard(
+              width: width,
+              title: 'Total Student Attendance',
+              value: '${data.studentAttendance.toStringAsFixed(1)}%',
+              subtitle: 'Attendance records',
+              trend: _trend(data.attendanceTrend),
+              icon: Icons.person_pin_circle_rounded,
+              color: const Color(0xFF69C2FF),
+            ),
+            _metricCard(
+              width: width,
+              title: 'Total Teacher Attendance',
+              value: '${data.teacherAttendance.toStringAsFixed(1)}%',
+              subtitle: 'Attendance records',
+              trend: '—',
+              icon: Icons.groups_rounded,
+              color: const Color(0xFF4D86FF),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCharts(_AdminAnalyticsData data, double maxWidth) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final gap = 14.0;
+        final columns = constraints.maxWidth >= 1100 ? 2 : 1;
+        final width = columns == 1
+            ? constraints.maxWidth
+            : (constraints.maxWidth - gap) / columns;
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            SizedBox(
+              width: width,
+              child: _chartCard(
+                title: 'Student Attendance Trend',
+                subtitle: 'Monthly student attendance',
+                icon: Icons.groups_rounded,
+                color: const Color(0xFF00D9D0),
+                trend: _trend(data.attendanceTrend),
+                chart: _AnalyticsLineChart(
+                  values: data.attendanceTrend,
+                  labels: _monthLabels,
+                  color: const Color(0xFF16D8E4),
+                  percent: true,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: _chartCard(
+                title: 'Monthly Fees Collection',
+                subtitle: 'Student fee payments',
+                icon: Icons.account_balance_wallet_rounded,
+                color: Colors.greenAccent,
+                trend: _trend(data.feesByMonth),
+                chart: _AnalyticsBarChart(
+                  values: data.feesByMonth,
+                  labels: _monthLabels,
+                  color: const Color(0xFF24D5BE),
+                  money: true,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: _chartCard(
+                title: 'Monthly School Expenses',
+                subtitle: 'Google Drive expense entries',
+                icon: Icons.monetization_on_rounded,
+                color: Colors.amberAccent,
+                trend: _trend(data.expensesByMonth),
+                chart: _AnalyticsBarChart(
+                  values: data.expensesByMonth,
+                  labels: _monthLabels,
+                  color: Colors.orangeAccent,
+                  money: true,
+                ),
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: _chartCard(
+                title: 'Pass vs Fail Trend',
+                subtitle: 'Monthly exam results',
+                icon: Icons.bar_chart_rounded,
+                color: Colors.orangeAccent,
+                trend: _trend(
+                  data.passFailByMonth.map((e) => e.pass).toList(),
+                ),
+                chart: _AnalyticsPassFailChart(
+                  values: data.passFailByMonth,
+                  labels: _monthLabels,
+                ),
+                footer: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _legend('Pass Students', const Color(0xFF53E6A6)),
+                    const SizedBox(width: 18),
+                    _legend('Fail Students', Colors.redAccent),
+                  ],
+                ),
+              ),
+            ),
+            SizedBox(
+              width: width,
+              child: _chartCard(
+                title: 'New Admissions',
+                subtitle: 'Monthly admission records',
+                icon: Icons.person_add_alt_1_rounded,
+                color: const Color(0xFF00B7FF),
+                trend: _trend(data.admissionsByMonth),
+                chart: _AnalyticsLineChart(
+                  values: data.admissionsByMonth,
+                  labels: _monthLabels,
+                  color: const Color(0xFF28A9F0),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AnalyticsLineChart extends StatelessWidget {
+  const _AnalyticsLineChart({
+    required this.values,
+    required this.labels,
+    required this.color,
+    this.percent = false,
+  });
+
+  final List<double> values;
+  final List<String> labels;
+  final Color color;
+  final bool percent;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _AnalyticsLinePainter(
+        values: values,
+        labels: labels,
+        color: color,
+        percent: percent,
+      ),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _AnalyticsBarChart extends StatelessWidget {
+  const _AnalyticsBarChart({
+    required this.values,
+    required this.labels,
+    required this.color,
+    this.money = false,
+  });
+
+  final List<double> values;
+  final List<String> labels;
+  final Color color;
+  final bool money;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _AnalyticsBarPainter(
+        values: values,
+        labels: labels,
+        color: color,
+        money: money,
+      ),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _AnalyticsPassFailChart extends StatelessWidget {
+  const _AnalyticsPassFailChart({
+    required this.values,
+    required this.labels,
+  });
+
+  final List<_AdminAnalyticsPair> values;
+  final List<String> labels;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _AnalyticsPassFailPainter(values: values, labels: labels),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+abstract class _AnalyticsPainterBase extends CustomPainter {
+  static const Color gridColor = Color(0x263A7B86);
+  static const TextStyle axisStyle = TextStyle(
+    color: Colors.white54,
+    fontSize: 8,
+  );
+
+  void drawText(Canvas canvas, String text, Offset offset, {TextStyle? style}) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style ?? axisStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(canvas, offset);
+  }
+
+  void drawGrid(Canvas canvas, Size size, Rect chart) {
+    final paint = Paint()
+      ..color = gridColor
+      ..strokeWidth = 1;
+    for (var i = 0; i <= 4; i++) {
+      final y = chart.top + chart.height * i / 4;
+      canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), paint);
+    }
+    for (var i = 0; i < 12; i++) {
+      final x = chart.left + chart.width * i / 11;
+      canvas.drawLine(Offset(x, chart.top), Offset(x, chart.bottom), paint);
+    }
+  }
+
+  Rect chartRect(Size size) => Rect.fromLTRB(
+        35,
+        10,
+        size.width - 8,
+        size.height - 25,
+      );
+}
+
+class _AnalyticsLinePainter extends _AnalyticsPainterBase {
+  _AnalyticsLinePainter({
+    required this.values,
+    required this.labels,
+    required this.color,
+    required this.percent,
+  });
+
+  final List<double> values;
+  final List<String> labels;
+  final Color color;
+  final bool percent;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final chart = chartRect(size);
+    drawGrid(canvas, size, chart);
+    final maxValue = percent
+        ? 100.0
+        : ((values.fold<double>(0, (a, b) => a > b ? a : b) * 1.18) <= 1
+            ? 1.0
+            : values.fold<double>(0, (a, b) => a > b ? a : b) * 1.18);
+    final safeMax = maxValue <= 0 ? 1.0 : maxValue;
+
+    final path = Path();
+    final fill = Path();
+    for (var i = 0; i < values.length; i++) {
+      final x = values.length <= 1
+          ? chart.left
+          : chart.left + chart.width * i / (values.length - 1);
+      final y = chart.bottom -
+          (values[i].clamp(0, safeMax).toDouble() / safeMax) * chart.height;
+      if (i == 0) {
+        path.moveTo(x, y);
+        fill.moveTo(x, chart.bottom);
+        fill.lineTo(x, y);
+      } else {
+        path.lineTo(x, y);
+        fill.lineTo(x, y);
+      }
+      canvas.drawCircle(Offset(x, y), 3.1, Paint()..color = color);
+    }
+    fill.lineTo(chart.right, chart.bottom);
+    fill.close();
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          colors: [color.withOpacity(.30), color.withOpacity(.01)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ).createShader(chart),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.1
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    for (var i = 0; i < labels.length; i++) {
+      final x = chart.left + chart.width * i / (labels.length - 1);
+      drawText(canvas, labels[i], Offset(x - 8, chart.bottom + 7));
+    }
+    if (percent) {
+      drawText(canvas, '100%', const Offset(2, 7));
+      drawText(canvas, '50%', Offset(7, chart.top + chart.height / 2 - 5));
+      drawText(canvas, '0%', Offset(13, chart.bottom - 5));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AnalyticsLinePainter oldDelegate) => true;
+}
+
+class _AnalyticsBarPainter extends _AnalyticsPainterBase {
+  _AnalyticsBarPainter({
+    required this.values,
+    required this.labels,
+    required this.color,
+    required this.money,
+  });
+
+  final List<double> values;
+  final List<String> labels;
+  final Color color;
+  final bool money;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final chart = chartRect(size);
+    drawGrid(canvas, size, chart);
+    final highest = values.fold<double>(0, (a, b) => a > b ? a : b);
+    final maxValue = highest <= 0 ? 1.0 : highest * 1.2;
+    final slot = chart.width / values.length;
+    final barWidth = slot * .56;
+
+    for (var i = 0; i < values.length; i++) {
+      final height =
+          (values[i].clamp(0, maxValue).toDouble() / maxValue) * chart.height;
+      final left = chart.left + slot * i + (slot - barWidth) / 2;
+      final rect = Rect.fromLTRB(
+        left,
+        chart.bottom - height,
+        left + barWidth,
+        chart.bottom,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(3)),
+        Paint()
+          ..shader = LinearGradient(
+            colors: [color, color.withOpacity(.55)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ).createShader(rect),
+      );
+      drawText(canvas, labels[i], Offset(left + barWidth / 2 - 8, chart.bottom + 7));
+    }
+
+    final suffix = money ? '₹' : '';
+    drawText(canvas, '$suffix${_compactChartNumber(maxValue)}', const Offset(2, 7));
+    drawText(canvas, '$suffix${_compactChartNumber(maxValue / 2)}', Offset(2, chart.top + chart.height / 2 - 5));
+    drawText(canvas, '${suffix}0', Offset(13, chart.bottom - 5));
+  }
+
+  String _compactChartNumber(double value) {
+    if (value >= 100000) return '${(value / 100000).toStringAsFixed(1)}L';
+    if (value >= 1000) return '${(value / 1000).toStringAsFixed(1)}K';
+    return value.toStringAsFixed(0);
+  }
+
+  @override
+  bool shouldRepaint(covariant _AnalyticsBarPainter oldDelegate) => true;
+}
+
+class _AnalyticsPassFailPainter extends _AnalyticsPainterBase {
+  _AnalyticsPassFailPainter({required this.values, required this.labels});
+
+  final List<_AdminAnalyticsPair> values;
+  final List<String> labels;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final chart = chartRect(size);
+    drawGrid(canvas, size, chart);
+    final highest = values.fold<double>(0, (best, item) {
+      final value = item.pass > item.fail ? item.pass : item.fail;
+      return value > best ? value : best;
+    });
+    final maxValue = highest <= 0 ? 1.0 : highest * 1.2;
+    final slot = chart.width / values.length;
+    final barWidth = slot * .23;
+
+    for (var i = 0; i < values.length; i++) {
+      final left = chart.left + slot * i + slot * .22;
+      final passHeight = (values[i].pass / maxValue) * chart.height;
+      final failHeight = (values[i].fail / maxValue) * chart.height;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTRB(left, chart.bottom - passHeight, left + barWidth, chart.bottom),
+          const Radius.circular(2),
+        ),
+        Paint()..color = const Color(0xFF53E6A6),
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTRB(left + barWidth + 2, chart.bottom - failHeight, left + barWidth * 2 + 2, chart.bottom),
+          const Radius.circular(2),
+        ),
+        Paint()..color = Colors.redAccent,
+      );
+      drawText(canvas, labels[i], Offset(left - 2, chart.bottom + 7));
+    }
+
+    drawText(canvas, _compactChartNumber(maxValue), const Offset(2, 7));
+    drawText(canvas, _compactChartNumber(maxValue / 2), Offset(2, chart.top + chart.height / 2 - 5));
+    drawText(canvas, '0', Offset(20, chart.bottom - 5));
+  }
+
+  String _compactChartNumber(double value) {
+    if (value >= 1000) return '${(value / 1000).toStringAsFixed(1)}K';
+    return value.toStringAsFixed(0);
+  }
+
+  @override
+  bool shouldRepaint(covariant _AnalyticsPassFailPainter oldDelegate) => true;
 }
 
 // ============================================================
@@ -23230,4 +25190,3 @@ class _WindowsMetricCard extends StatelessWidget{
   @override
   Widget build(BuildContext context)=>Expanded(child:Container(padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:const Color(0xFF111B21),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color:color,size:28),const SizedBox(width:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,style:const TextStyle(color:Colors.white54,fontSize:10)),const SizedBox(height:3),Text(value,style:TextStyle(color:color,fontSize:18,fontWeight:FontWeight.w900))])])));
 }
-
