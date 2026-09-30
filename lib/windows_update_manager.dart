@@ -139,16 +139,23 @@ for (\$i = 0; \$i -lt 30; \$i++) {
     return 0;
   }
 
-  static Future<Map<String, dynamic>> _fetchLatestGitHubRelease() async {
+  static Future<Map<String, dynamic>> _fetchLatestWindowsGitHubRelease() async {
     HttpClient? client;
 
     try {
       client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 12);
 
+      // IMPORTANT: repository also publishes Android releases.
+      // /releases/latest can therefore point at android-v..., so fetch a page
+      // of releases and pick the newest production tag that starts windows-v.
       final uri = Uri.https(
         'api.github.com',
-        '/repos/$_githubOwner/$_githubRepo/releases/latest',
+        '/repos/$_githubOwner/$_githubRepo/releases',
+        const <String, String>{
+          'per_page': '50',
+          'page': '1',
+        },
       );
 
       final request = await client.getUrl(uri);
@@ -173,8 +180,8 @@ for (\$i = 0; \$i -lt 30; \$i++) {
 
       if (response.statusCode == 404) {
         throw const HttpException(
-          'GitHub latest Windows release nahi mila. '
-          'Repository/release public hona chahiye.',
+          'GitHub Windows releases nahi mile. '
+          'Repository/releases public hone chahiye.',
         );
       }
 
@@ -185,20 +192,35 @@ for (\$i = 0; \$i -lt 30; \$i++) {
       }
 
       final decoded = jsonDecode(body);
-      if (decoded is! Map) {
+      if (decoded is! List) {
         throw const FormatException(
-          'GitHub release response invalid hai.',
+          'GitHub releases response invalid hai.',
         );
       }
 
-      return Map<String, dynamic>.from(decoded);
+      for (final raw in decoded) {
+        if (raw is! Map) continue;
+        final release = Map<String, dynamic>.from(raw);
+        final tag = release['tag_name']?.toString().trim() ?? '';
+        final draft = release['draft'] == true;
+        final prerelease = release['prerelease'] == true;
+        if (!draft &&
+            !prerelease &&
+            tag.startsWith(_windowsReleaseTagPrefix)) {
+          return release;
+        }
+      }
+
+      throw const StateError(
+        'Koi production windows-v... GitHub Release nahi mila.',
+      );
     } finally {
       client?.close(force: true);
     }
   }
 
   static Future<WindowsUpdateCheckResult> checkForUpdate() async {
-    final release = await _fetchLatestGitHubRelease();
+    final release = await _fetchLatestWindowsGitHubRelease();
 
     final tag = release['tag_name']?.toString().trim() ?? '';
     final draft = release['draft'] == true;
@@ -207,7 +229,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
     if (draft || prerelease) {
       return const WindowsUpdateCheckResult(
         configFound: false,
-        message: 'Latest GitHub release production Windows release nahi hai.',
+        message: 'Windows production GitHub release nahi mila.',
       );
     }
 
@@ -215,7 +237,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
       return WindowsUpdateCheckResult(
         configFound: false,
         message:
-            'Latest GitHub release Windows tag nahi hai: '
+            'Selected GitHub release Windows tag nahi hai: '
             '${tag.isEmpty ? 'missing tag' : tag}',
       );
     }
