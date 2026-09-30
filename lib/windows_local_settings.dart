@@ -185,9 +185,7 @@ class WindowsExternalConnections {
     }
 
     if (googleScriptUrl != null) {
-      final value = _normalizeGoogleScriptUrl(
-        googleScriptUrl.trim(),
-      );
+      final value = googleScriptUrl.trim();
 
       if (value.isEmpty) {
         existing.remove('googleScriptUrl');
@@ -238,20 +236,6 @@ class WindowsExternalConnections {
 
   static void validateGoogleScriptUrl(String input) {
     _validateGoogleScriptUrl(input.trim());
-  }
-
-  static String _normalizeGoogleScriptUrl(
-    String value,
-  ) {
-    if (value.isEmpty) return '';
-
-    final uri = Uri.tryParse(value);
-    if (uri == null) return value;
-
-    return uri.replace(
-      query: '',
-      fragment: '',
-    ).toString();
   }
 
   static void _validateGoogleScriptUrl(String value) {
