@@ -4,6 +4,7 @@ import 'dart:math';
 import 'windows_settings_panel.dart';
 import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
+import 'windows_connection_center.dart';
 import 'windows_service_status.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
@@ -34,17 +35,8 @@ import 'windows_mobile_scanner_shim.dart';
 /// Advanced Settings saves Google connection in WindowsExternalConnections,
 /// so Windows feature screens must NOT read the old Firestore
 /// school_config/google_drive_account document.
-Future<String> _windowsGoogleScriptUrl({bool required = true}) async {
-  final connection = await WindowsExternalConnections.load();
-  final url = connection['googleScriptUrl']?.toString().trim() ?? '';
-
-  if (required && url.isEmpty) {
-    throw Exception(
-      'Google Drive / Apps Script Advanced Settings me connected nahi hai.',
-    );
-  }
-
-  return url;
+Future<String> _windowsGoogleScriptUrl({bool required = true}) {
+  return WindowsConnectionCenter.googleScriptUrl(required: required);
 }
 
 const String _windowsLanguageKey = 'vidya_windows_language_v1';
@@ -93,17 +85,13 @@ String _windowsStableHash(String input) {
 }
 
 Future<String> _windowsActiveSchoolProfileId() async {
-  final data = await WindowsExternalConnections.load();
-  final firebaseLink = data['firebaseLink']?.toString().trim() ?? '';
-  final googleScriptUrl = data['googleScriptUrl']?.toString().trim() ?? '';
-  var projectId = '';
-  try {
-    if (firebaseLink.isNotEmpty) {
-      final config = WindowsExternalConnections.decodeFirebaseLink(firebaseLink);
-      projectId = config['projectId']?.toString().trim() ?? '';
-    }
-  } catch (_) {}
-  return 'VS-${_windowsStableHash('$projectId|$googleScriptUrl')}';
+  final active = FirebaseFirestore.instance.activeProfileId.trim();
+  if (active.isNotEmpty && active != 'unbound') {
+    return active;
+  }
+
+  final snapshot = await WindowsConnectionCenter.reload();
+  return 'VS-${_windowsStableHash('${snapshot.firebaseProjectId}|${snapshot.googleScriptUrl}')}';
 }
 
 Future<Map<String, dynamic>> _windowsSchoolLocationData() async {
@@ -144,9 +132,9 @@ Future<String> _windowsBuildPersonQrPayload({
   required String documentId,
   required Map<String, dynamic> person,
 }) async {
-  final connections = await WindowsExternalConnections.load();
-  final firebaseLink = connections['firebaseLink']?.toString().trim() ?? '';
-  final googleScriptUrl = connections['googleScriptUrl']?.toString().trim() ?? '';
+  final connections = await WindowsConnectionCenter.reload();
+  final firebaseLink = connections.firebaseLink;
+  final googleScriptUrl = connections.googleScriptUrl;
   final profileId = await _windowsActiveSchoolProfileId();
   final location = await _windowsSchoolLocationData();
   final token = await _windowsEnsurePersonLinkToken(
@@ -15794,32 +15782,8 @@ class _AddTeacherScreenState
     );
   }
 
-  Future<String>
-      _getTeacherScriptUrl() async {
-    final configDoc =
-        await FirebaseFirestore
-            .instance
-            .collection(
-              'school_config',
-            )
-            .doc(
-              'google_drive_account',
-            )
-            .get();
-
-    final scriptUrl =
-        configDoc.data()?['scriptUrl']
-                ?.toString()
-                .trim() ??
-            '';
-
-    if (scriptUrl.isEmpty) {
-      throw Exception(
-        'Google Apps Script URL Settings me saved nahi hai.',
-      );
-    }
-
-    return scriptUrl;
+  Future<String> _getTeacherScriptUrl() async {
+    return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>>
@@ -22654,11 +22618,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
   }
 
   Future<Map<String, dynamic>> _call(Map<String, dynamic> body) async {
-    final connection = await WindowsExternalConnections.load();
-    final scriptUrl = connection['googleScriptUrl']?.toString().trim() ?? '';
-    if (scriptUrl.isEmpty) {
-      throw StateError('Google Drive / Apps Script pehle connect karein.');
-    }
+    final scriptUrl = await _windowsGoogleScriptUrl();
     final response = await WindowsBackendBridge.post(
       Uri.parse(scriptUrl),
       headers: const {'Content-Type': 'text/plain;charset=utf-8'},
@@ -22853,9 +22813,7 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
   void dispose(){ _qr.dispose(); super.dispose(); }
 
   Future<Map<String,dynamic>> _call(Map<String,dynamic> body) async {
-    final connection = await WindowsExternalConnections.load();
-    final scriptUrl = connection['googleScriptUrl']?.toString().trim() ?? '';
-    if (scriptUrl.isEmpty) throw StateError('Google Drive / Apps Script connected nahi hai.');
+    final scriptUrl = await _windowsGoogleScriptUrl();
     final response = await WindowsBackendBridge.post(
       Uri.parse(scriptUrl),
       headers: const {'Content-Type':'text/plain;charset=utf-8'},
