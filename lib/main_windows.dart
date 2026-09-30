@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import 'main_dashboard_screen_windows.dart';
@@ -8,30 +6,22 @@ import 'windows_local_auth.dart';
 import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
-import 'windows_sync_engine.dart';
 import 'windows_update_manager.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await WindowsLocalStorage.initialize();
-
-  // Reload secure Local Admin credentials on every app start.
   await WindowsLocalSecurity.initialize();
+  await WindowsLocalStorage.initialize();
+  try { await WindowsUpdateManager.cleanupOldInstallers(); } catch (_) {}
   await WindowsLocalSession.initialize();
-
-  // Clean old update installers from Windows TEMP.
-  await WindowsUpdateManager.cleanupOldInstallers();
-
   await FirebaseAuth.instance.bootstrapLocalUser();
-  await WindowsSyncEngine.instance.initialize();
 
   if (WindowsLocalSession.loggedOut) {
     await FirebaseAuth.instance.signOut();
   }
 
-  // WindowsSyncEngine has already selected the connection-scoped
-  // storage namespace. Never force all schools back into one 'local' bucket.
+  windows_html.setSchoolStorageNamespace('local');
   runApp(const VidyaSaarthiWindowsApp());
 }
 
@@ -82,7 +72,7 @@ class WindowsLocalDashboardGate extends StatelessWidget {
     storage.remove('saarthi_portal_student_id_v1');
     storage.remove('saarthi_portal_student_class_v1');
     storage['saarthi_portal_expiry_v1'] = DateTime.now()
-        .add(const Duration(days: 3650))
+        .add(const Duration(minutes: 30))
         .millisecondsSinceEpoch
         .toString();
   }
@@ -128,6 +118,8 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
         password: _password.text,
       );
       await WindowsLocalSession.markLoggedIn();
+      if (!mounted) return;
+      await WindowsUpdateManager.promptIfAvailable(context);
       if (!mounted) return;
       Navigator.of(context).pushNamedAndRemoveUntil(
         '/dashboard',
