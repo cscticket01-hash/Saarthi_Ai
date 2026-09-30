@@ -581,38 +581,79 @@ class WindowsSyncEngine {
     String scriptUrl,
     Map<String, dynamic> body,
   ) async {
-    final response = await http
-        .post(
-          Uri.parse(scriptUrl),
-          headers: const <String, String>{
+    final client = http.Client();
+    try {
+      Future<http.Response> sendPost(Uri target) async {
+        final request = http.Request('POST', target)
+          ..headers.addAll(const <String, String>{
             'Content-Type': 'text/plain;charset=utf-8',
             'Cache-Control': 'no-cache',
-          },
-          body: jsonEncode(body),
-        )
-        .timeout(const Duration(seconds: 30));
+          })
+          ..body = jsonEncode(body)
+          ..followRedirects = false;
+        final streamed = await client.send(request);
+        return http.Response.fromStream(streamed);
+      }
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(
-        'Google sync identity HTTP ${response.statusCode}.',
-      );
+      Future<http.Response> sendGet(Uri target) async {
+        final request = http.Request('GET', target)
+          ..headers.addAll(const <String, String>{
+            'Accept': 'application/json,text/plain,*/*',
+            'Cache-Control': 'no-cache',
+          })
+          ..followRedirects = false;
+        final streamed = await client.send(request);
+        return http.Response.fromStream(streamed);
+      }
+
+      var current = Uri.parse(scriptUrl);
+      var response = await sendPost(current)
+          .timeout(const Duration(seconds: 30));
+
+      for (var redirectCount = 0;
+          redirectCount < 8;
+          redirectCount++) {
+        final code = response.statusCode;
+        final isRedirect = code == 301 ||
+            code == 302 ||
+            code == 303 ||
+            code == 307 ||
+            code == 308;
+        if (!isRedirect) break;
+
+        final location = response.headers['location']?.trim() ?? '';
+        if (location.isEmpty) break;
+
+        current = current.resolve(location);
+        response = (code == 301 || code == 302 || code == 303)
+            ? await sendGet(current).timeout(const Duration(seconds: 30))
+            : await sendPost(current).timeout(const Duration(seconds: 30));
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(
+          'Google sync identity HTTP ${response.statusCode}.',
+        );
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map) {
+        throw StateError('Google sync identity JSON invalid hai.');
+      }
+
+      final result = Map<String, dynamic>.from(decoded);
+      if (result['success'] != true) {
+        throw StateError(
+          result['message']?.toString() ??
+              result['error']?.toString() ??
+              'Google sync identity request fail hua.',
+        );
+      }
+
+      return result;
+    } finally {
+      client.close();
     }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
-      throw StateError('Google sync identity JSON invalid hai.');
-    }
-
-    final result = Map<String, dynamic>.from(decoded);
-    if (result['success'] != true) {
-      throw StateError(
-        result['message']?.toString() ??
-            result['error']?.toString() ??
-            'Google sync identity request fail hua.',
-      );
-    }
-
-    return result;
   }
 
   String _newSchoolSyncId() {
