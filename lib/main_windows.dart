@@ -1,9 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'main_dashboard_screen_windows.dart';
@@ -12,6 +9,8 @@ import 'windows_update_manager.dart';
 import 'windows_firebase_connection.dart';
 import 'windows_offline_home.dart';
 import 'windows_local_settings.dart';
+import 'windows_local_auth.dart';
+import 'windows_local_firestore.dart';
 
 const String _windowsAppVersion = String.fromEnvironment(
   'APP_VERSION',
