@@ -71,7 +71,7 @@ jobs:
           lib/mobile/school_notifications.dart
           test/mobile_boundary_test.dart
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
     - uses: actions/checkout@v4
     - uses: subosito/flutter-action@v2
@@ -149,6 +149,8 @@ jobs:
         open(p,'w').write(s)
         PY
     - run: flutter pub add mobile_scanner:7.3.0
+    - name: Align resolved Android plugin SDKs
+      run: python .github/scripts/configure_android_plugins.py
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/school_notifications.dart
     - name: Build unsigned Android preview

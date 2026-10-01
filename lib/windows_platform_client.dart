@@ -136,9 +136,8 @@ class WindowsPlatformClient {
     if (verified && serverTime != null) {
       final serverDate =
           DateTime.fromMillisecondsSinceEpoch(serverTime, isUtc: true);
-      if (_lastSeen == null || serverDate.isAfter(_lastSeen!)) {
-        _lastSeen = serverDate;
-      }
+      // An online server check can recover from an accidentally advanced clock.
+      _lastSeen = serverDate;
       if (now.difference(serverDate).inMinutes.abs() > 5) {
         state.value = WindowsLicenseState(
             allowed: false,
