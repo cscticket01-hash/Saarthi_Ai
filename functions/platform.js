@@ -77,6 +77,9 @@ async function handler(req) {
     const id = schoolId(b.projectId);
     const url = scriptUrl(b.googleScriptUrl);
     await verifySchoolAdmin(id, b.schoolIdToken);
+    const backend = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'mobile_project_info' }), signal: AbortSignal.timeout(15000) });
+    const identity = await backend.json();
+    if (!identity.success || identity.projectId !== id) fail(403, 'Install the mobile integration in this school’s own Google Script and configure its matching Firebase project');
     const ref = collection('schools').doc(id);
     await db().runTransaction(async tx => {
       const existing = await tx.get(ref);

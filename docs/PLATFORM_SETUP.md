@@ -93,7 +93,7 @@ teacher's salary records when the school later adds them.
 Templates contains Default plus four choices per document category. Student IDs
 and separately designed teacher IDs each include two landscape and two portrait
 options. Report cards and receipts have four layouts each. Preview produces the
-actual PDF; the selected layout is saved per school and used by its print/export
+actual PDF, including the default; the selected layout is saved per school and used by its print/export
 actions and Android documents.
 
 Only platform administration data is held centrally: school identity, bound

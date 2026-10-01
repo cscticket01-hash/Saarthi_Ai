@@ -41,6 +41,7 @@ function VS_handleMobile(e){
 }
 function VS_mobileAction(b){
  const action=b.action;
+ if(action==='mobile_project_info')return {projectId:VS_project()};
  if(action==='mobile_login'){
   const expected=VS_project();if(b.projectId!==expected)throw new Error('The QR Firebase project and this school backend do not match');
   const verified=VS_person(b);const p=verified.person;

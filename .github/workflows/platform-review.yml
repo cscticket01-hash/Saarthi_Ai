@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: platform-review-${{ github.ref }}
+  group: platform-review-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   backend:
@@ -35,6 +35,8 @@ jobs:
           cache: true
       - run: flutter create --platforms=web --project-name saarthi_ai .
       - run: flutter pub get
+      - name: Format platform source for review
+        run: dart format lib/main.dart lib/main_android.dart lib/main_windows.dart lib/developer_portal.dart lib/school_document_renderer.dart lib/windows_platform_client.dart lib/windows_license_gate.dart lib/windows_school_operations.dart lib/windows_document_templates.dart lib/mobile/school_session.dart lib/platform/platform_config.dart test/document_renderer_test.dart
       - name: Analyze developer portal
         run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart
       - name: Verify printable templates
@@ -47,6 +49,22 @@ jobs:
           path: |
             build/web
             build/document-previews
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formatted-platform-source
+          path: |
+            lib/main.dart
+            lib/main_android.dart
+            lib/main_windows.dart
+            lib/developer_portal.dart
+            lib/school_document_renderer.dart
+            lib/windows_platform_client.dart
+            lib/windows_license_gate.dart
+            lib/windows_school_operations.dart
+            lib/windows_document_templates.dart
+            lib/mobile/school_session.dart
+            lib/platform/platform_config.dart
+            test/document_renderer_test.dart
   windows:
     runs-on: windows-2022
     steps:

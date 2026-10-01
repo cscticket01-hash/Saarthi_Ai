@@ -24,7 +24,7 @@ class WindowsPlatformClient {
   static final instance = WindowsPlatformClient._();
   static const _secure = FlutterSecureStorage();
   final state = ValueNotifier<WindowsLicenseState>(WindowsLicenseState(allowed: true, status: 'checking', expiresAt: DateTime.now()));
-  String _id = '', _secret = '', _boundProject = '', _cacheProject = '';
+  String _id = '', _secret = '', _boundProject = '', _boundScript = '', _cacheProject = '';
   DateTime? _trialStart, _lastSeen, _verifiedAt;
   Timer? _timer;
   bool _running = false;
@@ -68,8 +68,18 @@ class WindowsPlatformClient {
   }
   void _apply(Map<String,dynamic> data, {bool verified=true}) {
     final now = DateTime.now().toUtc();
+    final serverTime=(data['serverTime'] as num?)?.toInt();
+    if(verified && serverTime!=null){
+      final serverDate=DateTime.fromMillisecondsSinceEpoch(serverTime,isUtc:true);
+      if(now.difference(serverDate).inMinutes.abs()>5){state.value=WindowsLicenseState(allowed:false,status:'clock_error',expiresAt:serverDate,error:'Correct the device clock and reconnect.');return;}
+      _lastSeen=serverDate;
+    }
     _cacheProject = data['schoolId']?.toString() ?? '';
     final end = DateTime.fromMillisecondsSinceEpoch((data['expiresAt'] as num?)?.toInt() ?? 0, isUtc:true);
+    if(data['status']=='trial'||data['status']=='expired'){
+      final trial=end.subtract(const Duration(days:5));
+      if(_trialStart==null || trial.isBefore(_trialStart!)){_trialStart=trial;unawaited(_secure.write(key:'vs_trial_start',value:trial.toIso8601String()));}
+    }
     state.value = WindowsLicenseState(allowed:data['allowed']==true && end.isAfter(now),status:data['status']?.toString() ?? 'expired',expiresAt:end);
     if (verified) { _verifiedAt=now; unawaited(_secure.write(key:'vs_license_verified_at',value:now.toIso8601String())); unawaited(_secure.write(key:'vs_license_cache',value:jsonEncode(data))); }
   }
@@ -94,10 +104,11 @@ class WindowsPlatformClient {
       }
       final links=await WindowsExternalConnections.load();
       final script=links['googleScriptUrl']?.toString().trim() ?? '';
-      if(remote.authenticated && script.isNotEmpty && _boundProject!=remote.projectId) {
+      if(remote.authenticated && script.isNotEmpty && (_boundProject!=remote.projectId || _boundScript!=script)) {
         final nameDoc=await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get();
         final bound=await call('school/bind',{'projectId':remote.projectId,'googleScriptUrl':script,'schoolIdToken':await WindowsFirebaseRemote.freshIdToken(),'schoolName':nameDoc.data()?['schoolName'] ?? remote.projectId,'version':version});
         _boundProject=remote.projectId;
+        _boundScript=script;
         _apply(bound);
       }
       final students=await FirebaseFirestore.instance.collection('students_directory').get();
@@ -107,7 +118,7 @@ class WindowsPlatformClient {
       _apply(heartbeat);
       if(state.value.allowed && _boundProject.isNotEmpty) await _relayNotices();
     } catch(e) { _offlineState(e.toString().replaceFirst('Bad state: ','')); }
-    finally { _lastSeen=DateTime.now().toUtc(); await _secure.write(key:'vs_license_last_seen',value:_lastSeen!.toIso8601String()); _running=false; }
+    finally { final now=DateTime.now().toUtc();if(_lastSeen==null || now.isAfter(_lastSeen!))_lastSeen=now; await _secure.write(key:'vs_license_last_seen',value:_lastSeen!.toIso8601String()); _running=false; }
   }
   Future<void> _relayNotices() async {
     final list=await FirebaseFirestore.instance.collection('school_notices').get();
@@ -120,7 +131,7 @@ class WindowsPlatformClient {
       _sentNotices.add(doc.id);
     }
   }
-  Future<void> activate(String key) async { final data=await call('license/activate',{'key':key.trim().toUpperCase()}); _apply(data); await _secure.write(key:'vidya_saarthi_windows_license_status_v1',value:'active'); }
+  Future<void> activate(String key) async {await refresh();final remote=await WindowsFirebaseRemote.status();if(_boundProject.isEmpty || remote.projectId!=_boundProject)throw StateError('Connect and verify this school before activating its licence.');final data=await call('license/activate',{'key':key.trim().toUpperCase()}); _apply(data); await _secure.write(key:'vidya_saarthi_windows_license_status_v1',value:'active'); }
   Future<void> complaint(String message) async { await call('complaint/create',{'message':message,'version':version}); }
   void dispose() { _timer?.cancel(); }
 }

@@ -25313,10 +25313,10 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    if (reportUrl.isNotEmpty)
+                    if (result.isNotEmpty)
                       IconButton(
                         tooltip: 'Open Report Card',
-                        onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result))html.window.open(reportUrl, '_blank');}
+                        onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result))html.window.open(reportUrl, '_blank');},
                         icon: const Icon(
                           Icons.picture_as_pdf_rounded,
                           color: Colors.orangeAccent,
@@ -26167,10 +26167,10 @@ class _ExamMarksEntryScreenState
                                       fontWeight: FontWeight.w900),
                                 ),
                               ),
-                            if (reportUrl.isNotEmpty)
+                            if (result != null)
                               IconButton(
                                 tooltip: 'Report Card PDF',
-                                onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result!))html.window.open(reportUrl, '_blank');}
+                                onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result!))html.window.open(reportUrl, '_blank');},
                                 icon: const Icon(
                                     Icons.picture_as_pdf_rounded,
                                     color: Colors.orangeAccent),
