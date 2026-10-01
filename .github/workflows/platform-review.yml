@@ -2,7 +2,7 @@ name: Platform review builds
 permissions:
   contents: read
 concurrency:
-  group: platform-review-${{ github.head_ref || github.ref_name }}
+  group: platform-review-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 jobs:
   backend:
@@ -182,9 +182,6 @@ jobs:
         name: android-review-apk
         path: build/app/outputs/flutter-apk/app-debug.apk
 'on':
-  push:
-    branches:
-    - feature/developer-platform-20261001
   pull_request:
     branches:
     - main
