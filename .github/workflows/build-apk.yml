@@ -906,6 +906,19 @@ jobs:
           else:
               print("dart:html -> Android compatibility shim patched.")
 
+          # Browser document styling has no native Android equivalent.
+          # Remove only the web bootstrap initializer from the runner copy;
+          # Flutter's existing theme supplies the Android background.
+          text = re.sub(
+              r'(?m)^final bool _vidyaWebBootstrapBackgroundApplied = '
+              r'\(\(\) \{[\s\S]*?^\}\)\(\);\n*',
+              '',
+              text,
+              count=1,
+          )
+          if 'html.document.documentElement' in text or 'html.document.body?.style' in text:
+              raise SystemExit('ERROR: Web bootstrap background Android source me reh gaya')
+
           # ========================================================
           # 2. ADD ANDROID-ONLY IMPORTS
           # ========================================================
@@ -3763,6 +3776,11 @@ jobs:
       # Every run gets a higher Android versionCode so the newest APK
       # actually replaces the older installed build.
       # ============================================================
+      - name: Analyze Android Dart Source
+        run: |
+          flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings \
+            lib/main.dart lib/main_dashboard_screen.dart lib/android_html_shim.dart
+
       - name: Build Vidya Saarthi Release APK
         shell: bash
         env:
@@ -3987,4 +4005,3 @@ jobs:
             android/app/saarthi-release.jks \
             android/app/saarthi-release.jks.enc \
             android/app/google-services.json
-
