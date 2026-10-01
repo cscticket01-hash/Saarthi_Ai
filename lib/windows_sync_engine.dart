@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'school_backend_transport.dart';
 import 'dart:math';
 
 import 'package:http/http.dart' as http;
@@ -588,21 +589,32 @@ class WindowsSyncEngine {
     String scriptUrl,
     Map<String, dynamic> body,
   ) async {
+    final status = await WindowsFirebaseRemote.status();
+    if (!status.authenticated || status.projectId.isEmpty) {
+      throw StateError('Connect this school Firebase administrator first.');
+    }
+    final proof = <String, dynamic>{
+      ...body,
+      'schoolProjectId': status.projectId,
+      'schoolAdminIdToken': await WindowsFirebaseRemote.freshIdToken(),
+    };
     final client = http.Client();
     try {
       Future<http.Response> sendPost(Uri target) async {
+        requireSchoolBackendUri(target);
         final request = http.Request('POST', target)
           ..headers.addAll(const <String, String>{
             'Content-Type': 'text/plain;charset=utf-8',
             'Cache-Control': 'no-cache',
           })
-          ..body = jsonEncode(body)
+          ..body = jsonEncode(proof)
           ..followRedirects = false;
         final streamed = await client.send(request);
         return http.Response.fromStream(streamed);
       }
 
       Future<http.Response> sendGet(Uri target) async {
+        requireSchoolBackendUri(target);
         final request = http.Request('GET', target)
           ..headers.addAll(const <String, String>{
             'Accept': 'application/json,text/plain,*/*',
@@ -657,6 +669,9 @@ class WindowsSyncEngine {
         );
       }
 
+      if (result['projectId'] != status.projectId) {
+        throw StateError('Google backend belongs to another school or needs the secure backend update.');
+      }
       return result;
     } finally {
       client.close();

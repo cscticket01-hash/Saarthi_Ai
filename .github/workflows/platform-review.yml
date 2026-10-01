@@ -34,14 +34,16 @@ jobs:
         lib/windows_platform_client.dart lib/windows_license_gate.dart lib/windows_school_operations.dart lib/windows_document_templates.dart
         lib/mobile/school_session.dart lib/platform/platform_config.dart test/document_renderer_test.dart lib/windows_school_identity.dart
         lib/mobile/school_notifications.dart test/mobile_boundary_test.dart
+        lib/school_text_data.dart lib/school_backend_transport.dart test/school_text_data_test.dart
     - name: Analyze developer portal
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart
     - name: Analyze Windows school source
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_windows.dart lib/main_dashboard_screen_windows.dart
         lib/windows_school_operations.dart lib/windows_school_identity.dart lib/windows_platform_client.dart lib/windows_document_templates.dart
         lib/windows_backend_bridge.dart
+        lib/windows_sync_engine.dart lib/windows_firebase_sync.dart lib/school_text_data.dart lib/school_backend_transport.dart
     - name: Verify documents and mobile school boundaries
-      run: flutter test test/document_renderer_test.dart test/mobile_boundary_test.dart
+      run: flutter test test/document_renderer_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart
     - name: Build developer website
       run: flutter build web --release
     - uses: actions/upload-artifact@v4
@@ -70,6 +72,26 @@ jobs:
           lib/windows_school_identity.dart
           lib/mobile/school_notifications.dart
           test/mobile_boundary_test.dart
+          lib/school_text_data.dart
+          lib/school_backend_transport.dart
+          test/school_text_data_test.dart
+  school-security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '21'
+    - name: Install isolated school rules test dependencies
+      working-directory: security-tests
+      run: npm ci
+    - name: Verify school Firestore rules in an emulator
+      working-directory: security-tests
+      run: npm test
   windows:
     runs-on: windows-2022
     steps:

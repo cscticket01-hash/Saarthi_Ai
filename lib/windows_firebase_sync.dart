@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'windows_local_settings.dart';
 import 'windows_local_firestore.dart';
+import 'school_text_data.dart';
 
 class WindowsFirebaseRemoteStatus {
   const WindowsFirebaseRemoteStatus({
@@ -510,7 +511,7 @@ class WindowsFirebaseRemote {
           <String, dynamic>{
             'update': <String, dynamic>{
               'name': documentName,
-              'fields': _encodeFirestoreFields(data),
+              'fields': _encodeFirestoreFields(schoolTextData(data)),
             },
           },
         ],

@@ -11,6 +11,7 @@ import 'windows_local_storage.dart';
 import 'windows_runtime_flags.dart';
 import 'windows_service_status.dart';
 import 'windows_firebase_sync.dart';
+import 'school_backend_transport.dart';
 
 class WindowsBackendBridge {
   WindowsBackendBridge._();
@@ -102,6 +103,17 @@ class WindowsBackendBridge {
                 result['message']?.toString() ?? 'School backend rejected the request.',
               );
               return response;
+            }
+
+            final school = await WindowsFirebaseRemote.status();
+            if (!school.authenticated || result['projectId'] != school.projectId) {
+              status.unhealthy(WindowsServiceType.googleDrive,
+                  'School identity mismatch or secure Google backend update required.');
+              return http.Response(jsonEncode({
+                'success': false,
+                'code': 'SCHOOL_PROJECT_MISMATCH',
+                'message': 'Connect the matching school Firebase and updated Google backend.'
+              }), 409, headers: {'content-type': 'application/json'});
             }
 
             if (code == 'SCHOOL_SYNC_ID_MISMATCH') {
@@ -377,6 +389,7 @@ class WindowsBackendBridge {
     final client = http.Client();
     try {
       Future<http.Response> sendPost(Uri target) async {
+        requireSchoolBackendUri(target);
         final request = http.Request('POST', target);
         if (headers != null) request.headers.addAll(headers);
         if (verifiedBody is String) {
@@ -397,6 +410,7 @@ class WindowsBackendBridge {
       }
 
       Future<http.Response> sendGet(Uri target) async {
+        requireSchoolBackendUri(target);
         final request = http.Request('GET', target);
         request.headers['Accept'] = 'application/json,text/plain,*/*';
         request.followRedirects = false;

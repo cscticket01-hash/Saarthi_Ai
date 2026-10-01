@@ -27,11 +27,13 @@ upgrade. If deployment is unavailable, the new website is not published.
    Use the school's own administrator Firebase login in Windows Advanced Settings,
    then save that school's Apps Script /exec URL. The Firebase user must have an
    `admin: true` or `role: "admin"` custom claim in that SCHOOL project.
-2. Add school-backend/SaarthiMobile.gs to that school's existing Apps Script.
-   Add this line at the very beginning of its existing doPost(e), before old action
-   routing: `const mobile = VS_handleMobile(e); if (mobile) return mobile;`
-3. Merge the OAuth scopes from school-backend/appsscript.scopes.json into the
-   school's existing appsscript.json; retain its other settings and scopes.
+2. Follow [SCHOOL_BACKEND_INSTALL.md](SCHOOL_BACKEND_INSTALL.md) to install the
+   corrected full `SaarthiSchool.gs`, companion `SaarthiMobile.gs` and
+   `SaarthiStorage.gs`, school Firestore rules and complete `appsscript.json`.
+   The full backend already calls the adapter; keep exactly one `doPost`.
+3. Migrate existing school sheets/folders by their exact IDs with
+   `VS_prepareSchoolStorage`. Confirm empty storage explicitly only for a new
+   school. Account-wide Drive filename searches are no longer used.
 4. Run `VS_setupSchool("the-school-firebase-project-id", "the-school-web-api-key")` as the script owner.
    The owner needs Firestore access in that exact Firebase project; enable the
    Firestore API and grant the script owner's Google account the Datastore User

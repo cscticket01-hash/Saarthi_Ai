@@ -476,21 +476,21 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
         'schoolName': school['schoolName'] ?? school['name'] ?? _s.schoolName,
         ...d
       };
-      Uint8List? photo;
-      final url = Uri.tryParse(d['photoUrl']?.toString() ?? '');
-      if (url?.scheme == 'https') {
-        try {
-          final r = await http.get(url!).timeout(const Duration(seconds: 8));
-          if ((r.headers['content-type'] ?? '').startsWith('image/'))
-            photo = r.bodyBytes;
-        } catch (_) {}
+      Future<Uint8List?> asset(String kind) async {
+        final r = await _s.schoolCall('mobile_asset', {'kind': kind});
+        return r['available'] == true
+            ? base64Decode(r['base64'].toString()) : null;
       }
+      final photo = kind == 'studentId' || kind == 'teacherId'
+          ? await asset('photo') : null;
+      final logo = await asset('logo');
       final pdf = await renderSchoolDocument(
           kind: kind,
           template: index,
           data: data,
           qr: _s.link!.rawQr,
-          photo: photo);
+          photo: photo,
+          logo: logo);
       if (mounted)
         await Navigator.push(
             context,
