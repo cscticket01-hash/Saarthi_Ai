@@ -19,7 +19,9 @@ Future<void> main() async {
 
   await WindowsLocalSecurity.initialize();
   await WindowsLocalStorage.initialize();
-  try { await WindowsUpdateManager.cleanupOldInstallers(); } catch (_) {}
+  try {
+    await WindowsUpdateManager.cleanupOldInstallers();
+  } catch (_) {}
   await WindowsLocalSession.initialize();
   await FirebaseAuth.instance.bootstrapLocalUser();
 
@@ -61,18 +63,20 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
       ),
       builder: (context, child) {
         return WindowsLicenseGate(
-          connectionBuilder: (_) => const WindowsStartupGate(child: AdvancedSettingsScreen()),
+          connectionBuilder: (_) =>
+              const WindowsStartupGate(
+                  child: AdvancedSettingsScreen(connectionsOnly: true)),
           child: Listener(
-          behavior: HitTestBehavior.translucent,
-          onPointerDown: (_) => windows_html.document.dispatchClick(),
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: child ?? const SizedBox.shrink(),
-              ),
-              const _WindowsGlobalUpdateProgress(),
-            ],
-          ),
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) => windows_html.document.dispatchClick(),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: child ?? const SizedBox.shrink(),
+                ),
+                const _WindowsGlobalUpdateProgress(),
+              ],
+            ),
           ),
         );
       },

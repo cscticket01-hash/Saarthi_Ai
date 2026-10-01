@@ -59,10 +59,14 @@ async function handler(req) {
     const fingerprint = str(b.deviceFingerprint, 128);
     if (id.length < 20 || !/^[a-f0-9]{64}$/.test(fingerprint)) fail(400, 'Installation identity missing');
     const ref = collection('installations').doc(hash(id));
-    const key = secret();
+    const key = str(b.installationSecret, 128) || secret();
+    if (!/^[A-Za-z0-9_-]{40,128}$/.test(key)) fail(400, 'Secure installation secret required');
     const started = await db().runTransaction(async tx => {
       const doc = await tx.get(ref);
-      if (doc.exists) fail(409, 'This installation is already registered');
+      if (doc.exists) {
+        if (!safeEqual(doc.data().secretHash, hash(key))) fail(409, 'This installation is already registered');
+        return doc.data().trialStartedAt;
+      }
       const deviceRef = collection('devices').doc(fingerprint);
       const device = await tx.get(deviceRef);
       const trialStartedAt = device.exists ? device.data().trialStartedAt : now;
@@ -79,7 +83,7 @@ async function handler(req) {
     await verifySchoolAdmin(id, b.schoolIdToken);
     const backend = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'mobile_project_info' }), signal: AbortSignal.timeout(15000) });
     const identity = await backend.json();
-    if (!identity.success || identity.projectId !== id) fail(403, 'Install the mobile integration in this school’s own Google Script and configure its matching Firebase project');
+    if (!identity.success || identity.projectId !== id || identity.windowsAdminProtection !== true) fail(403, 'Install the mobile integration in this school’s own Google Script and configure its matching Firebase project and API key');
     const ref = collection('schools').doc(id);
     await db().runTransaction(async tx => {
       const existing = await tx.get(ref);
@@ -106,7 +110,7 @@ async function handler(req) {
     await db().runTransaction(async tx => {
       const lic = await tx.get(ref);
       if (!lic.exists || lic.data().schoolId !== i.schoolId || lic.data().status !== 'active' || lic.data().expiresAt <= now) fail(403, 'This key is invalid, expired, or belongs to another school');
-      tx.update(collection('schools').doc(i.schoolId), { licenseId: ref.id, licenseExpiresAt: lic.data().expiresAt, purchased: lic.data().paid === true });
+      tx.update(collection('schools').doc(i.schoolId), { licenseId: ref.id, licenseExpiresAt: lic.data().expiresAt, ...(lic.data().paid === true ? { purchased: true } : {}) });
       tx.update(ref, { activatedAt: now });
     });
     return { serverTime: now, ...(await schoolState(i.schoolId)).state, schoolId: i.schoolId };
@@ -120,6 +124,7 @@ async function handler(req) {
     const key = `VS-${crypto.randomBytes(18).toString('hex').toUpperCase().match(/.{1,6}/g).join('-')}`;
     const doc = { schoolId: id, status: 'active', expiresAt: now + days * DAY, createdAt: now, createdBy: user.uid, paid: b.paid === true, amount: Math.max(0, Number(b.amount) || 0), currency: 'INR', keySuffix: key.slice(-6) };
     await collection('licenses').doc(hash(key)).create(doc);
+    if (doc.paid) await collection('schools').doc(id).update({ purchased: true });
     await collection('audit').add({ action, schoolId: id, userId: user.uid, at: now });
     return { key, ...doc };
   }
@@ -180,7 +185,8 @@ async function handler(req) {
     const sessions = await collection('mobile_sessions').where('schoolId', '==', i.schoolId).get();
     const tokens = [...new Set(sessions.docs.filter(d => d.data().expiresAt > now).map(d => d.data().fcmToken).filter(Boolean))];
     const title = str(b.title, 100); const text = str(b.message, 180);
-    for (let offset = 0; offset < tokens.length; offset += 500) await admin.messaging().sendEachForMulticast({ tokens: tokens.slice(offset, offset + 500), notification: { title, body: text }, data: { schoolId: i.schoolId, type: 'school_notice', noticeId: str(b.noticeId, 160) }, android: { priority: 'high', notification: { sound: 'default' } } });
+    // Let the app check the current school before displaying a queued notice.
+    for (let offset = 0; offset < tokens.length; offset += 500) await admin.messaging().sendEachForMulticast({ tokens: tokens.slice(offset, offset + 500), data: { schoolId: i.schoolId, type: 'school_notice', noticeId: str(b.noticeId, 160), title, body: text }, android: { priority: 'high' } });
     await noticeRef.set({ status: 'sent', sentAt: now, recipients: tokens.length }, { merge: true });
     return { sent: tokens.length };
   }

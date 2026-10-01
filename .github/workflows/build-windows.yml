@@ -84,6 +84,7 @@ jobs:
             'firebase_core',
             'firebase_auth',
             'firebase_messaging',
+            'flutter_local_notifications',
             'firebase_storage',
             'firebase_analytics',
             'firebase_database',
@@ -316,4 +317,3 @@ jobs:
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
             build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
-

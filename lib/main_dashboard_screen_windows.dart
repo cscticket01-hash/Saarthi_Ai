@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'windows_school_operations.dart';
+import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
 import 'windows_platform_client.dart';
 import 'dart:io';
@@ -115,19 +116,9 @@ Future<String> _windowsEnsurePersonLinkToken({
   required String documentId,
   required Map<String, dynamic> data,
 }) async {
-  final existing = data['mobileLinkToken']?.toString().trim() ?? '';
-  if (existing.isNotEmpty) return existing;
-  final random = Random.secure();
-  final bytes = List<int>.generate(24, (_) => random.nextInt(256));
-  final token = base64UrlEncode(bytes).replaceAll('=', '');
-  await FirebaseFirestore.instance
-      .collection(collection)
-      .doc(documentId)
-      .set({
-        'mobileLinkToken': token,
-        'mobileLinkUpdatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-  return token;
+  final person = await SchoolPersonIdentity.ensure(collection,documentId);
+  if(data['name']!=null && data['name']!=person['name'])throw StateError('School record changed. Refresh the directory.');
+  return person['mobileLinkToken'].toString();
 }
 
 Future<String> _windowsBuildPersonQrPayload({
@@ -14297,7 +14288,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
   ) async {
     if (_isSavingPayment) return;
 
-    final student = studentDoc.data();
+    final student = await SchoolPersonIdentity.ensure('students_directory',studentDoc.id);
     final studentName = student['name']?.toString().trim() ?? 'Student';
     final studentClass = student['class']?.toString().trim() ?? '';
     final roll = student['rollNo']?.toString().trim() ?? '';
@@ -21283,7 +21274,8 @@ class PasswordManagementScreen extends StatelessWidget {
 }
 
 class AdvancedSettingsScreen extends StatefulWidget {
-  const AdvancedSettingsScreen({super.key});
+  const AdvancedSettingsScreen({super.key,this.connectionsOnly=false});
+  final bool connectionsOnly;
 
   @override
   State<AdvancedSettingsScreen> createState() => _AdvancedSettingsScreenState();
@@ -21677,11 +21669,11 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                       ),
                       const SizedBox(height: 14),
                       const WindowsLicenseSettingsPanel(),
-                      const PromotionPolicySwitch(),
+                      if(!widget.connectionsOnly)const PromotionPolicySwitch(),
                       const SizedBox(height: 14),
-                      const WindowsLocalStorageCard(),
+                      if(!widget.connectionsOnly)const WindowsLocalStorageCard(),
                       const SizedBox(height: 14),
-                      const _AdvancedStudentUidSettingsPanel(),
+                      if(!widget.connectionsOnly)const _AdvancedStudentUidSettingsPanel(),
                     ],
                   ),
                 ),
@@ -25776,7 +25768,7 @@ class _ExamMarksEntryScreenState
 
   Future<void> _enterMarks(
       QueryDocumentSnapshot<Map<String, dynamic>> doc) async {
-    final student = doc.data();
+    final student = await SchoolPersonIdentity.ensure('students_directory',doc.id);
     final existing = _resultFor(doc.id);
     final existingMarks = existing?['marks'] is Map
         ? Map<String, dynamic>.from(existing!['marks'] as Map)
@@ -26653,4 +26645,3 @@ class _WindowsMetricCard extends StatelessWidget{
   @override
   Widget build(BuildContext context)=>Expanded(child:Container(padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:const Color(0xFF111B21),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color:color,size:28),const SizedBox(width:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,style:const TextStyle(color:Colors.white54,fontSize:10)),const SizedBox(height:3),Text(value,style:TextStyle(color:color,fontSize:18,fontWeight:FontWeight.w900))])])));
 }
-

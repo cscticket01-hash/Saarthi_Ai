@@ -29,8 +29,12 @@ class VidyaSaarthiApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        colorScheme: const ColorScheme.dark(primary: Color(0xFF63E6BE), surface: Color(0xFF16242E)),
-        inputDecorationTheme: const InputDecorationTheme(filled: true, fillColor: Color(0xFF16242E), border: OutlineInputBorder()),
+        colorScheme: const ColorScheme.dark(
+            primary: Color(0xFF63E6BE), surface: Color(0xFF16242E)),
+        inputDecorationTheme: const InputDecorationTheme(
+            filled: true,
+            fillColor: Color(0xFF16242E),
+            border: OutlineInputBorder()),
         scaffoldBackgroundColor: const Color(0xFF0B141A),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF1F2C34),
@@ -41,4 +45,3 @@ class VidyaSaarthiApp extends StatelessWidget {
     );
   }
 }
-

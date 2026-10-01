@@ -10,6 +10,7 @@ import 'windows_html_shim.dart' as windows_html;
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_runtime_flags.dart';
+import 'windows_platform_client.dart';
 
 class WindowsSyncEngine {
   WindowsSyncEngine._();
@@ -56,6 +57,7 @@ class WindowsSyncEngine {
 
     WindowsLocalFirestoreSyncControl.onTrackedMutation = () async {
       scheduleSoon();
+      WindowsPlatformClient.instance.scheduleRefresh();
     };
 
     WindowsFirebaseRemote.onConnectionChanged = () async {
@@ -1598,4 +1600,3 @@ class _ResolvedSyncProfile {
     );
   }
 }
-

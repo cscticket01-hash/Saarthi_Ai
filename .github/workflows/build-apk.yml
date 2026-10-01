@@ -26,205 +26,722 @@ jobs:
       uses: android-actions/setup-android@v4
     - name: Install Android SDK 36
       shell: bash
-      run: "yes | sdkmanager --licenses >/dev/null || true\n\nsdkmanager \\\n  \"platform-tools\" \\\n  \"platforms;android-36\"\
-        \ \\\n  \"build-tools;36.0.0\"\n"
+      run: |
+        yes | sdkmanager --licenses >/dev/null || true
+
+        sdkmanager \
+          "platform-tools" \
+          "platforms;android-36" \
+          "build-tools;36.0.0"
     - name: Show Build Environment
       shell: bash
-      run: 'flutter --version
-
+      run: |
+        flutter --version
         dart --version
-
         java -version
-
         echo "ANDROID_HOME=$ANDROID_HOME"
-
-        '
     - name: Configure Android Project
       shell: bash
-      run: "flutter config --enable-android\n\nif [ ! -f \"android/app/src/main/AndroidManifest.xml\" ]; then\n  echo \"Android\
-        \ project missing. Creating...\"\n  flutter create \\\n    --platforms=android \\\n    --android-language=java \\\n\
-        \    --no-pub \\\n    .\nelse\n  echo \"Existing Android project found.\"\n  echo \"Existing Android configuration\
-        \ preserve kiya jayega.\"\nfi\n"
+      run: |
+        flutter config --enable-android
+
+        if [ ! -f "android/app/src/main/AndroidManifest.xml" ]; then
+          echo "Android project missing. Creating..."
+          flutter create \
+            --platforms=android \
+            --android-language=java \
+            --no-pub \
+            .
+        else
+          echo "Existing Android project found."
+          echo "Existing Android configuration preserve kiya jayega."
+        fi
     - name: Configure Firebase and Permanent Signing
       shell: bash
       env:
         GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         ANDROID_KEYSTORE_ENCRYPTED_BASE64: ${{ secrets.ANDROID_KEYSTORE_ENCRYPTED_BASE64 }}
         ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      run: "set -euo pipefail\n\nif [ -z \"$GOOGLE_SERVICES_JSON_BASE64\" ]; then\n  echo \"::error::GOOGLE_SERVICES_JSON_BASE64\
-        \ secret missing.\"\n  exit 1\nfi\n\n\nif [ -z \"$ANDROID_KEYSTORE_ENCRYPTED_BASE64\" ]; then\n  echo \"::error::ANDROID_KEYSTORE_ENCRYPTED_BASE64\
-        \ secret missing.\"\n  exit 1\nfi\n\nif [ -z \"$ANDROID_KEYSTORE_PASSWORD\" ]; then\n  echo \"::error::ANDROID_KEYSTORE_PASSWORD\
-        \ secret missing.\"\n  exit 1\nfi\n\necho \"Restoring Firebase Android configuration...\"\nprintf '%s' \"$GOOGLE_SERVICES_JSON_BASE64\"\
-        \ \\\n  | base64 --decode \\\n  > android/app/google-services.json\n\necho \"Restoring permanent encrypted signing\
-        \ key...\"\nprintf '%s' \"$ANDROID_KEYSTORE_ENCRYPTED_BASE64\" \\\n  | base64 --decode \\\n  > android/app/saarthi-release.jks.enc\n\
-        \nopenssl enc \\\n  -d \\\n  -aes-256-cbc \\\n  -pbkdf2 \\\n  -iter 200000 \\\n  -in android/app/saarthi-release.jks.enc\
-        \ \\\n  -out android/app/saarthi-release.jks \\\n  -pass env:ANDROID_KEYSTORE_PASSWORD\n\nrm -f android/app/saarthi-release.jks.enc\n\
-        chmod 600 android/app/saarthi-release.jks\n\npython3 <<'PY'\nfrom pathlib import Path\nimport json\nimport re\n\n\
-        expected_package = \"com.example.saarthi_ai\"\n\ngoogle_json = Path(\"android/app/google-services.json\")\nsettings\
-        \ = Path(\"android/settings.gradle.kts\")\napp_gradle = Path(\"android/app/build.gradle.kts\")\n\nfor path in (google_json,\
-        \ settings, app_gradle):\n    if not path.exists():\n        raise SystemExit(f\"ERROR: Required file missing: {path}\"\
-        )\n\ndata = json.loads(google_json.read_text(encoding=\"utf-8\"))\n\nclients = data.get(\"client\", [])\nmatched =\
-        \ [\n    client for client in clients\n    if client.get(\"client_info\", {})\n        .get(\"android_client_info\"\
-        , {})\n        .get(\"package_name\") == expected_package\n]\n\nif not matched:\n    raise SystemExit(\n        \"\
-        ERROR: google-services.json package name \"\n        f\"{expected_package} se match nahi karta\"\n    )\n\nsettings_text\
-        \ = settings.read_text(\n    encoding=\"utf-8\",\n    errors=\"ignore\",\n)\n\ngoogle_plugin_decl = (\n    '    id(\"\
-        com.google.gms.google-services\") '\n    'version \"4.5.0\" apply false'\n)\n\nif 'id(\"com.google.gms.google-services\"\
-        )' not in settings_text:\n    settings_text, count = re.subn(\n        r'(?m)^plugins\\s*\\{\\s*$',\n        \"plugins\
-        \ {\\n\" + google_plugin_decl,\n        settings_text,\n        count=1,\n    )\n\n    if count != 1:\n        raise\
-        \ SystemExit(\n            \"ERROR: settings.gradle.kts plugins block nahi mila\"\n        )\n\n    settings.write_text(\n\
-        \        settings_text,\n        encoding=\"utf-8\",\n    )\n\napp_text = app_gradle.read_text(\n    encoding=\"utf-8\"\
-        ,\n    errors=\"ignore\",\n)\n\nif 'id(\"com.google.gms.google-services\")' not in app_text:\n    android_plugin =\
-        \ '    id(\"com.android.application\")'\n    google_plugin = '    id(\"com.google.gms.google-services\")'\n\n    if\
-        \ android_plugin in app_text:\n        app_text = app_text.replace(\n            android_plugin,\n            android_plugin\
-        \ + \"\\n\" + google_plugin,\n            1,\n        )\n    else:\n        app_text, count = re.subn(\n         \
-        \   r'(?m)^plugins\\s*\\{\\s*$',\n            'plugins {\\n' + google_plugin,\n            app_text,\n           \
-        \ count=1,\n        )\n\n        if count != 1:\n            raise SystemExit(\n                \"ERROR: app/build.gradle.kts\
-        \ plugins block nahi mila\"\n            )\n\nif 'create(\"release\")' not in app_text:\n    signing_block = \"\"\"\
-        \    signingConfigs {\n        create(\"release\") {\n            storeFile = file(\"saarthi-release.jks\")\n    \
-        \        storePassword = System.getenv(\"ANDROID_KEYSTORE_PASSWORD\")\n            keyAlias = \"saarthi\"\n      \
-        \      keyPassword = System.getenv(\"ANDROID_KEYSTORE_PASSWORD\")\n        }\n    }\n\n\"\"\"\n\n    build_types_marker\
-        \ = \"    buildTypes {\\n\"\n\n    if build_types_marker not in app_text:\n        raise SystemExit(\n           \
-        \ \"ERROR: app/build.gradle.kts buildTypes block nahi mila\"\n        )\n\n    app_text = app_text.replace(\n    \
-        \    build_types_marker,\n        signing_block + build_types_marker,\n        1,\n    )\n\nrelease_signing = (\n\
-        \    'signingConfig = signingConfigs.getByName(\"release\")'\n)\n\nif release_signing not in app_text:\n    debug_signing\
-        \ = (\n        'signingConfig = signingConfigs.getByName(\"debug\")'\n    )\n\n    if debug_signing in app_text:\n\
-        \        app_text = app_text.replace(\n            debug_signing,\n            release_signing,\n            1,\n\
-        \        )\n    else:\n        app_text, count = re.subn(\n            r'(?m)^(\\s*)release\\s*\\{\\s*$',\n      \
-        \      lambda m: (\n                f'{m.group(1)}release {{\\n'\n                f'{m.group(1)}    {release_signing}'\n\
-        \            ),\n            app_text,\n            count=1,\n        )\n\n        if count != 1:\n            raise\
-        \ SystemExit(\n                \"ERROR: release buildType patch nahi hua\"\n            )\n\napp_gradle.write_text(\n\
-        \    app_text,\n    encoding=\"utf-8\",\n)\n\nprint(\"Firebase package verified:\", expected_package)\nprint(\"Google\
-        \ Services Gradle plugin configured.\")\nprint(\"Permanent release signing configured.\")\nPY\n\nEXPECTED_SHA1=\"\
-        76:24:14:31:E2:A8:21:D7:56:64:A6:12:24:46:EB:50:6F:CA:D0:1B\"\n\nACTUAL_SHA1=\"$(\n  keytool -list -v \\\n    -keystore\
-        \ android/app/saarthi-release.jks \\\n    -alias saarthi \\\n    -storepass \"$ANDROID_KEYSTORE_PASSWORD\" \\\n  \
-        \  | sed -n 's/^[[:space:]]*SHA1: //p' \\\n    | head -n 1\n)\"\n\nif [ \"$ACTUAL_SHA1\" != \"$EXPECTED_SHA1\" ];\
-        \ then\n  echo \"::error::Signing key SHA-1 mismatch.\"\n  echo \"Expected: $EXPECTED_SHA1\"\n  echo \"Actual:   $ACTUAL_SHA1\"\
-        \n  exit 1\nfi\n\necho \"Permanent signing SHA-1 verified: $ACTUAL_SHA1\"\n\necho \"\"\necho \"===== FIREBASE / SIGNING\
-        \ CHECK =====\"\ngrep -n \\\n  'com.google.gms.google-services' \\\n  android/settings.gradle.kts \\\n  android/app/build.gradle.kts\n\
-        \ngrep -n \\\n  'signingConfig = signingConfigs.getByName(\"release\")' \\\n  android/app/build.gradle.kts\n\ntest\
-        \ -s android/app/google-services.json\ntest -s android/app/saarthi-release.jks\n"
+      run: |
+        set -euo pipefail
+
+        if [ -z "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+          echo "::error::GOOGLE_SERVICES_JSON_BASE64 secret missing."
+          exit 1
+        fi
+
+
+        if [ -z "$ANDROID_KEYSTORE_ENCRYPTED_BASE64" ]; then
+          echo "::error::ANDROID_KEYSTORE_ENCRYPTED_BASE64 secret missing."
+          exit 1
+        fi
+
+        if [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+          echo "::error::ANDROID_KEYSTORE_PASSWORD secret missing."
+          exit 1
+        fi
+
+        echo "Restoring Firebase Android configuration..."
+        printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" \
+          | base64 --decode \
+          > android/app/google-services.json
+
+        echo "Restoring permanent encrypted signing key..."
+        printf '%s' "$ANDROID_KEYSTORE_ENCRYPTED_BASE64" \
+          | base64 --decode \
+          > android/app/saarthi-release.jks.enc
+
+        openssl enc \
+          -d \
+          -aes-256-cbc \
+          -pbkdf2 \
+          -iter 200000 \
+          -in android/app/saarthi-release.jks.enc \
+          -out android/app/saarthi-release.jks \
+          -pass env:ANDROID_KEYSTORE_PASSWORD
+
+        rm -f android/app/saarthi-release.jks.enc
+        chmod 600 android/app/saarthi-release.jks
+
+        python3 <<'PY'
+        from pathlib import Path
+        import json
+        import re
+
+        expected_package = "com.example.saarthi_ai"
+
+        google_json = Path("android/app/google-services.json")
+        settings = Path("android/settings.gradle.kts")
+        app_gradle = Path("android/app/build.gradle.kts")
+
+        for path in (google_json, settings, app_gradle):
+            if not path.exists():
+                raise SystemExit(f"ERROR: Required file missing: {path}")
+
+        data = json.loads(google_json.read_text(encoding="utf-8"))
+
+        clients = data.get("client", [])
+        matched = [
+            client for client in clients
+            if client.get("client_info", {})
+                .get("android_client_info", {})
+                .get("package_name") == expected_package
+        ]
+
+        if not matched:
+            raise SystemExit(
+                "ERROR: google-services.json package name "
+                f"{expected_package} se match nahi karta"
+            )
+
+        settings_text = settings.read_text(
+            encoding="utf-8",
+            errors="ignore",
+        )
+
+        google_plugin_decl = (
+            '    id("com.google.gms.google-services") '
+            'version "4.4.4" apply false'
+        )
+
+        if 'id("com.google.gms.google-services")' not in settings_text:
+            settings_text, count = re.subn(
+                r'(?m)^plugins\s*\{\s*$',
+                "plugins {\n" + google_plugin_decl,
+                settings_text,
+                count=1,
+            )
+
+            if count != 1:
+                raise SystemExit(
+                    "ERROR: settings.gradle.kts plugins block nahi mila"
+                )
+
+            settings.write_text(
+                settings_text,
+                encoding="utf-8",
+            )
+
+        app_text = app_gradle.read_text(
+            encoding="utf-8",
+            errors="ignore",
+        )
+
+        if 'id("com.google.gms.google-services")' not in app_text:
+            android_plugin = '    id("com.android.application")'
+            google_plugin = '    id("com.google.gms.google-services")'
+
+            if android_plugin in app_text:
+                app_text = app_text.replace(
+                    android_plugin,
+                    android_plugin + "\n" + google_plugin,
+                    1,
+                )
+            else:
+                app_text, count = re.subn(
+                    r'(?m)^plugins\s*\{\s*$',
+                    'plugins {\n' + google_plugin,
+                    app_text,
+                    count=1,
+                )
+
+                if count != 1:
+                    raise SystemExit(
+                        "ERROR: app/build.gradle.kts plugins block nahi mila"
+                    )
+
+        if 'create("release")' not in app_text:
+            signing_block = """    signingConfigs {
+                create("release") {
+                    storeFile = file("saarthi-release.jks")
+                    storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                    keyAlias = "saarthi"
+                    keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                }
+            }
+
+        """
+
+            build_types_marker = "    buildTypes {\n"
+
+            if build_types_marker not in app_text:
+                raise SystemExit(
+                    "ERROR: app/build.gradle.kts buildTypes block nahi mila"
+                )
+
+            app_text = app_text.replace(
+                build_types_marker,
+                signing_block + build_types_marker,
+                1,
+            )
+
+        release_signing = (
+            'signingConfig = signingConfigs.getByName("release")'
+        )
+
+        if release_signing not in app_text:
+            debug_signing = (
+                'signingConfig = signingConfigs.getByName("debug")'
+            )
+
+            if debug_signing in app_text:
+                app_text = app_text.replace(
+                    debug_signing,
+                    release_signing,
+                    1,
+                )
+            else:
+                app_text, count = re.subn(
+                    r'(?m)^(\s*)release\s*\{\s*$',
+                    lambda m: (
+                        f'{m.group(1)}release {{\n'
+                        f'{m.group(1)}    {release_signing}'
+                    ),
+                    app_text,
+                    count=1,
+                )
+
+                if count != 1:
+                    raise SystemExit(
+                        "ERROR: release buildType patch nahi hua"
+                    )
+
+        app_gradle.write_text(
+            app_text,
+            encoding="utf-8",
+        )
+
+        print("Firebase package verified:", expected_package)
+        print("Google Services Gradle plugin configured.")
+        print("Permanent release signing configured.")
+        PY
+
+        EXPECTED_SHA1="76:24:14:31:E2:A8:21:D7:56:64:A6:12:24:46:EB:50:6F:CA:D0:1B"
+
+        ACTUAL_SHA1="$(
+          keytool -list -v \
+            -keystore android/app/saarthi-release.jks \
+            -alias saarthi \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            | sed -n 's/^[[:space:]]*SHA1: //p' \
+            | head -n 1
+        )"
+
+        if [ "$ACTUAL_SHA1" != "$EXPECTED_SHA1" ]; then
+          echo "::error::Signing key SHA-1 mismatch."
+          echo "Expected: $EXPECTED_SHA1"
+          echo "Actual:   $ACTUAL_SHA1"
+          exit 1
+        fi
+
+        echo "Permanent signing SHA-1 verified: $ACTUAL_SHA1"
+
+        echo ""
+        echo "===== FIREBASE / SIGNING CHECK ====="
+        grep -n \
+          'com.google.gms.google-services' \
+          android/settings.gradle.kts \
+          android/app/build.gradle.kts
+
+        grep -n \
+          'signingConfig = signingConfigs.getByName("release")' \
+          android/app/build.gradle.kts
+
+        test -s android/app/google-services.json
+        test -s android/app/saarthi-release.jks
     - name: Ensure Android Permissions
       shell: bash
-      run: "python3 <<'PY'\nfrom pathlib import Path\n\nmanifest = Path(\"android/app/src/main/AndroidManifest.xml\")\n\n\
-        if not manifest.exists():\n    raise SystemExit(\"ERROR: AndroidManifest.xml nahi mila\")\n\ntext = manifest.read_text(\n\
-        \    encoding=\"utf-8\",\n    errors=\"ignore\",\n)\n\nadditions = []\n\nfor permission in [\"ACCESS_FINE_LOCATION\"\
-        , \"ACCESS_COARSE_LOCATION\"]:\n    if \"android.permission.\" + permission not in text:\n        additions.append('<uses-permission\
-        \ android:name=\"android.permission.' + permission + '\" />')\n\nif 'android.permission.INTERNET' not in text:\n \
-        \   additions.append(\n        '    <uses-permission android:name=\"android.permission.INTERNET\" />'\n    )\n\nif\
-        \ 'android.permission.CAMERA' not in text:\n    additions.append(\n        '    <uses-permission android:name=\"android.permission.CAMERA\"\
-        \ />'\n    )\n\nif 'android.permission.POST_NOTIFICATIONS' not in text:\n    additions.append(\n        '    <uses-permission\
-        \ android:name=\"android.permission.POST_NOTIFICATIONS\" />'\n    )\n\nif 'android.permission.REQUEST_INSTALL_PACKAGES'\
-        \ not in text:\n    additions.append(\n        '    <uses-permission android:name=\"android.permission.REQUEST_INSTALL_PACKAGES\"\
-        \ />'\n    )\n\nif 'android.hardware.camera.any' not in text:\n    additions.append(\n        '    <uses-feature android:name=\"\
-        android.hardware.camera.any\" android:required=\"false\" />'\n    )\n\nif additions:\n    manifest_end = text.find('>')\n\
-        \n    if manifest_end == -1:\n        raise SystemExit(\"ERROR: Invalid AndroidManifest.xml\")\n\n    text = (\n \
-        \       text[:manifest_end + 1]\n        + \"\\n\"\n        + \"\\n\".join(additions)\n        + \"\\n\"\n       \
-        \ + text[manifest_end + 1:]\n    )\n\n# mobile_scanner 5.1.1 + Android Impeller can show a\n# black/error camera preview\
-        \ on some Android devices.\n# Disable Impeller only for this Android APK build.\nimpeller_meta = (\n    '        <meta-data\
-        \ '\n    'android:name=\"io.flutter.embedding.android.EnableImpeller\" '\n    'android:value=\"false\" />'\n)\n\n\
-        if 'io.flutter.embedding.android.EnableImpeller' not in text:\n    app_start = text.find('<application')\n\n    if\
-        \ app_start == -1:\n        raise SystemExit(\n            \"ERROR: AndroidManifest.xml me <application> tag nahi\
-        \ mila\"\n        )\n\n    app_tag_end = text.find('>', app_start)\n\n    if app_tag_end == -1:\n        raise SystemExit(\n\
-        \            \"ERROR: AndroidManifest.xml ka <application> tag invalid hai\"\n        )\n\n    insert_at = app_tag_end\
-        \ + 1\n    text = (\n        text[:insert_at]\n        + \"\\n\"\n        + impeller_meta\n        + text[insert_at:]\n\
-        \    )\n\nmanifest.write_text(\n    text,\n    encoding=\"utf-8\",\n)\n\nprint(\"===== ANDROID MANIFEST =====\")\n\
-        final_manifest = manifest.read_text(\n    encoding=\"utf-8\",\n    errors=\"ignore\",\n)\n\nprint(final_manifest)\n\
-        \nif 'io.flutter.embedding.android.EnableImpeller' not in final_manifest:\n    raise SystemExit(\"ERROR: Impeller\
-        \ disable flag missing\")\n\nprint(\"Android scanner fix: Impeller disabled.\")\nPY\n"
+      run: |
+        python3 <<'PY'
+        from pathlib import Path
+
+        manifest = Path("android/app/src/main/AndroidManifest.xml")
+
+        if not manifest.exists():
+            raise SystemExit("ERROR: AndroidManifest.xml nahi mila")
+
+        text = manifest.read_text(
+            encoding="utf-8",
+            errors="ignore",
+        )
+
+        additions = []
+
+        for permission in ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]:
+            if "android.permission." + permission not in text:
+                additions.append('<uses-permission android:name="android.permission.' + permission + '" />')
+
+        if 'android.permission.INTERNET' not in text:
+            additions.append(
+                '    <uses-permission android:name="android.permission.INTERNET" />'
+            )
+
+        if 'android.permission.CAMERA' not in text:
+            additions.append(
+                '    <uses-permission android:name="android.permission.CAMERA" />'
+            )
+
+        if 'android.permission.POST_NOTIFICATIONS' not in text:
+            additions.append(
+                '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
+            )
+
+        if 'android.permission.REQUEST_INSTALL_PACKAGES' not in text:
+            additions.append(
+                '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />'
+            )
+
+        if 'android.hardware.camera.any' not in text:
+            additions.append(
+                '    <uses-feature android:name="android.hardware.camera.any" android:required="false" />'
+            )
+
+        if additions:
+            manifest_end = text.find('>')
+
+            if manifest_end == -1:
+                raise SystemExit("ERROR: Invalid AndroidManifest.xml")
+
+            text = (
+                text[:manifest_end + 1]
+                + "\n"
+                + "\n".join(additions)
+                + "\n"
+                + text[manifest_end + 1:]
+            )
+
+        # mobile_scanner 5.1.1 + Android Impeller can show a
+        # black/error camera preview on some Android devices.
+        # Disable Impeller only for this Android APK build.
+        impeller_meta = (
+            '        <meta-data '
+            'android:name="io.flutter.embedding.android.EnableImpeller" '
+            'android:value="false" />'
+        )
+
+        if 'io.flutter.embedding.android.EnableImpeller' not in text:
+            app_start = text.find('<application')
+
+            if app_start == -1:
+                raise SystemExit(
+                    "ERROR: AndroidManifest.xml me <application> tag nahi mila"
+                )
+
+            app_tag_end = text.find('>', app_start)
+
+            if app_tag_end == -1:
+                raise SystemExit(
+                    "ERROR: AndroidManifest.xml ka <application> tag invalid hai"
+                )
+
+            insert_at = app_tag_end + 1
+            text = (
+                text[:insert_at]
+                + "\n"
+                + impeller_meta
+                + text[insert_at:]
+            )
+
+        manifest.write_text(
+            text,
+            encoding="utf-8",
+        )
+
+        print("===== ANDROID MANIFEST =====")
+        final_manifest = manifest.read_text(
+            encoding="utf-8",
+            errors="ignore",
+        )
+
+        print(final_manifest)
+
+        if 'io.flutter.embedding.android.EnableImpeller' not in final_manifest:
+            raise SystemExit("ERROR: Impeller disable flag missing")
+
+        print("Android scanner fix: Impeller disabled.")
+        PY
+    - name: Configure notification desugaring
+      run: python .github/scripts/configure_android_notifications.py
+    - name: Use dedicated Android dependencies
+      run: |
+        python - <<'PY'
+        import re
+        p='pubspec.yaml'
+        s=open(p).read()
+        for name in ['agora_rtc_engine','flutter_contacts','google_sign_in','googleapis','google_generative_ai','image_picker','permission_handler','firebase_auth','cloud_firestore','font_awesome_flutter']:
+          s=re.sub(r'^  '+name+r':[^\n]*\n','',s,flags=re.M)
+        open(p,'w').write(s)
+        PY
     - name: Clean Project
       run: flutter clean
     - name: Install Flutter Dependencies
       run: flutter pub get
     - name: Upgrade Android Mobile Scanner
       shell: bash
-      run: "set -euo pipefail\n\necho \"Upgrading Android runner copy to mobile_scanner 7.3.0...\"\nflutter pub add \"mobile_scanner:7.3.0\"\
-        \nflutter pub get\n\n# Use the Google Play Services ML Kit barcode model on Android.\n# This is an official mobile_scanner\
-        \ Android option.\ntouch android/gradle.properties\nif grep -q '^dev\\.steenbakker\\.mobile_scanner\\.useUnbundled='\
-        \ android/gradle.properties; then\n  sed -i \\\n    's/^dev\\.steenbakker\\.mobile_scanner\\.useUnbundled=.*/dev.steenbakker.mobile_scanner.useUnbundled=true/'\
-        \ \\\n    android/gradle.properties\nelse\n  echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' \\\n    >> android/gradle.properties\n\
-        fi\n\n# GitHub Actions/Gradle file watcher can occasionally throw\n# \"Already watching path: .../android\". Disable\
-        \ VFS watching\n# only for the CI runner; repository source is unchanged.\nif grep -q '^org\\.gradle\\.vfs\\.watch='\
-        \ android/gradle.properties; then\n  sed -i \\\n    's/^org\\.gradle\\.vfs\\.watch=.*/org.gradle.vfs.watch=false/'\
-        \ \\\n    android/gradle.properties\nelse\n  echo 'org.gradle.vfs.watch=false' >> android/gradle.properties\nfi\n\n\
-        echo \"\"\necho \"===== MOBILE SCANNER VERSION =====\"\n\nflutter pub deps > /tmp/saarthi-pub-deps.txt\ngrep \"mobile_scanner\"\
-        \ /tmp/saarthi-pub-deps.txt || true\n\nif ! grep -q \"mobile_scanner 7.3.0\" /tmp/saarthi-pub-deps.txt; then\n  echo\
-        \ \"::error::mobile_scanner 7.3.0 resolve nahi hua.\"\n  exit 1\nfi\n\necho \"\"\necho \"===== MOBILE SCANNER ANDROID\
-        \ MODE =====\"\ngrep \"dev.steenbakker.mobile_scanner.useUnbundled\" \\\n  android/gradle.properties\n\necho \"OK\
-        \ - Android mobile_scanner 7.3.0 active.\"\n"
+      run: |
+        set -euo pipefail
+
+        echo "Upgrading Android runner copy to mobile_scanner 7.3.0..."
+        flutter pub add "mobile_scanner:7.3.0"
+        flutter pub get
+
+        # Use the Google Play Services ML Kit barcode model on Android.
+        # This is an official mobile_scanner Android option.
+        touch android/gradle.properties
+        if grep -q '^dev\.steenbakker\.mobile_scanner\.useUnbundled=' android/gradle.properties; then
+          sed -i \
+            's/^dev\.steenbakker\.mobile_scanner\.useUnbundled=.*/dev.steenbakker.mobile_scanner.useUnbundled=true/' \
+            android/gradle.properties
+        else
+          echo 'dev.steenbakker.mobile_scanner.useUnbundled=true' \
+            >> android/gradle.properties
+        fi
+
+        # GitHub Actions/Gradle file watcher can occasionally throw
+        # "Already watching path: .../android". Disable VFS watching
+        # only for the CI runner; repository source is unchanged.
+        if grep -q '^org\.gradle\.vfs\.watch=' android/gradle.properties; then
+          sed -i \
+            's/^org\.gradle\.vfs\.watch=.*/org.gradle.vfs.watch=false/' \
+            android/gradle.properties
+        else
+          echo 'org.gradle.vfs.watch=false' >> android/gradle.properties
+        fi
+
+        echo ""
+        echo "===== MOBILE SCANNER VERSION ====="
+
+        flutter pub deps > /tmp/saarthi-pub-deps.txt
+        grep "mobile_scanner" /tmp/saarthi-pub-deps.txt || true
+
+        if ! grep -q "mobile_scanner 7.3.0" /tmp/saarthi-pub-deps.txt; then
+          echo "::error::mobile_scanner 7.3.0 resolve nahi hua."
+          exit 1
+        fi
+
+        echo ""
+        echo "===== MOBILE SCANNER ANDROID MODE ====="
+        grep "dev.steenbakker.mobile_scanner.useUnbundled" \
+          android/gradle.properties
+
+        echo "OK - Android mobile_scanner 7.3.0 active."
     - name: Fix Plugin Compile SDK
       shell: bash
-      run: "echo \"Fixing existing Android plugin compileSdk to 36...\"\n\npython3 <<'PY'\nfrom pathlib import Path\nimport\
-        \ re\n\npub_cache = Path.home() / \".pub-cache\" / \"hosted\" / \"pub.dev\"\n\npackage_patterns = [\n    \"agora_rtc_engine-*\"\
-        ,\n    \"iris_method_channel-*\",\n    \"printing-*\",\n    \"mobile_scanner-*\",\n    \"flutter_contacts-*\",\n \
-        \   \"permission_handler_android-*\",\n    \"url_launcher_android-*\",\n    \"flutter_plugin_android_lifecycle-*\"\
-        ,\n]\n\nfound_packages = 0\npatched_files = 0\n\nfor package_pattern in package_patterns:\n    packages = list(pub_cache.glob(package_pattern))\n\
-        \n    if not packages:\n        print(f\"WARNING: {package_pattern} nahi mila\")\n        continue\n\n    for package\
-        \ in packages:\n        found_packages += 1\n\n        print(\"\")\n        print(\"====================================\"\
-        )\n        print(\"PACKAGE:\", package)\n        print(\"====================================\")\n\n        android_dir\
-        \ = package / \"android\"\n\n        if not android_dir.exists():\n            print(\"Android folder nahi hai - skip\"\
-        )\n            continue\n\n        gradle_files = list(android_dir.rglob(\"*.gradle\"))\n        gradle_files += list(android_dir.rglob(\"\
-        *.gradle.kts\"))\n\n        for file in gradle_files:\n            text = file.read_text(\n                encoding=\"\
-        utf-8\",\n                errors=\"ignore\",\n            )\n\n            original = text\n\n            if file.name.endswith(\"\
-        .gradle.kts\"):\n                text = re.sub(\n                    r'(?m)^(\\s*)compileSdk\\s*=.*$',\n         \
-        \           r'\\1compileSdk = 36',\n                    text,\n                )\n                text = re.sub(\n\
-        \                    r'(?m)^(\\s*)compileSdkVersion\\s*=.*$',\n                    r'\\1compileSdk = 36',\n      \
-        \              text,\n                )\n            else:\n                text = re.sub(\n                    r'(?m)^(\\\
-        s*)compileSdkVersion\\s+.*$',\n                    r'\\1compileSdkVersion 36',\n                    text,\n      \
-        \          )\n                text = re.sub(\n                    r'(?m)^(\\s*)compileSdk\\s*(?:=\\s*)?.*$',\n   \
-        \                 r'\\1compileSdkVersion 36',\n                    text,\n                )\n\n            if text\
-        \ != original:\n                file.write_text(\n                    text,\n                    encoding=\"utf-8\"\
-        ,\n                )\n                patched_files += 1\n                print(\"PATCHED:\", file)\n\nprint(\"\"\
-        )\nprint(\"Found packages:\", found_packages)\nprint(\"Patched Gradle files:\", patched_files)\n\nif found_packages\
-        \ == 0:\n    raise SystemExit(\n        \"ERROR: Android plugin packages nahi mile\"\n    )\nPY\n\necho \"\"\necho\
-        \ \"===== AGORA AFTER PATCH =====\"\nfind \"$HOME/.pub-cache/hosted/pub.dev\" \\\n  -maxdepth 1 \\\n  -type d \\\n\
-        \  -name \"agora_rtc_engine-*\" \\\n  -exec grep -R -n \"compileSdk\" {}/android \\; \\\n  2>/dev/null || true\n\n\
-        echo \"\"\necho \"===== IRIS AFTER PATCH =====\"\nfind \"$HOME/.pub-cache/hosted/pub.dev\" \\\n  -maxdepth 1 \\\n\
-        \  -type d \\\n  -name \"iris_method_channel-*\" \\\n  -exec grep -R -n \"compileSdk\" {}/android \\; \\\n  2>/dev/null\
-        \ || true\n\necho \"\"\necho \"===== PRINTING AFTER PATCH =====\"\nfind \"$HOME/.pub-cache/hosted/pub.dev\" \\\n \
-        \ -maxdepth 1 \\\n  -type d \\\n  -name \"printing-*\" \\\n  -exec grep -R -n \"compileSdk\" {}/android \\; \\\n \
-        \ 2>/dev/null || true\n\necho \"\"\necho \"Existing plugin compileSdk 36 patch completed.\"\n"
+      run: |
+        echo "Fixing existing Android plugin compileSdk to 36..."
+
+        python3 <<'PY'
+        from pathlib import Path
+        import re
+
+        pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+
+        package_patterns = [
+            "agora_rtc_engine-*",
+            "iris_method_channel-*",
+            "printing-*",
+            "mobile_scanner-*",
+            "flutter_contacts-*",
+            "permission_handler_android-*",
+            "url_launcher_android-*",
+            "flutter_plugin_android_lifecycle-*",
+        ]
+
+        found_packages = 0
+        patched_files = 0
+
+        for package_pattern in package_patterns:
+            packages = list(pub_cache.glob(package_pattern))
+
+            if not packages:
+                print(f"WARNING: {package_pattern} nahi mila")
+                continue
+
+            for package in packages:
+                found_packages += 1
+
+                print("")
+                print("====================================")
+                print("PACKAGE:", package)
+                print("====================================")
+
+                android_dir = package / "android"
+
+                if not android_dir.exists():
+                    print("Android folder nahi hai - skip")
+                    continue
+
+                gradle_files = list(android_dir.rglob("*.gradle"))
+                gradle_files += list(android_dir.rglob("*.gradle.kts"))
+
+                for file in gradle_files:
+                    text = file.read_text(
+                        encoding="utf-8",
+                        errors="ignore",
+                    )
+
+                    original = text
+
+                    if file.name.endswith(".gradle.kts"):
+                        text = re.sub(
+                            r'(?m)^(\s*)compileSdk\s*=.*$',
+                            r'\1compileSdk = 36',
+                            text,
+                        )
+                        text = re.sub(
+                            r'(?m)^(\s*)compileSdkVersion\s*=.*$',
+                            r'\1compileSdk = 36',
+                            text,
+                        )
+                    else:
+                        text = re.sub(
+                            r'(?m)^(\s*)compileSdkVersion\s+.*$',
+                            r'\1compileSdkVersion 36',
+                            text,
+                        )
+                        text = re.sub(
+                            r'(?m)^(\s*)compileSdk\s*(?:=\s*)?.*$',
+                            r'\1compileSdkVersion 36',
+                            text,
+                        )
+
+                    if text != original:
+                        file.write_text(
+                            text,
+                            encoding="utf-8",
+                        )
+                        patched_files += 1
+                        print("PATCHED:", file)
+
+        print("")
+        print("Found packages:", found_packages)
+        print("Patched Gradle files:", patched_files)
+
+        if found_packages == 0:
+            raise SystemExit(
+                "ERROR: Android plugin packages nahi mile"
+            )
+        PY
+
+        echo ""
+        echo "===== AGORA AFTER PATCH ====="
+        find "$HOME/.pub-cache/hosted/pub.dev" \
+          -maxdepth 1 \
+          -type d \
+          -name "agora_rtc_engine-*" \
+          -exec grep -R -n "compileSdk" {}/android \; \
+          2>/dev/null || true
+
+        echo ""
+        echo "===== IRIS AFTER PATCH ====="
+        find "$HOME/.pub-cache/hosted/pub.dev" \
+          -maxdepth 1 \
+          -type d \
+          -name "iris_method_channel-*" \
+          -exec grep -R -n "compileSdk" {}/android \; \
+          2>/dev/null || true
+
+        echo ""
+        echo "===== PRINTING AFTER PATCH ====="
+        find "$HOME/.pub-cache/hosted/pub.dev" \
+          -maxdepth 1 \
+          -type d \
+          -name "printing-*" \
+          -exec grep -R -n "compileSdk" {}/android \; \
+          2>/dev/null || true
+
+        echo ""
+        echo "Existing plugin compileSdk 36 patch completed."
     - name: Verify Android Configuration
       shell: bash
-      run: "echo \"===== APP COMPILE SDK =====\"\ngrep -R -n \"compileSdk\" android/app 2>/dev/null || true\n\necho \"\"\n\
-        echo \"===== CAMERA PERMISSION =====\"\ngrep -R -n \"android.permission.CAMERA\" \\\n  android/app/src/main/AndroidManifest.xml\n\
-        \necho \"\"\necho \"===== INTERNET PERMISSION =====\"\ngrep -R -n \"android.permission.INTERNET\" \\\n  android/app/src/main/AndroidManifest.xml\n"
+      run: |
+        echo "===== APP COMPILE SDK ====="
+        grep -R -n "compileSdk" android/app 2>/dev/null || true
+
+        echo ""
+        echo "===== CAMERA PERMISSION ====="
+        grep -R -n "android.permission.CAMERA" \
+          android/app/src/main/AndroidManifest.xml
+
+        echo ""
+        echo "===== INTERNET PERMISSION ====="
+        grep -R -n "android.permission.INTERNET" \
+          android/app/src/main/AndroidManifest.xml
     - name: Flutter Doctor
       run: flutter doctor -v
     - name: Force Android Compile SDK 36
       shell: bash
-      run: "set -euo pipefail\n\necho \"Patching app + Android plugin modules to compileSdk 36...\"\n\npython3 <<'PY'\nfrom\
-        \ pathlib import Path\nimport re\n\nAPP_SDK = \"36\"\n\ndef patch_gradle_file(path: Path) -> bool:\n    text = path.read_text(encoding=\"\
-        utf-8\", errors=\"ignore\")\n    original = text\n\n    if path.name.endswith(\".gradle.kts\"):\n        text = re.sub(\n\
-        \            r'(?m)^(\\s*)compileSdk\\s*=.*$',\n            rf'\\1compileSdk = {APP_SDK}',\n            text,\n  \
-        \      )\n        text = re.sub(\n            r'(?m)^(\\s*)compileSdkVersion\\s*=.*$',\n            rf'\\1compileSdk\
-        \ = {APP_SDK}',\n            text,\n        )\n    else:\n        text = re.sub(\n            r'(?m)^(\\s*)compileSdkVersion\\\
-        s+.*$',\n            rf'\\1compileSdkVersion {APP_SDK}',\n            text,\n        )\n        text = re.sub(\n \
-        \           r'(?m)^(\\s*)compileSdk\\s*(?:=\\s*)?.*$',\n            rf'\\1compileSdkVersion {APP_SDK}',\n        \
-        \    text,\n        )\n\n    if text != original:\n        path.write_text(text, encoding=\"utf-8\")\n        return\
-        \ True\n\n    return False\n\n# Main Android app must compile against 36 too.\napp_candidates = [\n    Path(\"android/app/build.gradle.kts\"\
-        ),\n    Path(\"android/app/build.gradle\"),\n]\n\napp_patched = False\nfor app_file in app_candidates:\n    if app_file.exists():\n\
-        \        changed = patch_gradle_file(app_file)\n        app_patched = app_patched or changed\n        print(\"APP:\"\
-        , app_file, \"patched=\", changed)\n\npub_cache = Path.home() / \".pub-cache\" / \"hosted\" / \"pub.dev\"\n\n# These\
-        \ are the Android plugins used by this project or pulled in\n# by the Android-only helper packages. file_picker is\
-        \ the module\n# that triggered the current AAR metadata failure.\npatterns = [\n    \"file_picker-*\",\n    \"flutter_plugin_android_lifecycle-*\"\
-        ,\n    \"mobile_scanner-*\",\n    \"flutter_contacts-*\",\n    \"permission_handler_android-*\",\n    \"url_launcher_android-*\"\
-        ,\n    \"agora_rtc_engine-*\",\n    \"iris_method_channel-*\",\n    \"printing-*\",\n]\n\nseen = set()\npatched =\
-        \ []\n\nfor pattern in patterns:\n    for package in pub_cache.glob(pattern):\n        if package in seen:\n     \
-        \       continue\n        seen.add(package)\n\n        android_dir = package / \"android\"\n        if not android_dir.exists():\n\
-        \            continue\n\n        for gradle_file in list(android_dir.rglob(\"*.gradle\")) + \\\n                list(android_dir.rglob(\"\
-        *.gradle.kts\")):\n            if patch_gradle_file(gradle_file):\n                patched.append(str(gradle_file))\n\
-        \nprint(\"Patched plugin Gradle files:\", len(patched))\nfor item in patched:\n    print(\"PATCHED:\", item)\n\n#\
-        \ file_picker must exist because Android source uses it.\nfile_picker_dirs = list(pub_cache.glob(\"file_picker-8.0.7\"\
-        ))\nif not file_picker_dirs:\n    raise SystemExit(\"ERROR: file_picker 8.0.7 package not found\")\nPY\n\n# Keep Gradle\
-        \ VFS watcher off in CI to avoid the intermittent\n# \"Already watching path\" exception seen in the previous run.\n\
-        touch android/gradle.properties\nif grep -q '^org\\.gradle\\.vfs\\.watch=' android/gradle.properties; then\n  sed\
-        \ -i \\\n    's/^org\\.gradle\\.vfs\\.watch=.*/org.gradle.vfs.watch=false/' \\\n    android/gradle.properties\nelse\n\
-        \  echo 'org.gradle.vfs.watch=false' >> android/gradle.properties\nfi\n\necho \"\"\necho \"===== FINAL APP COMPILE\
-        \ SDK =====\"\ngrep -R -n \"compileSdk\" android/app 2>/dev/null || true\n\necho \"\"\necho \"===== FINAL FILE_PICKER\
-        \ COMPILE SDK =====\"\nfind \"$HOME/.pub-cache/hosted/pub.dev\" \\\n  -maxdepth 1 \\\n  -type d \\\n  -name \"file_picker-8.0.7\"\
-        \ \\\n  -exec grep -R -n \"compileSdk\" {}/android \\; \\\n  2>/dev/null || true\n\necho \"\"\necho \"===== GRADLE\
-        \ CI PROPERTIES =====\"\ngrep -E \\\n  'org.gradle.vfs.watch|dev.steenbakker.mobile_scanner.useUnbundled' \\\n  android/gradle.properties\
-        \ || true\n"
+      run: |
+        set -euo pipefail
+
+        echo "Patching app + Android plugin modules to compileSdk 36..."
+
+        python3 <<'PY'
+        from pathlib import Path
+        import re
+
+        APP_SDK = "36"
+
+        def patch_gradle_file(path: Path) -> bool:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            original = text
+
+            if path.name.endswith(".gradle.kts"):
+                text = re.sub(
+                    r'(?m)^(\s*)compileSdk\s*=.*$',
+                    rf'\1compileSdk = {APP_SDK}',
+                    text,
+                )
+                text = re.sub(
+                    r'(?m)^(\s*)compileSdkVersion\s*=.*$',
+                    rf'\1compileSdk = {APP_SDK}',
+                    text,
+                )
+            else:
+                text = re.sub(
+                    r'(?m)^(\s*)compileSdkVersion\s+.*$',
+                    rf'\1compileSdkVersion {APP_SDK}',
+                    text,
+                )
+                text = re.sub(
+                    r'(?m)^(\s*)compileSdk\s*(?:=\s*)?.*$',
+                    rf'\1compileSdkVersion {APP_SDK}',
+                    text,
+                )
+
+            if text != original:
+                path.write_text(text, encoding="utf-8")
+                return True
+
+            return False
+
+        # Main Android app must compile against 36 too.
+        app_candidates = [
+            Path("android/app/build.gradle.kts"),
+            Path("android/app/build.gradle"),
+        ]
+
+        app_patched = False
+        for app_file in app_candidates:
+            if app_file.exists():
+                changed = patch_gradle_file(app_file)
+                app_patched = app_patched or changed
+                print("APP:", app_file, "patched=", changed)
+
+        pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+
+        # These are the Android plugins used by this project or pulled in
+        # by the Android-only helper packages. file_picker is the module
+        # that triggered the current AAR metadata failure.
+        patterns = [
+            "file_picker-*",
+            "flutter_plugin_android_lifecycle-*",
+            "mobile_scanner-*",
+            "flutter_contacts-*",
+            "permission_handler_android-*",
+            "url_launcher_android-*",
+            "agora_rtc_engine-*",
+            "iris_method_channel-*",
+            "printing-*",
+        ]
+
+        seen = set()
+        patched = []
+
+        for pattern in patterns:
+            for package in pub_cache.glob(pattern):
+                if package in seen:
+                    continue
+                seen.add(package)
+
+                android_dir = package / "android"
+                if not android_dir.exists():
+                    continue
+
+                for gradle_file in list(android_dir.rglob("*.gradle")) + \
+                        list(android_dir.rglob("*.gradle.kts")):
+                    if patch_gradle_file(gradle_file):
+                        patched.append(str(gradle_file))
+
+        print("Patched plugin Gradle files:", len(patched))
+        for item in patched:
+            print("PATCHED:", item)
+
+        # file_picker must exist because Android source uses it.
+        file_picker_dirs = list(pub_cache.glob("file_picker-8.0.7"))
+        if not file_picker_dirs:
+            raise SystemExit("ERROR: file_picker 8.0.7 package not found")
+        PY
+
+        # Keep Gradle VFS watcher off in CI to avoid the intermittent
+        # "Already watching path" exception seen in the previous run.
+        touch android/gradle.properties
+        if grep -q '^org\.gradle\.vfs\.watch=' android/gradle.properties; then
+          sed -i \
+            's/^org\.gradle\.vfs\.watch=.*/org.gradle.vfs.watch=false/' \
+            android/gradle.properties
+        else
+          echo 'org.gradle.vfs.watch=false' >> android/gradle.properties
+        fi
+
+        echo ""
+        echo "===== FINAL APP COMPILE SDK ====="
+        grep -R -n "compileSdk" android/app 2>/dev/null || true
+
+        echo ""
+        echo "===== FINAL FILE_PICKER COMPILE SDK ====="
+        find "$HOME/.pub-cache/hosted/pub.dev" \
+          -maxdepth 1 \
+          -type d \
+          -name "file_picker-8.0.7" \
+          -exec grep -R -n "compileSdk" {}/android \; \
+          2>/dev/null || true
+
+        echo ""
+        echo "===== GRADLE CI PROPERTIES ====="
+        grep -E \
+          'org.gradle.vfs.watch|dev.steenbakker.mobile_scanner.useUnbundled' \
+          android/gradle.properties || true
     - name: Analyze dedicated Android source
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart
     - name: Build Vidya Saarthi Release APK
@@ -232,20 +749,46 @@ jobs:
       env:
         ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         GRADLE_OPTS: -Dorg.gradle.vfs.watch=false
-      run: "flutter build apk -t lib/main_android.dart \\\n  --release \\\n    --dart-define=APP_VERSION=1.0.${{ github.run_number\
-        \ }} \\\n    --dart-define=APP_BUILD=${{ github.run_number }} \\\n  --build-name=\"1.0.${{ github.run_number }}\"\
-        \ \\\n  --build-number=\"${{ github.run_number }}\" \\\n  --dart-define=APP_PLATFORM=\"android\" \\\n  --dart-define=APP_VERSION_CODE=\"\
-        ${{ github.run_number }}\" \\\n  --dart-define=APP_VERSION_NAME=\"1.0.${{ github.run_number }}\"\n"
+      run: |
+        flutter build apk -t lib/main_android.dart \
+          --release \
+            --dart-define=APP_VERSION=1.0.${{ github.run_number }} \
+            --dart-define=APP_BUILD=${{ github.run_number }} \
+          --build-name="1.0.${{ github.run_number }}" \
+          --build-number="${{ github.run_number }}" \
+          --dart-define=APP_PLATFORM="android" \
+          --dart-define=APP_VERSION_CODE="${{ github.run_number }}" \
+          --dart-define=APP_VERSION_NAME="1.0.${{ github.run_number }}"
     - name: Verify APK
       shell: bash
-      run: "if [ ! -f \"build/app/outputs/flutter-apk/app-release.apk\" ]; then\n  echo \"::error::app-release.apk nahi mila!\"\
-        \n  exit 1\nfi\n\nls -lh build/app/outputs/flutter-apk/app-release.apk\n"
+      run: |
+        if [ ! -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
+          echo "::error::app-release.apk nahi mila!"
+          exit 1
+        fi
+
+        ls -lh build/app/outputs/flutter-apk/app-release.apk
     - name: Prepare Final APK
       shell: bash
-      run: "mkdir -p release\n\ncp \\\n  build/app/outputs/flutter-apk/app-release.apk \\\n  release/Vidya-Saarthi-v1.0.${{\
-        \ github.run_number }}.apk\n\necho \"\"\necho \"=========================================\"\necho \"       VIDYA SAARTHI\
-        \ APK READY\"\necho \"=========================================\"\necho \"\"\n\nls -lh release/\n\necho \"\"\necho\
-        \ \"APK SHA256:\"\nsha256sum \\\n  release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk\n"
+      run: |
+        mkdir -p release
+
+        cp \
+          build/app/outputs/flutter-apk/app-release.apk \
+          release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+
+        echo ""
+        echo "========================================="
+        echo "       VIDYA SAARTHI APK READY"
+        echo "========================================="
+        echo ""
+
+        ls -lh release/
+
+        echo ""
+        echo "APK SHA256:"
+        sha256sum \
+          release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
     - name: Publish GitHub Release
       uses: softprops/action-gh-release@v2
       with:
@@ -262,23 +805,94 @@ jobs:
         VERSION_NAME: 1.0.${{ github.run_number }}
         RELEASE_TAG: android-v1.0.${{ github.run_number }}
         APK_FILE: Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
-      run: "set -euo pipefail\n\nif [ -z \"$FIREBASE_SERVICE_ACCOUNT\" ]; then\n  echo \"::error::FIREBASE_SERVICE_ACCOUNT\
-        \ secret missing.\"\n  exit 1\nfi\n\nmkdir -p \"$RUNNER_TEMP/vidya-update-admin\"\ncd \"$RUNNER_TEMP/vidya-update-admin\"\
-        \nnpm init -y >/dev/null 2>&1\nnpm install firebase-admin@14.4.0 >/dev/null\n\ncat > publish-update.cjs <<'NODE'\n\
-        const { initializeApp, cert } =\n  require('firebase-admin/app');\nconst { getFirestore, FieldValue } =\n  require('firebase-admin/firestore');\n\
-        const { execSync } = require('child_process');\n\nconst serviceAccount = JSON.parse(\n  process.env.FIREBASE_SERVICE_ACCOUNT\n\
-        );\n\ninitializeApp({\n  credential: cert(serviceAccount),\n});\n\nconst db = getFirestore();\n\nconst repo = process.env.GITHUB_REPOSITORY;\n\
-        const tag = process.env.RELEASE_TAG;\nconst apkFile = process.env.APK_FILE;\nconst versionCode = Number(process.env.VERSION_CODE);\n\
-        const versionName = process.env.VERSION_NAME;\nconst apkUrl =\n  `https://github.com/${repo}/releases/download/${tag}/${apkFile}`;\n\
-        \nlet commitMessage =\n  'Latest Vidya Saarthi improvements and fixes.';\n\ntry {\n  commitMessage = execSync(\n \
-        \   'git -C \"$GITHUB_WORKSPACE\" log -1 --pretty=%s',\n    {\n      env: process.env,\n      encoding: 'utf8',\n\
-        \      shell: '/bin/bash',\n    },\n  ).trim() || commitMessage;\n} catch (_) {}\n\nasync function main() {\n  await\
-        \ db\n    .collection('app_config')\n    .doc('android_update')\n    .set({\n      versionCode,\n      versionName,\n\
-        \      apkUrl,\n      whatsNew: [commitMessage],\n      mandatory: false,\n      releaseTag: tag,\n      githubRepository:\
-        \ repo,\n      publishedAt:\n        FieldValue.serverTimestamp(),\n    }, { merge: true });\n\n  console.log(\n \
-        \   'Firestore Android update metadata published.'\n  );\n  console.log(\n    'Version:',\n    versionName,\n    '('\
-        \ + versionCode + ')',\n  );\n  console.log('APK:', apkUrl);\n}\n\nmain()\n  .then(() => process.exit(0))\n  .catch((error)\
-        \ => {\n    console.error(error);\n    process.exit(1);\n  });\nNODE\n\nnode publish-update.cjs\n"
+      run: |
+        set -euo pipefail
+
+        if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+          echo "::error::FIREBASE_SERVICE_ACCOUNT secret missing."
+          exit 1
+        fi
+
+        mkdir -p "$RUNNER_TEMP/vidya-update-admin"
+        cd "$RUNNER_TEMP/vidya-update-admin"
+        npm init -y >/dev/null 2>&1
+        npm install firebase-admin@14.4.0 >/dev/null
+
+        cat > publish-update.cjs <<'NODE'
+        const { initializeApp, cert } =
+          require('firebase-admin/app');
+        const { getFirestore, FieldValue } =
+          require('firebase-admin/firestore');
+        const { execSync } = require('child_process');
+
+        const serviceAccount = JSON.parse(
+          process.env.FIREBASE_SERVICE_ACCOUNT
+        );
+
+        initializeApp({
+          credential: cert(serviceAccount),
+        });
+
+        const db = getFirestore();
+
+        const repo = process.env.GITHUB_REPOSITORY;
+        const tag = process.env.RELEASE_TAG;
+        const apkFile = process.env.APK_FILE;
+        const versionCode = Number(process.env.VERSION_CODE);
+        const versionName = process.env.VERSION_NAME;
+        const apkUrl =
+          `https://github.com/${repo}/releases/download/${tag}/${apkFile}`;
+
+        let commitMessage =
+          'Latest Vidya Saarthi improvements and fixes.';
+
+        try {
+          commitMessage = execSync(
+            'git -C "$GITHUB_WORKSPACE" log -1 --pretty=%s',
+            {
+              env: process.env,
+              encoding: 'utf8',
+              shell: '/bin/bash',
+            },
+          ).trim() || commitMessage;
+        } catch (_) {}
+
+        async function main() {
+          await db
+            .collection('app_config')
+            .doc('android_update')
+            .set({
+              versionCode,
+              versionName,
+              apkUrl,
+              whatsNew: [commitMessage],
+              mandatory: false,
+              releaseTag: tag,
+              githubRepository: repo,
+              publishedAt:
+                FieldValue.serverTimestamp(),
+            }, { merge: true });
+
+          console.log(
+            'Firestore Android update metadata published.'
+          );
+          console.log(
+            'Version:',
+            versionName,
+            '(' + versionCode + ')',
+          );
+          console.log('APK:', apkUrl);
+        }
+
+        main()
+          .then(() => process.exit(0))
+          .catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+        NODE
+
+        node publish-update.cjs
     - name: Create Build Summary
       shell: bash
       run: "APK_SIZE=$(du -h \\\n  release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk \\\n  | cut -f1)\n\necho \"# \U0001F4F1\
@@ -302,7 +916,11 @@ jobs:
     - name: Cleanup Signing Files
       if: always()
       shell: bash
-      run: "rm -f \\\n  android/app/saarthi-release.jks \\\n  android/app/saarthi-release.jks.enc \\\n  android/app/google-services.json\n"
+      run: |
+        rm -f \
+          android/app/saarthi-release.jks \
+          android/app/saarthi-release.jks.enc \
+          android/app/google-services.json
 'on':
   push:
     branches:

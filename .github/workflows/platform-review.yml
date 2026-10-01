@@ -1,10 +1,4 @@
 name: Platform review builds
-on:
-  push:
-    branches: [feature/developer-platform-20261001]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -14,129 +8,160 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Check platform backend
-        working-directory: functions
-        run: |
-          npm install
-          node --check platform.js
-          node --check domain.js
-          npm test
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Check platform backend
+      working-directory: functions
+      run: |
+        npm install
+        node --check platform.js
+        node --check domain.js
+        npm test
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-      - run: flutter create --platforms=web --project-name saarthi_ai .
-      - run: flutter pub get
-      - name: Format platform source for review
-        run: dart format lib/main.dart lib/main_android.dart lib/main_windows.dart lib/developer_portal.dart lib/school_document_renderer.dart lib/windows_platform_client.dart lib/windows_license_gate.dart lib/windows_school_operations.dart lib/windows_document_templates.dart lib/mobile/school_session.dart lib/platform/platform_config.dart test/document_renderer_test.dart
-      - name: Analyze developer portal
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart
-      - name: Verify printable templates
-        run: flutter test test/document_renderer_test.dart
-      - name: Build developer website
-        run: flutter build web --release
-      - uses: actions/upload-artifact@v4
-        with:
-          name: developer-website-preview
-          path: |
-            build/web
-            build/document-previews
-      - uses: actions/upload-artifact@v4
-        with:
-          name: formatted-platform-source
-          path: |
-            lib/main.dart
-            lib/main_android.dart
-            lib/main_windows.dart
-            lib/developer_portal.dart
-            lib/school_document_renderer.dart
-            lib/windows_platform_client.dart
-            lib/windows_license_gate.dart
-            lib/windows_school_operations.dart
-            lib/windows_document_templates.dart
-            lib/mobile/school_session.dart
-            lib/platform/platform_config.dart
-            test/document_renderer_test.dart
+    - uses: actions/checkout@v4
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - run: flutter create --platforms=web --project-name saarthi_ai .
+    - run: flutter pub get
+    - name: Format platform source for review
+      run: dart format lib/main.dart lib/main_android.dart lib/main_windows.dart lib/developer_portal.dart lib/school_document_renderer.dart
+        lib/windows_platform_client.dart lib/windows_license_gate.dart lib/windows_school_operations.dart lib/windows_document_templates.dart
+        lib/mobile/school_session.dart lib/platform/platform_config.dart test/document_renderer_test.dart lib/windows_school_identity.dart
+        lib/mobile/school_notifications.dart test/mobile_boundary_test.dart
+    - name: Analyze developer portal
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart
+    - name: Analyze Windows school source
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_windows.dart lib/main_dashboard_screen_windows.dart
+        lib/windows_school_operations.dart lib/windows_school_identity.dart lib/windows_platform_client.dart lib/windows_document_templates.dart
+        lib/windows_backend_bridge.dart
+    - name: Verify documents and mobile school boundaries
+      run: flutter test test/document_renderer_test.dart test/mobile_boundary_test.dart
+    - name: Build developer website
+      run: flutter build web --release
+    - uses: actions/upload-artifact@v4
+      with:
+        name: developer-website-preview
+        path: |
+          build/web
+          build/document-previews
+    - uses: actions/upload-artifact@v4
+      with:
+        name: formatted-platform-source
+        path: |
+          lib/main.dart
+          lib/main_android.dart
+          lib/main_windows.dart
+          lib/developer_portal.dart
+          lib/school_document_renderer.dart
+          lib/windows_platform_client.dart
+          lib/windows_license_gate.dart
+          lib/windows_school_operations.dart
+          lib/windows_document_templates.dart
+          lib/mobile/school_session.dart
+          lib/platform/platform_config.dart
+          test/document_renderer_test.dart
+
+          lib/windows_school_identity.dart
+          lib/mobile/school_notifications.dart
+          test/mobile_boundary_test.dart
   windows:
-    runs-on: windows-2022
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-      - run: flutter create --platforms=windows --project-name saarthi_ai .
-      - name: Keep Windows local dependencies
-        shell: bash
-        run: |
-          python - <<'PY'
-          import re
-          p='pubspec.yaml'
-          s=open(p).read()
-          for name in ['firebase_core','firebase_auth','firebase_messaging','cloud_firestore','agora_rtc_engine','mobile_scanner','geolocator']:
-            s=re.sub(r'^  '+name+r':[^\n]*\n','',s,flags=re.M)
-          open(p,'w').write(s)
-          PY
-      - run: flutter pub get
-      - name: Compile Windows school app
-        run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.79 --build-number=79 --dart-define=APP_VERSION=2.1.79
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-review-build
-          path: build/windows/x64/runner/Release
+    - uses: actions/checkout@v4
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - run: flutter create --platforms=windows --project-name saarthi_ai .
+    - name: Keep Windows local dependencies
+      shell: bash
+      run: |
+        python - <<'PY'
+        import re
+        p='pubspec.yaml'
+        s=open(p).read()
+        for name in ['firebase_core','firebase_auth','firebase_messaging','flutter_local_notifications','cloud_firestore','agora_rtc_engine','mobile_scanner','geolocator']:
+          s=re.sub(r'^  '+name+r':[^\n]*\n','',s,flags=re.M)
+        open(p,'w').write(s)
+        PY
+    - run: flutter pub get
+    - name: Compile Windows school app
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.79 --build-number=79 --dart-define=APP_VERSION=2.1.79
+    - uses: actions/upload-artifact@v4
+      with:
+        name: windows-review-build
+        path: build/windows/x64/runner/Release
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-      - run: flutter create --platforms=android --project-name saarthi_ai --org com.saarthi .
-      - name: Configure public Firebase app and permissions
-        env:
-          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
-        run: |
-          python - <<'PY'
-          import os,json,base64,re,pathlib
-          raw=os.environ.get('GOOGLE_SERVICES_JSON_BASE64','')
-          if not raw: raise SystemExit('Public Firebase Android configuration is missing')
-          data=json.loads(base64.b64decode(raw))
-          pathlib.Path('android/app/google-services.json').write_text(json.dumps(data))
-          package=data['client'][0]['client_info']['android_client_info']['package_name']
-          p=pathlib.Path('android/app/build.gradle.kts')
-          s=p.read_text()
-          s=s.replace('plugins {','plugins {\n    id("com.google.gms.google-services")',1)
-          s=re.sub(r'applicationId = "[^"]+"','applicationId = "'+package+'"',s)
-          s=re.sub(r'compileSdk = [^\n]+','compileSdk = 36',s)
-          p.write_text(s)
-          p=pathlib.Path('android/settings.gradle.kts')
-          s=p.read_text().replace('plugins {','plugins {\n    id("com.google.gms.google-services") version "4.4.4" apply false',1)
-          p.write_text(s)
-          p=pathlib.Path('android/app/src/main/AndroidManifest.xml')
-          s=p.read_text()
-          for permission in ['INTERNET','CAMERA','ACCESS_FINE_LOCATION','ACCESS_COARSE_LOCATION','POST_NOTIFICATIONS','REQUEST_INSTALL_PACKAGES']:
-            s=s.replace('<application','<uses-permission android:name="android.permission.'+permission+'" />\n    <application',1)
-          p.write_text(s)
-          PY
-      - run: flutter pub add mobile_scanner:7.3.0
-      - name: Analyze universal mobile app
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart
-      - name: Build unsigned Android preview
-        run: flutter build apk --debug -t lib/main_android.dart --dart-define=APP_VERSION=review --dart-define=APP_BUILD=0
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-review-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - run: flutter create --platforms=android --project-name saarthi_ai --org com.saarthi .
+    - name: Configure public Firebase app and permissions
+      env:
+        GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+      run: |
+        python - <<'PY'
+        import os,json,base64,re,pathlib
+        raw=os.environ.get('GOOGLE_SERVICES_JSON_BASE64','')
+        if not raw: raise SystemExit('Public Firebase Android configuration is missing')
+        data=json.loads(base64.b64decode(raw))
+        pathlib.Path('android/app/google-services.json').write_text(json.dumps(data))
+        package=data['client'][0]['client_info']['android_client_info']['package_name']
+        p=pathlib.Path('android/app/build.gradle.kts')
+        s=p.read_text()
+        s=s.replace('plugins {','plugins {\n    id("com.google.gms.google-services")',1)
+        s=re.sub(r'applicationId = "[^"]+"','applicationId = "'+package+'"',s)
+        s=re.sub(r'compileSdk = [^\n]+','compileSdk = 36',s)
+        p.write_text(s)
+        p=pathlib.Path('android/settings.gradle.kts')
+        s=p.read_text().replace('plugins {','plugins {\n    id("com.google.gms.google-services") version "4.4.4" apply false',1)
+        p.write_text(s)
+        p=pathlib.Path('android/app/src/main/AndroidManifest.xml')
+        s=p.read_text()
+        for permission in ['INTERNET','CAMERA','ACCESS_FINE_LOCATION','ACCESS_COARSE_LOCATION','POST_NOTIFICATIONS','REQUEST_INSTALL_PACKAGES']:
+          s=s.replace('<application','<uses-permission android:name="android.permission.'+permission+'" />\n    <application',1)
+        p.write_text(s)
+        PY
+    - name: Configure notification desugaring
+      run: python .github/scripts/configure_android_notifications.py
+    - name: Use dedicated Android dependencies
+      run: |
+        python - <<'PY'
+        import re
+        p='pubspec.yaml'
+        s=open(p).read()
+        for name in ['agora_rtc_engine','flutter_contacts','google_sign_in','googleapis','google_generative_ai','image_picker','permission_handler','firebase_auth','cloud_firestore','font_awesome_flutter']:
+          s=re.sub(r'^  '+name+r':[^\n]*\n','',s,flags=re.M)
+        open(p,'w').write(s)
+        PY
+    - run: flutter pub add mobile_scanner:7.3.0
+    - name: Analyze universal mobile app
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/school_notifications.dart
+    - name: Build unsigned Android preview
+      run: flutter build apk --debug -t lib/main_android.dart --dart-define=APP_VERSION=review --dart-define=APP_BUILD=0
+    - uses: actions/upload-artifact@v4
+      with:
+        name: android-review-apk
+        path: build/app/outputs/flutter-apk/app-debug.apk
+'on':
+  push:
+    branches:
+    - feature/developer-platform-20261001
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch: null

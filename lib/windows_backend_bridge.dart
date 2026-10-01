@@ -10,6 +10,7 @@ import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_runtime_flags.dart';
 import 'windows_service_status.dart';
+import 'windows_firebase_sync.dart';
 
 class WindowsBackendBridge {
   WindowsBackendBridge._();
@@ -94,6 +95,14 @@ class WindowsBackendBridge {
           if (decoded is Map) {
             final result = Map<String, dynamic>.from(decoded);
             final code = result['code']?.toString().trim().toUpperCase() ?? '';
+
+            if (result['success'] == false) {
+              status.unhealthy(
+                WindowsServiceType.googleDrive,
+                result['message']?.toString() ?? 'School backend rejected the request.',
+              );
+              return response;
+            }
 
             if (code == 'SCHOOL_SYNC_ID_MISMATCH') {
               status.unhealthy(
@@ -353,21 +362,33 @@ class WindowsBackendBridge {
     Object? body,
     Encoding? encoding,
   }) async {
+    // Proof is refreshed only for the outgoing request and is never stored in
+    // the offline mutation queue or exposed through an ID-card QR.
+    Object? verifiedBody = body;
+    try {
+      final data = _decodeBody(body);
+      final school = await WindowsFirebaseRemote.status();
+      if (school.authenticated) {
+        data['schoolAdminIdToken'] = await WindowsFirebaseRemote.freshIdToken();
+        data['schoolProjectId'] = school.projectId;
+        verifiedBody = jsonEncode(data);
+      }
+    } catch (_) {}
     final client = http.Client();
     try {
       Future<http.Response> sendPost(Uri target) async {
         final request = http.Request('POST', target);
         if (headers != null) request.headers.addAll(headers);
-        if (body is String) {
-          request.body = body;
+        if (verifiedBody is String) {
+          request.body = verifiedBody;
           if (encoding != null) request.encoding = encoding;
-        } else if (body is List<int>) {
-          request.bodyBytes = body;
-        } else if (body is Map<String, String>) {
-          request.bodyFields = body;
+        } else if (verifiedBody is List<int>) {
+          request.bodyBytes = verifiedBody;
+        } else if (verifiedBody is Map<String, String>) {
+          request.bodyFields = verifiedBody;
           if (encoding != null) request.encoding = encoding;
-        } else if (body != null) {
-          request.body = body.toString();
+        } else if (verifiedBody != null) {
+          request.body = verifiedBody.toString();
           if (encoding != null) request.encoding = encoding;
         }
         request.followRedirects = false;

@@ -32,7 +32,7 @@ upgrade. If deployment is unavailable, the new website is not published.
    routing: `const mobile = VS_handleMobile(e); if (mobile) return mobile;`
 3. Merge the OAuth scopes from school-backend/appsscript.scopes.json into the
    school's existing appsscript.json; retain its other settings and scopes.
-4. Run `VS_setupSchool("the-school-firebase-project-id")` as the script owner.
+4. Run `VS_setupSchool("the-school-firebase-project-id", "the-school-web-api-key")` as the script owner.
    The owner needs Firestore access in that exact Firebase project; enable the
    Firestore API and grant the script owner's Google account the Datastore User
    role. Authorise the requested Google scopes.
@@ -80,10 +80,14 @@ automatically applies the class decision: PASS moves to the next class; FAIL
 retains the current class. An administrator can enable the force-promotion switch
 in Advanced Settings, then use Promote on a retained student. Decisions are
 idempotent for the same final exam. Class 10 is the current app's final class.
-An occupied destination roll is shown as pending rather than overwriting another
-pupil; resolve the class/roll conflict and retry the decision.
+When the previous roll is occupied in the next class, a free roll is assigned.
+The school sheet and Firestore are moved together; another pupil is never overwritten.
+A concurrent conflicting change is shown as pending for a safe retry.
 
-Student history keeps a stable mobile identity and previous document IDs so
+Legacy Windows actions require a verified admin token from that school Firebase project;
+public QR connection details cannot authorise directory reads or writes.
+
+Student history keeps a random, stable mobile identity and previous document IDs so
 promotion does not reveal a different pupil's fees, attendance or reports.
 The salary drawer is intentionally a placeholder; mobile shows only the logged-in
 teacher's salary records when the school later adds them.
@@ -117,7 +121,10 @@ tokens belonging to the issuing school; it never uses a global all-schools topic
 Windows relays newly published notices while online. The server deduplicates
 delivery by school and notice ID. Foreground notices show an in-app alert;
 background notices use Android's normal notification tray after permission is
-granted. A force-stopped phone cannot receive until the app opens again.
+granted. Both paths verify the currently logged-in school before displaying a
+data-only FCM message, so queued notices from an earlier school are ignored.
+Logout clears displayed notices. A force-stopped phone cannot receive until the
+app opens again.
 
 The central function hosting still requires Blaze, and normal backend usage can
 have costs above its free allowance; this is not a promise of an entirely free
