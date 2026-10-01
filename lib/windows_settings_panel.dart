@@ -13,7 +13,17 @@ import 'windows_runtime_flags.dart';
 import 'windows_connection_center.dart';
 
 class WindowsSettingsPanel extends StatefulWidget {
-  const WindowsSettingsPanel({super.key});
+  const WindowsSettingsPanel({
+    super.key,
+    this.showLocalLock = true,
+    this.showFirebase = false,
+  });
+
+  /// Keeps the Local Settings Lock on Password Management.
+  final bool showLocalLock;
+
+  /// Shows the school Firebase connection only from Advanced Settings.
+  final bool showFirebase;
 
   @override
   State<WindowsSettingsPanel> createState() => _WindowsSettingsPanelState();
@@ -45,6 +55,11 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
   }
 
   Future<void> _load() async {
+    if (!widget.showFirebase) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+
     final local = await WindowsExternalConnections.load();
     final remote = await WindowsFirebaseRemote.status();
     _firebase.text = local['firebaseLink']?.toString() ?? '';
@@ -416,9 +431,10 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
 
     return Column(
       children: [
-        _localLockCard(),
-        const SizedBox(height: 14),
-        _firebaseCard(),
+        if (widget.showLocalLock) _localLockCard(),
+        if (widget.showLocalLock && widget.showFirebase)
+          const SizedBox(height: 14),
+        if (widget.showFirebase) _firebaseCard(),
       ],
     );
   }
