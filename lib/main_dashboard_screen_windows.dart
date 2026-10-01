@@ -398,7 +398,15 @@ class WindowsSectionLocks {
     required String currentPassword,
     required String newPassword,
   }) async {
-    if (!await verify(sectionKey: sectionKey, password: currentPassword)) {
+    final storedPassword = await _secure.read(
+      key: _passwordKey(sectionKey),
+    );
+
+    if (storedPassword == null || storedPassword.isEmpty) {
+      throw StateError('Pehle section password add karein.');
+    }
+
+    if (storedPassword != currentPassword) {
       throw StateError('Current section password galat hai.');
     }
 
@@ -406,6 +414,10 @@ class WindowsSectionLocks {
     await _secure.write(
       key: _passwordKey(sectionKey),
       value: newPassword,
+    );
+    await _secure.write(
+      key: _enabledKey(sectionKey),
+      value: 'true',
     );
   }
 
@@ -429,6 +441,47 @@ class WindowsSectionLocks {
         'Section password kam se kam 6 characters ka hona chahiye.',
       );
     }
+  }
+}
+
+const String _windowsAcademicYearRolloverMonthKey =
+    'vidya_saarthi_windows_academic_year_rollover_month_v1';
+
+class WindowsAcademicYearSettings {
+  WindowsAcademicYearSettings._();
+
+  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+
+  static int _normalizeMonth(int month) => month == 4 ? 4 : 1;
+
+  static Future<int> load() async {
+    try {
+      final raw = await _secure.read(
+        key: _windowsAcademicYearRolloverMonthKey,
+      );
+      return _normalizeMonth(int.tryParse(raw ?? '') ?? 1);
+    } catch (_) {
+      return 1;
+    }
+  }
+
+  static Future<void> save(int month) async {
+    await _secure.write(
+      key: _windowsAcademicYearRolloverMonthKey,
+      value: _normalizeMonth(month).toString(),
+    );
+  }
+
+  static int startYear(DateTime date, int rolloverMonth) {
+    return date.month >= _normalizeMonth(rolloverMonth)
+        ? date.year
+        : date.year - 1;
+  }
+
+  static String format(DateTime date, int rolloverMonth) {
+    final start = startYear(date, rolloverMonth);
+    final next = ((start + 1) % 100).toString().padLeft(2, '0');
+    return '$start-$next';
   }
 }
 
@@ -9171,7 +9224,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     'Dec',
   ];
 
-  // January-based year selection: January 2027 automatically becomes 2027-28.
+  // The rollover month is selected in Admin Settings.
   final List<int> _availableYears = <int>[
     DateTime.now().year,
     DateTime.now().year - 1,
@@ -9179,6 +9232,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   ];
 
   late int _selectedYear;
+  int _academicYearRolloverMonth = 1;
   bool _loading = true;
   String? _error;
   _AdminAnalyticsData? _data;
@@ -9187,7 +9241,20 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   void initState() {
     super.initState();
     _selectedYear = _availableYears.first;
-    _loadAnalytics();
+    _loadAcademicYearSettingsAndAnalytics();
+  }
+
+  Future<void> _loadAcademicYearSettingsAndAnalytics() async {
+    final month = await WindowsAcademicYearSettings.load();
+    if (!mounted) return;
+    setState(() {
+      _academicYearRolloverMonth = month;
+      _selectedYear = WindowsAcademicYearSettings.startYear(
+        DateTime.now(),
+        month,
+      );
+    });
+    await _loadAnalytics();
   }
 
   Future<QuerySnapshot<Map<String, dynamic>>?> _analyticsGet(
@@ -10183,7 +10250,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     );
 
     if (!mounted) return;
-    await _loadAnalytics();
+    await _loadAcademicYearSettingsAndAnalytics();
     setState(() {});
   }
 
@@ -12008,6 +12075,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   String? _linkedGmail;
   String? _linkedScriptUrl;
   bool _isLoading = false;
+  int _academicYearRolloverMonth = 1;
+  bool _academicYearSettingsLoading = true;
 
   bool _uidSettingsLoading = true;
   bool _uidMasterEnabled = false;
@@ -12023,6 +12092,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   void initState() {
     super.initState();
     _fetchLinkedAccount();
+    _loadAcademicYearSettings();
   }
 
   @override
@@ -12036,6 +12106,41 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   bool get _isDriveLinked {
     return (_linkedGmail?.trim().isNotEmpty ?? false) &&
         (_linkedScriptUrl?.trim().isNotEmpty ?? false);
+  }
+
+  Future<void> _loadAcademicYearSettings() async {
+    final month = await WindowsAcademicYearSettings.load();
+    if (!mounted) return;
+    setState(() {
+      _academicYearRolloverMonth = month;
+      _academicYearSettingsLoading = false;
+    });
+  }
+
+  Future<void> _saveAcademicYearRolloverMonth(int month) async {
+    if (_academicYearSettingsLoading) return;
+
+    try {
+      await WindowsAcademicYearSettings.save(month);
+      if (!mounted) return;
+      setState(() => _academicYearRolloverMonth = month);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
+          content: Text(
+            'Academic year ab ${month == 1 ? 'January' : 'April'} se change hoga.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Academic year setting save error: $e'),
+        ),
+      );
+    }
   }
 
   Future<void> _fetchLinkedAccount() async {
@@ -12837,7 +12942,166 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                 ),
 
                 const SizedBox(height: 16),
-                const WindowsLocalStorageCard(),
+
+                _settingsCard(
+                  icon: Icons.calendar_month_rounded,
+                  iconColor: const Color(0xFF69C2FF),
+                  title: 'Academic Year',
+                  subtitle: 'Choose January or April as the session change month',
+                  child: _academicYearSettingsLoading
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(8),
+                            child: CircularProgressIndicator(
+                              color: Color(0xFF69C2FF),
+                            ),
+                          ),
+                        )
+                      : Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 13,
+                            vertical: 11,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F191F),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.event_repeat_rounded,
+                                color: Color(0xFF69C2FF),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Session Change Month',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'Current: ${WindowsAcademicYearSettings.format(DateTime.now(), _academicYearRolloverMonth)}',
+                                      style: const TextStyle(
+                                        color: Colors.white38,
+                                        fontSize: 10.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              DropdownButtonHideUnderline(
+                                child: DropdownButton<int>(
+                                  value: _academicYearRolloverMonth,
+                                  dropdownColor: const Color(0xFF12272F),
+                                  style: const TextStyle(color: Colors.white),
+                                  items: const [
+                                    DropdownMenuItem<int>(
+                                      value: 1,
+                                      child: Text('January'),
+                                    ),
+                                    DropdownMenuItem<int>(
+                                      value: 4,
+                                      child: Text('April'),
+                                    ),
+                                  ],
+                                  onChanged: (value) {
+                                    if (value != null) {
+                                      _saveAcademicYearRolloverMonth(value);
+                                    }
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
+
+                const SizedBox(height: 16),
+
+                _settingsCard(
+                  icon: Icons.password_rounded,
+                  iconColor: Colors.orangeAccent,
+                  title: 'Password Management',
+                  subtitle: 'Section locks aur Local Settings Lock manage karein',
+                  trailing: const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.white38,
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(13),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const PasswordManagementScreen(),
+                          ),
+                        );
+                      },
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F191F),
+                          borderRadius: BorderRadius.circular(13),
+                          border: Border.all(
+                            color: Colors.orangeAccent.withOpacity(0.16),
+                          ),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(
+                              Icons.lock_person_rounded,
+                              color: Colors.orangeAccent,
+                              size: 21,
+                            ),
+                            SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Open Password Management',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  SizedBox(height: 3),
+                                  Text(
+                                    'Admin, Student, Fees, Expenses, Attendance aur Local Settings locks yahan manage honge.',
+                                    style: TextStyle(
+                                      color: Colors.white38,
+                                      fontSize: 10.5,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              color: Colors.orangeAccent,
+                              size: 19,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
                 const SizedBox(height: 16),
 
                 // =====================================================
@@ -20845,6 +21109,36 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
 // ============================================================
 // ADVANCED SETTINGS
 // ============================================================
+class PasswordManagementScreen extends StatelessWidget {
+  const PasswordManagementScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF172229),
+        title: const Text('Password Management'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(18),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900),
+            child: Column(
+              children: const [
+                WindowsSettingsPanel(),
+                SizedBox(height: 14),
+                _WindowsSectionPasswordLocksPanel(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class AdvancedSettingsScreen extends StatefulWidget {
   const AdvancedSettingsScreen({super.key});
 
@@ -21117,7 +21411,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                             SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                'Protected settings: Google Drive, Firebase aur Local Settings Lock changes password-protected hain.',
+                                'Protected settings: Google Drive, Local Data aur Student UID yahan manage karein.',
                                 style: TextStyle(
                                     color: Colors.white70, height: 1.4),
                               ),
@@ -21234,9 +21528,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                         ),
                       ),
                       const SizedBox(height: 14),
-                      const WindowsSettingsPanel(),
-                      const SizedBox(height: 14),
-                      const _WindowsSectionPasswordLocksPanel(),
+                      const WindowsLocalStorageCard(),
                       const SizedBox(height: 14),
                       const _AdvancedStudentUidSettingsPanel(),
                     ],
@@ -21359,7 +21651,11 @@ class _WindowsSectionPasswordLocksPanelState
                 if (!dialogContext.mounted) return;
                 setDialogState(() {
                   saving = false;
-                  error = e.toString().replaceFirst('FormatException: ', '');
+                  error = e
+                      .toString()
+                      .replaceFirst('FormatException: ', '')
+                      .replaceFirst('StateError: ', '')
+                      .replaceFirst('Bad state: ', '');
                 });
               }
             }
@@ -23488,6 +23784,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   bool _loading = false;
   bool _saving = false;
   String? _error;
+  int _academicYearRolloverMonth = 1;
 
   List<Map<String, dynamic>> _exams = [];
   List<Map<String, dynamic>> _results = [];
@@ -23510,9 +23807,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       _loading = true;
     }
 
+    _loadAcademicYearRolloverMonth();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _load(silent: cached != null);
     });
+  }
+
+  Future<void> _loadAcademicYearRolloverMonth() async {
+    final month = await WindowsAcademicYearSettings.load();
+    if (!mounted) return;
+    setState(() => _academicYearRolloverMonth = month);
   }
 
   Future<String> _scriptUrl() async {
@@ -23664,9 +23968,10 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
   String _academicYear() {
     final now = DateTime.now();
-    final start = now.month >= 4 ? now.year : now.year - 1;
-    final next = ((start + 1) % 100).toString().padLeft(2, '0');
-    return '$start-$next';
+    return WindowsAcademicYearSettings.format(
+      now,
+      _academicYearRolloverMonth,
+    );
   }
 
   Future<void> _openMarks(Map<String, dynamic> exam) async {
