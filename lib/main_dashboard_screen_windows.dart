@@ -485,6 +485,347 @@ class WindowsAcademicYearSettings {
   }
 }
 
+const String _windowsLicenseKeyStorageKey =
+    'vidya_saarthi_windows_license_key_v1';
+const String _windowsLicenseStatusStorageKey =
+    'vidya_saarthi_windows_license_status_v1';
+const String _windowsLicenseSavedAtStorageKey =
+    'vidya_saarthi_windows_license_saved_at_v1';
+
+/// Local license-key store for the Windows-only licensing module.
+///
+/// The key is kept in secure storage. Live central-Firebase/website
+/// verification is intentionally a separate next step so a school Firebase
+/// connection is never treated as the product-license server.
+class WindowsLicenseStore {
+  WindowsLicenseStore._();
+
+  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+
+  static Future<Map<String, String>> load() async {
+    try {
+      return <String, String>{
+        'key': (await _secure.read(key: _windowsLicenseKeyStorageKey) ?? '')
+            .trim(),
+        'status':
+            (await _secure.read(key: _windowsLicenseStatusStorageKey) ?? '')
+                .trim(),
+        'savedAt':
+            (await _secure.read(key: _windowsLicenseSavedAtStorageKey) ?? '')
+                .trim(),
+      };
+    } catch (_) {
+      return const <String, String>{};
+    }
+  }
+
+  static Future<void> save(String key) async {
+    final normalized = key.trim();
+    await _secure.write(key: _windowsLicenseKeyStorageKey, value: normalized);
+    await _secure.write(
+      key: _windowsLicenseStatusStorageKey,
+      value: 'pending_online_verification',
+    );
+    await _secure.write(
+      key: _windowsLicenseSavedAtStorageKey,
+      value: DateTime.now().toIso8601String(),
+    );
+  }
+
+  static Future<void> clear() async {
+    await _secure.delete(key: _windowsLicenseKeyStorageKey);
+    await _secure.delete(key: _windowsLicenseStatusStorageKey);
+    await _secure.delete(key: _windowsLicenseSavedAtStorageKey);
+  }
+}
+
+class WindowsLicenseSettingsPanel extends StatefulWidget {
+  const WindowsLicenseSettingsPanel({super.key});
+
+  @override
+  State<WindowsLicenseSettingsPanel> createState() =>
+      _WindowsLicenseSettingsPanelState();
+}
+
+class _WindowsLicenseSettingsPanelState
+    extends State<WindowsLicenseSettingsPanel> {
+  final _licenseKey = TextEditingController();
+  bool _loading = true;
+  bool _saving = false;
+  String _savedKey = '';
+  String _status = '';
+  String _savedAt = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _licenseKey.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final data = await WindowsLicenseStore.load();
+    if (!mounted) return;
+    setState(() {
+      _savedKey = data['key'] ?? '';
+      _status = data['status'] ?? '';
+      _savedAt = data['savedAt'] ?? '';
+      _loading = false;
+    });
+  }
+
+  String _maskedKey(String key) {
+    if (key.length <= 8) return key;
+    return '${key.substring(0, 4)}••••${key.substring(key.length - 4)}';
+  }
+
+  String _statusText() {
+    if (_savedKey.isEmpty) return 'License Key not added';
+    if (_status == 'active') return 'License Active';
+    if (_status == 'expired') return 'License Expired';
+    return 'Key saved — online verification pending';
+  }
+
+  Color _statusColor() {
+    if (_savedKey.isEmpty) return Colors.white54;
+    if (_status == 'active') return const Color(0xFF00D9A5);
+    if (_status == 'expired') return Colors.redAccent;
+    return Colors.orangeAccent;
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    final key = _licenseKey.text.trim();
+    if (key.length < 8) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Valid Licensing Key daalein.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      await WindowsLicenseStore.save(key);
+      if (!mounted) return;
+      setState(() {
+        _savedKey = key;
+        _status = 'pending_online_verification';
+        _savedAt = DateTime.now().toIso8601String();
+        _saving = false;
+        _licenseKey.clear();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Color(0xFF00A884),
+          content: Text('Licensing Key secure storage me save ho gayi.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Licensing Key save error: $e'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _clear() async {
+    if (_saving || _savedKey.isEmpty) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF172229),
+        title: const Text('Remove Licensing Key'),
+        content: const Text(
+          'Saved key is device se remove ho jayegi. Website verification record delete nahi hoga.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    await WindowsLicenseStore.clear();
+    if (!mounted) return;
+    setState(() {
+      _savedKey = '';
+      _status = '';
+      _savedAt = '';
+    });
+  }
+
+  String _savedAtText() {
+    final date = DateTime.tryParse(_savedAt);
+    if (date == null) return 'Not saved yet';
+    return date.toLocal().toString().split('.').first;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(22),
+          child: CircularProgressIndicator(color: Color(0xFF00A884)),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF172229),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.vpn_key_rounded, color: Colors.orangeAccent),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Licensing Key',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Text(
+                _statusText(),
+                style: TextStyle(
+                  color: _statusColor(),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Adobe-style activation ke liye key yahan add hogi. School Firebase aur Google Drive connection isse alag rahega.',
+            style: TextStyle(color: Colors.white60, fontSize: 11, height: 1.4),
+          ),
+          const SizedBox(height: 14),
+          if (_savedKey.isNotEmpty) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F191F),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.lock_rounded,
+                      color: Color(0xFF00D9A5), size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Saved Key',
+                            style:
+                                TextStyle(color: Colors.white38, fontSize: 10)),
+                        const SizedBox(height: 3),
+                        SelectableText(
+                          _maskedKey(_savedKey),
+                          style: const TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'Saved: ${_savedAtText()}',
+                          style: const TextStyle(
+                              color: Colors.white38, fontSize: 10),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove key',
+                    onPressed: _saving ? null : _clear,
+                    icon: const Icon(Icons.delete_outline_rounded,
+                        color: Colors.orangeAccent),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          TextField(
+            controller: _licenseKey,
+            textCapitalization: TextCapitalization.characters,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: _savedKey.isEmpty
+                  ? 'Enter Licensing Key'
+                  : 'Replace Licensing Key',
+              prefixIcon: const Icon(Icons.key_rounded),
+              filled: true,
+              fillColor: const Color(0xFF0F191F),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+            onSubmitted: (_) => _save(),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _saving ? null : _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00A884),
+                foregroundColor: Colors.white,
+              ),
+              icon: _saving
+                  ? const SizedBox(
+                      width: 17,
+                      height: 17,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.verified_user_rounded),
+              label: Text(_saving ? 'Saving...' : 'Save Licensing Key'),
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Online verification status: website/central Firebase connection next phase me add hoga.',
+            style: TextStyle(color: Colors.orangeAccent, fontSize: 10.5),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 Future<bool> _requireWindowsSectionPassword(
   BuildContext context,
   String sectionKey,
@@ -21527,6 +21868,13 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                           ],
                         ),
                       ),
+                      const SizedBox(height: 14),
+                      const WindowsSettingsPanel(
+                        showLocalLock: false,
+                        showFirebase: true,
+                      ),
+                      const SizedBox(height: 14),
+                      const WindowsLicenseSettingsPanel(),
                       const SizedBox(height: 14),
                       const WindowsLocalStorageCard(),
                       const SizedBox(height: 14),
