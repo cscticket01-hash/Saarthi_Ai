@@ -1,40 +1,41 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import 'main_dashboard_screen_windows.dart';
 import 'windows_html_shim.dart' as windows_html;
-import 'windows_update_manager.dart';
-import 'windows_firebase_connection.dart';
-import 'windows_offline_home.dart';
-import 'windows_local_settings.dart';
 import 'windows_local_auth.dart';
-import 'windows_local_firestore.dart';
-
-const String _windowsAppVersion = String.fromEnvironment(
-  'APP_VERSION',
-  defaultValue: '1.0.0',
-);
-
-void _saveWindowsAdminPortalSession() {
-  final storage = windows_html.window.localStorage;
-  storage['saarthi_portal_role_v1'] = 'admin';
-  storage.remove('saarthi_portal_student_id_v1');
-  storage.remove('saarthi_portal_student_class_v1');
-  storage['saarthi_portal_expiry_v1'] = DateTime.now()
-      .add(const Duration(minutes: 30))
-      .millisecondsSinceEpoch
-      .toString();
-}
+import 'windows_local_session.dart';
+import 'windows_local_settings.dart';
+import 'windows_local_storage.dart';
+import 'windows_connection_center.dart';
+import 'windows_update_service.dart' as update_service;
+import 'windows_update_manager.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await WindowsFirebaseConnection.bootstrap();
-  windows_html.setSchoolStorageNamespace(WindowsFirebaseConnection.projectId);
+  await WindowsLocalSecurity.initialize();
+  await WindowsLocalStorage.initialize();
+  try { await WindowsUpdateManager.cleanupOldInstallers(); } catch (_) {}
+  await WindowsLocalSession.initialize();
+  await FirebaseAuth.instance.bootstrapLocalUser();
 
+  if (WindowsLocalSession.loggedOut) {
+    await FirebaseAuth.instance.signOut();
+  }
+
+  windows_html.setSchoolStorageNamespace('local');
   runApp(const VidyaSaarthiWindowsApp());
+
+  // App-level connection engine: Firebase + Google Drive/Apps Script become
+  // the single active school profile for every Windows feature screen.
+  // This runs independently of any individual page lifecycle.
+  unawaited(
+    WindowsConnectionCenter.initialize().catchError((Object error) {
+      debugPrint('Windows connection center background init warning: $error');
+    }),
+  );
 }
 
 class VidyaSaarthiWindowsApp extends StatelessWidget {
@@ -43,8 +44,10 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Vidya Saarthi Admin',
+      title: 'Vidya Saarthi',
       debugShowCheckedModeBanner: false,
+
+      // Website main.dart ka theme intentionally same rakha gaya hai.
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF0B141A),
@@ -52,30 +55,38 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           backgroundColor: Color(0xFF1F2C34),
           elevation: 1,
         ),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF00A884),
-          secondary: Color(0xFF00D9A5),
-        ),
       ),
       builder: (context, child) {
         return Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: (_) => windows_html.document.dispatchClick(),
-          child: child ?? const SizedBox.shrink(),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: child ?? const SizedBox.shrink(),
+              ),
+              const _WindowsGlobalUpdateProgress(),
+            ],
+          ),
         );
       },
-      home: WindowsStartupGate(
-        child: WindowsFirebaseConnection.current == null
-            ? const WindowsOfflineHomeScreen()
-            : const WindowsAdminLoginScreen(),
-      ),
+      routes: {
+        '/local-login': (_) => const WindowsLocalLoginScreen(),
+        '/dashboard': (_) => const WindowsLocalDashboardGate(),
+      },
+      home: !WindowsLocalSecurity.configured
+          ? const WindowsFirstRunSecuritySetup()
+          : WindowsLocalSession.loggedOut
+              ? const WindowsLocalLoginScreen()
+              : const WindowsStartupGate(
+                  child: WindowsLocalDashboardGate(),
+                ),
     );
   }
 }
 
-/// Blocks the first visible Windows screen when the Local Settings password
-/// is configured. This keeps the dashboard/login from flashing before the
-/// password prompt appears.
+/// Requires the existing local password before showing a saved dashboard.
+/// School Firebase verification remains in Advanced Settings.
 class WindowsStartupGate extends StatefulWidget {
   const WindowsStartupGate({super.key, required this.child});
 
@@ -106,11 +117,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
   Future<void> _prepare() async {
     try {
       await WindowsLocalSecurity.initialize();
-      // Offline setup remains available until a school Firebase connection
-      // exists. Once the app is configured, the password is shown before any
-      // dashboard/login widget is rendered.
-      final shouldLock = WindowsLocalSecurity.configured &&
-          WindowsFirebaseConnection.current != null;
+      final shouldLock = WindowsLocalSecurity.configured;
       if (!mounted) return;
       setState(() {
         _locked = shouldLock;
@@ -120,7 +127,8 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _locked = false;
+        _locked = true;
+        _error = 'App Password load nahi ho paya. App restart karein.';
       });
     }
   }
@@ -221,610 +229,450 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
   }
 }
 
-class _WindowsUpdateInfo {
-  const _WindowsUpdateInfo({
-    required this.latestVersion,
-    required this.downloadUrl,
-    required this.releaseNotes,
-    required this.forceUpdate,
-  });
-
-  final String latestVersion;
-  final String downloadUrl;
-  final String releaseNotes;
-  final bool forceUpdate;
-}
-
-class WindowsUpdateGate extends StatefulWidget {
-  const WindowsUpdateGate({super.key});
+class _WindowsGlobalUpdateProgress extends StatelessWidget {
+  const _WindowsGlobalUpdateProgress();
 
   @override
-  State<WindowsUpdateGate> createState() => _WindowsUpdateGateState();
-}
-
-class _WindowsUpdateGateState extends State<WindowsUpdateGate> {
-  bool _checking = true;
-  bool _downloading = false;
-  double? _progress;
-  String? _error;
-  _WindowsUpdateInfo? _update;
-  bool _continueWithoutUpdate = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkForUpdate();
-  }
-
-  List<int> _versionParts(String value) {
-    return value
-        .trim()
-        .split('.')
-        .map((part) => int.tryParse(RegExp(r'\d+').stringMatch(part) ?? '') ?? 0)
-        .toList();
-  }
-
-  int _compareVersions(String a, String b) {
-    final av = _versionParts(a);
-    final bv = _versionParts(b);
-    final length = av.length > bv.length ? av.length : bv.length;
-
-    for (var i = 0; i < length; i++) {
-      final ai = i < av.length ? av[i] : 0;
-      final bi = i < bv.length ? bv[i] : 0;
-      if (ai != bi) return ai.compareTo(bi);
-    }
-    return 0;
-  }
-
-  Future<void> _checkForUpdate() async {
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('app_config')
-          .doc('windows_update')
-          .get()
-          .timeout(const Duration(seconds: 8));
-
-      final data = doc.data();
-      if (data == null || data['enabled'] == false) {
-        if (mounted) setState(() => _checking = false);
-        return;
-      }
-
-      final latest = data['latestVersion']?.toString().trim() ?? '';
-      final minimum = data['minimumVersion']?.toString().trim() ?? '';
-      final downloadUrl = data['downloadUrl']?.toString().trim() ?? '';
-      final releaseNotes = data['releaseNotes']?.toString().trim() ?? '';
-      final configuredForce = data['forceUpdate'] == true;
-
-      if (latest.isEmpty || downloadUrl.isEmpty) {
-        if (mounted) setState(() => _checking = false);
-        return;
-      }
-
-      if (_compareVersions(latest, _windowsAppVersion) <= 0) {
-        if (mounted) setState(() => _checking = false);
-        return;
-      }
-
-      final belowMinimum = minimum.isNotEmpty &&
-          _compareVersions(_windowsAppVersion, minimum) < 0;
-
-      if (!mounted) return;
-      setState(() {
-        _update = _WindowsUpdateInfo(
-          latestVersion: latest,
-          downloadUrl: downloadUrl,
-          releaseNotes: releaseNotes,
-          forceUpdate: configuredForce || belowMinimum,
-        );
-        _checking = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      // Update server unavailable should never block normal admin work.
-      setState(() {
-        _checking = false;
-        _error = 'Update check skipped: $e';
-      });
-    }
-  }
-
-  Future<void> _downloadAndInstall() async {
-    final update = _update;
-    if (update == null || _downloading) return;
-
-    setState(() {
-      _downloading = true;
-      _progress = null;
-      _error = null;
-    });
-
-    HttpClient? client;
-    IOSink? sink;
-
-    try {
-      final uri = Uri.parse(update.downloadUrl);
-      client = HttpClient();
-      final request = await client.getUrl(uri);
-      request.followRedirects = true;
-      final response = await request.close();
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('Download failed: HTTP ${response.statusCode}');
-      }
-
-      final file = File(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}'
-        'Vidya_Saarthi_Update_${update.latestVersion}.exe',
-      );
-
-      sink = file.openWrite();
-      final total = response.contentLength;
-      var received = 0;
-
-      await for (final chunk in response) {
-        sink.add(chunk);
-        received += chunk.length;
-        if (mounted && total > 0) {
-          setState(() => _progress = received / total);
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<update_service.WindowsUpdateRuntimeState>(
+      valueListenable: update_service.WindowsUpdateService.state,
+      builder: (context, state, _) {
+        if (!state.downloading && !state.launching) {
+          return const SizedBox.shrink();
         }
-      }
 
-      await sink.flush();
-      await sink.close();
-      sink = null;
+        final percent = state.progress == null
+            ? null
+            : (state.progress! * 100).clamp(0, 100).toStringAsFixed(0);
 
-      if (!await file.exists() || await file.length() == 0) {
-        throw const FileSystemException('Downloaded installer empty hai.');
-      }
-
-      await Process.start(
-        file.path,
-        const <String>[
-          '/SILENT',
-          '/CLOSEAPPLICATIONS',
-          '/RESTARTAPPLICATIONS',
-        ],
-        mode: ProcessStartMode.detached,
-      );
-
-      await Future<void>.delayed(const Duration(milliseconds: 700));
-      exit(0);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _downloading = false;
-        _progress = null;
-        _error = 'Update install error: $e';
-      });
-    } finally {
-      try {
-        await sink?.close();
-      } catch (_) {}
-      client?.close(force: true);
-    }
-  }
-
-  Widget _brandLoading() {
-    return const Scaffold(
-      backgroundColor: Color(0xFF06171D),
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.auto_stories_rounded,
-              color: Color(0xFF00E8D0),
-              size: 54,
-            ),
-            SizedBox(height: 14),
-            Text(
-              'Vidya Saarthi',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
+        return IgnorePointer(
+          child: Align(
+            alignment: Alignment.topRight,
+            child: SafeArea(
+              child: Container(
+                width: 310,
+                margin: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF172229),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.white10),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black38,
+                      blurRadius: 16,
+                      offset: Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.system_update_alt_rounded,
+                          color: Color(0xFF4DA3FF),
+                          size: 19,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            state.launching
+                                ? 'Update ready'
+                                : 'App update downloading${percent == null ? '' : ' • $percent%'}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(
+                      value: state.launching ? 1 : state.progress,
+                      minHeight: 5,
+                      color: const Color(0xFF4DA3FF),
+                      backgroundColor: Colors.white10,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      state.message,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 9.5,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            SizedBox(height: 18),
-            CircularProgressIndicator(color: Color(0xFF00D9A5)),
-            SizedBox(height: 10),
-            Text(
-              'Checking Windows app...',
-              style: TextStyle(color: Colors.white38, fontSize: 11),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
+  }
+}
+
+class WindowsLocalDashboardGate extends StatelessWidget {
+  const WindowsLocalDashboardGate({super.key});
+
+  void _primeLocalAdminSession() {
+    final storage = windows_html.window.localStorage;
+    storage['saarthi_portal_role_v1'] = 'admin';
+    storage.remove('saarthi_portal_student_id_v1');
+    storage.remove('saarthi_portal_student_class_v1');
+    storage['saarthi_portal_expiry_v1'] = DateTime.now()
+        .add(const Duration(minutes: 30))
+        .millisecondsSinceEpoch
+        .toString();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_checking) return _brandLoading();
-
-    final update = _update;
-    if (update == null || _continueWithoutUpdate) {
-      return WindowsAdminLoginScreen(updateWarning: _error);
-    }
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF07151B),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Container(
-            width: 540,
-            padding: const EdgeInsets.all(28),
-            decoration: BoxDecoration(
-              color: const Color(0xFF122129),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: const Color(0xFF00D9A5).withOpacity(0.24),
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(
-                      Icons.system_update_alt_rounded,
-                      color: Color(0xFF00D9A5),
-                      size: 32,
-                    ),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Vidya Saarthi Update Available',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 19,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Installed: $_windowsAppVersion   •   New: ${update.latestVersion}',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                if (update.releaseNotes.isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(13),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0C171D),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      update.releaseNotes,
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        height: 1.45,
-                      ),
-                    ),
-                  ),
-                ],
-                if (_downloading) ...[
-                  const SizedBox(height: 18),
-                  LinearProgressIndicator(
-                    value: _progress,
-                    minHeight: 8,
-                    color: const Color(0xFF00D9A5),
-                    backgroundColor: Colors.white10,
-                  ),
-                  const SizedBox(height: 7),
-                  Text(
-                    _progress == null
-                        ? 'Downloading update...'
-                        : 'Downloading ${(100 * _progress!).toStringAsFixed(0)}%',
-                    style: const TextStyle(color: Colors.white54, fontSize: 11),
-                  ),
-                ],
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    _error!,
-                    style: const TextStyle(color: Colors.redAccent, fontSize: 11),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (!update.forceUpdate)
-                      TextButton(
-                        onPressed: _downloading
-                            ? null
-                            : () => setState(() => _continueWithoutUpdate = true),
-                        child: const Text('Later'),
-                      ),
-                    const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00A884),
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: _downloading ? null : _downloadAndInstall,
-                      icon: const Icon(Icons.download_rounded),
-                      label: Text(
-                        _downloading ? 'Downloading...' : 'Update Now',
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+    _primeLocalAdminSession();
+    return const AdminDashboardScreen();
   }
 }
 
-class WindowsAdminLoginScreen extends StatefulWidget {
-  const WindowsAdminLoginScreen({
-    super.key,
-    this.updateWarning,
-  });
-
-  final String? updateWarning;
+class WindowsLocalLoginScreen extends StatefulWidget {
+  const WindowsLocalLoginScreen({super.key});
 
   @override
-  State<WindowsAdminLoginScreen> createState() =>
-      _WindowsAdminLoginScreenState();
+  State<WindowsLocalLoginScreen> createState() =>
+      _WindowsLocalLoginScreenState();
 }
 
-class _WindowsAdminLoginScreenState extends State<WindowsAdminLoginScreen> {
-  final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
+class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
+  final _adminId = TextEditingController();
+  final _password = TextEditingController();
+  bool _busy = false;
   bool _obscure = true;
-  bool _loggingIn = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _adminId.text = WindowsLocalSecurity.adminId;
+  }
 
   Future<void> _login() async {
-    if (_loggingIn) return;
-    final email = _emailController.text.trim();
-    final password = _passwordController.text;
-
-    if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Admin Email aur Password bharein.'),
-        ),
-      );
-      return;
-    }
-
-    setState(() => _loggingIn = true);
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
 
     try {
       await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email,
-        password: password,
+        email: _adminId.text,
+        password: _password.text,
       );
-
-      try {
-        await WindowsFirebaseConnection.requireAdmin(FirebaseAuth.instance.currentUser!);
-      } catch (_) {
-        await FirebaseAuth.instance.signOut();
-        rethrow;
-      }
-      _saveWindowsAdminPortalSession();
-
+      await WindowsLocalSession.markLoggedIn();
       if (!mounted) return;
-
       await WindowsUpdateManager.promptIfAvailable(context);
       if (!mounted) return;
-
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => const AdminDashboardScreen(),
-        ),
-      );
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text(
-            e.code == 'invalid-credential'
-                ? 'Galat Admin Email ya Password.'
-                : 'Admin login error: ${e.message ?? e.code}',
-          ),
-        ),
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        '/dashboard',
+        (route) => false,
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Admin login error: $e'),
-        ),
-      );
+      setState(() {
+        _error = e
+            .toString()
+            .replaceFirst('FirebaseAuthException: ', '')
+            .replaceFirst('Bad state: ', '');
+      });
     } finally {
-      if (mounted) setState(() => _loggingIn = false);
+      if (mounted) setState(() => _busy = false);
     }
   }
 
   @override
   void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
+    _adminId.dispose();
+    _password.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF06171D),
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(0, -0.25),
-            radius: 1.2,
-            colors: [
-              Color(0xFF0B3B3A),
-              Color(0xFF08262D),
-              Color(0xFF06171D),
-              Color(0xFF041116),
-            ],
+    return _LocalAuthShell(
+      title: 'Vidya Saarthi',
+      subtitle: 'LOCAL ADMIN LOGIN',
+      description:
+          'Local ID/Password se Windows app unlock karein. Firebase connection alag rahega.',
+      children: [
+        TextField(
+          controller: _adminId,
+          decoration: const InputDecoration(
+            labelText: 'Local Admin ID',
+            prefixIcon: Icon(Icons.person_outline_rounded),
           ),
         ),
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Container(
-              width: 460,
-              padding: const EdgeInsets.all(30),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0A1E26).withOpacity(0.96),
-                borderRadius: BorderRadius.circular(26),
-                border: Border.all(
-                  color: const Color(0xFF00E8D0).withOpacity(0.45),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _password,
+          obscureText: _obscure,
+          onSubmitted: (_) => _login(),
+          decoration: InputDecoration(
+            labelText: 'Local Password',
+            prefixIcon: const Icon(Icons.lock_outline_rounded),
+            suffixIcon: IconButton(
+              onPressed: () => setState(() => _obscure = !_obscure),
+              icon: Icon(
+                _obscure ? Icons.visibility_off : Icons.visibility,
+              ),
+            ),
+          ),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            _error!,
+            style: const TextStyle(color: Colors.redAccent),
+          ),
+        ],
+        const SizedBox(height: 18),
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: FilledButton.icon(
+            onPressed: _busy ? null : _login,
+            icon: _busy
+                ? const SizedBox(
+                    width: 17,
+                    height: 17,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.login_rounded),
+            label: Text(_busy ? 'Opening...' : 'Open Vidya Saarthi'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class WindowsFirstRunSecuritySetup extends StatefulWidget {
+  const WindowsFirstRunSecuritySetup({super.key});
+
+  @override
+  State<WindowsFirstRunSecuritySetup> createState() =>
+      _WindowsFirstRunSecuritySetupState();
+}
+
+class _WindowsFirstRunSecuritySetupState
+    extends State<WindowsFirstRunSecuritySetup> {
+  final _adminId = TextEditingController();
+  final _password = TextEditingController();
+  final _confirm = TextEditingController();
+  bool _busy = false;
+  bool _obscure = true;
+  String? _error;
+
+  Future<void> _save() async {
+    if (_busy) return;
+    if (_password.text != _confirm.text) {
+      setState(() => _error = 'Password match nahi kar raha.');
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      await WindowsLocalSecurity.create(
+        adminId: _adminId.text,
+        password: _password.text,
+      );
+      await FirebaseAuth.instance.refreshLocalUser();
+      await WindowsLocalSession.markLoggedIn();
+      if (!mounted) return;
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        '/dashboard',
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e
+            .toString()
+            .replaceFirst('FormatException: ', '')
+            .replaceFirst('Bad state: ', '');
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _adminId.dispose();
+    _password.dispose();
+    _confirm.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _LocalAuthShell(
+      title: 'Vidya Saarthi',
+      subtitle: 'CREATE LOCAL SETTINGS LOCK',
+      description:
+          'Ye ID/Password sirf is PC ke protected Settings aur local login ke liye hoga. Firebase login nahi hai.',
+      children: [
+        TextField(
+          controller: _adminId,
+          decoration: const InputDecoration(
+            labelText: 'Local Admin ID',
+            prefixIcon: Icon(Icons.person_outline),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _password,
+          obscureText: _obscure,
+          decoration: InputDecoration(
+            labelText: 'Settings Password',
+            prefixIcon: const Icon(Icons.lock_outline),
+            suffixIcon: IconButton(
+              onPressed: () => setState(() => _obscure = !_obscure),
+              icon: Icon(
+                _obscure ? Icons.visibility_off : Icons.visibility,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _confirm,
+          obscureText: _obscure,
+          onSubmitted: (_) => _save(),
+          decoration: const InputDecoration(
+            labelText: 'Confirm Password',
+            prefixIcon: Icon(Icons.verified_user_outlined),
+          ),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+        ],
+        const SizedBox(height: 18),
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: FilledButton.icon(
+            onPressed: _busy ? null : _save,
+            icon: _busy
+                ? const SizedBox(
+                    width: 17,
+                    height: 17,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.arrow_forward_rounded),
+            label: Text(_busy ? 'Saving...' : 'Create Lock & Open App'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LocalAuthShell extends StatelessWidget {
+  const _LocalAuthShell({
+    required this.title,
+    required this.subtitle,
+    required this.description,
+    required this.children,
+  });
+
+  final String title;
+  final String subtitle;
+  final String description;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF06171D),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Container(
+            width: 500,
+            padding: const EdgeInsets.all(30),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0A1E26),
+              borderRadius: BorderRadius.circular(26),
+              border: Border.all(
+                color: const Color(0xFF00E8D0).withOpacity(0.35),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF33E9D0), Color(0xFF00A8FF)],
+                    ),
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: const Icon(
+                    Icons.admin_panel_settings_rounded,
+                    color: Colors.white,
+                    size: 38,
+                  ),
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.35),
-                    blurRadius: 35,
-                    offset: const Offset(0, 18),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
                   ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF33E9D0), Color(0xFF00A8FF)],
-                      ),
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: const Icon(
-                      Icons.admin_panel_settings_rounded,
-                      color: Colors.white,
-                      size: 40,
-                    ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Color(0xFF00D9A5),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Vidya Saarthi',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.w900,
-                    ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  description,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    height: 1.4,
                   ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'WINDOWS ADMIN CONSOLE',
-                    style: TextStyle(
-                      color: Color(0xFF00D9A5),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.8,
-                    ),
-                  ),
-                  if (widget.updateWarning != null) ...[
-                    const SizedBox(height: 14),
-                    Text(
-                      widget.updateWarning!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white30, fontSize: 9),
-                    ),
-                  ],
-                  const SizedBox(height: 24),
-                  TextField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'Admin Email',
-                      prefixIcon: Icon(Icons.email_outlined),
-                      filled: true,
-                      fillColor: Color(0xFF10242C),
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: _passwordController,
-                    obscureText: _obscure,
-                    onSubmitted: (_) => _login(),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      labelText: 'Password',
-                      prefixIcon: const Icon(Icons.lock_outline_rounded),
-                      filled: true,
-                      fillColor: const Color(0xFF10242C),
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        onPressed: () => setState(() => _obscure = !_obscure),
-                        icon: Icon(
-                          _obscure ? Icons.visibility_off : Icons.visibility,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00A884),
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: _loggingIn ? null : _login,
-                      icon: _loggingIn
-                          ? const SizedBox(
-                              width: 17,
-                              height: 17,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.login_rounded),
-                      label: Text(
-                        _loggingIn ? 'Signing in...' : 'Admin Login',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text('School: ${WindowsFirebaseConnection.projectId}'),
-                  TextButton.icon(
-                    onPressed: _loggingIn ? null : () async {
-                      await Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => WindowsFirebaseSetupScreen(
-                          protectCurrent: FirebaseAuth.instance.currentUser != null,
-                        ),
-                      ));
-                    },
-                    icon: const Icon(Icons.settings_ethernet),
-                    label: const Text('School / Firebase Connection'),
-                  ),
-                  Text(
-                    'Version $_windowsAppVersion',
-                    style: const TextStyle(color: Colors.white24, fontSize: 9),
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 22),
+                ...children,
+              ],
             ),
           ),
         ),
