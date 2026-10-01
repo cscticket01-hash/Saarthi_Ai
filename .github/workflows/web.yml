@@ -75,8 +75,7 @@ jobs:
         run: |
           flutter build web \
             --release \
-            --base-href "/" \
-            --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            --base-href "/"
 
       # =========================================================
       # BLOCK COMMON INSPECT / VIEW SOURCE SHORTCUTS
@@ -205,8 +204,15 @@ jobs:
       # =========================================================
       # DEPLOY ONLY VIDYASAARTHI HOSTING SITE
       # =========================================================
+      - name: Verify and deploy central platform backend
+        run: |
+          npm --prefix functions test
+          npm --prefix functions install
+          firebase deploy --project saarthi-ai-df12b --only functions:platform,firestore:rules
+
       - name: Deploy to Firebase Hosting
         run: |
           firebase deploy \
             --project saarthi-ai-df12b \
             --only hosting:vidyasaarthi
+

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'main_dashboard_screen.dart';
+import 'developer_portal.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,17 +25,20 @@ class VidyaSaarthiApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Vidya Saarthi',
+      title: 'Vidya Saarthi • Developer',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
+        colorScheme: const ColorScheme.dark(primary: Color(0xFF63E6BE), surface: Color(0xFF16242E)),
+        inputDecorationTheme: const InputDecorationTheme(filled: true, fillColor: Color(0xFF16242E), border: OutlineInputBorder()),
         scaffoldBackgroundColor: const Color(0xFF0B141A),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF1F2C34),
           elevation: 1,
         ),
       ),
-      home: const MainDashboardScreen(),
+      home: const DeveloperPortal(),
     );
   }
 }
+

@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'windows_school_operations.dart';
+import 'windows_document_templates.dart';
+import 'windows_platform_client.dart';
 import 'dart:io';
 import 'dart:math';
 import 'windows_settings_panel.dart';
@@ -148,6 +151,7 @@ Future<String> _windowsBuildPersonQrPayload({
     'v': 2,
     'type': type,
     'schoolProfileId': profileId,
+    'firebaseProjectId': connections.firebaseProjectId,
     'firebaseLink': firebaseLink,
     'googleScriptUrl': googleScriptUrl,
     'personId': documentId,
@@ -521,10 +525,12 @@ class WindowsLicenseStore {
 
   static Future<void> save(String key) async {
     final normalized = key.trim();
+    await WindowsPlatformClient.instance.refresh();
+    await WindowsPlatformClient.instance.activate(normalized);
     await _secure.write(key: _windowsLicenseKeyStorageKey, value: normalized);
     await _secure.write(
       key: _windowsLicenseStatusStorageKey,
-      value: 'pending_online_verification',
+      value: 'active',
     );
     await _secure.write(
       key: _windowsLicenseSavedAtStorageKey,
@@ -617,7 +623,7 @@ class _WindowsLicenseSettingsPanelState
       if (!mounted) return;
       setState(() {
         _savedKey = key;
-        _status = 'pending_online_verification';
+        _status = 'active';
         _savedAt = DateTime.now().toIso8601String();
         _saving = false;
         _licenseKey.clear();
@@ -817,7 +823,7 @@ class _WindowsLicenseSettingsPanelState
           ),
           const SizedBox(height: 10),
           const Text(
-            'Online verification status: website/central Firebase connection next phase me add hoga.',
+            'Keys are verified by the developer platform and bound to this school.',
             style: TextStyle(color: Colors.orangeAccent, fontSize: 10.5),
           ),
         ],
@@ -5430,6 +5436,8 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
 
 Future<void> _showIdCardPreview() async {
   final data = await _getIdCardStudentData();
+  final custom = await WindowsDocumentTemplates.selected('studentId', data, qr:data['qrData'].toString());
+  if(custom != null){if(mounted)await WindowsDocumentTemplates.preview(context,custom,title:'Student ID card');return;}
 
   if (!mounted) return;
 
@@ -6317,6 +6325,8 @@ Widget _modernIdField(
 
 Future<Uint8List> _buildIdCardPdf() async {
   final data = await _getIdCardStudentData();
+  final custom = await WindowsDocumentTemplates.selected('studentId', data, qr:data['qrData'].toString());
+  if(custom != null) return custom;
 
   final name = data['name'].toString();
   final roll = data['roll'].toString();
@@ -7679,6 +7689,20 @@ errorBuilder: (_, __, ___) => const Icon(
               onTap: () => _openAdminDrawerPage(const TeachersDirectoryScreen()),
             ),
             _adminDrawerItem(
+              icon: Icons.wallet_rounded,
+              title: 'Teacher salary',
+              subtitle: 'Salary section',
+              color: Colors.purpleAccent,
+              onTap: () => _openAdminDrawerPage(const TeacherSalaryPlaceholder()),
+            ),
+            _adminDrawerItem(
+              icon: Icons.support_agent_rounded,
+              title: 'App support',
+              subtitle: 'Report a Windows app problem',
+              color: Colors.tealAccent,
+              onTap: () => _openAdminDrawerPage(const WindowsSupportScreen()),
+            ),
+            _adminDrawerItem(
               icon: Icons.account_balance_wallet_rounded,
               title: windowsTr('expenses'),
               subtitle: 'Expense entry, ledger & reports',
@@ -7692,10 +7716,10 @@ errorBuilder: (_, __, ___) => const Icon(
             _adminDrawerItem(
               icon: Icons.fact_check_rounded,
               title: windowsTr('attendance'),
-              subtitle: 'QR entry/exit + 200m geofence',
+              subtitle: 'Student / teacher records & calendar',
               color: const Color(0xFF69C2FF),
               onTap: () => _openAdminDrawerPage(
-                const WindowsAttendanceScreen(),
+                const SchoolAttendanceOverview(),
                 sectionKey: _windowsAttendanceLock,
                 sectionTitle: 'Attendance',
               ),
@@ -7706,7 +7730,7 @@ errorBuilder: (_, __, ___) => const Icon(
               subtitle: 'ID cards, report cards & receipts',
               color: const Color(0xFFCE93D8),
               onTap: () => _openAdminDrawerPage(
-                const WindowsTemplatesScreen(),
+                const SchoolDocumentTemplatesScreen(),
               ),
             ),
             _adminDrawerItem(
@@ -10551,7 +10575,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                     subtitle: 'QR entry/exit + geofence',
                     color: const Color(0xFF69C2FF),
                     onTap: () => _openAnalyticsModule(
-                      const WindowsAttendanceScreen(),
+                      const SchoolAttendanceOverview(),
                       sectionKey: _windowsAttendanceLock,
                       sectionTitle: 'Attendance',
                     ),
@@ -10563,7 +10587,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                     color: const Color(0xFFCE93D8),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => const WindowsTemplatesScreen(),
+                        builder: (_) => const SchoolDocumentTemplatesScreen(),
                       ),
                     ),
                   ),
@@ -14349,6 +14373,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'paymentId': paymentRef.id,
       'receiptNo': receiptNo,
       'studentId': studentDoc.id,
+          'personId': student['mobileStableId'] ?? studentDoc.id,
       'feeIdentity': feeIdentity,
       'studentUid': studentUid,
       'studentName': studentName,
@@ -14407,6 +14432,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         ledgerRef,
         {
           'studentId': studentDoc.id,
+          'personId': student['mobileStableId'] ?? studentDoc.id,
           'feeIdentity': feeIdentity,
           'studentUid': studentUid,
           'studentName': studentName,
@@ -14537,6 +14563,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
   }
 
   Future<Uint8List> _buildReceiptPdf(Map<String, dynamic> data) async {
+    final custom=await WindowsDocumentTemplates.selected('receipt',data);
+    if(custom!=null)return custom;
     final pdf = pw.Document();
     final items = Map<String, dynamic>.from(data['feeItems'] ?? {});
     final itemEntries = items.entries.where((e) => _toDouble(e.value) > 0).toList();
@@ -17956,6 +17984,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
       documentId: docId,
       person: data,
     );
+    final custom=await WindowsDocumentTemplates.selected('teacherId',{...data,'teacherId':data['teacherId'] ?? docId},qr:qrData);
+    if(custom!=null){if(mounted)await WindowsDocumentTemplates.preview(context,custom,title:'Teacher ID card');return;}
     if (!mounted) return;
     final name = data['name']?.toString().trim() ?? 'Teacher';
     final teacherId = data['teacherId']?.toString().trim().isNotEmpty == true
@@ -19982,6 +20012,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     if (storedResult.isNotEmpty) {
       return <String, dynamic>{
         'result': storedResult,
+        'examId': student['promotionExamId'] ?? '',
+        'isFinal': student['promotionExamId'] != null,
         'examName': student['lastExamName']?.toString() ?? 'Previous Exam',
         'percentage': student['lastExamPercentage'] ?? 0,
         'timestamp': student['lastExamTimestamp'] ?? 0,
@@ -20039,258 +20071,28 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     return result;
   }
 
-  Future<void> _changeStudentClass(
-    String docId,
-    Map<String, dynamic> student,
-    int direction,
-  ) async {
+  Future<void> _changeStudentClass(String docId, Map<String,dynamic> student, int direction) async {
     if (_movingStudentIds.contains(docId)) return;
-
-    final currentClass = student['class']?.toString().trim() ?? '';
-    final currentClassNo = _studentClassNumber(currentClass);
-    final targetClassNo = currentClassNo + direction;
-
-    if (currentClassNo < 1 || currentClassNo > 10) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Student class format valid nahi hai.'),
-        ),
-      );
+    final result = _latestExamResultForStudent(docId, student);
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Enter the final exam result before promotion or retention.')));
       return;
     }
-
-    if (targetClassNo < 1 || targetClassNo > 10) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.orangeAccent,
-          content: Text(
-            direction > 0
-                ? 'Class 10 highest class hai. Is student ko aur promote nahi kiya ja sakta.'
-                : 'Class 1 lowest class hai. Is student ko aur demote nahi kiya ja sakta.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    final targetClass = 'Class $targetClassNo';
-    final rollNo = student['rollNo']?.toString().trim() ?? '';
-    final studentName = student['name']?.toString().trim() ?? 'Student';
-    final latestResult = _latestExamResultForStudent(docId, student);
-    final resultStatus = latestResult?['result']?.toString().trim() ?? '';
-    final examName = latestResult?['examName']?.toString().trim() ?? '';
-    final percentage = (latestResult?['percentage'] as num?)?.toDouble();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF172229),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-        ),
-        title: Row(
-          children: [
-            Icon(
-              direction > 0
-                  ? Icons.trending_up_rounded
-                  : Icons.trending_down_rounded,
-              color: direction > 0
-                  ? const Color(0xFF00D9A5)
-                  : Colors.orangeAccent,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                direction > 0 ? 'Promote Student?' : 'Demote Student?',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '$studentName\n$currentClass  →  $targetClass',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                height: 1.45,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(11),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0D171C),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: Text(
-                resultStatus.isEmpty
-                    ? 'Latest exam result: Not entered / not available'
-                    : 'Latest: ${examName.isEmpty ? 'Exam' : examName} • '
-                        '$resultStatus${percentage == null ? '' : ' • ${percentage.toStringAsFixed(1)}%'}',
-                style: TextStyle(
-                  color: resultStatus == 'PASS'
-                      ? const Color(0xFF00D9A5)
-                      : resultStatus == 'FAIL'
-                          ? Colors.redAccent
-                          : Colors.white54,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            if (direction > 0 && resultStatus == 'FAIL') ...[
-              const SizedBox(height: 10),
-              const Text(
-                'Warning: Latest result FAIL hai. Admin confirmation se phir bhi promote kiya ja sakta hai.',
-                style: TextStyle(
-                  color: Colors.orangeAccent,
-                  fontSize: 10.5,
-                  height: 1.35,
-                ),
-              ),
-            ],
-            const SizedBox(height: 10),
-            const Text(
-              'Class change Firestore aur Google Sheet dono me sync hoga. Purane exam result history delete nahi hogi.',
-              style: TextStyle(
-                color: Colors.white38,
-                fontSize: 10,
-                height: 1.4,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: direction > 0
-                  ? const Color(0xFF00A884)
-                  : Colors.orange.shade700,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.pop(ctx, true),
-            icon: Icon(
-              direction > 0
-                  ? Icons.trending_up_rounded
-                  : Icons.trending_down_rounded,
-              size: 18,
-            ),
-            label: Text(direction > 0 ? 'Promote' : 'Demote'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    final newDocId = '${targetClass}_Roll_$rollNo';
-    final oldRef = FirebaseFirestore.instance
-        .collection('students_directory')
-        .doc(docId);
-    final newRef = FirebaseFirestore.instance
-        .collection('students_directory')
-        .doc(newDocId);
-
-    setState(() => _movingStudentIds.add(docId));
-
-    bool backendChanged = false;
+    final status = result['result']?.toString().toUpperCase() ?? '';
+    final force = direction > 0 && status == 'FAIL';
+    final decision = direction < 0 ? 'FAIL' : status;
+    final yes = await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      title:Text(direction < 0 ? 'Retain in the same class?' : force ? 'Force promote this student?' : 'Apply final exam decision?'),
+      content:Text('${student['name']} • ${student['class']}\nFinal result: $status'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]));
+    if(yes!=true||!mounted)return;
+    setState(()=>_movingStudentIds.add(docId));
     try {
-      final targetExisting = await newRef.get();
-      if (targetExisting.exists && newDocId != docId) {
-        throw Exception(
-          '$targetClass me Roll $rollNo already exist karta hai.',
-        );
-      }
-
-      await _postStudentClassChange(
-        oldClass: currentClass,
-        newClass: targetClass,
-        rollNo: rollNo,
-        oldStudentId: docId,
-        newStudentId: newDocId,
-        movement: direction > 0 ? 'PROMOTED' : 'DEMOTED',
-        latestResult: latestResult,
-      );
-      backendChanged = true;
-
-      final newData = Map<String, dynamic>.from(student)
-        ..['class'] = targetClass
-        ..['previousClass'] = currentClass
-        ..['classMovement'] = direction > 0 ? 'PROMOTED' : 'DEMOTED'
-        ..['classChangedBy'] =
-            FirebaseAuth.instance.currentUser?.email ?? 'Admin'
-        ..['classChangedAt'] = FieldValue.serverTimestamp();
-
-      if (latestResult != null) {
-        newData['lastExamResult'] =
-            latestResult['result']?.toString().trim() ?? '';
-        newData['lastExamName'] =
-            latestResult['examName']?.toString().trim() ?? '';
-        newData['lastExamPercentage'] = latestResult['percentage'] ?? 0;
-        newData['lastExamTimestamp'] = latestResult['timestamp'] ?? 0;
-      }
-
-      final batch = FirebaseFirestore.instance.batch();
-      batch.set(newRef, newData);
-      if (newDocId != docId) {
-        batch.delete(oldRef);
-      }
-      await batch.commit();
-
-      if (!mounted) return;
-      setState(() => _movingStudentIds.remove(docId));
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFF00A884),
-          content: Text(
-            '$studentName ${direction > 0 ? 'promote' : 'demote'} hokar $targetClass me chala gaya.',
-          ),
-        ),
-      );
-    } catch (e) {
-      // Google Sheet changed but Firestore failed: best-effort rollback.
-      if (backendChanged) {
-        try {
-          await _postStudentClassChange(
-            oldClass: targetClass,
-            newClass: currentClass,
-            rollNo: rollNo,
-            oldStudentId: newDocId,
-            newStudentId: docId,
-            movement: 'ROLLBACK',
-            latestResult: latestResult,
-          );
-        } catch (rollbackError) {
-          debugPrint('Student class rollback warning: $rollbackError');
-        }
-      }
-
-      if (!mounted) return;
-      setState(() => _movingStudentIds.remove(docId));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Class change error: $e'),
-        ),
-      );
-    }
+      if(direction < 0 && status != 'FAIL')throw StateError('Retention is only for a final-exam FAIL result.');
+      final message=await SchoolPromotionService.apply(studentId:docId,student:student,exam:result,result:decision,force:force);
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(message)));
+    }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('$e')));}
+    finally{if(mounted)setState(()=>_movingStudentIds.remove(docId));}
   }
 
   Future<void> _deleteStudent(String docId) async {
@@ -21875,6 +21677,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                       ),
                       const SizedBox(height: 14),
                       const WindowsLicenseSettingsPanel(),
+                      const PromotionPolicySwitch(),
                       const SizedBox(height: 14),
                       const WindowsLocalStorageCard(),
                       const SizedBox(height: 14),
@@ -24348,6 +24151,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     final fullByClass = <String, TextEditingController>{};
     final passByClass = <String, TextEditingController>{};
     String? dialogError;
+    bool isFinalExam=false;
 
     void ensureClass(String className) {
       subjectsByClass.putIfAbsent(
@@ -24435,6 +24239,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                         Icons.edit_note_rounded,
                       ),
                     ),
+                    CheckboxListTile(value:isFinalExam,onChanged:(v)=>setDialogState(()=>isFinalExam=v ?? false),title:const Text('Final exam — apply PASS / FAIL promotion decisions')),
                     const SizedBox(height: 16),
                     const Text(
                       'SELECT CLASSES',
@@ -24732,6 +24537,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
                     configs.add({
                       'examName': name,
+                      'isFinal': isFinalExam,
                       'studentClass': className,
                       'subjects': subjectList,
                       'fullMarks': fullMarks,
@@ -24765,11 +24571,13 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
     try {
       for (final payload in payloads) {
-        await _post({
+        final savedExam = await _post({
           'action': 'save_exam',
           ...payload,
           'createdBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
         });
+        final savedId=savedExam['examId']?.toString() ?? '';
+        if(savedId.isNotEmpty)await FirebaseFirestore.instance.collection('school_settings').doc('exam_$savedId').set({...payload,'examId':savedId});
         created++;
       }
       await _load();
@@ -25508,7 +25316,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     if (reportUrl.isNotEmpty)
                       IconButton(
                         tooltip: 'Open Report Card',
-                        onPressed: () => html.window.open(reportUrl, '_blank'),
+                        onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result))html.window.open(reportUrl, '_blank');}
                         icon: const Icon(
                           Icons.picture_as_pdf_rounded,
                           color: Colors.orangeAccent,
@@ -26113,6 +25921,15 @@ class _ExamMarksEntryScreenState
                               FirebaseAuth.instance.currentUser?.email ??
                                   'Admin',
                         });
+                        final resultStatus=marks.values.every((m)=>m>=_passMarks)?'PASS':'FAIL';
+                        final isFinal=await SchoolPromotionService.isFinal(widget.exam);
+                        final total=marks.values.fold<double>(0,(a,b)=>a+b);
+                        final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
+                        await FirebaseFirestore.instance.collection('exam_results').doc('${_examId}_${doc.id}').set(resultData);
+                        if(isFinal){
+                          try{await SchoolPromotionService.apply(studentId:doc.id,student:student,exam:{...widget.exam,'isFinal':true},result:resultStatus);}
+                          catch(e){await FirebaseFirestore.instance.collection('students_directory').doc(doc.id).set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
+                        }
                         if (!ctx.mounted) return;
                         Navigator.pop(ctx, true);
                       } catch (e) {
@@ -26353,8 +26170,7 @@ class _ExamMarksEntryScreenState
                             if (reportUrl.isNotEmpty)
                               IconButton(
                                 tooltip: 'Report Card PDF',
-                                onPressed: () =>
-                                    html.window.open(reportUrl, '_blank'),
+                                onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result!))html.window.open(reportUrl, '_blank');}
                                 icon: const Icon(
                                     Icons.picture_as_pdf_rounded,
                                     color: Colors.orangeAccent),
@@ -26837,3 +26653,4 @@ class _WindowsMetricCard extends StatelessWidget{
   @override
   Widget build(BuildContext context)=>Expanded(child:Container(padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:const Color(0xFF111B21),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color:color,size:28),const SizedBox(width:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,style:const TextStyle(color:Colors.white54,fontSize:10)),const SizedBox(height:3),Text(value,style:TextStyle(color:color,fontSize:18,fontWeight:FontWeight.w900))])])));
 }
+

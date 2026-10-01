@@ -79,6 +79,7 @@ jobs:
           # Repository pubspec.yaml, Android and Website stay unchanged.
           $removePackages = @(
             'agora_rtc_engine',
+            'geolocator',
             'mobile_scanner',
             'firebase_core',
             'firebase_auth',
@@ -315,3 +316,4 @@ jobs:
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
             build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
+

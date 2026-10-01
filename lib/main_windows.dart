@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'windows_platform_client.dart';
+import 'windows_license_gate.dart';
 
 import 'package:flutter/material.dart';
 
@@ -26,6 +28,7 @@ Future<void> main() async {
   }
 
   windows_html.setSchoolStorageNamespace('local');
+  await WindowsPlatformClient.instance.initialize();
   runApp(const VidyaSaarthiWindowsApp());
 
   // App-level connection engine: Firebase + Google Drive/Apps Script become
@@ -57,7 +60,9 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
         ),
       ),
       builder: (context, child) {
-        return Listener(
+        return WindowsLicenseGate(
+          connectionBuilder: (_) => const WindowsStartupGate(child: AdvancedSettingsScreen()),
+          child: Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: (_) => windows_html.document.dispatchClick(),
           child: Stack(
@@ -67,6 +72,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
               ),
               const _WindowsGlobalUpdateProgress(),
             ],
+          ),
           ),
         );
       },

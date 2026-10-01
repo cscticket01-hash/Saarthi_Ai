@@ -26,6 +26,11 @@ class WindowsSyncEngine {
     'fee_payments',
     'fee_ledger',
     'fee_settings',
+    'school_settings',
+    'school_calendar',
+    'attendance_records',
+    'exam_results',
+    'teacher_salary',
   ];
 
   Timer? _periodicTimer;
@@ -1593,3 +1598,4 @@ class _ResolvedSyncProfile {
     );
   }
 }
+

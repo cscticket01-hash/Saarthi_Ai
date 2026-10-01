@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function developer() { return request.auth != null && (request.auth.token.admin == true || request.auth.token.developer == true); }
+    match /{document=**} { allow read, write: if developer(); }
+    // Clients call platformApi. It enforces developer, installation or school
+    // session identity and never trusts a schoolId supplied without proof.
+  }
+}
