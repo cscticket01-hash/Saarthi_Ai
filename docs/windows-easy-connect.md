@@ -1,8 +1,8 @@
 # Windows school Google Connect — unpublished preview
 
-This change adds an optional setup wizard in Advanced Settings. It does not alter
-startup, licensing, existing school connections, Android code, website code or
-backend source. Do not publish or merge until the live acceptance checks below
+This change adds an optional setup wizard in Advanced Settings. It preserves existing school connections, Android code, website code and
+backend source. This branch also contains the previously implemented offline
+startup and unrestricted licence Skip fixes. Do not publish or merge until the live acceptance checks below
 are completed with an authorized test school account.
 
 ## What this build does
@@ -57,8 +57,8 @@ unlimited quotas or fully automatic notification onboarding.
 
 ## One-time developer prerequisite
 
-A real **Desktop application OAuth client** is required. No OAuth client was
-supplied for this work, and no real Google account was used to provision resources.
+A real **Desktop application OAuth client** is required. The repository public Client ID is supplied by the developer. No real school
+Google account has yet been used here to provision resources.
 Without it, the wizard clearly displays “Developer setup is pending” and disables
 sign-in. It never claims to have connected anything.
 
@@ -76,16 +76,16 @@ Supply at Windows build time:
 --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=<desktop-client-id>
 ```
 
-Installed desktop clients are public clients: this optional Google-issued client
-secret is not a private service-account credential. No service-account private key
-belongs in the executable. Authentication uses system-browser OAuth, loopback
+Installed desktop clients are public clients. OAuth client secrets and
+service-account private keys are never compiled into this executable. Authentication uses system-browser OAuth, loopback
 127.0.0.1 with an ephemeral port, random state and PKCE S256. Privileged Google
 access tokens exist only in memory and are not sent to Apps Script or the developer
 website. No Google refresh token or Google password is saved. The generated
 per-school Firebase password/checkpoint is encrypted locally and cleared on reset.
 
-This draft intentionally does not add OAuth credentials to release workflows,
-change published releases, attach billing, or deploy Cloud Functions.
+Both Windows workflows pass only the public OAuth Client ID. This PR does not
+run the release workflow, change published releases, attach billing or deploy
+Cloud Functions.
 
 ## Verification and release gate
 
@@ -147,7 +147,7 @@ or deployment is performed by this PR workflow. Live Google token exchange must
 still be tested with the configured Desktop client; a successful compile does
 not prove consent or resource provisioning works.
 
-School steps: Advanced Settings → Connect School Cloud → enter school name,
+School steps: Advanced Settings → Connect Google Drive → Connect School Cloud → enter school name,
 choose India location and confirm new empty storage → sign in with the school
 Gmail account → grant access → follow any Firebase/Apps Script approval screen →
 Continue → wait for all verification statuses → Done. Selecting Connect Firebase
