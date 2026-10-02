@@ -9,6 +9,10 @@ import 'package:saarthi_ai/windows_connect/school_provisioner.dart';
 import 'package:saarthi_ai/windows_connect/school_backend_probe.dart';
 import 'package:saarthi_ai/windows_connect/easy_connect_screen.dart';
 
+// Use the base real HttpClient implementation for loopback only; all Google
+// endpoints use MockClient. A null override would retain the binding global.
+class LoopbackHttpOverrides extends HttpOverrides {}
+
 class MemoryCheckpoint implements SetupCheckpoint {
   MemoryCheckpoint([Map<String, dynamic>? initial]) : value = initial ?? {};
   Map<String, dynamic> value;
@@ -82,7 +86,7 @@ void main() {
     // Widget binding overrides HttpClient with a fake 400 response. This
     // integration uses only the real loopback listener; Google calls are mocked.
     final result = await HttpOverrides.runWithHttpOverrides(
-      () => auth.authorize(script: false), null);
+      () => auth.authorize(script: false), LoopbackHttpOverrides());
     expect(result.subject, 'school-owner');
     expect(result.email, 'school@gmail.com');
     auth.close();
@@ -102,7 +106,7 @@ void main() {
         } finally { browser.close(); }
       });
     try {
-      return await HttpOverrides.runWithHttpOverrides(() => auth.authorize(script: false), null);
+      return await HttpOverrides.runWithHttpOverrides(() => auth.authorize(script: false), LoopbackHttpOverrides());
     } finally { auth.close(); }
   }
 
@@ -184,6 +188,55 @@ void main() {
     expect(calls.join(), isNot(contains('initializeAuth')));
     expect(calls.join(), isNot(contains('billing')));
   });
+  test('Firebase setup creates private school resources and reuses a paginated registered app', () async {
+    final storage = MemoryCheckpoint(checkpoint());
+    final calls = <String>[];
+    final setup = provisioner(storage, MockClient((r) async {
+      calls.add('${r.method} ${r.url}');
+      if (r.url.host == 'cloudresourcemanager.googleapis.com') return json({
+        'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'test123'}, 'projectNumber': '123456'});
+      if (r.url.host == 'serviceusage.googleapis.com') {
+        expect(jsonDecode(r.body)['serviceIds'], contains('firebaserules.googleapis.com'));
+        return json({'done': true});
+      }
+      if (r.url.host == 'firestore.googleapis.com') {
+        if (r.method == 'GET') return json({}, 404);
+        final body = jsonDecode(r.body);
+        expect(body['deleteProtectionState'], 'DELETE_PROTECTION_ENABLED');
+        expect(body['locationId'], 'asia-south1');
+        return json({'done': true});
+      }
+      if (r.url.host == 'firebaserules.googleapis.com') {
+        if (r.method == 'GET') return json({}, 404);
+        final body = jsonDecode(r.body);
+        if (r.url.path.endsWith('/rulesets')) {
+          expect(body['source']['files'].single['content'], 'school-only-rules');
+          return json({'name': 'projects/$school/rulesets/private'});
+        }
+        expect(body['rulesetName'], 'projects/$school/rulesets/private');
+        return json({});
+      }
+      if (r.url.host == 'identitytoolkit.googleapis.com') {
+        if (r.method == 'PATCH') expect(r.url.queryParameters['updateMask'], 'signIn.email');
+        return json({});
+      }
+      if (r.url.path.endsWith(':addFirebase')) return json({'done': true});
+      if (r.url.path.endsWith('/webApps')) {
+        expect(r.method, 'GET');
+        if (!r.url.queryParameters.containsKey('pageToken')) return json({'nextPageToken': 'second'});
+        return json({'apps': [{'displayName': 'Vidya Saarthi test123', 'appId': 'existing-app'}]});
+      }
+      if (r.url.path.endsWith('/config')) return json({'projectId': school, 'apiKey': 'public-key'});
+      if (r.url.path.endsWith('/$school')) return json({}, 404);
+      fail('Unexpected request ${r.method} ${r.url}');
+    }));
+    await setup.begin(schoolName: '', location: '');
+    expect((await setup.firebase())['projectId'], school);
+    expect(storage.value['rulesReady'], isTrue);
+    expect(storage.value['webAppId'], 'existing-app');
+    expect(calls.join(), isNot(contains('billing')));
+  });
+
   test('Apps Script permission failure is resumable without duplicate project', () async {
     final storage = MemoryCheckpoint({...checkpoint(), 'firebaseConnected': true});
     final setup = provisioner(storage, MockClient((r) async {
@@ -291,6 +344,19 @@ void main() {
     }
   });
 
+  test('Unexpected newly created admin UID never receives an admin claim', () async {
+    final setup = provisioner(MemoryCheckpoint({...checkpoint(),
+      'firebaseConfig': {'projectId': school, 'apiKey': 'public-key'}}), MockClient((r) async {
+        if (r.url.host == 'cloudresourcemanager.googleapis.com') return json({
+          'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'test123'}, 'projectNumber': '123456'});
+        if (r.url.path.endsWith(':lookup')) return json({});
+        expect(r.url.path, endsWith(':signUp'));
+        return json({'localId': 'foreign-identity'});
+      }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.adminPassword(), throwsStateError);
+  });
+
   test('Unsaved backend identity and health verified through safe Google redirects', () async {
     var calls = 0;
     await verifySchoolBackend(Uri.parse('https://script.google.com/macros/s/school/exec'), school,
@@ -327,4 +393,14 @@ void main() {
     expect(find.text('Firebase: Not verified'), findsOneWidget);
     expect(find.text('Firestore: Not verified'), findsOneWidget);
   });
+  testWidgets('Drive preview never claims storage is ready before verification', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const MaterialApp(home: EasySchoolConnectScreen(googleDrive: true)));
+    expect(find.text('Google Drive: Not verified'), findsOneWidget);
+    expect(find.text('School storage: Not verified'), findsOneWidget);
+    expect(find.text('School storage: Ready'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
 }
