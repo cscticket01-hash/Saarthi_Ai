@@ -1,5 +1,6 @@
+import 'windows_ui_localization.dart';
 import 'dart:typed_data';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'package:http/http.dart' as http;
 import 'package:printing/printing.dart';
 import 'windows_local_firestore.dart';

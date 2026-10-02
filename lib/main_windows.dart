@@ -1,8 +1,10 @@
+import 'windows_ui_localization.dart';
 import 'dart:async';
 import 'windows_platform_client.dart';
 import 'windows_license_gate.dart';
 
-import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter/material.dart' hide Text, InputDecoration;
 
 import 'main_dashboard_screen_windows.dart';
 import 'windows_html_shim.dart' as windows_html;
@@ -48,13 +50,19 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return ValueListenableBuilder<String>(valueListenable: WindowsUiLanguage.changed,
+      builder: (context, language, _) => MaterialApp(
+      locale: Locale(language),
+      supportedLocales: const [Locale('en'), Locale('hi'), Locale('bn'), Locale('as')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       title: 'Vidya Saarthi',
       debugShowCheckedModeBanner: false,
 
       // Website main.dart ka theme intentionally same rakha gaya hai.
       theme: ThemeData(
         brightness: Brightness.dark,
+        fontFamily: 'Segoe UI',
+        fontFamilyFallback: const ['Nirmala UI', 'Arial'],
         scaffoldBackgroundColor: const Color(0xFF0B141A),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF1F2C34),
@@ -91,7 +99,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
               : const WindowsStartupGate(
                   child: WindowsLocalDashboardGate(),
                 ),
-    );
+    ));
   }
 }
 

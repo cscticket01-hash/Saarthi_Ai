@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   verify-rules:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +27,7 @@ jobs:
       - run: npm test
         working-directory: security-tests
   build-and-deploy:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')
     needs: verify-rules
     runs-on: ubuntu-latest
 

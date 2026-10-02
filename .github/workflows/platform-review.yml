@@ -41,10 +41,12 @@ jobs:
     - name: Analyze Windows school source
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_windows.dart lib/main_dashboard_screen_windows.dart
         lib/windows_school_operations.dart lib/windows_school_identity.dart lib/windows_platform_client.dart lib/windows_document_templates.dart
-        lib/windows_backend_bridge.dart
+        lib/windows_backend_bridge.dart lib/windows_admin_sidebar.dart lib/windows_ui_localization.dart lib/windows_ui_translations.dart lib/windows_preferences_reset.dart lib/windows_exam_service.dart lib/windows_notice_delivery.dart lib/windows_monthly_attendance.dart
         lib/windows_sync_engine.dart lib/windows_firebase_sync.dart lib/school_text_data.dart lib/school_backend_transport.dart
     - name: Verify documents and mobile school boundaries
       run: flutter test test/document_renderer_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/spark_license_test.dart test/github_update_test.dart
+    - name: Verify Windows portal regressions
+      run: flutter test test/windows_portal_test.dart
     - name: Build developer website
       run: flutter build web --release
     - uses: actions/upload-artifact@v4

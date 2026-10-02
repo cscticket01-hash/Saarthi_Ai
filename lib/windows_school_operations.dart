@@ -1,5 +1,6 @@
+import 'windows_ui_localization.dart';
 import 'dart:convert';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_local_firestore.dart';
 import 'windows_local_auth.dart';
 import 'windows_backend_bridge.dart';
