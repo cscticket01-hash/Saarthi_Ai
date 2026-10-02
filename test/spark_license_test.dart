@@ -13,6 +13,17 @@ void main(){
       if(trial) 'createdAt':{'timestampValue':'2026-09-26T00:00:00Z'},
     }}),200,headers:{'date':'Fri, 02 Oct 2026 04:00:00 GMT'})));
   final hash=List.filled(64,'a').join();
+  test('deleted central licences fail closed rather than becoming an offline network error',()async{
+    final c=SparkLicenseClient(client:MockClient((_)async=>http.Response('{}',404)));
+    final status=await c.schoolStatus('school-one',licenseHash:hash);
+    expect(status['allowed'],false); expect(status['status'],'blocked'); expect(status['licenseHash'],hash); c.close();
+  });
+  test('malformed central responses cannot activate a licence',()async{
+    for(final body in ['invalid','[]',jsonEncode({'fields':{'schoolId':{'stringValue':'school-one'},'revoked':{'booleanValue':false}}})]) {
+      final c=SparkLicenseClient(client:MockClient((_)async=>http.Response(body,200,headers:{'date':'Fri, 02 Oct 2026 04:00:00 GMT'})));
+      await expectLater(c.schoolStatus('school-one',licenseHash:hash),throwsA(isA<LicenseVerificationRejected>()));c.close();
+    }
+  });
   test('Windows verifies the actual school on the developer-controlled licence',()async{
     final c=client(school:'school-two');
     await expectLater(c.schoolStatus('school-one',licenseHash:hash),throwsStateError);c.close();

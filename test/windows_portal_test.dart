@@ -15,6 +15,8 @@ import '../lib/windows_exam_service.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_local_firestore.dart' as local;
 import '../lib/windows_preferences_reset.dart';
+import '../lib/windows_local_settings.dart';
+import '../lib/windows_sync_engine.dart';
 import '../lib/main_dashboard_screen_windows.dart';
 
 void main() {
@@ -159,9 +161,12 @@ void main() {
     await db.switchProfile(original);
     expect((await WindowsExamService.request({'action':'list_exam_center'}))['exams'], hasLength(1));
   });
-  test('settings reset preserves school data, offline work, credentials and trial identity', () async {
+  test('app reset removes passwords and links while preserving all school data and trial identity', () async {
     FlutterSecureStorage.setMockInitialValues({'vs_trial_start':'2026-09-30','vs_installation_id':'original-device',
-      'vs_license_cache':'existing-licence','vidya_saarthi_windows_admin_password_v1':'keep-password'});
+      'vs_license_cache':'existing-licence','vidya_saarthi_windows_admin_password_v1':'remove-password',
+      'vidya_saarthi_windows_admin_id_v1':'Old admin','vidya_saarthi_windows_section_password_v1_admin':'old-section'});
+    await WindowsLocalSecurity.initialize();
+    await WindowsExternalConnections.save(googleEmail:'example@gmail.com',googleScriptUrl:'https://script.google.com/macros/s/example/exec');
     final db = local.FirebaseFirestore.instance;
     final profile = db.activeProfileId;
     for (final collection in ['students_directory','teachers_directory','fee_payments','school_calendar','school_notices','_windows_exam_pending']) {
@@ -169,17 +174,22 @@ void main() {
     }
     await db.collection('school_settings').doc('document_templates').set({'studentId':3});
     await WindowsPreferencesReset.reset();
+    expect(db.activeProfileId, isNot(profile));
+    expect(WindowsLocalSecurity.configured, false);
+    expect(await WindowsExternalConnections.googleScriptUrl(), isEmpty);
+    await db.switchProfile(profile); // reconnecting the same profile restores it
     for (final collection in ['students_directory','teachers_directory','fee_payments','school_calendar','school_notices','_windows_exam_pending']) {
       expect((await db.collection(collection).doc('preserve').get()).data()?['keep'], true);
     }
     expect(db.activeProfileId, profile); expect(await WindowsRuntimeFlags.localStorageEnabled(), false);
-    expect((await db.collection('school_settings').doc('document_templates').get()).data(), isEmpty);
-    expect((await db.collection('school_settings').doc('promotion_policy').get()).data()?['allowForcedPromotion'], false);
+    expect((await db.collection('school_settings').doc('document_templates').get()).data()?['studentId'], 3);
     const secure = FlutterSecureStorage();
     expect(await secure.read(key:'vs_trial_start'),'2026-09-30');
     expect(await secure.read(key:'vs_installation_id'),'original-device');
-    expect(await secure.read(key:'vs_license_cache'),'existing-licence');
-    expect(await secure.read(key:'vidya_saarthi_windows_admin_password_v1'),'keep-password');
+    expect(await secure.read(key:'vs_license_cache'),isNull);
+    expect(await secure.read(key:'vidya_saarthi_windows_admin_password_v1'),isNull);
+    expect(await secure.read(key:'vidya_saarthi_windows_section_password_v1_admin'),isNull);
+    await WindowsSyncEngine.instance.pauseForAppReset();
   });
   test('offline publish never reports delivery or creates a notice', () async {
     await expectLater(WindowsPlatformClient.instance.publishNotice('unsent', {'title':'Example'}), throwsStateError);

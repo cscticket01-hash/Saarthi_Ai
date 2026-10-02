@@ -88,6 +88,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
         );
       },
       routes: {
+        '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
         '/local-login': (_) => const WindowsLocalLoginScreen(),
         '/dashboard': (_) => const WindowsLocalDashboardGate(),
       },

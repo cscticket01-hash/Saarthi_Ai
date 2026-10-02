@@ -230,24 +230,6 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
       }));
 }
 
-class TeacherSalaryPlaceholder extends StatelessWidget {
-  const TeacherSalaryPlaceholder({super.key});
-  @override
-  Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(title: const Text('Teacher salary')),
-      body: const Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.account_balance_wallet_outlined,
-            size: 58, color: Colors.purpleAccent),
-        SizedBox(height: 20),
-        Text('Teacher salary',
-            style: TextStyle(fontSize: 25, fontWeight: FontWeight.w700)),
-        SizedBox(height: 8),
-        Text('Salary setup will be added in the next update.',
-            style: TextStyle(color: Colors.white54))
-      ])));
-}
-
 class WindowsSupportScreen extends StatefulWidget {
   const WindowsSupportScreen({super.key});
   @override
@@ -386,10 +368,10 @@ class SchoolPromotionService {
           {...shared, 'classMovement': 'RETAINED'}, SetOptions(merge: true));
       return 'Retained in ${live['class']}';
     }
-    if (classNo >= 10) {
+    if (classNo >= 12) {
       await ref.set(
           {...shared, 'classMovement': 'GRADUATED'}, SetOptions(merge: true));
-      return 'Completed Class 10';
+      return 'Completed Class 12';
     }
     final newClass = 'Class ${classNo + 1}';
     final roll = live['rollNo']?.toString() ?? '';

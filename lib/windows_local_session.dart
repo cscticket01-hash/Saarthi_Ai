@@ -52,4 +52,9 @@ class WindowsLocalSession {
       flush: true,
     );
   }
+
+  static Future<void> resetAppSession() async {
+    _loggedOut = false;
+    if (await _file.exists()) await _file.delete();
+  }
 }

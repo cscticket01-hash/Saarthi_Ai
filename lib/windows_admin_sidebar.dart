@@ -20,7 +20,7 @@ class WindowsAdminSidebar extends StatelessWidget {
     (WindowsAdminPage.fees, 'Fees Collection', 'Collect fees, receipts & dues', Icons.payments_rounded, Colors.greenAccent),
     (WindowsAdminPage.exams, 'Exam Center', 'Marks, results & report cards', Icons.fact_check_rounded, Colors.orangeAccent),
     (WindowsAdminPage.teachers, 'Teachers', 'Directory, profiles & schedules', Icons.school_rounded, Colors.purpleAccent),
-    (WindowsAdminPage.salary, 'Teacher salary', 'Salary section', Icons.account_balance_wallet_rounded, Colors.purpleAccent),
+    (WindowsAdminPage.salary, 'Staff salary', 'Teachers, staff & workers', Icons.account_balance_wallet_rounded, Colors.purpleAccent),
     (WindowsAdminPage.support, 'App support', 'Report a Windows app problem', Icons.support_agent_rounded, Color(0xFF00D9A5)),
     (WindowsAdminPage.expenses, 'School Expenses', 'Expense entry, ledger & reports', Icons.account_balance_wallet_rounded, Colors.amberAccent),
     (WindowsAdminPage.attendance, 'Attendance', 'Student / teacher records & calendar', Icons.fact_check_rounded, Color(0xFF69C2FF)),

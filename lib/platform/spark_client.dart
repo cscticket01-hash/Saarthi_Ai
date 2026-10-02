@@ -3,6 +3,10 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'platform_config.dart';
 
+class LicenseVerificationRejected extends StateError {
+  LicenseVerificationRejected(super.message);
+}
+
 /// Independently verifies the developer-controlled status. A school owns its
 /// script, so a script's claimed expiry is never sufficient for Windows access.
 class SparkLicenseClient {
@@ -13,18 +17,29 @@ class SparkLicenseClient {
     final licensed=licenseHash!=null && licenseHash.isNotEmpty;
     if(licensed && !RegExp(r'^[a-f0-9]{64}$').hasMatch(licenseHash)) throw StateError('Invalid licence verification');
     final path=licensed?'platform_license_status/$licenseHash':'platform_school_trials/$project';
-    final r=await _client.get(Uri.parse('$platformFirestoreUrl/$path')).timeout(const Duration(seconds:15));
+    final r=await _client.get(Uri.parse('$platformFirestoreUrl/$path'),
+      headers: {'Cache-Control':'no-cache'}).timeout(const Duration(seconds:15));
+    if (licensed && r.statusCode == 404) {
+      return {'schoolId':project,'licenseHash':licenseHash,'expiresAt':0,'allowed':false,'status':'blocked'};
+    }
     if(r.statusCode!=200) throw StateError('Developer licence verification unavailable');
     final date=r.headers['date'];
     if(date==null) throw StateError('Licence server time unavailable');
     final now=HttpDate.parse(date).millisecondsSinceEpoch;
-    final fields=jsonDecode(r.body)['fields'];
-    if(licensed && fields['schoolId']?['stringValue']!=project) throw StateError('Licence belongs to a different school');
-    final end=DateTime.parse(licensed?fields['expiresAt']['timestampValue']:fields['createdAt']['timestampValue'])
-        .millisecondsSinceEpoch+(licensed?0:5*86400000);
+    dynamic decoded;
+    try { decoded = jsonDecode(r.body); }
+    on FormatException { throw LicenseVerificationRejected('Invalid developer licence response'); }
+    final fields=decoded is Map ? decoded['fields'] : null;
+    if (fields is! Map) throw LicenseVerificationRejected('Invalid developer licence response');
+    if(licensed && fields['schoolId']?['stringValue']!=project) throw LicenseVerificationRejected('Licence belongs to a different school');
+    if (licensed && fields['revoked']?['booleanValue'] is! bool) throw LicenseVerificationRejected('Incomplete developer licence response');
+    final timestamp = fields[licensed ? 'expiresAt' : 'createdAt'];
+    final expiry = timestamp is Map ? DateTime.tryParse(timestamp['timestampValue']?.toString() ?? '') : null;
+    if (expiry == null) throw LicenseVerificationRejected('Invalid developer licence expiry');
+    final end=expiry.millisecondsSinceEpoch+(licensed?0:5*86400000);
     final revoked=licensed && fields['revoked']?['booleanValue']==true;
     final status=revoked?'blocked':end<=now?'expired':licensed?'licensed':'trial';
-    return {'schoolId':project,'serverTime':now,'expiresAt':end,'allowed':!revoked&&end>now,'status':status};
+    return {'schoolId':project,if(licensed) 'licenseHash':licenseHash,'serverTime':now,'expiresAt':end,'allowed':!revoked&&end>now,'status':status};
   }
   void close()=>_client.close();
 }
