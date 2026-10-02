@@ -222,8 +222,8 @@ jobs:
       # =========================================================
       - name: Verify and deploy free central Firebase rules
         run: |
-          npm --prefix functions test
           npm --prefix functions install
+          npm --prefix functions test
           node .github/scripts/configure_platform_auth.cjs
           firebase deploy --project saarthi-ai-df12b --only firestore:rules
 
@@ -232,4 +232,3 @@ jobs:
           firebase deploy \
             --project saarthi-ai-df12b \
             --only hosting:vidyasaarthi
-

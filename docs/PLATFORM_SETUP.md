@@ -26,7 +26,7 @@ The existing deployment account needs Firestore rules/Hosting access and Firebas
 Authentication Admin if Anonymous sign-in is not enabled yet. Already-enabled
 Anonymous sign-in is verified through its public API without requiring config-read access. This
 changes only that provider; existing developer Email/Password accounts stay intact.
-If the account lacks Auth config access, enable Anonymous in Firebase Console and
+If the account lacks Auth config access, enable Anonymous in Firebase Console or
 grant the deployment account the stated role before retrying. School monitor
 accounts use the existing Email/Password provider and have no developer claim.
 

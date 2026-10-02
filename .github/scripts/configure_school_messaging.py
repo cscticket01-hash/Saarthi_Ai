@@ -13,6 +13,15 @@ namespace = re.search(r'namespace\s*(?:=\s*)?[\'"]([^\'"]+)', source)
 if not namespace:
     raise SystemExit('Android namespace is missing')
 namespace = namespace.group(1)
+# Production Flutter scaffolding creates Java; review scaffolding creates Kotlin.
+# Both languages share one JVM class name, so replace the generated activity.
+for activity in (app / 'src/main').rglob('MainActivity.*'):
+    if activity.suffix not in {'.java', '.kt'}:
+        continue
+    existing = activity.read_text()
+    package = re.search(r'^\s*package\s+([A-Za-z_][\w.]*)\s*;?\s*$', existing, re.M)
+    if package and package.group(1) == namespace and re.search(r'\bclass\s+MainActivity\b', existing):
+        activity.unlink()
 main = app / 'src/main/kotlin' / Path(*namespace.split('.')) / 'MainActivity.kt'
 main.parent.mkdir(parents=True, exist_ok=True)
 main.write_text(Path('.github/android/MainActivity.kt').read_text().replace('APP_NAMESPACE', namespace))

@@ -172,7 +172,9 @@ jobs:
     - name: Configure notification desugaring
       run: python .github/scripts/configure_android_notifications.py
     - name: Configure school-owned Firebase messaging
-      run: python .github/scripts/configure_school_messaging.py
+      run: |
+        python .github/scripts/test_school_messaging.py
+        python .github/scripts/configure_school_messaging.py
     - name: Use dedicated Android dependencies
       run: |
         python - <<'PY'
