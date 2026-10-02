@@ -145,7 +145,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     var role = 'Office staff';
     await _editor('Add staff member', (setDialog) => [
       TextField(controller: name, decoration: const InputDecoration(labelText: 'Staff name')),
-      DropdownButtonFormField<String>(initialValue: role, decoration: const InputDecoration(labelText: 'Role'),
+      DropdownButtonFormField<String>(isExpanded: true, initialValue: role, decoration: const InputDecoration(labelText: 'Role'),
         items: ['Office staff', 'Driver', 'Guard', 'Support staff', 'Other'].map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
         onChanged: (v) => setDialog(() => role = v!)),
       TextField(controller: designation, decoration: const InputDecoration(labelText: 'Designation')),
@@ -197,7 +197,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final paymentId = '${row['id']}:${DateTime.now().microsecondsSinceEpoch}';
     await _editor('Record payment • ${row['name']}', (setD) => [
       TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Amount', prefixText: '₹ ')),
-      DropdownButtonFormField<String>(initialValue: mode, items: ['Cash', 'Bank transfer', 'UPI', 'Cheque'].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(), onChanged: (v) => setD(() => mode = v!)),
+      DropdownButtonFormField<String>(isExpanded: true, initialValue: mode, items: ['Cash', 'Bank transfer', 'UPI', 'Cheque'].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(), onChanged: (v) => setD(() => mode = v!)),
       TextButton.icon(icon: const Icon(Icons.event), label: Text('${date.day}/${date.month}/${date.year}'), onPressed: () async {
         final selected = await showDatePicker(context: context, initialDate: date, firstDate: DateTime(2000), lastDate: DateTime.now());
         if (selected != null) setD(() => date = selected);
@@ -249,7 +249,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         if (_error != null) Padding(padding: const EdgeInsets.all(16), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
         const SizedBox(height: 16),
         Wrap(spacing: 16, runSpacing: 12, children: [SizedBox(width: 300, child: TextField(onChanged: (v) => setState(() => _search = v), decoration: const InputDecoration(labelText: 'Search staff', prefixIcon: Icon(Icons.search)))),
-          SizedBox(width: 210, child: DropdownButtonFormField<String>(initialValue: _role, decoration: const InputDecoration(labelText: 'Role'),
+          SizedBox(width: 210, child: DropdownButtonFormField<String>(isExpanded: true, initialValue: _role, decoration: const InputDecoration(labelText: 'Role'),
             items: ['All staff', 'Teacher', 'Office staff', 'Driver', 'Guard', 'Support staff', 'Other'].map((r) => DropdownMenuItem(value:r,child:Text(r))).toList(), onChanged: (v) => setState(() => _role = v!))) ]),
         const SizedBox(height: 20),
         if (people.isEmpty) const Padding(padding: EdgeInsets.all(30), child: Text('No staff found. Add a teacher in Teachers, or add a staff member here.')),
