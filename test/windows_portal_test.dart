@@ -203,10 +203,16 @@ void main() {
     expect(months.every((m)=>m==0),isTrue);
   });
   testWidgets('Exam Center shows creation tools without Firebase or Google', (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: ExamCenterScreen()));
-    for (var i=0;i<10;i++) {
-      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds:50)));
-      await tester.pump();
+    await tester.binding.setSurfaceSize(const Size(1600,1800));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    await tester.runAsync(() async {
+      await tester.pumpWidget(const MaterialApp(home: ExamCenterScreen()));
+      await Future<void>.delayed(const Duration(milliseconds:250));
+    });
+    for (var i=0;i<30;i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds:30)));
+      await tester.pump(const Duration(milliseconds:30));
+      if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
     }
     expect(find.text('Create Exam'), findsWidgets);
     expect(find.textContaining('Remote school connection ready nahi hai'), findsNothing);
@@ -220,10 +226,14 @@ void main() {
       await db.collection('fee_payments').doc('jan').set({'amount':500,'timestamp':DateTime(DateTime.now().year,1,10).millisecondsSinceEpoch});
       await db.collection('fee_payments').doc('feb').set({'amount':900,'timestamp':DateTime(DateTime.now().year,2,10).millisecondsSinceEpoch});
     });
-    await tester.pumpWidget(const MaterialApp(home:AdminAnalyticsScreen()));
-    for(var i=0;i<12;i++) {
-      await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:50)));
-      await tester.pump();
+    await tester.runAsync(() async {
+      await tester.pumpWidget(const MaterialApp(home:AdminAnalyticsScreen()));
+      await Future<void>.delayed(const Duration(milliseconds:250));
+    });
+    for(var i=0;i<30;i++) {
+      await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:30)));
+      await tester.pump(const Duration(milliseconds:30));
+      if (find.byType(LinearProgressIndicator).evaluate().isEmpty) break;
     }
     await tester.pumpAndSettle();
     final menus=find.byType(PopupMenuButton<int>);
