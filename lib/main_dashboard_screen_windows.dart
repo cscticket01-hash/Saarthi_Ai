@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'windows_admin_sidebar.dart';
+import 'windows_monthly_attendance.dart';
 import 'windows_exam_service.dart';
 import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
@@ -1562,7 +1563,8 @@ class _ExamCenterDataCache {
 
     try {
       final value = await future;
-      if (_profile == profile) snapshot = value;
+      if (_profile != profile) throw StateError('School changed. Refresh the exam screen.');
+      snapshot = value;
       return value;
     } finally {
       if (_profile == profile) _inFlight = null;
@@ -9485,6 +9487,11 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       'admissionDate',
     ];
 
+    for (final key in candidates.where((k) => k != 'month')) {
+      final date = _analyticsDate(data[key]);
+      if (date == null) continue;
+      return WindowsAcademicYearSettings.startYear(date, _academicYearRolloverMonth) == _selectedYear ? date.month - 1 : null;
+    }
     for (final key in candidates) {
       final value = data[key];
       if (value == null) continue;
@@ -9638,6 +9645,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         _analyticsGet('teachers_directory'),
         _analyticsGet('fee_payments'),
         _analyticsGet('fee_ledger'),
+        _analyticsGet('attendance_records'),
+        _analyticsGet('school_calendar'),
       ]);
 
       final rawStudents = snapshots[0]?.docs
@@ -9783,6 +9792,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         if (month != null) admissionsByMonth[month]++;
       }
 
+      final attendanceRecords = snapshots[4]?.docs.map((d) => d.data()).toList() ?? <Map<String, dynamic>>[];
+      final calendar = snapshots[5]?.docs.map((d) => {'date': d.id, ...d.data()}).toList() ?? <Map<String, dynamic>>[];
+      final monthlyAttendance = windowsMonthlyAttendance(records: attendanceRecords, calendar: calendar,
+        role: 'student', people: students.length, startYear: _selectedYear,
+        rolloverMonth: _academicYearRolloverMonth, today: DateTime.now());
+
       final result = _AdminAnalyticsData(
         totalStudents: students.length,
         totalTeachers: teachers.length,
@@ -9792,11 +9807,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         failStudents: failStudents,
         studentAttendance: studentAttendance,
         teacherAttendance: teacherAttendance,
-        attendanceTrend: _analyticsAttendanceTrend(
-          students,
-          studentAttendance,
-          const ['attendanceHistory', 'monthlyAttendance', 'attendanceByMonth'],
-        ),
+        attendanceTrend: attendanceRecords.isNotEmpty ? monthlyAttendance : _analyticsAttendanceTrend(
+          students, studentAttendance, const ['attendanceHistory', 'monthlyAttendance', 'attendanceByMonth']),
         feesByMonth: feesByMonth,
         expensesByMonth: expensesByMonth,
         passFailByMonth: passFailByMonth,
@@ -25233,6 +25245,7 @@ class _ExamMarksEntryScreenState
     String? dialogError;
     bool saving = false;
 
+    var savedOffline = false;
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -25348,8 +25361,13 @@ class _ExamMarksEntryScreenState
                       });
 
                       try {
-                        await _post({
+                        final resultStatus=marks.values.every((m)=>m>=_passMarks)?'PASS':'FAIL';
+                        final isFinal=await SchoolPromotionService.isFinal(widget.exam);
+                        final total=marks.values.fold<double>(0,(a,b)=>a+b);
+                        final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
+                        final savedResult = await _post({
                           'action': 'save_exam_result',
+                          ...resultData,
                           'examId': _examId,
                           'studentId': doc.id,
                           'studentName':
@@ -25361,11 +25379,8 @@ class _ExamMarksEntryScreenState
                               FirebaseAuth.instance.currentUser?.email ??
                                   'Admin',
                         });
-                        final resultStatus=marks.values.every((m)=>m>=_passMarks)?'PASS':'FAIL';
-                        final isFinal=await SchoolPromotionService.isFinal(widget.exam);
-                        final total=marks.values.fold<double>(0,(a,b)=>a+b);
-                        final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
                         await FirebaseFirestore.instance.collection('exam_results').doc('${_examId}_${doc.id}').set(resultData);
+                        savedOffline = savedResult['windowsLocalFallback'] == true;
                         if(isFinal){
                           try{await SchoolPromotionService.apply(studentId:doc.id,student:student,exam:{...widget.exam,'isFinal':true},result:resultStatus);}
                           catch(e){await FirebaseFirestore.instance.collection('students_directory').doc(doc.id).set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
@@ -25406,10 +25421,10 @@ class _ExamMarksEntryScreenState
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
+        SnackBar(
+          backgroundColor: const Color(0xFF00A884),
           content: Text(
-              'Marks saved aur report card Google Drive me generate ho gaya.'),
+              savedOffline ? 'Marks saved offline. Google report card generation is pending school connection.' : 'Marks saved aur report card Google Drive me generate ho gaya.'),
         ),
       );
     }

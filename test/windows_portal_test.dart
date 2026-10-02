@@ -9,6 +9,7 @@ import '../lib/windows_admin_sidebar.dart';
 import '../lib/windows_license_gate.dart';
 import '../lib/windows_platform_client.dart';
 import '../lib/windows_notice_delivery.dart';
+import '../lib/windows_monthly_attendance.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_exam_service.dart';
 import '../lib/windows_runtime_flags.dart';
@@ -174,4 +175,66 @@ void main() {
     expect(await secure.read(key:'vs_license_cache'),'existing-licence');
     expect(await secure.read(key:'vidya_saarthi_windows_admin_password_v1'),'keep-password');
   });
+  test('offline publish never reports delivery or creates a notice', () async {
+    await expectLater(WindowsPlatformClient.instance.publishNotice('unsent', {'title':'Example'}), throwsStateError);
+    expect((await local.FirebaseFirestore.instance.collection('school_notices').get()).docs, isEmpty);
+  });
+  test('monthly attendance honours closures, duplicates, role and future days', () {
+    final january = windowsMonthlyAttendance(records: [
+      {'date':'2026-01-01','role':'student','personId':'s1','checkIn':1},
+      {'date':'2026-01-01','role':'student','personId':'s1','checkIn':2,'checkOut':3},
+      {'date':'2026-01-02','role':'student','personId':'s1','checkIn':1},
+      {'date':'2026-01-01','role':'teacher','personId':'t1','checkIn':1},
+      {'date':'2026-02-01','role':'student','personId':'s1','checkIn':1},
+    ], calendar:[{'date':'2026-01-02','isOpen':false}], role:'student', people:1,
+      startYear:2026, rolloverMonth:1, today:DateTime(2026,1,2));
+    expect(january[0],100); expect(january[1],0);
+  });
+  test('April academic year includes next January but excludes the previous January', () {
+    final months = windowsMonthlyAttendance(records: [
+      {'date':'2027-01-01','role':'student','personId':'s1','checkIn':1},
+      {'date':'2026-01-01','role':'student','personId':'s1','checkIn':1},
+    ], calendar:[], role:'student', people:1, startYear:2026, rolloverMonth:4, today:DateTime(2027,1,1));
+    expect(months[0],100);
+  });
+  test('monthly attendance does not invent attendance without check-ins or people', () {
+    final months = windowsMonthlyAttendance(records:[],calendar:[],role:'student',people:0,
+      startYear:2026,rolloverMonth:1,today:DateTime(2026,10,2));
+    expect(months.every((m)=>m==0),isTrue);
+  });
+  testWidgets('Exam Center shows creation tools without Firebase or Google', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: ExamCenterScreen()));
+    for (var i=0;i<10;i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds:50)));
+      await tester.pump();
+    }
+    expect(find.text('Create Exam'), findsWidgets);
+    expect(find.textContaining('Remote school connection ready nahi hai'), findsNothing);
+    expect(tester.takeException(),isNull);
+  });
+  testWidgets('monthly analytics filters show distinct real fee values', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1800,2200));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    await tester.runAsync(() async {
+      final db=local.FirebaseFirestore.instance;
+      await db.collection('fee_payments').doc('jan').set({'amount':500,'timestamp':DateTime(DateTime.now().year,1,10).millisecondsSinceEpoch});
+      await db.collection('fee_payments').doc('feb').set({'amount':900,'timestamp':DateTime(DateTime.now().year,2,10).millisecondsSinceEpoch});
+    });
+    await tester.pumpWidget(const MaterialApp(home:AdminAnalyticsScreen()));
+    for(var i=0;i<12;i++) {
+      await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:50)));
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+    final menus=find.byType(PopupMenuButton<int>);
+    expect(menus, findsNWidgets(5));
+    await tester.tap(menus.at(1)); await tester.pumpAndSettle();
+    await tester.tap(find.text('Jan ${DateTime.now().year}')); await tester.pumpAndSettle();
+    expect(find.text('Jan: ₹500'),findsOneWidget);
+    await tester.tap(menus.at(1)); await tester.pumpAndSettle();
+    await tester.tap(find.text('Feb ${DateTime.now().year}')); await tester.pumpAndSettle();
+    expect(find.text('Feb: ₹900'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
 }

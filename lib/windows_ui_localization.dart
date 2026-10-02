@@ -33,6 +33,9 @@ class WindowsUiLanguage {
     }
     // Preserve leading error details while translating the UI explanation.
     if (value.startsWith('Bad state: ')) return translate(value.substring(11));
+    for (final separator in const [' • ', ': ', '\n']) {
+      if (value.contains(separator)) return value.split(separator).map(translate).join(separator);
+    }
     return value;
   }
 }
@@ -58,20 +61,20 @@ class Text extends m.StatelessWidget {
     this.selectionColor });
   final String data;
   final bool translate;
-  final m.TextStyle style;
+  final m.TextStyle? style;
   final m.StrutStyle? strutStyle;
   final m.TextAlign? textAlign;
   final m.TextDirection? textDirection;
   final m.Locale? locale;
-  final bool softWrap;
-  final m.TextOverflow overflow;
+  final bool? softWrap;
+  final m.TextOverflow? overflow;
   final double? textScaleFactor;
   final m.TextScaler? textScaler;
   final int? maxLines;
   final String? semanticsLabel;
   final String? semanticsIdentifier;
-  final m.TextWidthBasis textWidthBasis;
-  final m.TextHeightBehavior textHeightBehavior;
+  final m.TextWidthBasis? textWidthBasis;
+  final m.TextHeightBehavior? textHeightBehavior;
   final m.Color? selectionColor;
   @override
   m.Widget build(m.BuildContext context) => m.ValueListenableBuilder<String>(

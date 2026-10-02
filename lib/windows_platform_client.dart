@@ -299,9 +299,11 @@ class WindowsPlatformClient {
   }
 
   Future<void> _relayNotices() async {
+    final profile = FirebaseFirestore.instance.activeProfileId;
     final list =
         await FirebaseFirestore.instance.collection('school_notices').get();
     for (final doc in list.docs) {
+      if (FirebaseFirestore.instance.activeProfileId != profile) return;
       if (_sentNotices.contains(doc.id)) continue;
       final d = doc.data();
       // Old local saves and drafts are never silently advertised as sent.
@@ -327,6 +329,7 @@ class WindowsPlatformClient {
         'title': d['title'] ?? 'School notice',
         'message': d['description'] ?? d['message'] ?? ''
       });
+      if (FirebaseFirestore.instance.activeProfileId != profile) return;
       if (response['sent'] != true) continue;
       await doc.reference.update({'deliveryStatus': 'sent'});
       _sentNotices.add(doc.id);
@@ -334,6 +337,7 @@ class WindowsPlatformClient {
   }
 
   Future<WindowsNoticeDelivery> publishNotice(String id, Map<String, dynamic> data) async {
+    final profile = FirebaseFirestore.instance.activeProfileId;
     final remote = await WindowsFirebaseRemote.status();
     if (!remote.authenticated || remote.projectId.isEmpty) {
       throw StateError('Notice not sent. Connect and verify this school Firebase and Google Script first.');
@@ -343,6 +347,7 @@ class WindowsPlatformClient {
       projectId: remote.projectId, idToken: token, collection: 'students_directory');
     final users = await WindowsFirebaseRemote.readCollection(
       projectId: remote.projectId, idToken: token, collection: 'mobile_users');
+    if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Retry notice publication.');
     final recipients = schoolNoticeRecipients(roster.values, users.values);
     if (recipients == 0) {
       throw StateError('Notice not sent. No students with an issued ID-card QR have registered in this school student app.');
@@ -353,10 +358,12 @@ class WindowsPlatformClient {
       'deliveryStatus': 'notification_pending'};
     await WindowsFirebaseRemote.writeDocument(projectId: remote.projectId,
       idToken: token, collection: 'school_notices', documentId: id, data: payload);
+    if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Retry notice publication.');
     await FirebaseFirestore.instance.collection('school_notices').doc(id).set(payload);
     try {
       final sent = await call('school/notice', {'projectId': remote.projectId, 'noticeId': id});
       if (sent['sent'] != true) throw StateError('School notification was not acknowledged.');
+      if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Check notice status in the original school.');
       _sentNotices.add(id);
       await FirebaseFirestore.instance.collection('school_notices').doc(id).update({'deliveryStatus': 'sent'});
       return WindowsNoticeDelivery(notificationSent: true, recipients: recipients);
