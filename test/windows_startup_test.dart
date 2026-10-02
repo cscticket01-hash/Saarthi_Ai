@@ -194,7 +194,7 @@ void main() {
     WindowsPlatformClient.instance.state.value = WindowsLicenseState(
       allowed: true, status: 'licensed', expiresAt: DateTime.now().add(const Duration(days: 1)),
     );
-    await tester.pumpWidget(const MaterialApp(home: WindowsLicenseGate(child: TextField())));
+    await tester.pumpWidget(const MaterialApp(home: WindowsLicenseGate(child: Scaffold(body: TextField()))));
     await tester.pump();
     await tester.enterText(find.byType(TextField), 'Unsaved school work');
     WindowsPlatformClient.instance.state.value = WindowsLicenseState(
