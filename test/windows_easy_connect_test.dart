@@ -1,0 +1,197 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:saarthi_ai/windows_connect/google_authorization.dart';
+import 'package:saarthi_ai/windows_connect/school_provisioner.dart';
+import 'package:saarthi_ai/windows_connect/school_backend_probe.dart';
+import 'package:saarthi_ai/windows_connect/easy_connect_screen.dart';
+
+class MemoryCheckpoint implements SetupCheckpoint {
+  MemoryCheckpoint([Map<String, dynamic>? initial]) : value = initial ?? {};
+  Map<String, dynamic> value;
+  @override
+  Future<Map<String, dynamic>> read() async => Map.of(value);
+  @override
+  Future<void> write(Map<String, dynamic> data) async { value = Map.of(data); }
+}
+const school = 'vs-school-test123';
+const account = GoogleSetupAccount('google-sub-1', 'school@gmail.com', 'private-token');
+Map<String, dynamic> checkpoint() => {
+  'accountSub': account.subject, 'email': account.email, 'projectId': school,
+  'nonce': 'test123', 'projectNumber': '123456', 'location': 'asia-south1',
+};
+http.Response json(Object value, [int status = 200]) => http.Response(jsonEncode(value), status);
+SchoolProvisioner provisioner(MemoryCheckpoint storage, http.Client client) => SchoolProvisioner(
+  api: GoogleSetupApi(account.accessToken, client: client), account: account,
+  checkpoint: storage, progress: (_) {}, bundle: {'rules': 'school-only-rules', 'files': []});
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test('PKCE matches RFC 7636 S256 vector', () {
+    expect(GoogleAuthorization.challenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'),
+      'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
+  });
+  test('OAuth callback rejects missing, duplicate and conflicting state/code', () {
+    expect(GoogleAuthorization.validCallback(Uri.parse('/oauth2/callback?state=abc&code=ok'), 'abc'), isTrue);
+    for (final query in ['state=wrong&code=ok', 'state=abc&state=abc&code=ok',
+      'state=abc&code=one&code=two', 'state=abc&code=', 'state=abc&code=ok&error=denied', 'code=ok']) {
+      expect(GoogleAuthorization.validCallback(Uri.parse('/oauth2/callback?$query'), 'abc'), isFalse);
+    }
+    expect(GoogleAuthorization.validCallback(Uri.parse('/other?state=abc&code=ok'), 'abc'), isFalse);
+  });
+  test('OAuth browser failure cleans listener and is retryable', () async {
+    final auth = GoogleAuthorization(oauthClientId: 'test.apps.googleusercontent.com',
+      openBrowser: (_) async => throw StateError('browser unavailable'));
+    await expectLater(auth.authorize(script: true), throwsStateError);
+    await expectLater(auth.authorize(script: true), throwsStateError);
+    auth.close();
+  });
+  test('OAuth cancellation completes cleanly', () async {
+    late GoogleAuthorization auth;
+    auth = GoogleAuthorization(oauthClientId: 'test.apps.googleusercontent.com',
+      openBrowser: (_) async { auth.cancel(); });
+    await expectLater(auth.authorize(script: false), throwsA(isA<SetupCancelled>()));
+    auth.close();
+  });
+  test('OAuth exchanges PKCE and accepts only verified account with granted scopes', () async {
+    late String verifierChallenge;
+    final client = MockClient((r) async {
+      if (r.url.host == 'oauth2.googleapis.com') {
+        final form = Uri.splitQueryString(r.body);
+        expect(GoogleAuthorization.challenge(form['code_verifier']!), verifierChallenge);
+        expect(form['code'], 'approved-code');
+        return json({'access_token': 'access-only', 'scope': 'openid email https://www.googleapis.com/auth/cloud-platform'});
+      }
+      expect(r.headers['Authorization'], 'Bearer access-only');
+      return json({'sub': 'school-owner', 'email': 'school@gmail.com', 'email_verified': true});
+    });
+    final auth = GoogleAuthorization(client: client, oauthClientId: 'test.apps.googleusercontent.com',
+      openBrowser: (uri) async {
+        verifierChallenge = uri.queryParameters['code_challenge']!;
+        expect(uri.queryParameters['code_challenge_method'], 'S256');
+        expect(uri.queryParameters['access_type'], 'online');
+        final callback = Uri.parse(uri.queryParameters['redirect_uri']!).replace(queryParameters: {
+          'state': uri.queryParameters['state']!, 'code': 'approved-code'});
+        final browser = HttpClient();
+        try { final response = await (await browser.getUrl(callback)).close(); await response.drain<void>(); }
+        finally { browser.close(); }
+      });
+    final result = await auth.authorize(script: false);
+    expect(result.subject, 'school-owner');
+    expect(result.email, 'school@gmail.com');
+    auth.close();
+  });
+  test('Google API tokens never follow redirects or reach untrusted hosts', () async {
+    var calls = 0;
+    final api = GoogleSetupApi('secret', client: MockClient((r) async {
+      calls++;
+      expect(r.followRedirects, isFalse);
+      return http.Response('private-error-body', 302, headers: {'location': 'https://evil.test'});
+    }));
+    await expectLater(api.request('GET', 'https://evil.test'), throwsStateError);
+    expect(calls, 0);
+    await expectLater(api.request('GET', 'https://firebase.googleapis.com/v1beta1/projects/x'),
+      throwsA(isA<SetupApiError>().having((e) => e.toString(), 'sanitized', isNot(contains('private-error-body')))));
+    expect(calls, 1);
+    api.close();
+    await expectLater(api.request('GET', 'https://firebase.googleapis.com/v1beta1/projects/x'), throwsA(isA<SetupCancelled>()));
+  });
+  test('Checkpoint cannot resume under another Google account', () async {
+    final storage = MemoryCheckpoint({...checkpoint(), 'accountSub': 'another-owner'});
+    final setup = provisioner(storage, MockClient((_) async => fail('No cloud request allowed')));
+    await expectLater(setup.begin(schoolName: '', location: ''), throwsStateError);
+  });
+  test('Existing unmarked project is never modified', () async {
+    final setup = provisioner(MemoryCheckpoint(checkpoint()), MockClient((r) async {
+      expect(r.method, 'GET');
+      return json({'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'another-school'}});
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.ensureProject(), throwsStateError);
+  });
+  test('Authentication initialization asks for Google approval, never enables billing', () async {
+    final calls = <String>[];
+    final setup = provisioner(MemoryCheckpoint({...checkpoint(), 'servicesReady': true, 'rulesReady': true}),
+      MockClient((r) async {
+        calls.add('${r.method} ${r.url}');
+        if (r.url.host == 'cloudresourcemanager.googleapis.com') {
+          return json({'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'test123'}, 'projectNumber': '123456'});
+        }
+        if (r.url.host == 'firestore.googleapis.com') return json({'name': 'default'});
+        if (r.url.host == 'identitytoolkit.googleapis.com') return json({}, 404);
+        fail('Unexpected request ${r.url}');
+      }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.firebase(), throwsA(isA<SetupActionRequired>()
+      .having((e) => e.url.path, 'Firebase console', contains('/authentication'))));
+    expect(calls.every((c) => c.startsWith('GET ')), isTrue);
+    expect(calls.join(), isNot(contains('initializeAuth')));
+    expect(calls.join(), isNot(contains('billing')));
+  });
+  test('Apps Script permission failure is resumable without duplicate project', () async {
+    final storage = MemoryCheckpoint({...checkpoint(), 'firebaseConnected': true});
+    final setup = provisioner(storage, MockClient((r) async {
+      if (r.method == 'GET') return json({'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'test123'}, 'projectNumber': '123456'});
+      return json({}, 403);
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.prepareScript(), throwsA(isA<SetupActionRequired>()));
+    expect(storage.value['scriptCreatePending'], isNull);
+  });
+  test('Uncertain script creation is not duplicated on retry', () async {
+    final setup = provisioner(MemoryCheckpoint({...checkpoint(), 'firebaseConnected': true, 'scriptCreatePending': true}),
+      MockClient((r) async {
+        expect(r.method, 'GET');
+        return json({'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'test123'}, 'projectNumber': '123456'});
+      }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.prepareScript(), throwsA(isA<SetupActionRequired>()));
+  });
+  test('Resume discovers owner-approved manual script deployment without creating another', () async {
+    final storage = MemoryCheckpoint({...checkpoint(), 'scriptId': 'script-1'});
+    final setup = provisioner(storage, MockClient((r) async {
+      expect(r.method, 'GET');
+      return json({'deployments': [{'deploymentConfig': {'description': 'School manually approved'},
+        'entryPoints': [{'entryPointType': 'WEB_APP', 'webApp': {
+          'url': 'https://script.google.com/macros/s/deployment/exec',
+          'entryPointConfig': {'executeAs': 'USER_DEPLOYING', 'access': 'ANYONE_ANONYMOUS'}}}]}]});
+    }));
+    await setup.begin(schoolName: '', location: '');
+    expect(await setup.deployScript(), 'https://script.google.com/macros/s/deployment/exec');
+    expect(storage.value['scriptUrl'], contains('/exec'));
+  });
+  test('Unsaved backend identity and health verified through safe Google redirects', () async {
+    var calls = 0;
+    await verifySchoolBackend(Uri.parse('https://script.google.com/macros/s/school/exec'), school,
+      client: MockClient((r) async {
+        calls++;
+        expect(r.headers.containsKey('Authorization'), isFalse);
+        expect(r.followRedirects, isFalse);
+        if (r.method == 'POST') return http.Response('', 302,
+          headers: {'location': 'https://script.googleusercontent.com/macros/echo?test=1'});
+        if (r.url.host == 'script.googleusercontent.com') return json({'success': true, 'projectId': school, 'windowsAdminProtection': true});
+        return json({'success': true, 'working': true, 'rootFolderAccessible': true});
+      }));
+    expect(calls, 3);
+  });
+  test('Wrong school, unsafe redirects and false health cannot connect', () async {
+    final uri = Uri.parse('https://script.google.com/macros/s/school/exec');
+    for (final bad in [json({'success': true, 'projectId': 'other-school', 'windowsAdminProtection': true}),
+      http.Response('', 302, headers: {'location': 'https://evil.test/'})]) {
+      await expectLater(verifySchoolBackend(uri, school, client: MockClient((_) async => bad)), throwsStateError);
+    }
+    await expectLater(verifySchoolBackend(uri, school, client: MockClient((r) async => r.method == 'POST'
+      ? json({'success': true, 'projectId': school, 'windowsAdminProtection': true})
+      : json({'success': true, 'working': false, 'rootFolderAccessible': false}))), throwsStateError);
+  });
+  testWidgets('Unconfigured preview explains developer prerequisite and disables sign-in', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: EasySchoolConnectScreen()));
+    expect(find.textContaining('Developer setup is pending'), findsOneWidget);
+    final signIn = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Sign in with Google / Resume setup'));
+    expect(signIn.onPressed, isNull);
+    expect(find.textContaining('No billing account'), findsOneWidget);
+  });
+}

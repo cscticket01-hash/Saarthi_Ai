@@ -1,0 +1,121 @@
+# Windows school Google Connect — unpublished preview
+
+This change adds an optional setup wizard in Advanced Settings. It does not alter
+startup, licensing, existing school connections, Android code, website code or
+backend source. Do not publish or merge until the live acceptance checks below
+are completed with an authorized test school account.
+
+## What this build does
+
+Two entry buttons: **Connect Google Drive** and **Connect Firebase**. Drive setup
+also prepares Firebase first, so both links always belong to the same school.
+The administrator confirms new empty school storage, chooses Mumbai/Delhi, signs
+in to their school Gmail in the system browser and grants permissions.
+
+The wizard creates a new, labelled Google project, adds Firebase, enables the
+required APIs, creates the default Firestore database, applies the repository's
+school rules, enables password sign-in after Google's initial Auth setup, creates
+a dedicated school admin credential and verifies actual Firestore access. The
+school configuration is filled automatically; no URL copying is required.
+
+For Drive it creates a school-owned Apps Script project, uploads an asset generated
+from the canonical school backend, creates a version/deployment, discovers the
+web-app URL and verifies school identity, admin protection and accessible storage
+before saving the connection. It uses the existing school-isolation/sync engine.
+No local fallback can falsely satisfy setup verification.
+
+Progress is encrypted in Windows secure storage and bound to the Google account's
+stable subject ID. Retry resumes that account's project. Cancel stops requests;
+it does not delete resources already created. Uncertain non-idempotent script
+creation stops for recovery instead of blindly creating a duplicate. App reset
+clears the local setup checkpoint under the existing reset prefix, but never
+deletes school cloud resources. **After reset, connect existing resources through
+manual settings; starting a new setup does not recover an old cloud project.**
+
+## Honest limits: this is guided setup, not silent provisioning
+
+Google may require first-time terms acceptance, permission grants or quota checks.
+The app cannot approve these for the school.
+
+1. Each account must enable Apps Script API access in its Google user settings.
+   The wizard opens the exact page if access is denied.
+2. Firebase Authentication may require **Get started** in Firebase Console. The
+   wizard does not call billing-only `initializeAuth` or upgrade the project.
+3. The school opens its generated script, selects `VS_easyConnectSetup`, clicks
+   **Run**, and grants script permissions. The generated helper supplies project
+   IDs and API keys, so no code editing/copying is needed. It prepares only the
+   explicitly confirmed new school folder. Return to the app and click Continue.
+4. If Google does not expose a web-app entry point from API deployment, the owner
+   must deploy once as Web app / execute as owner / access Anyone. The app then
+   discovers that URL automatically. Organization policies can prohibit this.
+
+This first preview supports school **Gmail** accounts and **new empty cloud
+setups**. Existing cloud data migration, Workspace/domain accounts, recovery after
+reset, Android Firebase app/FCM registration and messaging triggers are not
+automated here. Existing setup paths remain intact. There is no promise of
+unlimited quotas or fully automatic notification onboarding.
+
+## One-time developer prerequisite
+
+A real **Desktop application OAuth client** is required. No OAuth client was
+supplied for this work, and no real Google account was used to provision resources.
+Without it, the wizard clearly displays “Developer setup is pending” and disables
+sign-in. It never claims to have connected anything.
+
+Create/configure the Google OAuth consent application with Cloud Resource Manager,
+Service Usage, Firebase Management, Firestore, Firebase Rules, Identity Toolkit and
+Apps Script APIs enabled as appropriate in the OAuth application's project.
+Configure the requested scopes: `openid`, `email`, `cloud-platform`,
+`script.projects`, `script.deployments`. Complete Google's consent/verification
+requirements before external school rollout; testing-mode accounts must be
+explicitly allowed. These permissions are powerful: disclose them to schools.
+
+Supply at Windows build time:
+
+```
+--dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=<desktop-client-id>
+--dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET=<desktop-client-secret-if-required>
+```
+
+Installed desktop clients are public clients: this optional Google-issued client
+secret is not a private service-account credential. No service-account private key
+belongs in the executable. Authentication uses system-browser OAuth, loopback
+127.0.0.1 with an ephemeral port, random state and PKCE S256. Privileged Google
+access tokens exist only in memory and are not sent to Apps Script or the developer
+website. No Google refresh token or Google password is saved. The generated
+per-school Firebase password/checkpoint is encrypted locally and cleared on reset.
+
+This draft intentionally does not add OAuth credentials to release workflows,
+change published releases, attach billing, or deploy Cloud Functions.
+
+## Verification and release gate
+
+Automated coverage: PKCE/state handling, cancellation/browser failure, mocked token
+exchange, API endpoint/redirect restrictions, sanitized API errors, account-bound
+resume, project collision protection, no-billing Auth approval, script permission
+retry/uncertain creation, deployment rediscovery, backend school mismatch and
+storage verification, and disabled UI without developer configuration.
+
+CI runs these alongside Windows/Web builds and existing platform regression and
+school-rules checks. `python tool/build_school_setup_bundle.py --check` prevents
+uploaded script/rules drifting from canonical school source. Regenerate with the
+same command without `--check` after approved backend changes.
+
+Before release, a developer must use a real configured Desktop OAuth client and
+an authorized empty test-school account to verify consent, each actual Google API
+response, Auth initialization, Firestore rules/admin login, script execution and
+deployment, interruption/resume, Drive pairing, reconnect after app restart and
+cross-school denial. Test both Google buttons. Confirm Spark/no billing and inspect
+actual school resource ownership. Automated mocks do not replace this live test.
+**Until these checks pass, production readiness is not established.**
+
+## Official references
+
+- https://developers.google.com/identity/protocols/oauth2/native-app
+- https://developers.google.com/apps-script/api/how-tos/enable
+- https://developers.google.com/apps-script/api/reference/rest/v1/projects.deployments
+- https://firebase.google.com/docs/projects/api/workflow_set-up-and-manage-project
+- https://firebase.google.com/docs/firestore/reference/rest/v1/projects.databases/create
+- https://firebase.google.com/docs/rules/manage-deploy
+- https://cloud.google.com/identity-platform/docs/reference/rest/v2/projects.identityPlatform/initializeAuth
+- https://cloud.google.com/identity-platform/docs/reference/rest/v1/projects.accounts/lookup

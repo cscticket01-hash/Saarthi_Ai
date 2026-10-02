@@ -1,3 +1,4 @@
+import 'windows_connect/easy_connect_screen.dart';
 import 'dart:async';
 import 'windows_admin_sidebar.dart';
 import 'windows_monthly_attendance.dart';
@@ -21058,6 +21059,41 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   constraints: const BoxConstraints(maxWidth: 900),
                   child: Column(
                     children: [
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Connect your school account', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 8),
+                              const Text('For a new school cloud setup: sign in with Google and follow the approval steps. Connection links are filled automatically.'),
+                              const SizedBox(height: 12),
+                              Wrap(spacing: 12, runSpacing: 8, children: [
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.add_to_drive),
+                                  label: const Text('Connect Google Drive'),
+                                  onPressed: _saving ? null : () async {
+                                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EasySchoolConnectScreen(googleDrive: true)));
+                                    if (mounted) await _load();
+                                  },
+                                ),
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.cloud_outlined),
+                                  label: const Text('Connect Firebase'),
+                                  onPressed: _saving ? null : () async {
+                                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EasySchoolConnectScreen()));
+                                    if (mounted) await _load();
+                                  },
+                                ),
+                              ]),
+                              const SizedBox(height: 8),
+                              const Text('Existing school connections and manual setup remain available below.'),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(18),
