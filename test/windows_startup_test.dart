@@ -259,12 +259,13 @@ void main() {
     expect(WindowsLocalSecurity.configured, isFalse);
     await tester.enterText(fields.at(2), 'secure-password');
     await tester.enterText(fields.at(3), 'secure-password');
-    await tester.runAsync(() async {
-      await tester.tap(find.text('Save & Open App'));
-      for (var i = 0; i < 100 && !WindowsLocalSecurity.configured; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
-    });
+    await tester.tap(find.text('Save & Open App'));
+    // Disk IO runs in real time; Flutter callback continuations and frames run
+    // in the test's fake clock. Advance both until the save and route finish.
+    for (var i = 0; i < 100 && find.text('Digital Notice Board').evaluate().isEmpty; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(WindowsLocalSecurity.verifyPassword('secure-password'), isTrue,
