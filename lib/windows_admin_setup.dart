@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart' hide Text, InputDecoration;
-import 'package:image_picker/image_picker.dart';
 
 import 'windows_local_auth.dart';
 import 'windows_local_firestore.dart';
@@ -195,21 +194,51 @@ class _WindowsAdminSetupScreenState extends State<WindowsAdminSetupScreen> {
   }
 
   Future<void> _pick(int slot) async {
+    // The Windows runner has no image_picker platform implementation, so the
+    // gallery API always throws here. Use the native Windows file-open dialog
+    // instead (PowerShell works on every supported Windows version). This is
+    // local-only: no Firebase/network involvement.
     try {
-      final picked =
-          await ImagePicker().getImage(source: ImageSource.gallery);
-      if (picked == null) return;
+      final path = await _pickImageViaWindowsDialog();
+      if (path == null || path.isEmpty) return;
+      if (!mounted) return;
       setState(() {
         if (slot == 0) {
-          _logoPath = picked.path;
+          _logoPath = path;
         } else if (slot == 1) {
-          _sealPath = picked.path;
+          _sealPath = path;
         } else {
-          _signaturePath = picked.path;
+          _signaturePath = path;
         }
       });
     } catch (e) {
-      if (mounted) setState(() => _error = 'Could not open image picker: $e');
+      if (mounted) setState(() => _error = 'Could not open file picker: $e');
+    }
+  }
+
+  static Future<String?> _pickImageViaWindowsDialog() async {
+    if (!Platform.isWindows) return null;
+    const script = r'''
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = 'Select school image'
+$dialog.Filter = 'Images (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|All files (*.*)|*.*'
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::Out.Write($dialog.FileName)
+}
+''';
+    try {
+      final result = await Process.run(
+        'powershell.exe',
+        ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      );
+      final path = (result.stdout ?? '').toString().trim();
+      if (result.exitCode != 0 || path.isEmpty || !File(path).existsSync()) {
+        return null;
+      }
+      return path;
+    } catch (_) {
+      return null;
     }
   }
 
