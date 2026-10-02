@@ -222,12 +222,17 @@ jobs:
           Write-Host "Release tag will be: windows-v$version"
 
       - name: Build Windows Admin App
+        env:
+          SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+          SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET }}
         shell: powershell
         run: |
           flutter build windows `
             --release `
             -t lib/main_windows.dart `
             --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
+            --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID `
+            --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET `
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
       - name: Verify Windows Build
@@ -313,6 +318,10 @@ jobs:
           tag_name: windows-v${{ steps.app_version.outputs.version }}
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
+          body: |
+            Includes persistent license Skip, offline school/admin setup, and an optional Google/Firebase school setup wizard.
+            Google sign-in requires developer Desktop OAuth configuration. Without it, sign-in stays disabled and existing manual connections remain available.
+            Real Google consent/provisioning has not yet been live-verified; this cloud feature supports new Gmail-school setups and may require guided owner approvals.
           generate_release_notes: true
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
