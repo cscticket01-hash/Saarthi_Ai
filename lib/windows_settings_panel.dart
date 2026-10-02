@@ -1,6 +1,7 @@
+import 'windows_ui_localization.dart';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, InputDecoration;
 
 import 'windows_firebase_sync.dart';
 import 'windows_local_auth.dart';
@@ -839,7 +840,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
                 label: const Text('Change HDD / Folder'),
               ),
               IconButton(
-                tooltip: 'Re-test local storage',
+                tooltip: WindowsUiLanguage.translate('Re-test local storage'),
                 onPressed: _busy ? null : _refresh,
                 icon: const Icon(Icons.refresh_rounded),
               ),

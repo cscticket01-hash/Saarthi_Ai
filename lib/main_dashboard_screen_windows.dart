@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'windows_admin_sidebar.dart';
+import 'windows_exam_service.dart';
+import 'windows_ui_localization.dart';
+import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
 import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
@@ -19,7 +23,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_auth.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -44,41 +48,14 @@ Future<String> _windowsGoogleScriptUrl({bool required = true}) {
   return WindowsConnectionCenter.googleScriptUrl(required: required);
 }
 
-const String _windowsLanguageKey = 'vidya_windows_language_v1';
-
-String _windowsLanguage() {
-  try {
-    final value = html.window.localStorage[_windowsLanguageKey]?.trim() ?? '';
-    if (const {'en', 'hi', 'bn', 'as'}.contains(value)) return value;
-  } catch (_) {}
-  return 'en';
-}
-
-void _setWindowsLanguage(String value) {
-  try {
-    html.window.localStorage[_windowsLanguageKey] = value;
-  } catch (_) {}
-}
-
-String windowsTr(String key) {
-  const values = <String, Map<String, String>>{
-    'dashboard': {'en':'Dashboard','hi':'डैशबोर्ड','bn':'ড্যাশবোর্ড','as':'ডেশ্ববৰ্ড'},
-    'students': {'en':'Student Records','hi':'विद्यार्थी रिकॉर्ड','bn':'ছাত্র রেকর্ড','as':'ছাত্ৰ ৰেকৰ্ড'},
-    'fees': {'en':'Fees Collection','hi':'फीस कलेक्शन','bn':'ফি সংগ্রহ','as':'ফী সংগ্ৰহ'},
-    'exam': {'en':'Exam Center','hi':'परीक्षा केंद्र','bn':'পরীক্ষা কেন্দ্র','as':'পৰীক্ষা কেন্দ্ৰ'},
-    'teachers': {'en':'Teachers','hi':'शिक्षक','bn':'শিক্ষক','as':'শিক্ষক'},
-    'expenses': {'en':'School Expenses','hi':'स्कूल खर्च','bn':'স্কুল খরচ','as':'বিদ্যালয় খৰচ'},
-    'attendance': {'en':'Attendance','hi':'उपस्थिति','bn':'উপস্থিতি','as':'উপস্থিতি'},
-    'templates': {'en':'Templates','hi':'टेम्पलेट','bn':'টেমপ্লেট','as':'টেমপ্লেট'},
-    'settings': {'en':'Settings','hi':'सेटिंग्स','bn':'সেটিংস','as':'ছেটিংছ'},
-    'schoolSettings': {'en':'School Settings','hi':'स्कूल सेटिंग्स','bn':'স্কুল সেটিংস','as':'বিদ্যালয় ছেটিংছ'},
-    'entry': {'en':'Entry','hi':'एंट्री','bn':'প্রবেশ','as':'প্ৰৱেশ'},
-    'exit': {'en':'Exit','hi':'एग्जिट','bn':'প্রস্থান','as':'প্ৰস্থান'},
-  };
-  final item = values[key];
-  if (item == null) return key;
-  return item[_windowsLanguage()] ?? item['en'] ?? key;
-}
+String _windowsLanguage() => WindowsUiLanguage.current;
+void _setWindowsLanguage(String value) => WindowsUiLanguage.change(value);
+String windowsTr(String key) => WindowsUiLanguage.translate(const {
+  'dashboard': 'Dashboard', 'students': 'Student Records', 'fees': 'Fees Collection',
+  'exam': 'Exam Center', 'teachers': 'Teachers', 'expenses': 'School Expenses',
+  'attendance': 'Attendance', 'templates': 'Templates', 'settings': 'Settings',
+  'schoolSettings': 'School Settings', 'entry': 'Entry', 'exit': 'Exit',
+}[key] ?? key);
 
 String _windowsStableHash(String input) {
   var hash = 0xcbf29ce484222325;
@@ -764,7 +741,7 @@ class _WindowsLicenseSettingsPanelState
                     ),
                   ),
                   IconButton(
-                    tooltip: 'Remove key',
+                    tooltip: WindowsUiLanguage.translate('Remove key'),
                     onPressed: _saving ? null : _clear,
                     icon: const Icon(Icons.delete_outline_rounded,
                         color: Colors.orangeAccent),
@@ -1499,6 +1476,55 @@ Future<Uint8List?> _downloadImageBytes(String url) async {
 // Opens the page immediately while refreshing in background.
 // ============================================================
 
+Widget _windowsAdminModule(WindowsAdminPage page) => switch (page) {
+  WindowsAdminPage.students => const AllStudentsListScreen(),
+  WindowsAdminPage.fees => const FeesCollectionScreen(),
+  WindowsAdminPage.exams => const ExamCenterScreen(),
+  WindowsAdminPage.teachers => const TeachersDirectoryScreen(),
+  WindowsAdminPage.salary => const TeacherSalaryPlaceholder(),
+  WindowsAdminPage.support => const WindowsSupportScreen(),
+  WindowsAdminPage.expenses => const WindowsSchoolExpensesScreen(),
+  WindowsAdminPage.attendance => const SchoolAttendanceOverview(),
+  WindowsAdminPage.templates => const SchoolDocumentTemplatesScreen(),
+  WindowsAdminPage.dashboard => const AdminDashboardScreen(),
+};
+String? _windowsAdminModuleLock(WindowsAdminPage page) => switch (page) {
+  WindowsAdminPage.students => _windowsStudentRecordsLock,
+  WindowsAdminPage.fees => _windowsFeesCollectionLock,
+  WindowsAdminPage.expenses => _windowsSchoolExpensesLock,
+  WindowsAdminPage.attendance => _windowsAttendanceLock,
+  _ => null,
+};
+String _windowsAdminModuleTitle(WindowsAdminPage page) => WindowsAdminSidebar.entries.firstWhere((e) => e.$1 == page).$2;
+Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<WindowsAdminPage> onSelected,
+  required VoidCallback onLogout, VoidCallback? onAnalytics}) => WindowsAdminSidebar(
+    onSelected: onSelected, onLogout: onLogout,
+    header: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: _schoolProfileCacheRef().snapshots(), builder: (ctx, snapshot) {
+        final profile = _mergeSchoolProfile(snapshot.data?.data());
+        final logo = profile['logoUrl']?.toString() ?? '';
+        return Padding(padding: const EdgeInsets.all(12), child: Material(
+          color: const Color(0xFF123D38), borderRadius: BorderRadius.circular(18),
+          child: ListTile(onTap: onAnalytics,
+            leading: SizedBox(width: 50, height: 50, child: logo.isEmpty
+              ? const Icon(Icons.school_rounded, color: Color(0xFF00D9A5), size: 34)
+              : Image.network(logo, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.school_rounded))),
+            title: Text(_schoolName(profile), translate: false, maxLines: 2),
+            subtitle: const Text('ADMIN NAVIGATION', style: TextStyle(color: Color(0xFF00D9A5), fontSize: 10)),
+          )));
+      }));
+Future<void> _windowsConfirmLogout(BuildContext context) async {
+  final confirmed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+    title: const Text('Logout Admin?'), content: const Text('Logout karne ke baad School Login screen dikhegi.'),
+    actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+      FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Logout'))]));
+  if (confirmed != true) return;
+  _clearPortalSession();
+  await WindowsLocalSession.logout();
+  await FirebaseAuth.instance.signOut();
+  if (context.mounted) Navigator.of(context).pushNamedAndRemoveUntil('/local-login', (_) => false);
+}
+
 class _ExamCenterSnapshot {
   const _ExamCenterSnapshot({
     required this.exams,
@@ -1516,8 +1542,11 @@ class _ExamCenterSnapshot {
 class _ExamCenterDataCache {
   static _ExamCenterSnapshot? snapshot;
   static Future<_ExamCenterSnapshot>? _inFlight;
+  static String _profile = '';
 
   static Future<_ExamCenterSnapshot> refresh({bool force = false}) async {
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    if (_profile != profile) { snapshot = null; _inFlight = null; _profile = profile; }
     final cached = snapshot;
     if (!force && cached != null) {
       final age = DateTime.now().difference(cached.loadedAt);
@@ -1533,32 +1562,15 @@ class _ExamCenterDataCache {
 
     try {
       final value = await future;
-      snapshot = value;
+      if (_profile == profile) snapshot = value;
       return value;
     } finally {
-      _inFlight = null;
+      if (_profile == profile) _inFlight = null;
     }
   }
 
   static Future<_ExamCenterSnapshot> _fetch() async {
-    final scriptUrl = await _windowsGoogleScriptUrl();
-
-    final response = await WindowsBackendBridge.post(
-      Uri.parse(scriptUrl),
-      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode(const {'action': 'list_exam_center'}),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('Google backend error: ${response.statusCode}');
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
-      throw Exception('Google backend response invalid hai.');
-    }
-
-    final result = Map<String, dynamic>.from(decoded);
+    final result = await WindowsExamService.request({'action': 'list_exam_center'});
     if (result['success'] != true) {
       throw Exception(result['message'] ?? 'Exam Center load failed');
     }
@@ -2046,7 +2058,7 @@ void _startInlineScanner() {
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Close scanner',
+                  tooltip: WindowsUiLanguage.translate('Close scanner'),
                   onPressed: _closeInlineScanner,
                   icon: const Icon(
                     Icons.close_rounded,
@@ -2373,7 +2385,7 @@ errorBuilder: (context, error, stackTrace) {
             ),
           ),
           IconButton(
-            tooltip: 'Scan another card',
+            tooltip: WindowsUiLanguage.translate('Scan another card'),
             onPressed: _clearScannedStudent,
             icon: const Icon(
               Icons.refresh_rounded,
@@ -4312,7 +4324,7 @@ errorBuilder: (context, error, stackTrace) {
           _buildPortalSessionTimer(_sessionSecondsRemaining),
           const SizedBox(width: 7),
           IconButton(
-            tooltip: 'Logout',
+            tooltip: WindowsUiLanguage.translate('Logout'),
             icon: Container(
               width: 38,
               height: 38,
@@ -5067,19 +5079,23 @@ void _handleLoginBack(bool didPop) {
     }
     setState(() => _isSavingNotice = true);
     try {
-      if (_editingNoticeId == null) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        await FirebaseFirestore.instance.collection('school_notices').add({
-          'title': title, 'description': description, 'category': _noticeCategory, 'timestamp': now, 'lastEdited': now,
-        });
-      } else {
-        await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).update({
-          'title': title, 'description': description, 'category': _noticeCategory, 'lastEdited': DateTime.now().millisecondsSinceEpoch,
-        });
-      }
+      final connection = await WindowsConnectionCenter.reload();
+      if (!connection.remoteReady) throw StateError('Notice not sent. Connect and verify this school Firebase and Google Script first.');
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final id = 'NOTICE-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
+      // An edited announcement is a new notification, avoiding old FCM-job dedupe.
+      final result = await WindowsPlatformClient.instance.publishNotice(id, {
+        'title': title, 'description': description, 'category': _noticeCategory,
+        'timestamp': now, 'lastEdited': now,
+      });
+      if (_editingNoticeId != null) await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).delete();
       if (!mounted) return;
       _cancelNoticeEdit();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Notice successfully saved!')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: result.notificationSent ? const Color(0xFF00A884) : Colors.orange,
+        content: Text(result.notificationSent
+          ? 'Published to the school student app. Notification accepted for ${result.recipients} registered students.'
+          : 'Published to the school portal. Notification pending: ${result.error}')));
     } catch (e) {
       if (mounted) {
         setState(() => _isSavingNotice = false);
@@ -7460,298 +7476,16 @@ Future<void> _printIdCard() async {
     );
   }
 
-  Widget _adminDrawerItem({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.07),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: color.withOpacity(0.16)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.13),
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                  child: Icon(icon, color: color, size: 20),
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 9.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: color.withOpacity(.8),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAdminDrawer() {
-    return Drawer(
-      width: 320,
-      backgroundColor: const Color(0xFF0B141A),
-      child: SafeArea(
-        child: ListView(
-          children: [
-            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-              stream: _schoolProfileCacheRef().snapshots(),
-              builder: (context, snapshot) {
-                final profile = _mergeSchoolProfile(snapshot.data?.data());
-                final logoUrl = profile['logoUrl']?.toString().trim() ?? '';
-                return Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(18),
-                    onTap: () {
-                      // Close the drawer first, then show the password gate.
-                      Navigator.of(context).pop();
-                      Future<void>.delayed(
-                        const Duration(milliseconds: 160),
-                        () {
-                          if (mounted) _openAdminAnalyticsGate();
-                        },
-                      );
-                    },
-                    child: Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.all(12),
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF123D38), Color(0xFF172229)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: const Color(0xFF00D9A5).withOpacity(.42),
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF00D9A5).withOpacity(.08),
-                            blurRadius: 16,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: logoUrl.isNotEmpty
-                            ? Image.network(
-                                logoUrl,
-                                fit: BoxFit.contain,
-errorBuilder: (_, __, ___) => const Icon(
-                                  Icons.school_rounded,
-                                  color: Color(0xFF00A884),
-                                ),
-                              )
-                            : const Icon(
-                                Icons.school_rounded,
-                                color: Color(0xFF00A884),
-                                size: 30,
-                              ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _schoolName(profile),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            const Text(
-                              'ADMIN NAVIGATION',
-                              style: TextStyle(
-                                color: Color(0xFF00D9A5),
-                                fontSize: 8.5,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1.0,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-            _adminDrawerItem(
-              icon: Icons.dashboard_rounded,
-              title: windowsTr('dashboard'),
-              subtitle: 'School overview & notices',
-              color: const Color(0xFF00D9A5),
-              onTap: () => Navigator.of(context).pop(),
-            ),
-            _adminDrawerItem(
-              icon: Icons.people_alt_rounded,
-              title: windowsTr('students'),
-              subtitle: 'Students, profiles & ID cards',
-              color: const Color(0xFF00A884),
-              onTap: () => _openAdminDrawerPage(
-                const AllStudentsListScreen(),
-                sectionKey: _windowsStudentRecordsLock,
-                sectionTitle: 'Student Records',
-              ),
-            ),
-            _adminDrawerItem(
-              icon: Icons.payments_rounded,
-              title: windowsTr('fees'),
-              subtitle: 'Collect fees, receipts & dues',
-              color: Colors.greenAccent,
-              onTap: () => _openAdminDrawerPage(
-                const FeesCollectionScreen(),
-                sectionKey: _windowsFeesCollectionLock,
-                sectionTitle: 'Fees Collection',
-              ),
-            ),
-            _adminDrawerItem(
-              icon: Icons.fact_check_rounded,
-              title: windowsTr('exam'),
-              subtitle: 'Marks, results & report cards',
-              color: Colors.orangeAccent,
-              onTap: () => _openAdminDrawerPage(const ExamCenterScreen()),
-            ),
-            _adminDrawerItem(
-              icon: Icons.school_rounded,
-              title: windowsTr('teachers'),
-              subtitle: 'Directory, profiles & schedules',
-              color: Colors.purpleAccent,
-              onTap: () => _openAdminDrawerPage(const TeachersDirectoryScreen()),
-            ),
-            _adminDrawerItem(
-              icon: Icons.wallet_rounded,
-              title: 'Teacher salary',
-              subtitle: 'Salary section',
-              color: Colors.purpleAccent,
-              onTap: () => _openAdminDrawerPage(const TeacherSalaryPlaceholder()),
-            ),
-            _adminDrawerItem(
-              icon: Icons.support_agent_rounded,
-              title: 'App support',
-              subtitle: 'Report a Windows app problem',
-              color: Colors.tealAccent,
-              onTap: () => _openAdminDrawerPage(const WindowsSupportScreen()),
-            ),
-            _adminDrawerItem(
-              icon: Icons.account_balance_wallet_rounded,
-              title: windowsTr('expenses'),
-              subtitle: 'Expense entry, ledger & reports',
-              color: Colors.amberAccent,
-              onTap: () => _openAdminDrawerPage(
-                const WindowsSchoolExpensesScreen(),
-                sectionKey: _windowsSchoolExpensesLock,
-                sectionTitle: 'School Expenses',
-              ),
-            ),
-            _adminDrawerItem(
-              icon: Icons.fact_check_rounded,
-              title: windowsTr('attendance'),
-              subtitle: 'Student / teacher records & calendar',
-              color: const Color(0xFF69C2FF),
-              onTap: () => _openAdminDrawerPage(
-                const SchoolAttendanceOverview(),
-                sectionKey: _windowsAttendanceLock,
-                sectionTitle: 'Attendance',
-              ),
-            ),
-            _adminDrawerItem(
-              icon: Icons.dashboard_customize_rounded,
-              title: windowsTr('templates'),
-              subtitle: 'ID cards, report cards & receipts',
-              color: const Color(0xFFCE93D8),
-              onTap: () => _openAdminDrawerPage(
-                const SchoolDocumentTemplatesScreen(),
-              ),
-            ),
-            _adminDrawerItem(
-              icon: Icons.logout_rounded,
-              title: 'Logout',
-              subtitle: 'Sign out from this Admin Console',
-              color: Colors.redAccent,
-              onTap: () {
-                Navigator.of(context).pop();
-                Future<void>.delayed(
-                  const Duration(milliseconds: 160),
-                  () {
-                    if (mounted) _confirmAdminLogoutFromHeader();
-                  },
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(18, 8, 18, 18),
-              child: Text(
-                'Vidya Saarthi • School Management',
-                style: TextStyle(color: Colors.white24, fontSize: 9),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _buildAdminDrawer() => Drawer(width: WindowsAdminSidebar.width,
+    child: _windowsSharedAdminSidebar(context,
+      onAnalytics: () { Navigator.of(context).pop(); _openAdminAnalyticsGate(); },
+      onLogout: () { Navigator.of(context).pop(); _confirmAdminLogoutFromHeader(); },
+      onSelected: (page) {
+        if (page == WindowsAdminPage.dashboard) { Navigator.of(context).pop(); return; }
+        final module = _windowsAdminModule(page);
+        final lock = _windowsAdminModuleLock(page);
+        _openAdminDrawerPage(module, sectionKey: lock, sectionTitle: _windowsAdminModuleTitle(page));
+      }));
 
   @override
   Widget build(BuildContext context) {
@@ -7874,7 +7608,7 @@ errorBuilder: (_, __, ___) => const Icon(
 
           // Settings icon opens the Settings screen directly.
           IconButton(
-            tooltip: 'Settings',
+            tooltip: WindowsUiLanguage.translate('Settings'),
             onPressed: () async {
               await Navigator.push(
                 context,
@@ -9055,8 +8789,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                                       ],
                                     ),
                                     const SizedBox(height: 6),
-                                    Text(
-                                      data['title']?.toString() ?? 'Untitled Notice',
+                                    Text(data['title']?.toString() ?? 'Untitled Notice', translate: false,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
@@ -9067,8 +8800,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                                       ),
                                     ),
                                     const SizedBox(height: 5),
-                                    Text(
-                                      data['description']?.toString() ?? '',
+                                    Text(data['description']?.toString() ?? '', translate: false,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
@@ -9081,7 +8813,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                                 ),
                               ),
                               PopupMenuButton<String>(
-                                tooltip: 'Notice Actions',
+                                tooltip: WindowsUiLanguage.translate('Notice Actions'),
                                 color: const Color(0xFF1B2A32),
                                 icon: const Icon(
                                   Icons.more_vert_rounded,
@@ -9439,8 +9171,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    data['title']?.toString() ?? 'Notice',
+                  Text(data['title']?.toString() ?? 'Notice', translate: false,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 17,
@@ -9454,8 +9185,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
         ),
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
-          child: Text(
-            data['description']?.toString() ?? '',
+          child: Text(data['description']?.toString() ?? '', translate: false,
             style: const TextStyle(
               color: Colors.white70,
               fontSize: 12,
@@ -9587,6 +9317,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     DateTime.now().year - 2,
   ];
 
+  final Map<String, int> _chartMonths = {};
   late int _selectedYear;
   int _academicYearRolloverMonth = 1;
   bool _loading = true;
@@ -9626,7 +9357,9 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
 
   Future<List<Map<String, dynamic>>> _analyticsLoadExpenses() async {
     try {
-      final url = await _windowsGoogleScriptUrl();
+      final connection = await WindowsConnectionCenter.reload();
+      if (!connection.remoteReady) return <Map<String, dynamic>>[];
+      final url = connection.googleScriptUrl;
       final response = await WindowsBackendBridge.post(
         Uri.parse(url),
         headers: const {'Content-Type': 'text/plain;charset=utf-8'},
@@ -9765,7 +9498,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       }
 
       final date = _analyticsDate(value);
-      if (date != null && date.year == _selectedYear) return date.month - 1;
+      if (date != null && WindowsAcademicYearSettings.startYear(date, _academicYearRolloverMonth) == _selectedYear) return date.month - 1;
     }
     return null;
   }
@@ -9823,10 +9556,6 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     for (var index = 0; index < values.length; index++) {
       if (counts[index] > 0) {
         values[index] /= counts[index];
-      } else if (average > 0) {
-        // Existing records without monthly history still show the current
-        // attendance average instead of inventing a different percentage.
-        values[index] = average;
       }
     }
     return values;
@@ -10286,11 +10015,14 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                   ),
                 ),
               const SizedBox(width: 7),
-              _analyticsDropdownPill(),
+              _analyticsDropdownPill(title),
             ],
           ),
           const SizedBox(height: 8),
           SizedBox(height: 190, child: chart),
+          if ((_chartMonths[title] ?? -1) >= 0 && _data != null)
+            Text(_chartMonthSummary(title, _chartMonths[title]!), key: ValueKey('monthly-value-$title'),
+              style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
           if (footer != null) ...[
             const SizedBox(height: 2),
             footer,
@@ -10300,27 +10032,38 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     );
   }
 
-  Widget _analyticsDropdownPill() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFF12313A),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'Monthly',
-            style: TextStyle(color: Colors.white70, fontSize: 9),
-          ),
-          SizedBox(width: 3),
-          Icon(Icons.keyboard_arrow_down_rounded, size: 14, color: Colors.white54),
-        ],
-      ),
-    );
+  String _chartMonthSummary(String title, int month) {
+    final data = _data!;
+    final label = WindowsUiLanguage.translate(_monthLabels[month]);
+    final value = switch (title) {
+      'Student Attendance Trend' => '${data.attendanceTrend[month].toStringAsFixed(1)}%',
+      'Monthly Fees Collection' => _money(data.feesByMonth[month]),
+      'Monthly School Expenses' => _money(data.expensesByMonth[month]),
+      'Pass vs Fail Trend' => '${WindowsUiLanguage.translate('Pass Students')}: ${data.passFailByMonth[month].pass.toInt()} / ${WindowsUiLanguage.translate('Fail Students')}: ${data.passFailByMonth[month].fail.toInt()}',
+      _ => '${data.admissionsByMonth[month].toInt()}',
+    };
+    return '$label: $value';
   }
+
+  Widget _analyticsDropdownPill(String chart) => PopupMenuButton<int>(
+    tooltip: WindowsUiLanguage.translate('Select month'),
+    initialValue: _chartMonths[chart] ?? -1,
+    onSelected: (month) => setState(() => _chartMonths[chart] = month),
+    itemBuilder: (_) => [
+      const PopupMenuItem(value: -1, child: Text('All months')),
+      for (var i = 0; i < 12; i++) PopupMenuItem(value: i, child: Text('${WindowsUiLanguage.translate(_monthLabels[i])} ${i + 1 < _academicYearRolloverMonth ? _selectedYear + 1 : _selectedYear}', translate: false)),
+    ],
+    child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      decoration: BoxDecoration(color: const Color(0xFF12313A), borderRadius: BorderRadius.circular(8)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Text((_chartMonths[chart] ?? -1) == -1 ? 'Monthly' : _monthLabels[_chartMonths[chart]!], style: const TextStyle(color: Colors.white70, fontSize: 10)),
+        const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
+      ])));
+  List<T> _chartValues<T>(String chart, List<T> values) {
+    final month = _chartMonths[chart] ?? -1;
+    return month == -1 ? values : [values[month]];
+  }
+  List<String> _chartLabels(String chart) => _chartValues(chart, _monthLabels);
 
   Widget _legend(String label, Color color) {
     return Row(
@@ -10340,263 +10083,19 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     );
   }
 
-  Widget _analyticsSidebarItem({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
-            decoration: BoxDecoration(
-              color: color.withOpacity(.07),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: color.withOpacity(.16)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 37,
-                  height: 37,
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(.13),
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                  child: Icon(icon, color: color, size: 20),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 9,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: color.withOpacity(.85),
-                  size: 20,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _analyticsSidebar() {
-    return Container(
-      width: 286,
-      color: const Color(0xFF06131A),
-      child: SafeArea(
-        child: Column(
-          children: [
-            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-              stream: _schoolProfileCacheRef().snapshots(),
-              builder: (context, snapshot) {
-                final profile = _mergeSchoolProfile(snapshot.data?.data());
-                final logoUrl = profile['logoUrl']?.toString().trim() ?? '';
-                return Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.all(12),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF123D38), Color(0xFF172229)],
-                    ),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: const Color(0xFF00D9A5).withOpacity(.35),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 50,
-                        height: 50,
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(13),
-                        ),
-                        child: logoUrl.isEmpty
-                            ? const Icon(
-                                Icons.school_rounded,
-                                color: Color(0xFF00A884),
-                                size: 29,
-                              )
-                            : Image.network(
-                                logoUrl,
-                                fit: BoxFit.contain,
-                                errorBuilder: (_, __, ___) => const Icon(
-                                  Icons.school_rounded,
-                                  color: Color(0xFF00A884),
-                                ),
-                              ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _schoolName(profile),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            const Text(
-                              'ADMIN NAVIGATION',
-                              style: TextStyle(
-                                color: Color(0xFF00D9A5),
-                                fontSize: 8,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            Expanded(
-              child: ListView(
-                padding: EdgeInsets.zero,
-                children: [
-                  _analyticsSidebarItem(
-                    icon: Icons.dashboard_rounded,
-                    title: 'Dashboard',
-                    subtitle: 'School overview & notices',
-                    color: const Color(0xFF00D9A5),
-                    onTap: () => Navigator.of(context).pop(),
-                  ),
-                  _analyticsSidebarItem(
-                    icon: Icons.people_alt_rounded,
-                    title: 'Student Records',
-                    subtitle: 'Students, profiles & ID cards',
-                    color: const Color(0xFF00A884),
-                    onTap: () => _openAnalyticsModule(
-                      const AllStudentsListScreen(),
-                      sectionKey: _windowsStudentRecordsLock,
-                      sectionTitle: 'Student Records',
-                    ),
-                  ),
-                  _analyticsSidebarItem(
-                    icon: Icons.payments_rounded,
-                    title: 'Fees Collection',
-                    subtitle: 'Collect fees, receipts & dues',
-                    color: Colors.greenAccent,
-                    onTap: () => _openAnalyticsModule(
-                      const FeesCollectionScreen(),
-                      sectionKey: _windowsFeesCollectionLock,
-                      sectionTitle: 'Fees Collection',
-                    ),
-                  ),
-                  _analyticsSidebarItem(
-                    icon: Icons.fact_check_rounded,
-                    title: 'Exam Center',
-                    subtitle: 'Marks, results & report cards',
-                    color: Colors.orangeAccent,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const ExamCenterScreen(),
-                      ),
-                    ),
-                  ),
-                  _analyticsSidebarItem(
-                    icon: Icons.school_rounded,
-                    title: 'Teachers',
-                    subtitle: 'Directory, profiles & schedules',
-                    color: Colors.purpleAccent,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const TeachersDirectoryScreen(),
-                      ),
-                    ),
-                  ),
-                  _analyticsSidebarItem(
-                    icon: Icons.account_balance_wallet_rounded,
-                    title: 'School Expenses',
-                    subtitle: 'Expense entry, ledger & reports',
-                    color: Colors.amberAccent,
-                    onTap: () => _openAnalyticsModule(
-                      const WindowsSchoolExpensesScreen(),
-                      sectionKey: _windowsSchoolExpensesLock,
-                      sectionTitle: 'School Expenses',
-                    ),
-                  ),
-                  _analyticsSidebarItem(
-                    icon: Icons.fact_check_rounded,
-                    title: 'Attendance',
-                    subtitle: 'QR entry/exit + geofence',
-                    color: const Color(0xFF69C2FF),
-                    onTap: () => _openAnalyticsModule(
-                      const SchoolAttendanceOverview(),
-                      sectionKey: _windowsAttendanceLock,
-                      sectionTitle: 'Attendance',
-                    ),
-                  ),
-                  _analyticsSidebarItem(
-                    icon: Icons.dashboard_customize_rounded,
-                    title: 'Templates',
-                    subtitle: 'ID cards, report cards & receipts',
-                    color: const Color(0xFFCE93D8),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const SchoolDocumentTemplatesScreen(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(18, 8, 18, 18),
-              child: Text(
-                'Vidya Saarthi • School Management',
-                style: TextStyle(color: Colors.white24, fontSize: 9),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _analyticsSidebar() => _windowsSharedAdminSidebar(context,
+    onAnalytics: null,
+    onLogout: () => _windowsConfirmLogout(context),
+    onSelected: (page) {
+      if (page == WindowsAdminPage.dashboard) { Navigator.of(context).pop(); return; }
+      final module = _windowsAdminModule(page);
+      final lock = _windowsAdminModuleLock(page);
+      if (lock != null) {
+        _openAnalyticsModule(module, sectionKey: lock, sectionTitle: _windowsAdminModuleTitle(page));
+      } else {
+        Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => module));
+      }
+    });
 
   Future<void> _openAnalyticsSettings() async {
     await Navigator.of(context).push(
@@ -10642,7 +10141,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: 'Refresh analytics',
+            tooltip: WindowsUiLanguage.translate('Refresh analytics'),
             onPressed: _loading ? null : _loadAnalytics,
             icon: const Icon(Icons.refresh_rounded),
           ),
@@ -10758,7 +10257,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                               ),
                               const SizedBox(width: 8),
                               IconButton(
-                                tooltip: 'Admin Settings',
+                                tooltip: WindowsUiLanguage.translate('Admin Settings'),
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints.tightFor(
                                   width: 42,
@@ -10964,8 +10463,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 color: const Color(0xFF00D9D0),
                 trend: _trend(data.attendanceTrend),
                 chart: _AnalyticsLineChart(
-                  values: data.attendanceTrend,
-                  labels: _monthLabels,
+                  values: _chartValues('Student Attendance Trend', data.attendanceTrend),
+                  labels: _chartLabels('Student Attendance Trend'),
                   color: const Color(0xFF16D8E4),
                   percent: true,
                 ),
@@ -10980,8 +10479,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 color: Colors.greenAccent,
                 trend: _trend(data.feesByMonth),
                 chart: _AnalyticsBarChart(
-                  values: data.feesByMonth,
-                  labels: _monthLabels,
+                  values: _chartValues('Monthly Fees Collection', data.feesByMonth),
+                  labels: _chartLabels('Monthly Fees Collection'),
                   color: const Color(0xFF24D5BE),
                   money: true,
                 ),
@@ -10996,8 +10495,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 color: Colors.amberAccent,
                 trend: _trend(data.expensesByMonth),
                 chart: _AnalyticsBarChart(
-                  values: data.expensesByMonth,
-                  labels: _monthLabels,
+                  values: _chartValues('Monthly School Expenses', data.expensesByMonth),
+                  labels: _chartLabels('Monthly School Expenses'),
                   color: Colors.orangeAccent,
                   money: true,
                 ),
@@ -11014,8 +10513,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                   data.passFailByMonth.map((e) => e.pass).toList(),
                 ),
                 chart: _AnalyticsPassFailChart(
-                  values: data.passFailByMonth,
-                  labels: _monthLabels,
+                  values: _chartValues('Pass vs Fail Trend', data.passFailByMonth),
+                  labels: _chartLabels('Pass vs Fail Trend'),
                 ),
                 footer: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -11036,8 +10535,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 color: const Color(0xFF00B7FF),
                 trend: _trend(data.admissionsByMonth),
                 chart: _AnalyticsLineChart(
-                  values: data.admissionsByMonth,
-                  labels: _monthLabels,
+                  values: _chartValues('New Admissions', data.admissionsByMonth),
+                  labels: _chartLabels('New Admissions'),
                   color: const Color(0xFF28A9F0),
                 ),
               ),
@@ -11130,7 +10629,7 @@ abstract class _AnalyticsPainterBase extends CustomPainter {
 
   void drawText(Canvas canvas, String text, Offset offset, {TextStyle? style}) {
     final painter = TextPainter(
-      text: TextSpan(text: text, style: style ?? axisStyle),
+      text: TextSpan(text: WindowsUiLanguage.translate(text), style: style ?? axisStyle),
       textDirection: TextDirection.ltr,
     )..layout();
     painter.paint(canvas, offset);
@@ -11221,7 +10720,7 @@ class _AnalyticsLinePainter extends _AnalyticsPainterBase {
     );
 
     for (var i = 0; i < labels.length; i++) {
-      final x = chart.left + chart.width * i / (labels.length - 1);
+      final x = chart.left + chart.width * i / max(1, labels.length - 1);
       drawText(canvas, labels[i], Offset(x - 8, chart.bottom + 7));
     }
     if (percent) {
@@ -12006,7 +11505,7 @@ errorBuilder: (_, __, ___) => Icon(
         ),
         actions: [
           IconButton(
-            tooltip: 'Refresh from Google Drive',
+            tooltip: WindowsUiLanguage.translate('Refresh from Google Drive'),
             onPressed: _loading || _saving ? null : _load,
             icon: const Icon(Icons.refresh_rounded),
           ),
@@ -12319,9 +11818,7 @@ errorBuilder: (_, __, ___) => Icon(
                                 if (mounted) {
                                   setState(() => _selectedWindowsLanguage = value);
                                 }
-                                await WindowsAppRestart.restart(
-                                  reason: 'Windows language changed',
-                                );
+
                               },
                             ),
                           ],
@@ -20914,8 +20411,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                 Row(
                                   children: [
                                     Expanded(
-                                      child: Text(
-                                        student['name']?.toString() ?? '',
+                                      child: Text(student['name']?.toString() ?? '', translate: false,
                                         style: const TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.bold,
@@ -21181,7 +20677,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                   border: Border.all(color: const Color(0xFF25D366).withOpacity(0.30)),
                                 ),
                                 child: IconButton(
-                                  tooltip: 'WhatsApp Parent',
+                                  tooltip: WindowsUiLanguage.translate('WhatsApp Parent'),
                                   icon: const FaIcon(
                                     FontAwesomeIcons.whatsapp,
                                     color: Color(0xFF25D366),
@@ -21208,7 +20704,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                   shape: BoxShape.circle,
                                 ),
                                 child: IconButton(
-                                  tooltip: 'Edit Record',
+                                  tooltip: WindowsUiLanguage.translate('Edit Record'),
                                   icon: const Icon(Icons.edit_rounded, color: Colors.blueAccent, size: 18),
                                   onPressed: () => _editStudent(doc.id, student),
                                 ),
@@ -21674,6 +21170,12 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                       if(!widget.connectionsOnly)const WindowsLocalStorageCard(),
                       const SizedBox(height: 14),
                       if(!widget.connectionsOnly)const _AdvancedStudentUidSettingsPanel(),
+                      if (!widget.connectionsOnly) ...[
+                        const SizedBox(height: 20),
+                        OutlinedButton.icon(icon: const Icon(Icons.restore_rounded),
+                          label: const Text('Reset app settings'),
+                          onPressed: () => WindowsPreferencesReset.confirmAndReset(context)),
+                      ],
                     ],
                   ),
                 ),
@@ -23483,7 +22985,7 @@ class _StudentDocumentsScreenState
                         label: const Text('Edit'),
                       ),
                       IconButton(
-                        tooltip: 'Delete',
+                        tooltip: WindowsUiLanguage.translate('Delete'),
                         onPressed:
                             _uploading ? null : () => _delete(document),
                         icon: const Icon(Icons.delete_outline_rounded,
@@ -23967,22 +23469,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   }
 
   Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
-    final response = await WindowsBackendBridge.post(
-      Uri.parse(await _scriptUrl()),
-      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode(body),
-    );
-    if (response.statusCode != 200) {
-      throw Exception('Google backend error: ${response.statusCode}');
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
-      throw Exception('Google backend response invalid hai.');
-    }
-    final result = Map<String, dynamic>.from(decoded);
-    if (result['success'] != true) {
-      throw Exception(result['message'] ?? 'Google backend operation failed');
-    }
+    final result = await WindowsExamService.request(body);
+    if (result['success'] != true) throw StateError(result['message']?.toString() ?? 'Exam operation failed');
     return result;
   }
 
@@ -25307,7 +24795,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     ),
                     if (result.isNotEmpty)
                       IconButton(
-                        tooltip: 'Open Report Card',
+                        tooltip: WindowsUiLanguage.translate('Open Report Card'),
                         onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result))html.window.open(reportUrl, '_blank');},
                         icon: const Icon(
                           Icons.picture_as_pdf_rounded,
@@ -25418,7 +24906,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
             ),
           ),
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: WindowsUiLanguage.translate('Refresh'),
             onPressed: _loading ? null : _load,
             icon: const Icon(Icons.refresh_rounded),
           ),
@@ -25428,41 +24916,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           ? const Center(
               child: CircularProgressIndicator(color: Color(0xFF00A884)),
             )
-          : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.cloud_off_rounded,
-                          color: Colors.redAccent,
-                          size: 40,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          _error!,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.redAccent),
-                        ),
-                        const SizedBox(height: 14),
-                        ElevatedButton.icon(
-                          onPressed: _load,
-                          icon: const Icon(Icons.refresh_rounded),
-                          label: const Text('Retry'),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : RefreshIndicator(
+          : RefreshIndicator(
                   onRefresh: _load,
                   color: const Color(0xFF00A884),
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(18, 18, 18, 100),
                     children: [
+                      if (_error != null) ListTile(leading: const Icon(Icons.cloud_off, color: Colors.orange), title: Text(_error!), trailing: TextButton(onPressed: _load, child: const Text('Retry'))),
+                      const Text('Exam tools work offline. With Local Data OFF, offline edits last only for this session. Enable Local Data to keep them on this PC.', style: TextStyle(color: Colors.orangeAccent)),
+                      const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
@@ -25710,22 +25173,8 @@ class _ExamMarksEntryScreenState
   }
 
   Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
-    final response = await WindowsBackendBridge.post(
-      Uri.parse(await _scriptUrl()),
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode(body),
-    );
-    if (response.statusCode != 200) {
-      throw Exception('Google backend error: ${response.statusCode}');
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
-      throw Exception('Google backend response invalid hai.');
-    }
-    final result = Map<String, dynamic>.from(decoded);
-    if (result['success'] != true) {
-      throw Exception(result['message'] ?? 'Google backend operation failed');
-    }
+    final result = await WindowsExamService.request(body);
+    if (result['success'] != true) throw StateError(result['message']?.toString() ?? 'Exam operation failed');
     return result;
   }
 
@@ -25793,8 +25242,7 @@ class _ExamMarksEntryScreenState
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                student['name']?.toString() ?? 'Student',
+              Text(student['name']?.toString() ?? 'Student', translate: false,
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 17,
@@ -26161,7 +25609,7 @@ class _ExamMarksEntryScreenState
                               ),
                             if (result != null)
                               IconButton(
-                                tooltip: 'Report Card PDF',
+                                tooltip: WindowsUiLanguage.translate('Report Card PDF'),
                                 onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result!))html.window.open(reportUrl, '_blank');},
                                 icon: const Icon(
                                     Icons.picture_as_pdf_rounded,

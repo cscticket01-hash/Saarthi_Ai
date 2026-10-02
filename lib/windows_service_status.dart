@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'windows_ui_localization.dart';
+import 'package:flutter/material.dart' hide Text, InputDecoration;
 
 enum WindowsServiceType {
   localStorage,

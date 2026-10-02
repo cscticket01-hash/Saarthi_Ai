@@ -14,6 +14,18 @@ import 'windows_firebase_sync.dart';
 import 'school_backend_transport.dart';
 
 class WindowsBackendBridge {
+  /// The exam editor is available even before a school connects its backend.
+  /// This uses the active school's isolated local store (RAM when Local Data
+  /// is OFF), and never pretends a local save reached Google/Firebase.
+  static Future<Map<String, dynamic>> localExamAction(Map<String, dynamic> body) async {
+    final action = body['action']?.toString() ?? '';
+    if (!const {'list_exam_center', 'save_exam', 'save_exam_result'}.contains(action)) {
+      throw ArgumentError('Not an offline exam action');
+    }
+    return {...await _handleLocal(action, body), 'windowsLocalFallback': true,
+      'sessionOnly': !await WindowsRuntimeFlags.localStorageEnabled()};
+  }
+
   WindowsBackendBridge._();
 
   static FutureOr<void> Function()?
@@ -639,7 +651,7 @@ class WindowsBackendBridge {
         final data = <String, dynamic>{
           ...body,
           'examId': examId,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
+          'timestamp': body['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
         }..remove('action');
         await FirebaseFirestore.instance
             .collection('_local_exam_center_exams')
@@ -655,7 +667,7 @@ class WindowsBackendBridge {
         }
         final data = <String, dynamic>{
           ...body,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
+          'timestamp': body['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
         }..remove('action');
         await FirebaseFirestore.instance
             .collection('_local_exam_center_results')

@@ -11,6 +11,7 @@ import 'school_backend_transport.dart';
 import 'windows_firebase_sync.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
+import 'windows_notice_delivery.dart';
 
 class WindowsLicenseState {
   const WindowsLicenseState(
@@ -303,6 +304,9 @@ class WindowsPlatformClient {
     for (final doc in list.docs) {
       if (_sentNotices.contains(doc.id)) continue;
       final d = doc.data();
+      // Old local saves and drafts are never silently advertised as sent.
+      if (d['deliveryStatus'] != 'notification_pending' ||
+          (d['recipientCount'] is! num || d['recipientCount'] <= 0)) continue;
       final raw = d['timestamp'] ?? d['createdAt'];
       final at = raw is Timestamp
           ? raw.millisecondsSinceEpoch
@@ -318,12 +322,46 @@ class WindowsPlatformClient {
         _sentNotices.add(doc.id);
         continue;
       }
-      await call('school/notice', {
+      final response = await call('school/notice', {
         'noticeId': doc.id,
         'title': d['title'] ?? 'School notice',
         'message': d['description'] ?? d['message'] ?? ''
       });
+      if (response['sent'] != true) continue;
+      await doc.reference.update({'deliveryStatus': 'sent'});
       _sentNotices.add(doc.id);
+    }
+  }
+
+  Future<WindowsNoticeDelivery> publishNotice(String id, Map<String, dynamic> data) async {
+    final remote = await WindowsFirebaseRemote.status();
+    if (!remote.authenticated || remote.projectId.isEmpty) {
+      throw StateError('Notice not sent. Connect and verify this school Firebase and Google Script first.');
+    }
+    final token = await WindowsFirebaseRemote.freshIdToken();
+    final roster = await WindowsFirebaseRemote.readCollection(
+      projectId: remote.projectId, idToken: token, collection: 'students_directory');
+    final users = await WindowsFirebaseRemote.readCollection(
+      projectId: remote.projectId, idToken: token, collection: 'mobile_users');
+    final recipients = schoolNoticeRecipients(roster.values, users.values);
+    if (recipients == 0) {
+      throw StateError('Notice not sent. No students with an issued ID-card QR have registered in this school student app.');
+    }
+    // The school Script must respond online before a notice is published.
+    await call('installation/status', {'projectId': remote.projectId});
+    final payload = {...data, 'recipientCount': recipients,
+      'deliveryStatus': 'notification_pending'};
+    await WindowsFirebaseRemote.writeDocument(projectId: remote.projectId,
+      idToken: token, collection: 'school_notices', documentId: id, data: payload);
+    await FirebaseFirestore.instance.collection('school_notices').doc(id).set(payload);
+    try {
+      final sent = await call('school/notice', {'projectId': remote.projectId, 'noticeId': id});
+      if (sent['sent'] != true) throw StateError('School notification was not acknowledged.');
+      _sentNotices.add(id);
+      await FirebaseFirestore.instance.collection('school_notices').doc(id).update({'deliveryStatus': 'sent'});
+      return WindowsNoticeDelivery(notificationSent: true, recipients: recipients);
+    } catch (e) {
+      return WindowsNoticeDelivery(notificationSent: false, recipients: recipients, error: '$e');
     }
   }
 

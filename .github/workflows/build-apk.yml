@@ -6,6 +6,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')
     name: Build Release APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
