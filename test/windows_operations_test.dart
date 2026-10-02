@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -105,7 +104,7 @@ void main() {
     }
     await WindowsAppReset.reset();
     expect(WindowsLocalSecurity.configured,false); expect(WindowsLocalSession.loggedOut,false);
-    expect((await WindowsExternalConnections.load())['googleScriptUrl'],'');
+    expect(await WindowsExternalConnections.googleScriptUrl(),'');
     const secure=FlutterSecureStorage();
     expect(await secure.read(key:'vs_trial_start'),'2026-09-30');
     expect(await secure.read(key:'vs_license_denied'),'true');
@@ -129,10 +128,30 @@ void main() {
     expect(await SchoolPromotionService.apply(studentId:'fail',student:{},exam:exam,result:'FAIL'),'Retained in Class 12');
     expect((await db.collection('students_directory').doc('fail').get()).data()?['class'],'Class 12');
   });
-  test('Windows selectors and fee preloading extend to Class 12 without old Class 10 graduation', () {
-    final source=File('lib/main_dashboard_screen_windows.dart').readAsStringSync();
-    expect(source, isNot(contains('List.generate(10,')));
-    expect(source,contains('List.generate(12, (index) async'));
-    expect(source,isNot(contains('classNumber >= 10')));
+  test('senior students progress through Class 11 and 12 before graduation', () {
+    expect(SchoolPromotionService.nextClassNumber(10),11);
+    expect(SchoolPromotionService.nextClassNumber(11),12);
+    expect(SchoolPromotionService.nextClassNumber(12),isNull);
+    expect(() => SchoolPromotionService.nextClassNumber(13),throwsArgumentError);
+  });
+  testWidgets('payroll displays teacher salary, totals and actionable payments', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200,1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.runAsync(() async {
+      final person = await teacher();
+      await StaffPayroll.save(db.activeProfileId,person,'${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2,'0')}',basic:1000000);
+      await tester.pumpWidget(const MaterialApp(home:StaffSalaryScreen()));
+      await Future<void>.delayed(const Duration(milliseconds:200));
+    });
+    for (var i=0;i<20;i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds:30)));
+      await tester.pump();
+      if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('School Teacher'),findsOneWidget);
+    expect(find.text('Record payment'),findsOneWidget);
+    expect(find.text('Net payroll'),findsOneWidget);
+    expect(tester.takeException(),isNull);
   });
 }

@@ -310,6 +310,10 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
 }
 
 class SchoolPromotionService {
+  static int? nextClassNumber(int current) {
+    if (current < 1 || current > 12) throw ArgumentError('Invalid student class.');
+    return current == 12 ? null : current + 1;
+  }
   static Future<bool> forceEnabled() async =>
       (await FirebaseFirestore.instance
               .collection('school_settings')
@@ -368,12 +372,13 @@ class SchoolPromotionService {
           {...shared, 'classMovement': 'RETAINED'}, SetOptions(merge: true));
       return 'Retained in ${live['class']}';
     }
-    if (classNo >= 12) {
+    final nextClass = nextClassNumber(classNo);
+    if (nextClass == null) {
       await ref.set(
           {...shared, 'classMovement': 'GRADUATED'}, SetOptions(merge: true));
       return 'Completed Class 12';
     }
-    final newClass = 'Class ${classNo + 1}';
+    final newClass = 'Class $nextClass';
     final roll = live['rollNo']?.toString() ?? '';
     final directory = await FirebaseFirestore.instance.collection('students_directory').get();
     final occupied = directory.docs.where((d)=>d.data()['class']==newClass)

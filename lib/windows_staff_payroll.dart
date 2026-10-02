@@ -65,7 +65,8 @@ class StaffPayroll {
     people.add({'id': 'staff:${DateTime.now().microsecondsSinceEpoch}', 'name': name.trim(), 'role': role, 'designation': designation.trim()});
     await ref.set({'staff': people}, SetOptions(merge: true));
   });
-  static int paid(Map<String, dynamic> row) => (row['paidPaise'] as num?)?.toInt() ?? 0;
+  static int paid(Map<String, dynamic> row) => (row['paidPaise'] as num?)?.toInt() ??
+      (row['status']?.toString().toLowerCase() == 'paid' ? total(row) : 0);
   static int total(Map<String, dynamic> row) => (row['netPaise'] as num?)?.toInt() ?? ((row['amount'] as num? ?? 0) * 100).round();
   static Future<Map<String, dynamic>> save(String profile, Map<String, dynamic> person, String month,
       {required int basic, int allowance = 0, int bonus = 0, int overtime = 0, int deduction = 0}) => _serial(() async {

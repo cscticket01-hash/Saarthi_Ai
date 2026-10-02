@@ -24,7 +24,7 @@ class WindowsAppReset {
       await WindowsFirebaseRemote.disconnect();
       const secure = FlutterSecureStorage();
       final settings = await secure.readAll();
-      for (final key in settings.keys) {
+      for (final key in settings.keys.toList()) {
         if (key.startsWith('vidya_saarthi_windows_')) await secure.delete(key: key);
       }
       await WindowsLocalSecurity.clearAppLock();

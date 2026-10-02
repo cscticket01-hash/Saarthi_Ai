@@ -124,6 +124,17 @@ class WindowsPlatformClient {
         await _apply(Map<String, dynamic>.from(jsonDecode(cache)), verified: false);
       } catch (_) {}
     }
+    // Migrate already-activated installations to independent central checks.
+    // The saved key is a lookup capability, never evidence of validity itself.
+    if (_activeLicenseHash.isEmpty && _cacheProject.isNotEmpty) {
+      final previousKey = (await _secure.read(key: 'vidya_saarthi_windows_license_key_v1') ?? '').trim().toUpperCase();
+      if (previousKey.isNotEmpty) {
+        _activeLicenseHash = sha256.convert(utf8.encode(previousKey)).toString();
+        _licenseProject = _cacheProject;
+        await _secure.write(key: 'vs_active_license_hash', value: _activeLicenseHash);
+        await _secure.write(key: 'vs_active_license_project', value: _licenseProject);
+      }
+    }
     final active = await WindowsFirebaseRemote.status();
     if (_cacheProject.isNotEmpty && active.projectId != _cacheProject) {
       _verifiedAt = null;
