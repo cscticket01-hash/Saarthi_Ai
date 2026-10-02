@@ -9,6 +9,7 @@ import '../lib/windows_license_gate.dart';
 import '../lib/windows_admin_setup.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_local_session.dart';
+import '../lib/windows_local_firestore.dart';
 import '../lib/windows_local_settings.dart';
 import '../lib/windows_online_startup.dart';
 import '../lib/windows_platform_client.dart';
@@ -25,6 +26,10 @@ void main() {
     WindowsPlatformClient.skippedOverride = null;
     WindowsAdminSetup.completedOverride = null;
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    // Create the shared local database/write queue outside a widget test's
+    // FakeAsync zone, so later tests cannot inherit a dead callback clock.
+    await FirebaseFirestore.instance.collection('school_config')
+        .doc('school_profile_cache').get();
     WindowsPlatformClient.instance.state.value = WindowsLicenseState(
       allowed: true,
       status: 'trial',
