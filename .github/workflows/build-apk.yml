@@ -402,6 +402,9 @@ jobs:
         PY
     - name: Configure notification desugaring
       run: python .github/scripts/configure_android_notifications.py
+
+    - name: Configure school-owned Firebase messaging
+      run: python .github/scripts/configure_school_messaging.py
     - name: Use dedicated Android dependencies
       run: |
         python - <<'PY'
@@ -663,6 +666,22 @@ jobs:
         echo "APK SHA256:"
         sha256sum \
           release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+    - name: Prepare static Android update manifest
+      env:
+        RELEASE_BUILD: ${{ github.run_number }}
+      run: |
+        python3 <<'PYBUILD'
+        import hashlib,json,os,pathlib
+        build=int(os.environ['RELEASE_BUILD'])
+        version='1.0.'+str(build)
+        name='Vidya-Saarthi-v'+version+'.apk'
+        file=pathlib.Path('release')/name
+        digest=hashlib.sha256(file.read_bytes()).hexdigest()
+        data={'versionCode':build,'versionName':version,
+              'apkUrl':'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v'+version+'/'+name,
+              'sha256':digest}
+        pathlib.Path('release/android-update.json').write_text(json.dumps(data))
+        PYBUILD
     - name: Publish GitHub Release
       uses: softprops/action-gh-release@v2
       with:
@@ -670,7 +689,9 @@ jobs:
         name: Vidya Saarthi v1.0.${{ github.run_number }}
         make_latest: true
         generate_release_notes: true
-        files: release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+        files: |
+          release/Vidya-Saarthi-v1.0.${{ github.run_number }}.apk
+          release/android-update.json
     - name: Publish App Update Metadata
       shell: bash
       env:

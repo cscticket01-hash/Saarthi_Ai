@@ -1,6 +1,6 @@
 # Developer website, Windows school app and universal Android app
 
-The website at vidyasaarthi.web.app is now the developer control centre. Existing
+The website source is the developer control centre for vidyasaarthi.web.app. Existing
 Firebase email/password credentials are retained. The central account needs the
 existing `admin: true` claim or `developer: true`; school accounts cannot generate
 keys or read the central dashboard.
@@ -14,12 +14,19 @@ The review APK uses a debug certificate and must be installed as a test build.
 Production uses the existing permanent Android signing key and package name.
 The review workflow never deploys, publishes releases or modifies Firestore.
 
-Publishing main runs the existing website and signed app release workflows.
-Website deployment first installs the central platform API and its rules. Firebase
-Cloud Functions requires the central project to have the Blaze plan, its necessary
-APIs enabled, and the existing FIREBASE_SERVICE_ACCOUNT deployment account to have
-permission to deploy Functions and Firestore rules. There is no automatic billing
-upgrade. If deployment is unavailable, the new website is not published.
+Publishing main runs the website and signed app release workflows. The website
+workflow tests both school and central Firestore rules, verifies Anonymous Auth,
+then deploys **Firestore rules and Hosting only**. Cloud Functions, Cloud Run,
+Cloud Build and Blaze are not required by this design. `functions/platform.js`
+is retained for regression coverage of the previous API; it is not deployed or
+called by the current clients. Billing is never upgraded automatically.
+
+The existing deployment account needs Firestore rules/Hosting access and Firebase
+Authentication Admin to verify/enable Anonymous sign-in for online trials. This
+changes only that provider; existing developer Email/Password accounts stay intact.
+If the account lacks Auth config access, enable Anonymous in Firebase Console and
+grant the deployment account the stated role before retrying. School monitor
+accounts use the existing Email/Password provider and have no developer claim.
 
 ## Connect each school's own backend
 
@@ -29,7 +36,7 @@ upgrade. If deployment is unavailable, the new website is not published.
    `admin: true` or `role: "admin"` custom claim in that SCHOOL project.
 2. Follow [SCHOOL_BACKEND_INSTALL.md](SCHOOL_BACKEND_INSTALL.md) to install the
    corrected full `SaarthiSchool.gs`, companion `SaarthiMobile.gs` and
-   `SaarthiStorage.gs`, school Firestore rules and complete `appsscript.json`.
+   `SaarthiStorage.gs` and `SaarthiPlatform.gs`, school Firestore rules and complete `appsscript.json`.
    The full backend already calls the adapter; keep exactly one `doPost`.
 3. Migrate existing school sheets/folders by their exact IDs with
    `VS_prepareSchoolStorage`. Confirm empty storage explicitly only for a new
@@ -65,7 +72,7 @@ settings. Paid installations have an offline lease of at most 72 hours and never
 past the key's expiry. A cached licence cannot carry into another school profile.
 
 The developer generates a school-bound key from Licences and manually shares it.
-The full key is displayed once; the server stores its hash and a short suffix.
+The full key is displayed once; the central database stores its hash and a short suffix.
 School activates it in Windows. Licence issuance and revocation require verified
 developer access. The mobile backend independently checks school expiry.
 
@@ -102,41 +109,94 @@ options. Report cards and receipts have four layouts each. Preview produces the
 actual PDF, including the default; the selected layout is saved per school and used by its print/export
 actions and Android documents.
 
-Only platform administration data is held centrally: school identity, bound
-backend URL, licence, installation/session verification, activity counts, app
-version, notice delivery and submitted support complaints. Student directories,
-marks, fee records, attendance, salary, photos and documents remain in each
-school's own Firebase/Google backend.
+Only administration metadata is held centrally: school definitions, immutable trial
+creation dates, licence hashes/renewal dates/purchase status, aggregate school counts,
+and app complaints. The website provisions an Auth identity mapped to exactly one
+school. Its script can publish only that school's numeric summary and support reports;
+it cannot read the dashboard, list licences, issue keys, or write another school's data.
+Student records, QR/session identifiers, marks, fees, media and FCM tokens stay at
+that school. Complaints include the user's voluntarily submitted message, school,
+role and app version; no directory record is attached automatically.
 
-Active school means a Windows heartbeat within 24 hours. Online student means a
-verified mobile heartbeat within five minutes. Counts deduplicate person IDs within
-their school. Licence expiry warnings cover the next 14 days. No demo counts are
-displayed as real activity.
+A summary is sent at most once per school every five minutes. `reportedAt` is the
+central server timestamp; `lastSeenAt` is the school's last Windows/mobile activity.
+The maintenance timer does not make an unused school look active. Active/inactive
+uses a 24-hour activity window. Online students are a recent-activity **estimate**
+from school-only cache shards; cache eviction can lower the estimate. Summaries older
+than ten minutes contribute no online users. Registered student/app-user totals are
+school-side count aggregations, not 30,000 central session documents. Warnings cover
+licences expiring in the next 14 days.
 
-Windows and Android can submit app complaints; the developer can mark them open,
-in progress or resolved. Schools do not read another school's complaints.
+Windows and Android submit complaints through the authenticated school script.
+A private school outbox retains them during outages; a five-minute trigger retries.
+Five reports per person per day and one central report per school per 30 seconds
+limit writes. The developer can mark reports open, in progress or resolved.
 
-## Notifications and updates
+## School setup and owned notifications
 
-FCM message delivery is free. The central platform sends notices only to verified
-tokens belonging to the issuing school; it never uses a global all-schools topic.
-Windows relays newly published notices while online. The server deduplicates
-delivery by school and notice ID. Foreground notices show an in-app alert;
-background notices use Android's normal notification tray after permission is
-granted. Both paths verify the currently logged-in school before displaying a
-data-only FCM message, so queued notices from an earlier school are ignored.
-Logout clears displayed notices. A force-stopped phone cannot receive until the
-app opens again.
+In website **Schools → School setup**, enter the school name and its separate
+Firebase project ID. Copy the generated `VS_setupPlatform({...})` call and run it
+as the owner in that school's script. Credentials appear only at creation; they
+are not embedded in QR cards or either app. Generating setup again revokes the old
+monitor identity's access; paste the replacement into the school script. The
+function installs one five-minute maintenance trigger. For a school detected
+through its trial, the first licence may return both a key and a setup bundle;
+copy both. Then give the key manually and activate it in the school's Windows app.
 
-The central function hosting still requires Blaze, and normal backend usage can
-have costs above its free allowance; this is not a promise of an entirely free
-backend. Switching school removes previous school notification sessions.
+In the **school Firebase**, register an Android app with the existing package
+`com.example.saarthi_ai`. Use its Android app ID and project number from that
+school's google-services.json to run:
 
-Production APK builds retain the existing signing certificate, package identity,
-GitHub release and app_config/android_update publication. The Android update
-screen compares installed and published build numbers and uses only this
-repository's release download URLs. Windows keeps its existing installer/update
-system. Preview builds do not write production update metadata.
+```javascript
+VS_setupMessaging('1:YOUR_PROJECT_NUMBER:android:YOUR_APP_ID', 'YOUR_PROJECT_NUMBER');
+```
+
+The school API key configured by `VS_setupSchool` must allow the school's Firebase
+Installations/Messaging APIs. If API key restrictions are enabled, include the
+Android package and permanent production certificate SHA-1:
+`76:24:14:31:E2:A8:21:D7:56:64:A6:12:24:46:EB:50:6F:CA:D0:1B`.
+Enable the school's Firebase Cloud Messaging HTTP v1 API. Its Apps Script owner
+must have permission to send in **that school project**, and authorise the manifest's
+Firebase Messaging and Script trigger scopes. No Cloud Function/service-account
+private key is put in a school app.
+
+The universal Android app initializes its default Firebase Messaging SDK with the
+selected school's public Android options, including before background delivery.
+On a project change it saves the new authenticated session and restarts its process,
+which prevents an old Messaging singleton from retaining the previous project.
+The compiled central google-services resource is not used to initialize messaging.
+
+Windows relays a synced school notice through that school's authenticated script.
+The script sends a topic invalidation through that school's FCM project, with **only**
+school ID, notice ID and type. Private notice text is fetched separately using the
+recipient's authenticated school session before it is displayed. Knowing a public
+Firebase config/topic cannot reveal private notice content. Queued messages from
+another school are ignored; logout unsubscribes, deletes the token and clears notices.
+Background delivery needs Android notification permission and a non-force-stopped app.
+
+Production APK signing/package identity are retained. Android checks this repository's
+GitHub Releases directly, so updates do not depend on the discontinued central API.
+The existing public Android update metadata remains readable for completed releases.
+Windows retains its GitHub-based installer/update system. Preview builds do not
+publish production update metadata.
+
+## Free capacity and remaining installation work
+
+The design targets at least 10 schools and 30,000 **registered** students across
+separate school projects. A 10-school central summary schedule has a maximum of
+2,880 summary writes/day, plus licence/support/trial operations. Rule lookups,
+Windows licence checks, school licence checks and dashboard reads also consume
+central reads. School operational activity consumes each school's own quotas.
+This is a quota-oriented design target, not a 30,000-concurrent-user benchmark or
+an unlimited/free-forever promise. Per-school Apps Script concurrency/URL Fetch
+and Firebase daily quotas still apply. The monitor summary test uses 10 school
+records representing 30,000 students; it is not a production load test.
+
+School Apps Scripts/rules and their Firebase Android registrations must be installed
+in their respective accounts. This repository cannot deploy to unprovided school
+accounts. Download the review's `school-backend-copy-paste` artifact for combined
+`Code.gs`, `appsscript.json` and `firestore.school.rules` (exactly one doPost/doGet).
+Do not reuse the earlier three-file bundle; its licence API was the old Functions design.
 
 ## Acceptance check
 

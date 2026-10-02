@@ -2,7 +2,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
-import '../platform/platform_config.dart';
+import '../platform/github_updates.dart';
+import '../school_backend_transport.dart';
 
 class SchoolLink {
   const SchoolLink(
@@ -68,7 +69,8 @@ class SchoolSession {
   static final instance = SchoolSession._();
   static const _secure = FlutterSecureStorage();
   SchoolLink? link;
-  String schoolToken = '', mobileToken = '', deviceId = '';
+  String schoolToken = '', deviceId = '';
+  Map<String,dynamic>? messaging;
   Map<String, dynamic> person = {};
   String schoolName = '';
   static const version =
@@ -88,7 +90,7 @@ class SchoolSession {
       }
       link = SchoolLink.parse(d['qr']);
       schoolToken = d['schoolToken'];
-      mobileToken = d['mobileToken'] ?? '';
+      messaging = d['messaging'] is Map ? Map<String,dynamic>.from(d['messaging']) : null;
       person = Map<String, dynamic>.from(d['person'] ?? {});
       schoolName = d['schoolName'] ?? link!.projectId;
     } catch (_) {
@@ -111,9 +113,7 @@ class SchoolSession {
         .timeout(const Duration(seconds: 30));
     // Google Apps Script redirects POST responses to a one-time content URL.
     final response = r.isRedirect && r.headers['location'] != null
-        ? await http
-            .get(Uri.parse(r.headers['location']!))
-            .timeout(const Duration(seconds: 20))
+        ? await _redirect(r.headers['location']!)
         : r;
     final d = jsonDecode(response.body);
     if (d is! Map || d['success'] != true)
@@ -125,20 +125,17 @@ class SchoolSession {
     return Map<String, dynamic>.from(d);
   }
 
+  Future<http.Response> _redirect(String location) async {
+    final uri=Uri.parse(location);requireSchoolBackendUri(uri);
+    return http.get(uri).timeout(const Duration(seconds:20));
+  }
+
   Future<Map<String, dynamic>> platformCall(
       String action, Map<String, dynamic> body) async {
-    final r = await http
-        .post(Uri.parse(platformApiUrl),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(
-                {'action': action, 'mobileToken': mobileToken, ...body}))
-        .timeout(const Duration(seconds: 25));
-    final d = jsonDecode(r.body);
-    if (d is! Map || d['success'] != true)
-      throw StateError(d is Map
-          ? d['message']?.toString() ?? 'Platform unavailable'
-          : 'Platform unavailable');
-    return Map<String, dynamic>.from(d);
+    if(action=='updates/latest') return latestAndroidUpdate();
+    if(action=='mobile/heartbeat') return schoolCall('mobile_heartbeat',{'version':version});
+    if(action=='complaint/create') return schoolCall('mobile_complaint',body);
+    throw ArgumentError('Unknown mobile action');
   }
 
   Future<void> login(SchoolLink newLink,
@@ -158,29 +155,17 @@ class SchoolSession {
     });
     schoolToken = login['sessionToken'].toString();
     person = Map<String, dynamic>.from(login['person'] ?? {});
-    try {
-      final registered = await platformCall('mobile/register', {
-        'projectId': newLink.projectId,
-        'schoolSessionToken': schoolToken,
-        'fcmToken': fcmToken,
-        'deviceId': deviceId,
-        'version': version
-      });
-      mobileToken = registered['mobileToken'].toString();
-      schoolName = registered['schoolName']?.toString() ?? newLink.projectId;
-    } catch (e) {
-      try {
-        await schoolCall('mobile_logout', {});
-      } catch (_) {}
-      await clear();
-      rethrow;
+    schoolName=login['schoolName']?.toString() ?? newLink.projectId;
+    messaging=login['messaging'] is Map ? Map<String,dynamic>.from(login['messaging']) : null;
+    if(messaging!=null && messaging!['projectId']!=newLink.projectId) {
+      await clear();throw StateError('School messaging project mismatch');
     }
     await _secure.write(
         key: 'vs_mobile_session',
         value: jsonEncode({
           'qr': newLink.rawQr,
           'schoolToken': schoolToken,
-          'mobileToken': mobileToken,
+          'messaging': messaging,
           'person': person,
           'schoolName': schoolName,
           'expiresAt': login['expiresAt']
@@ -192,11 +177,6 @@ class SchoolSession {
       try {
         await schoolCall('mobile_logout', {});
       } catch (_) {}
-      if (mobileToken.isNotEmpty) {
-        try {
-          await platformCall('mobile/logout', {});
-        } catch (_) {}
-      }
     }
     await clear();
   }
@@ -204,7 +184,7 @@ class SchoolSession {
   Future<void> clear() async {
     link = null;
     schoolToken = '';
-    mobileToken = '';
+    messaging = null;
     person = {};
     schoolName = '';
     await _secure.delete(key: 'vs_mobile_session');

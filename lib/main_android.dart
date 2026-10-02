@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:crypto/crypto.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -14,33 +15,31 @@ import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'mobile/school_session.dart';
 import 'mobile/school_notifications.dart';
+import 'mobile/school_messaging.dart';
 import 'school_document_renderer.dart';
 
 @pragma('vm:entry-point')
 Future<void> _backgroundNotice(RemoteMessage message) async {
-  await Firebase.initializeApp();
   await SchoolSession.instance.restore();
-  await SchoolNotifications.show(message);
+  if(!SchoolSession.instance.loggedIn) return;
+  try {await Firebase.initializeApp();await SchoolNotifications.show(message);} catch(_){}
 }
 
 final _messenger = GlobalKey<ScaffoldMessengerState>();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
   await SchoolSession.instance.restore();
   await SchoolNotifications.initialize();
+  try {await SchoolMessaging.configure(SchoolSession.instance.messaging);} catch(_){}
   FirebaseMessaging.onBackgroundMessage(_backgroundNotice);
   try {
-    await FirebaseMessaging.instance
+    if(SchoolMessaging.ready) await FirebaseMessaging.instance
         .requestPermission(alert: true, badge: true, sound: true);
   } catch (_) {}
   FirebaseMessaging.onMessage.listen((m) {
     final school = SchoolSession.instance.link?.projectId;
     if (SchoolNotifications.belongsToSession(m.data, school)) {
-      unawaited(SchoolNotifications.show(m));
-      _messenger.currentState?.showSnackBar(SnackBar(
-          content: Text(
-                '${m.data['title'] ?? 'School notice'}\n${m.data['body'] ?? ''}')));
+      unawaited(SchoolNotifications.show(m).catchError((_) {}));
     }
   });
   runApp(const SaarthiMobileApp());
@@ -149,15 +148,17 @@ class _SchoolLoginState extends State<_SchoolLogin> {
       _error = null;
     });
     try {
-      String fcm = '';
-      try {
-        fcm = await FirebaseMessaging.instance.getToken() ?? '';
-      } catch (_) {}
+      await SchoolMessaging.stop();
+      await SchoolNotifications.clear();
       await SchoolSession.instance.login(_link!,
           studentClass: _class,
           roll: _roll.text.trim(),
-          dob: _dob.text.trim(),
-          fcmToken: fcm);
+          dob: _dob.text.trim());
+      try {
+        if(await SchoolMessaging.configure(SchoolSession.instance.messaging)) return;
+      } catch(_) {
+        _messenger.currentState?.showSnackBar(const SnackBar(content:Text('School login is ready. Ask the school to finish notification setup.')));
+      }
       if (mounted)
         Navigator.pushReplacement(context,
             MaterialPageRoute(builder: (_) => const _SchoolDashboard()));
@@ -281,7 +282,6 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month),
       _selectedDay = DateTime.now();
   Timer? _timer;
-  StreamSubscription<String>? _tokenChanges;
   String _attendanceMode = 'entry';
   bool get _teacher => _s.link!.role == 'teacher';
   List<Map<String, dynamic>> _list(dynamic value) => value is List
@@ -296,19 +296,17 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
     super.initState();
     _load();
     _presence();
-    _timer = Timer.periodic(const Duration(seconds: 60), (_) => _presence());
-    _tokenChanges =
-        FirebaseMessaging.instance.onTokenRefresh.listen((t) => _presence(t));
+    _timer = Timer.periodic(const Duration(minutes: 5), (_) => _presence());
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _tokenChanges?.cancel();
     super.dispose();
   }
 
   Future<void> _presence([String? token]) async {
+    if(WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
     try {
       final d =
           await _s.platformCall('mobile/heartbeat', {'fcmToken': token ?? ''});
@@ -348,9 +346,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
   }
 
   Future<void> _logout() async {
-    try {
-      await FirebaseMessaging.instance.deleteToken();
-    } catch (_) {}
+    await SchoolMessaging.stop();
     await _s.logout();
     await SchoolNotifications.clear();
     if (mounted)
@@ -457,7 +453,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
             {'message': message.text, 'version': SchoolSession.version});
         if (mounted)
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Complaint sent to the developer.')));
+              content: Text('Complaint saved for the developer.')));
       } catch (e) {
         if (mounted)
           ScaffoldMessenger.of(context)
@@ -564,6 +560,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
         await response.stream.pipe(sink);
       } finally {
         client.close();
+      }
+      final expected=u['sha256']?.toString().replaceFirst('sha256:','');
+      if(expected!=null && (await sha256.bind(file.openRead()).first).toString()!=expected){
+        await file.delete();throw StateError('Update verification failed. Download again.');
       }
       await OpenFilex.open(file.path);
     } catch (e) {

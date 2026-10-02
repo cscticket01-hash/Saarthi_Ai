@@ -13,6 +13,16 @@ test('the supplied full doPost denies anonymous legacy read/write/identity reque
   }
   assert.equal(s.properties.get('SAARTHI_SCHOOL_SYNC_ID'), undefined);
 });
+test('free platform actions retain the existing complete school-admin and storage guards', () => {
+  const s=school();s.prepare();
+  for(const action of ['platform_bind','platform_activate','platform_heartbeat','platform_notice','platform_complaint']){
+    assert.equal(s.post({action,key:'VS-'+'A'.repeat(32),message:'Problem'}).success,false);
+  }
+  let called=false;s.context.VS_platformAdmin=()=>{called=true;return {allowed:true};};
+  assert.equal(s.post({action:'platform_bind',...s.proof()}).success,true);assert.equal(called,true);
+  called=false;const wrong=s.post({action:'platform_bind',schoolProjectId:'school-two',schoolAdminIdToken:s.token()});
+  assert.equal(wrong.success,false);assert.equal(called,false);
+});
 test('a valid signed school-admin proof reaches the existing identity router', () => {
   const s = school();
   const result = s.post({action: 'sync_identity_get', ...s.proof()});

@@ -15,11 +15,16 @@ class SchoolNotifications {
   static Future<void> show(RemoteMessage message) async {
     final session = SchoolSession.instance;
     if (!session.loggedIn || !belongsToSession(message.data, session.link?.projectId)) return;
+    // FCM carries no private school content. The current school session must
+    // authorise the notice before its title/body are displayed.
+    final response=await session.schoolCall('mobile_notice',{'noticeId':message.data['noticeId']});
+    if(!session.loggedIn || !belongsToSession(message.data,session.link?.projectId)) return;
+    final notice=response['notice'] is Map ? response['notice'] as Map : {};
     await initialize();
     await _plugin.show(
       (message.data['noticeId']?.hashCode ?? message.hashCode) & 0x7fffffff,
-      message.data['title'] ?? 'School notice',
-      message.data['body'] ?? '',
+      notice['title']?.toString() ?? 'School notice',
+      (notice['description'] ?? notice['message'] ?? '').toString(),
       const NotificationDetails(android: AndroidNotificationDetails(
         'school_notices', 'School notices',
         channelDescription: 'Notices from your verified school',

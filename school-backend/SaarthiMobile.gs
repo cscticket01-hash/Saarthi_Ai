@@ -30,7 +30,7 @@ function VS_firestore(method,path,data) {
  const base='https://firestore.googleapis.com/v1/projects/'+encodeURIComponent(VS_project())+'/databases/(default)/documents/';
  const opt={method:method,muteHttpExceptions:true,headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()}};
  if(data){opt.contentType='application/json';opt.payload=JSON.stringify(data);}
- const r=UrlFetchApp.fetch(base+path,opt);const code=r.getResponseCode();if(code===404)return null;const body=JSON.parse(r.getContentText()||'{}');if(code>=400)throw new Error('School database operation failed ('+code+')');return body;
+ const r=UrlFetchApp.fetch((path[0]===':'?base.slice(0,-1):base)+path,opt);const code=r.getResponseCode();if(code===404)return null;const body=JSON.parse(r.getContentText()||'{}');if(code>=400)throw new Error('School database operation failed ('+code+')');return body;
 }
 function VS_get(col,id){return VS_doc(VS_firestore('GET',col+'/'+encodeURIComponent(id)));}
 function VS_set(col,id,data){const fields={};const text=firebaseTextOnlyValue_(data);Object.keys(text).forEach(k=>fields[k]=VS_encode(text[k]));return VS_doc(VS_firestore('PATCH',col+'/'+encodeURIComponent(id),{fields:fields}));}
@@ -49,6 +49,7 @@ function VS_handleMobile(e){
   try{
    VS_requireAdmin(b);
    VS_schoolSyncGuard(b);
+   if(String(b.action||'').startsWith('platform_'))return ContentService.createTextOutput(JSON.stringify(Object.assign({success:true,projectId:VS_project()},VS_platformAdmin(b)))).setMimeType(ContentService.MimeType.JSON);
    if(['mark_attendance','mark_student_attendance','mark_teacher_attendance'].indexOf(b.action)>=0&&!VS_isOpen(VS_day()))throw new Error('School is closed today. Attendance is disabled for everyone');
    if(b.action==='change_student_class' && b.newRollNo!==undefined)return ContentService.createTextOutput(JSON.stringify(Object.assign({success:true,projectId:VS_project()},VS_changeStudentClass(b)))).setMimeType(ContentService.MimeType.JSON);
    return null;
@@ -69,17 +70,24 @@ function VS_mobileAction(b){
    const roll=String(b.rollNo||'').replace(/^0+/,'');const savedRoll=String(p.rollNo||'').replace(/^0+/,'');
    if(!selected||selected!==assigned||!roll||roll!==savedRoll||!VS_dob(b.dob)||!VS_dob(p.dob||p.dateOfBirth)||VS_dob(b.dob)!==VS_dob(p.dob||p.dateOfBirth))throw new Error('Class, roll number or date of birth is incorrect');
   }
+  VS_requireLicense();
   const token=VS_secret();const expires=Date.now()+30*86400000;const stable=p.mobileStableId||p.id;
   VS_set('mobile_sessions',VS_hash(token),{personId:stable,documentId:p.id,role:verified.role,linkToken:p.mobileLinkToken,expiresAt:expires,createdAt:Date.now()});
-  return {sessionToken:token,personId:stable,role:verified.role,expiresAt:expires,person:VS_safePerson(p)};
+  VS_set('mobile_users',VS_hash(verified.role+'/'+stable),{role:verified.role});
+  return {sessionToken:token,personId:stable,role:verified.role,expiresAt:expires,person:VS_safePerson(p),messaging:VS_messagingOptions(),schoolName:VS_project()};
  }
  if(b.projectId && b.projectId!==VS_project())throw new Error('School identity mismatch');
  const session=VS_session(b);
  if(action!=='mobile_session_verify'&&action!=='mobile_logout')VS_requireLicense();
  if(action==='mobile_session_verify')return {personId:session.personId,role:session.role,expiresAt:session.doc.expiresAt};
  if(action==='mobile_logout'){VS_firestore('DELETE','mobile_sessions/'+VS_hash(b.sessionToken));return {loggedOut:true};}
+ if(action==='mobile_heartbeat'){VS_touchPresence(session,b.version);return {allowed:true};}
+ if(action==='mobile_messaging_config')return {messaging:VS_messagingOptions()};
+ if(action==='mobile_complaint')return VS_queueComplaint(b,session.role,'android',session.personId);
+ if(action==='mobile_notice'){const notice=VS_get('school_notices',String(b.noticeId||''));if(!notice)throw new Error('School notice unavailable');return {notice:notice};}
  if(action==='mobile_asset')return VS_mobileAsset(b,session);
  if(action==='mobile_dashboard'){
+  VS_touchPresence(session,b.version);
   const profile=VS_mobileSchoolProfile();
   const notices=VS_query('school_notices').sort((a,c)=>(c.timestamp||c.createdAt||0)-(a.timestamp||a.createdAt||0)).slice(0,100);
   const result={person:VS_safePerson(session.person),school:profile,notices:notices,templates:VS_get('school_settings','document_templates')||{},calendar:VS_query('school_calendar'),calendarSettings:VS_get('school_settings','calendar')||{closedWeekdays:[0]}};
@@ -117,8 +125,7 @@ function VS_mobileAction(b){
 }
 
 function VS_requireLicense(){
- const key='VS_LICENSE_LEASE';const props=PropertiesService.getScriptProperties();let lease;try{lease=JSON.parse(props.getProperty(key)||'null');}catch(_){}
- if(!lease||Date.now()-lease.checkedAt>300000){const response=UrlFetchApp.fetch('https://asia-south1-saarthi-ai-df12b.cloudfunctions.net/platformApi',{method:'post',contentType:'application/json',payload:JSON.stringify({action:'school/public_status',projectId:VS_project()}),muteHttpExceptions:true});const d=JSON.parse(response.getContentText());if(!d.success)throw new Error('School license service unavailable');lease={allowed:d.allowed,expiresAt:d.expiresAt,checkedAt:Date.now()};props.setProperty(key,JSON.stringify(lease));}
+ const lease=VS_platformStatus();
  if(!lease.allowed||lease.expiresAt<=Date.now())throw new Error('School trial or licence has ended');
 }
 

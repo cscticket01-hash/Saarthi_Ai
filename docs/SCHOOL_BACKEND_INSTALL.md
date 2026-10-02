@@ -1,7 +1,7 @@
 # Install the corrected school Firebase and Google backend
 
-These files update the backend supplied by the owner. They are saved in the
-review branch; nothing here automatically deploys to Google or Firebase.
+These files update the backend supplied by the owner. School scripts and rules must be installed in each school account; the central
+website deploys through the repository workflow.
 
 ## Files to copy
 
@@ -10,6 +10,7 @@ review branch; nothing here automatically deploys to Google or Firebase.
 | `school-backend/SaarthiSchool.gs` | Replace the old full school Apps Script code |
 | `school-backend/SaarthiMobile.gs` | Add a second `.gs` file in the same script project |
 | `school-backend/SaarthiStorage.gs` | Add a third `.gs` file in the same script project |
+| `school-backend/SaarthiPlatform.gs` | Add a fourth `.gs` file for free licensing, summaries and owned FCM |
 | `school-backend/appsscript.json` | The script manifest, shown through Project Settings |
 | `school-backend/firestore.school.rules` | The **school's** Firebase Console → Firestore → Rules |
 
@@ -29,7 +30,7 @@ school rules in the central developer Firebase project. Central rules stay in
 2. The Apps Script owner must have access to that school's Firebase project.
    Enable the Firestore API and grant that Google account the Datastore User role
    in that exact project. The manifest includes Sheets, Drive, Datastore and
-   external-request scopes. Authorise them when running setup.
+   external-request, Firebase Messaging and Script trigger scopes. Authorise them when running setup.
 3. Run this function from the script editor, substituting the school's own
    public Firebase Web API key and project ID:
 
@@ -79,9 +80,24 @@ school rules in the central developer Firebase project. Central rules stay in
    access to school records: Windows needs verified school-admin proof and
    Android needs its own hashed, expiring school session. QR data never contains
    an administrator password, Firebase ID token or owner OAuth credential.
-8. Confirm the central platform API is deployed separately, then connect Windows,
+8. Deploy the central Spark rules/website, enable Anonymous sign-in for immutable
+   trials, then connect Windows,
    set school location/calendar, and regenerate student/teacher ID cards. Each QR
    must contain this school's Firebase project, script URL and person link token.
+9. In the developer website Schools section, generate this school's monitoring
+   setup. Copy `VS_setupPlatform({...})` into a temporary setup function in the
+   school editor and run it as owner. Keep its password in script properties only.
+   The website also generates the school-bound licence key; activate it in Windows.
+10. Register the universal Android package `com.example.saarthi_ai` in this school's
+    Firebase. Run `VS_setupMessaging(androidAppId, projectNumber)` with that school's
+    values and authorise the new scopes. Enable its FCM HTTP v1 API and grant its
+    script owner messaging-send permission. Update the web-app deployment version.
+    Full steps and quota/online-count definitions are in [PLATFORM_SETUP.md](PLATFORM_SETUP.md).
+
+Instead of four `.gs` tabs, the `school-backend-copy-paste` review artifact contains
+one combined `Code.gs` plus the manifest and school rules. Install **either** the
+combined file **or** the four source tabs, never both. The old bundle from the
+previous Functions-based release is not compatible with this free backend.
 
 ## What was fixed
 
