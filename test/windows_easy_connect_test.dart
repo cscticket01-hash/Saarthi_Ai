@@ -79,11 +79,64 @@ void main() {
         try { final response = await (await browser.getUrl(callback)).close(); await response.drain<void>(); }
         finally { browser.close(); }
       });
-    final result = await auth.authorize(script: false);
+    // Widget binding overrides HttpClient with a fake 400 response. This
+    // integration uses only the real loopback listener; Google calls are mocked.
+    final result = await HttpOverrides.runWithHttpOverrides(
+      () => auth.authorize(script: false), null);
     expect(result.subject, 'school-owner');
     expect(result.email, 'school@gmail.com');
     auth.close();
   });
+  Future<GoogleSetupAccount> signInResponse(http.Response token, {http.Response? user}) async {
+    final auth = GoogleAuthorization(oauthClientId: 'test.apps.googleusercontent.com',
+      client: MockClient((request) async {
+        expect(request.followRedirects, isFalse);
+        return request.url.host == 'oauth2.googleapis.com' ? token : user!;
+      }), openBrowser: (uri) async {
+        final callback = Uri.parse(uri.queryParameters['redirect_uri']!).replace(queryParameters: {
+          'state': uri.queryParameters['state']!, 'code': 'approved-code'});
+        final browser = HttpClient();
+        try {
+          final response = await (await browser.getUrl(callback)).close();
+          await response.drain<void>();
+        } finally { browser.close(); }
+      });
+    try {
+      return await HttpOverrides.runWithHttpOverrides(() => auth.authorize(script: false), null);
+    } finally { auth.close(); }
+  }
+
+  test('OAuth refuses credential redirects, malformed responses and missing scopes', () async {
+    for (final response in [
+      http.Response('', 302, headers: {'location': 'https://evil.test'}),
+      http.Response('private-token-malformed-json', 200),
+      json({'access_token': 'private-token', 'scope': 'openid email'}),
+    ]) {
+      await expectLater(signInResponse(response), throwsA(isA<StateError>()
+        .having((e) => e.toString(), 'sanitized', isNot(contains('private-token')))));
+    }
+  });
+
+  test('OAuth refuses an unverified school account and user-info redirects', () async {
+    final token = json({'access_token': 'private-token',
+      'scope': 'openid email https://www.googleapis.com/auth/cloud-platform'});
+    for (final user in [
+      json({'sub': 'school-owner', 'email': 'school@gmail.com', 'email_verified': false}),
+      http.Response('', 302, headers: {'location': 'https://evil.test'}),
+    ]) {
+      await expectLater(signInResponse(token, user: user), throwsStateError);
+    }
+  });
+
+  test('Expired and malformed API responses request reconnect without leaking bodies', () async {
+    for (final response in [http.Response('private-body', 401), http.Response('private-body', 200)]) {
+      final api = GoogleSetupApi('secret', client: MockClient((_) async => response));
+      await expectLater(api.request('GET', 'https://firebase.googleapis.com/v1beta1/projects/x'),
+        throwsA(predicate((e) => !e.toString().contains('private-body'))));
+      api.close();
+    }
+  });
+
   test('Google API tokens never follow redirects or reach untrusted hosts', () async {
     var calls = 0;
     final api = GoogleSetupApi('secret', client: MockClient((r) async {
@@ -163,6 +216,81 @@ void main() {
     expect(await setup.deployScript(), 'https://script.google.com/macros/s/deployment/exec');
     expect(storage.value['scriptUrl'], contains('/exec'));
   });
+  test('Deployment discovery follows all pages without creating duplicate resources', () async {
+    final setup = provisioner(MemoryCheckpoint({...checkpoint(), 'scriptId': 'script-1'}),
+      MockClient((r) async {
+        expect(r.method, 'GET');
+        if (!r.url.queryParameters.containsKey('pageToken')) return json({'nextPageToken': 'page-two'});
+        expect(r.url.queryParameters['pageToken'], 'page-two');
+        return json({'deployments': [{'entryPoints': [{'entryPointType': 'WEB_APP', 'webApp': {
+          'url': 'https://script.google.com/macros/s/deployment/exec',
+          'entryPointConfig': {'executeAs': 'USER_DEPLOYING', 'access': 'ANYONE_ANONYMOUS'}}}]}]});
+      }));
+    await setup.begin(schoolName: '', location: '');
+    expect(await setup.deployScript(), contains('/exec'));
+  });
+
+  test('Repeated pagination stops rather than creating duplicate deployments', () async {
+    final setup = provisioner(MemoryCheckpoint({...checkpoint(), 'scriptId': 'script-1'}),
+      MockClient((r) async {
+        expect(r.method, 'GET');
+        return json({'nextPageToken': 'same-page'});
+      }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.deployScript(), throwsStateError);
+  });
+
+  test('Deployment retry reuses saved script version', () async {
+    final setup = provisioner(MemoryCheckpoint({...checkpoint(), 'scriptId': 'script-1', 'scriptVersion': 8}),
+      MockClient((r) async {
+        expect(r.url.path, isNot(endsWith('/versions')));
+        if (r.method == 'GET') return json({});
+        expect(jsonDecode(r.body)['versionNumber'], 8);
+        return json({'entryPoints': [{'entryPointType': 'WEB_APP', 'webApp': {
+          'url': 'https://script.google.com/macros/s/deployment/exec',
+          'entryPointConfig': {'executeAs': 'USER_DEPLOYING', 'access': 'ANYONE_ANONYMOUS'}}}]});
+      }));
+    await setup.begin(schoolName: '', location: '');
+    expect(await setup.deployScript(), contains('/exec'));
+  });
+
+  test('Admin resume preserves existing claims only for the exact generated identity', () async {
+    final setup = provisioner(MemoryCheckpoint({...checkpoint(),
+      'firebaseConfig': {'projectId': school, 'apiKey': 'public-key'},
+      'adminUid': 'generated-admin', 'adminPassword': 'generated-password'}), MockClient((r) async {
+        if (r.url.host == 'cloudresourcemanager.googleapis.com') return json({
+          'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'test123'}, 'projectNumber': '123456'});
+        if (r.url.path.endsWith(':lookup')) return json({'users': [{
+          'localId': 'generated-admin', 'email': account.email,
+          'customAttributes': jsonEncode({'schoolFeature': true})}]});
+        expect(r.url.path, endsWith(':update'));
+        final claims = jsonDecode(jsonDecode(r.body)['customAttributes']);
+        expect(claims, {'schoolFeature': true, 'admin': true});
+        return json({});
+      }));
+    await setup.begin(schoolName: '', location: '');
+    expect(await setup.adminPassword(), 'generated-password');
+  });
+
+  test('Admin creation cannot elevate a foreign or disabled identity', () async {
+    for (final user in [
+      {'localId': 'foreign-admin', 'email': account.email},
+      {'localId': 'generated-admin', 'email': 'another@gmail.com'},
+      {'localId': 'generated-admin', 'email': account.email, 'disabled': true},
+    ]) {
+      final setup = provisioner(MemoryCheckpoint({...checkpoint(),
+        'firebaseConfig': {'projectId': school, 'apiKey': 'public-key'}, 'adminUid': 'generated-admin'}),
+        MockClient((r) async {
+          if (r.url.host == 'cloudresourcemanager.googleapis.com') return json({
+            'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'test123'}, 'projectNumber': '123456'});
+          expect(r.url.path, endsWith(':lookup'));
+          return json({'users': [user]});
+        }));
+      await setup.begin(schoolName: '', location: '');
+      await expectLater(setup.adminPassword(), throwsStateError);
+    }
+  });
+
   test('Unsaved backend identity and health verified through safe Google redirects', () async {
     var calls = 0;
     await verifySchoolBackend(Uri.parse('https://script.google.com/macros/s/school/exec'), school,
@@ -188,10 +316,15 @@ void main() {
       : json({'success': true, 'working': false, 'rootFolderAccessible': false}))), throwsStateError);
   });
   testWidgets('Unconfigured preview explains developer prerequisite and disables sign-in', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(const MaterialApp(home: EasySchoolConnectScreen()));
     expect(find.textContaining('Developer setup is pending'), findsOneWidget);
-    final signIn = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Sign in with Google / Resume setup'));
+    final signIn = tester.widget<FilledButton>(find.byKey(const ValueKey('school-google-sign-in')));
     expect(signIn.onPressed, isNull);
     expect(find.textContaining('No billing account'), findsOneWidget);
+    expect(find.text('Google account: Not verified'), findsOneWidget);
+    expect(find.text('Firebase: Not verified'), findsOneWidget);
+    expect(find.text('Firestore: Not verified'), findsOneWidget);
   });
 }

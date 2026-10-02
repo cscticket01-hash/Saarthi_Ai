@@ -142,7 +142,10 @@ jobs:
         PY
     - run: flutter pub get
     - name: Compile Windows school app
-      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.79 --build-number=79 --dart-define=APP_VERSION=2.1.79
+      env:
+        SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+        SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET }}
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.79 --build-number=79 --dart-define=APP_VERSION=2.1.79 --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET
     - uses: actions/upload-artifact@v4
       with:
         name: windows-review-build
@@ -217,4 +220,9 @@ jobs:
   pull_request:
     branches:
     - main
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      google_oauth_client_id:
+        description: 'Optional public Desktop OAuth client ID for a school test preview'
+        required: false
+        type: string

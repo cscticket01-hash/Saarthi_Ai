@@ -21,6 +21,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
   GoogleSetupApi? _api;
   SchoolProvisioner? _setup;
   bool _busy = false, _newSchool = false, _done = false, _scriptApproval = false;
+  bool _googleConnected = false, _firebaseConnected = false, _driveConnected = false;
   String _location = 'asia-south1', _message = '', _email = '';
   SetupActionRequired? _action;
 
@@ -33,7 +34,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
   }
   Future<void> _start() async {
     if (_busy) return;
-    setState(() { _busy = true; _action = null; _done = false; _scriptApproval = false; });
+    setState(() { _busy = true; _action = null; _done = false; _scriptApproval = false; _googleConnected = false; });
     try {
       final saved = await _checkpoint.read();
       final links = await WindowsExternalConnections.load();
@@ -61,7 +62,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
       if (!account.email.toLowerCase().endsWith('@gmail.com')) {
         throw StateError('This preview supports school Gmail accounts. Workspace/domain accounts still require the existing connection setup.');
       }
-      setState(() => _email = account.email);
+      setState(() { _email = account.email; _googleConnected = true; });
       _api?.close();
       final api = GoogleSetupApi(account.accessToken); _api = api;
       final setup = SchoolProvisioner(api: api, account: account, checkpoint: _checkpoint,
@@ -87,6 +88,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
     } else {
       await WindowsFirebaseRemote.testSavedConnection();
     }
+    if (mounted) setState(() => _firebaseConnected = true);
     await setup.firebaseConnected();
     await WindowsConnectionCenter.reload();
     if (!widget.googleDrive) {
@@ -116,7 +118,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
     setup.data['complete'] = true;
     await setup.save();
     await WindowsConnectionCenter.reload();
-    if (mounted) setState(() { _done = true; _message = 'Google Drive and Firebase are connected to this school. Existing school isolation checks remain active.'; });
+    if (mounted) setState(() { _driveConnected = true; _done = true; _message = 'Google Drive and Firebase are connected to this school. Existing school isolation checks remain active.'; });
   }
 
   Future<void> _continue() async {
@@ -136,10 +138,23 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
   void _handle(Object error) {
     if (!mounted) return;
     setState(() {
+      if (error is SetupApiError && error.status == 401 || error is SetupCancelled) {
+        _googleConnected = false;
+        _setup = null;
+        _scriptApproval = false;
+        _api?.close();
+      }
       _action = error is SetupActionRequired ? error : null;
       _message = error.toString().replaceFirst('Bad state: ', '');
     });
   }
+  Widget _status(String label, bool verified, {bool ready = false}) => ListTile(
+    dense: true, contentPadding: EdgeInsets.zero,
+    leading: Icon(verified ? Icons.check_circle : Icons.radio_button_unchecked,
+      color: verified ? Colors.greenAccent : Colors.white54),
+    title: Text('$label: ${verified ? (ready ? 'Ready' : 'Connected') : 'Not verified'}'),
+  );
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text(widget.googleDrive ? 'Connect Google Drive' : 'Connect Firebase')),
@@ -165,6 +180,14 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
           subtitle: const Text('Existing school cloud data must be connected through the existing settings. No billing account or paid plan will be enabled.'),
           onChanged: _busy ? null : (v) => setState(() => _newSchool = v ?? false)),
         if (_email.isNotEmpty) Text('School account: $_email'),
+        const SizedBox(height: 12),
+        _status('Google account', _googleConnected),
+        _status('Firebase', _firebaseConnected),
+        _status('Firestore', _firebaseConnected, ready: true),
+        if (widget.googleDrive) ...[
+          _status('Google Drive', _driveConnected),
+          _status('School storage', _driveConnected, ready: true),
+        ],
         if (_busy) const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: LinearProgressIndicator()),
         if (_message.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text(_message)),
         if (_action != null) ...[
@@ -173,6 +196,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
           }, icon: const Icon(Icons.open_in_browser), label: const Text('Open Google approval')),
           FilledButton(onPressed: _busy ? null : _continue, child: const Text('Continue after approval')),
         ] else if (!_done) FilledButton.icon(
+          key: const ValueKey('school-google-sign-in'),
           onPressed: _busy || !GoogleAuthorization.configured ? null : _start,
           icon: const Icon(Icons.login), label: const Text('Sign in with Google / Resume setup')),
         if (_busy) TextButton(onPressed: () { _auth.cancel(); _api?.close(); }, child: const Text('Cancel')),

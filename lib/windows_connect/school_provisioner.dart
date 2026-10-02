@@ -52,9 +52,11 @@ class GoogleSetupApi {
       throw SetupApiError(response.statusCode, uri.host);
     }
     if (response.body.trim().isEmpty) return {};
-    final data = jsonDecode(response.body);
-    if (data is! Map) throw StateError('Unexpected Google setup response.');
-    return Map<String, dynamic>.from(data);
+    try {
+      final data = jsonDecode(response.body);
+      if (data is Map) return Map<String, dynamic>.from(data);
+    } catch (_) {}
+    throw StateError('Unexpected Google setup response. Please retry.');
   }
   Future<Map<String, dynamic>> waitOperation(String host, Map<String, dynamic> operation) async {
     var op = operation;
@@ -201,8 +203,8 @@ class SchoolProvisioner {
     });
     if (data['webAppId'] == null) {
       progress('Registering the school connection');
-      final list = await api.request('GET', 'https://firebase.googleapis.com/v1beta1/projects/$project/webApps');
-      final apps = (list!['apps'] as List? ?? []).where((a) => a['displayName'] == 'Vidya Saarthi ${data['nonce']}');
+      final apps = (await _pages('https://firebase.googleapis.com/v1beta1/projects/$project/webApps', 'apps'))
+          .where((a) => a['displayName'] == 'Vidya Saarthi ${data['nonce']}');
       if (apps.isNotEmpty) {
         data['webAppId'] = apps.first['appId'];
       } else {
@@ -218,7 +220,29 @@ class SchoolProvisioner {
     return config;
   }
 
+  Future<List<Map<String, dynamic>>> _pages(String url, String field) async {
+    final values = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    String? page;
+    do {
+      final target = Uri.parse(url).replace(queryParameters: {
+        if (page != null) 'pageToken': page,
+      });
+      final response = (await api.request('GET', target.toString()))!;
+      values.addAll((response[field] as List? ?? []).map((e) => Map<String, dynamic>.from(e)));
+      page = response['nextPageToken']?.toString();
+      if (page != null && page.isNotEmpty && !seen.add(page)) {
+        throw StateError('Google returned a repeated page. Retry without creating duplicate resources.');
+      }
+    } while (page != null && page.isNotEmpty);
+    return values;
+  }
+
   Future<String> adminPassword() async {
+    await ensureProject();
+    if (data['firebaseConfig']?['projectId'] != project) {
+      throw StateError('School administrator configuration mismatch.');
+    }
     // Random, per-school device credential. Google password is never requested.
     data['adminPassword'] ??= secureSetupToken(36);
     data['adminUid'] ??= 'vs-${data['nonce']}';
@@ -229,14 +253,21 @@ class SchoolProvisioner {
     final lookup = await api.request('POST', '$userUrl:lookup', body: {'localId': [data['adminUid']]});
     final users = lookup!['users'] as List? ?? [];
     if (users.isEmpty) {
-      await api.request('POST', 'https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$key', body: {
+      final created = await api.request('POST', 'https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$key', body: {
         'targetProjectId': project, 'localId': data['adminUid'], 'email': account.email,
         'emailVerified': true, 'password': password, 'displayName': 'School administrator',
       });
-    } else if (users.single['email'] != account.email) {
+      if (created?['localId'] != data['adminUid']) {
+        throw StateError('Google returned a different administrator identity. Setup stopped.');
+      }
+    } else if (users.length != 1 || users.single['localId'] != data['adminUid'] ||
+        users.single['email'] != account.email || users.single['disabled'] == true) {
       throw StateError('School administrator identity changed. Automatic overwrite blocked.');
     }
-    await api.request('POST', '$userUrl:update', body: {'localId': data['adminUid'], 'customAttributes': jsonEncode({'admin': true})});
+    final claims = users.isEmpty ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(users.single['customAttributes']?.toString() ?? '{}'));
+    await api.request('POST', '$userUrl:update', body: {
+      'localId': data['adminUid'], 'customAttributes': jsonEncode({...claims, 'admin': true})});
     return password;
   }
 
@@ -285,10 +316,10 @@ class SchoolProvisioner {
   Future<String> deployScript() async {
     final id = Uri.encodeComponent(data['scriptId']);
     progress('Finding the school web connection');
-    final deployments = await api.request('GET', 'https://script.googleapis.com/v1/projects/$id/deployments');
+    final deployments = await _pages('https://script.googleapis.com/v1/projects/$id/deployments', 'deployments');
     // This script was created by this checkpoint; accept an explicitly approved
     // manual deployment too, without creating duplicate deployments on retries.
-    final existing = (deployments!['deployments'] as List? ?? []).where((d) =>
+    final existing = deployments.where((d) =>
       (d['entryPoints'] as List? ?? []).any((e) => e['entryPointType'] == 'WEB_APP' &&
         e['webApp']?['entryPointConfig']?['executeAs'] == 'USER_DEPLOYING' &&
         e['webApp']?['entryPointConfig']?['access'] == 'ANYONE_ANONYMOUS'));
@@ -296,9 +327,13 @@ class SchoolProvisioner {
     if (existing.isNotEmpty) {
       deployed = Map<String, dynamic>.from(existing.first);
     } else {
-      final version = await api.request('POST', 'https://script.googleapis.com/v1/projects/$id/versions', body: {'description': 'School-owned setup'});
+      if (data['scriptVersion'] == null) {
+        final version = await api.request('POST', 'https://script.googleapis.com/v1/projects/$id/versions', body: {'description': 'School-owned setup'});
+        data['scriptVersion'] = version!['versionNumber'];
+        await save();
+      }
       deployed = (await api.request('POST', 'https://script.googleapis.com/v1/projects/$id/deployments', body: {
-        'versionNumber': version!['versionNumber'], 'manifestFileName': 'appsscript', 'description': 'Vidya Saarthi ${data['nonce']}',
+        'versionNumber': data['scriptVersion'], 'manifestFileName': 'appsscript', 'description': 'Vidya Saarthi ${data['nonce']}',
       }))!;
     }
     for (final entry in deployed['entryPoints'] as List? ?? []) {

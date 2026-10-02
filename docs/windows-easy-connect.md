@@ -119,3 +119,44 @@ actual school resource ownership. Automated mocks do not replace this live test.
 - https://firebase.google.com/docs/rules/manage-deploy
 - https://cloud.google.com/identity-platform/docs/reference/rest/v2/projects.identityPlatform/initializeAuth
 - https://cloud.google.com/identity-platform/docs/reference/rest/v1/projects.accounts/lookup
+
+
+## Continuation: verified status, safe reconnect and preview builds
+
+The wizard shows separate Google account, Firebase, Firestore, Google Drive and
+school storage statuses. A service is marked connected/ready only after its
+corresponding verification completes during this session. Saved checkpoint flags
+alone never show a verified connection. OAuth expiry or cancellation clears the
+current setup authorization; sign in again with the same school account to resume.
+Changing accounts cannot adopt the previous school's project or credentials.
+Google refresh tokens are intentionally not retained; reconnect requests fresh
+consent. Existing Firebase refresh tokens remain in the existing secure store.
+
+OAuth token exchange and user-info requests refuse redirects. Invalid Google
+response bodies are never surfaced in error messages. Admin resume checks the
+exact generated UID/email, blocks disabled accounts and preserves unrelated custom
+claims. Resource lists follow pagination and script deployment retries reuse the
+saved version rather than creating a new version on every attempt.
+
+For an unpublished configured Windows test build, run **Platform review builds**
+with the optional public `google_oauth_client_id` input, or set the repository
+variable `SAARTHI_GOOGLE_DESKTOP_CLIENT_ID`. If Google's Desktop client requires
+its public-client secret, use the repository secret
+`SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET`. This only configures review artifacts;
+production release/deployment workflows are unchanged. Without this configuration,
+sign-in stays disabled. Do not put a service-account key into either setting.
+
+School steps: Advanced Settings → Connect Google Drive → enter school name,
+choose India location and confirm new empty storage → sign in with the school
+Gmail account → grant access → follow any Firebase/Apps Script approval screen →
+Continue → wait for all verification statuses → Done. Selecting Connect Firebase
+performs only the Firebase half; return to Connect Google Drive with the same
+account to finish storage setup. Existing schools keep their manual connections;
+automatic setup refuses to replace them.
+
+Remaining acceptance: supply the real Desktop OAuth client, approve a test-school
+account in the consent application if it is in testing mode, then run the live
+new-school/interruption/reconnect/revocation tests above. Automated mock tests and
+builds cannot establish that Google's actual consent and provisioning work for a
+particular organization. Workspace migration, recovery after app reset and mobile
+notification onboarding remain outside this preview.

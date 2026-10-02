@@ -89,24 +89,25 @@ class GoogleAuthorization {
       }));
       final code = await codeFuture;
       if (_cancelled) throw SetupCancelled();
-      final tokenResponse = await client.post(Uri.https('oauth2.googleapis.com', '/token'), body: {
-        'client_id': oauthClientId, if (oauthClientSecret.isNotEmpty) 'client_secret': oauthClientSecret,
-        'code': code, 'code_verifier': verifier, 'redirect_uri': redirect,
-        'grant_type': 'authorization_code',
-      }).timeout(const Duration(seconds: 30));
+      final tokenResponse = await _send(http.Request('POST', Uri.https('oauth2.googleapis.com', '/token'))
+        ..bodyFields = {
+          'client_id': oauthClientId, if (oauthClientSecret.isNotEmpty) 'client_secret': oauthClientSecret,
+          'code': code, 'code_verifier': verifier, 'redirect_uri': redirect,
+          'grant_type': 'authorization_code',
+        });
       if (_cancelled) throw SetupCancelled();
       if (tokenResponse.statusCode != 200) throw StateError('Google sign-in could not be verified. Please reconnect.');
-      final token = jsonDecode(tokenResponse.body) as Map;
+      final token = _decode(tokenResponse.body);
       final granted = (token['scope'] as String? ?? '').split(' ').toSet();
       // Google may return the canonical userinfo.email scope instead of email.
       final needed = scopes.where((s) => s != 'email' && s != 'openid');
       if (!needed.every(granted.contains)) throw StateError('Required permissions were not granted. No school setup was started.');
       final access = token['access_token']?.toString() ?? '';
       if (access.isEmpty) throw StateError('Google access token missing.');
-      final user = await client.get(Uri.https('openidconnect.googleapis.com', '/v1/userinfo'),
-        headers: {'Authorization': 'Bearer $access'}).timeout(const Duration(seconds: 30));
+      final user = await _send(http.Request('GET', Uri.https('openidconnect.googleapis.com', '/v1/userinfo'))
+        ..headers['Authorization'] = 'Bearer $access');
       if (user.statusCode != 200) throw StateError('Google account could not be verified.');
-      final info = jsonDecode(user.body) as Map;
+      final info = _decode(user.body);
       if (info['email_verified'] != true || info['sub'] is! String || info['email'] is! String) {
         throw StateError('A verified school Google account is required.');
       }
@@ -119,6 +120,23 @@ class GoogleAuthorization {
       await subscription.cancel();
       await server.close(force: true);
     }
+  }
+
+  Future<http.Response> _send(http.Request request) async {
+    request.followRedirects = false;
+    final response = await http.Response.fromStream(await client.send(request)
+        .timeout(const Duration(seconds: 30))).timeout(const Duration(seconds: 30));
+    if (_cancelled) throw SetupCancelled();
+    return response;
+  }
+
+  static Map<String, dynamic> _decode(String body) {
+    try {
+      final value = jsonDecode(body);
+      if (value is Map) return Map<String, dynamic>.from(value);
+    } catch (_) {}
+    // Do not include raw OAuth responses, codes or tokens in UI exceptions.
+    throw StateError('Google returned an invalid sign-in response. Please reconnect.');
   }
 
   void cancel() {
