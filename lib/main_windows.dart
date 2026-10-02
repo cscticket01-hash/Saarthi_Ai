@@ -13,7 +13,7 @@ import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_connection_center.dart';
-import 'windows_online_startup.dart';
+import 'windows_admin_setup.dart';
 import 'windows_update_service.dart' as update_service;
 import 'windows_update_manager.dart';
 
@@ -69,9 +69,6 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
       ),
       builder: (context, child) {
         return WindowsLicenseGate(
-          connectionBuilder: (_) =>
-              const WindowsStartupGate(
-                  child: AdvancedSettingsScreen(connectionsOnly: true)),
           child: Listener(
             behavior: HitTestBehavior.translucent,
             onPointerDown: (_) => windows_html.document.dispatchClick(),
@@ -89,20 +86,84 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
       },
       routes: {
         '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
+        '/admin-setup': (_) => const WindowsAdminSetupScreen(),
         '/local-login': (_) => const WindowsLocalLoginScreen(),
         '/dashboard': (_) => const WindowsLocalDashboardGate(),
       },
-      home: WindowsOnlineStartupGate(
+      home: WindowsStartupFlow(
         initializeConnections: initializeConnections,
-        child: !WindowsLocalSecurity.configured
-          ? const WindowsFirstRunSecuritySetup()
-          : WindowsLocalSession.loggedOut
-              ? const WindowsLocalLoginScreen()
-              : const WindowsStartupGate(
-                  child: WindowsLocalDashboardGate(),
-                ),
       ),
     ));
+  }
+}
+
+/// Startup order after the licence gate:
+///   License screen (handled by WindowsLicenseGate) -> Skip -> Admin Setup
+///   (only when not already completed) -> Home.
+/// The optional online connection check now runs in the background; it never
+/// blocks opening the app and Firebase is not required to reach Home.
+class WindowsStartupFlow extends StatefulWidget {
+  const WindowsStartupFlow(
+      {super.key,
+      this.initializeConnections = WindowsConnectionCenter.initialize});
+
+  final Future<void> Function() initializeConnections;
+
+  @override
+  State<WindowsStartupFlow> createState() => _WindowsStartupFlowState();
+}
+
+class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
+  bool _loading = true;
+  bool _setupDone = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Optional school-connection init continues in the background only.
+    unawaited(widget.initializeConnections().catchError((error) {
+      debugPrint('Windows background connection init: $error');
+    }));
+    _prepare();
+  }
+
+  Future<void> _prepare() async {
+    try {
+      await WindowsLocalSecurity.initialize();
+      final done = await WindowsAdminSetup.completed();
+      if (!mounted) return;
+      setState(() {
+        _setupDone = done;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _setupDone = WindowsLocalSecurity.configured;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0B141A),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF00A884)),
+        ),
+      );
+    }
+    // Fresh install: local-first Admin Setup before the dashboard.
+    if (!_setupDone && !WindowsLocalSecurity.configured) {
+      return const WindowsAdminSetupScreen();
+    }
+    // School/cloud initialization is already running in the background.
+    // Never add a second online-startup screen or a duplicate connection check.
+    return WindowsLocalSession.loggedOut
+        ? const WindowsLocalLoginScreen()
+        : const WindowsStartupGate(child: WindowsLocalDashboardGate());
   }
 }
 

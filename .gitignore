@@ -1,8 +1,1 @@
-node_modules/
-.dart_tool/
-build/
-firebase-debug.log
-firestore-debug.log
-ui-debug.log
-.env
-.env.local
+(empty)

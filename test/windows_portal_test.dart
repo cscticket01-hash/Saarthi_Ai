@@ -23,6 +23,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() async {
     FlutterSecureStorage.setMockInitialValues({});
+    WindowsPlatformClient.skippedOverride = null;
     ui.WindowsUiLanguage.change('en');
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     await local.FirebaseFirestore.instance.switchProfile('test-${DateTime.now().microsecondsSinceEpoch}');
@@ -64,7 +65,9 @@ void main() {
       child: Scaffold(appBar: AppBar(title: const Text('Dashboard'), actions: [IconButton(
         key: const ValueKey('settings-test'), onPressed: () {}, icon: const Icon(Icons.settings))])))));
     await tester.pump();
-    expect(find.textContaining('Free trial:'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('license-skip-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('License not activated — Activate now'), findsOneWidget);
     final bannerBottom = tester.getBottomLeft(find.byType(WindowsTrialBanner)).dy;
     expect(tester.getTopLeft(find.byKey(const ValueKey('settings-test'))).dy, greaterThanOrEqualTo(bannerBottom));
   });

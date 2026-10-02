@@ -3,12 +3,40 @@ import 'windows_ui_localization.dart';
 import 'windows_platform_client.dart';
 
 class WindowsTrialBanner extends StatelessWidget {
-  const WindowsTrialBanner({super.key, required this.state, this.onActivate});
+  const WindowsTrialBanner(
+      {super.key, required this.state, this.onActivate, this.licenseSkipped = false});
   final WindowsLicenseState state;
   final VoidCallback? onActivate;
+  final bool licenseSkipped;
   @override
   Widget build(BuildContext context) {
-    if (state.allowed && state.status == 'licensed') return const SizedBox.shrink();
+    final licensed = state.allowed && state.status == 'licensed';
+    // A skipped licence keeps showing a red warning until real activation.
+    if (licensed) return const SizedBox.shrink();
+    if (licenseSkipped) {
+      return Material(
+          key: const ValueKey('license-not-activated-banner'),
+          color: const Color(0xFF661B24),
+          child: InkWell(
+              onTap: onActivate,
+              child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                      child: Row(children: [
+                        const Icon(Icons.warning_amber_rounded,
+                            color: Color(0xFFFF8A8A), size: 22),
+                        const SizedBox(width: 10),
+                        const Expanded(
+                            child: Text(
+                                'License not activated — Activate now',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700))),
+                        if (onActivate != null)
+                          const Icon(Icons.chevron_right, color: Colors.white),
+                      ])))));
+    }
     final end = state.expiresAt.toLocal();
     final date = '${end.day}/${end.month}/${end.year}';
     return Material(color: const Color(0xFF661B24), child: InkWell(
@@ -28,42 +56,79 @@ class WindowsTrialBanner extends StatelessWidget {
   }
 }
 
+/// First-run flow of the Windows app:
+///   License screen -> (Skip) -> Admin Setup -> Home.
+/// The licence screen only asks for a key and offers Skip; no school/Firebase
+/// configuration, no "Check again", no connection-error UI is shown here.
 class WindowsLicenseGate extends StatefulWidget {
-  const WindowsLicenseGate({super.key, required this.child, required this.connectionBuilder});
+  static final resetSignal = ValueNotifier<int>(0);
+  static void reopenAfterReset() => resetSignal.value++;
+  const WindowsLicenseGate({
+    super.key,
+    required this.child,
+    this.connectionBuilder,
+  });
   final Widget child;
-  final WidgetBuilder connectionBuilder;
+
+  /// Kept optional so Settings can still surface advanced connections later;
+  /// the first-run licence screen never shows it.
+  final WidgetBuilder? connectionBuilder;
   @override
   State<WindowsLicenseGate> createState() => _WindowsLicenseGateState();
 }
+
 class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
   final _key = TextEditingController();
-  bool _busy = false, _editingConnections = false, _showActivation = false;
+  bool _busy = false, _showActivation = false;
+  bool _resolved = false, _skipped = false;
   String? _error;
+
   @override
-  void dispose() { _key.dispose(); super.dispose(); }
+  void initState() {
+    super.initState();
+    WindowsLicenseGate.resetSignal.addListener(_reset);
+    WindowsPlatformClient.instance.licenseSkipped().then((value) {
+      if (mounted) setState(() { _skipped = value; _resolved = true; });
+    });
+  }
+
+  void _reset() {
+    if (mounted) setState(() { _skipped = false; _showActivation = false; _resolved = true; _error = null; });
+  }
+
+  @override
+  void dispose() { WindowsLicenseGate.resetSignal.removeListener(_reset); _key.dispose(); super.dispose(); }
+
   Future<void> _activate() async {
     setState(() { _busy = true; _error = null; });
     try {
       await WindowsPlatformClient.instance.activate(_key.text);
-      if (mounted) setState(() { _showActivation = false; _editingConnections = false; });
+      _key.clear();
+      if (mounted) setState(() { _showActivation = false; _skipped = false; });
     }
     catch (e) { if (mounted) setState(() => _error = '$e'); }
     finally { if (mounted) setState(() => _busy = false); }
   }
-  @override
-  Widget build(BuildContext context) => ValueListenableBuilder<WindowsLicenseState>(
-    valueListenable: WindowsPlatformClient.instance.state,
-    builder: (context, s, _) {
-      final Widget page;
-      if (_editingConnections) {
-        page = Scaffold(appBar: AppBar(title: const Text('School connections'),
+
+  Future<void> _skip() async {
+    if (_busy) return;
+    setState(() { _busy = true; _error = null; });
+    try {
+    await WindowsPlatformClient.instance.markLicenseSkipped();
+    if (mounted) setState(() { _skipped = true; _showActivation = false; });
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not save Skip: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _licenseScreen({required WindowsLicenseState s, bool blocking = false}) => Scaffold(
+      appBar: blocking ? null : AppBar(
+          title: const Text('School licence'),
           leading: IconButton(icon: const Icon(Icons.arrow_back),
-            onPressed: () => setState(() => _editingConnections = false))),
-          body: Navigator(onGenerateRoute: (_) => MaterialPageRoute(builder: widget.connectionBuilder)));
-      } else {
-        page = Scaffold(appBar: s.allowed ? AppBar(title: const Text('School licence'),
-          leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _busy ? null : () => setState(() => _showActivation = false))) : null,
-          body: Center(child: ConstrainedBox(
+            onPressed: _busy ? null : () => setState(() => _showActivation = false))),
+      body: Center(child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 480),
           child: SingleChildScrollView(padding: const EdgeInsets.all(28),
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -83,23 +148,41 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
               if (_error != null) Text(_error!, style: const TextStyle(color: Colors.redAccent)),
               const SizedBox(height: 12),
               FilledButton(onPressed: _busy ? null : _activate,
-                child: Text(_busy ? 'Verifying…' : 'Activate license')),
-              TextButton(onPressed: _busy ? null : () => setState(() => _editingConnections = true),
-                child: const Text('School connection settings')),
-              TextButton(onPressed: () => WindowsPlatformClient.instance.refresh(), child: const Text('Check again')),
+                child: Text(_busy ? 'Verifying…' : 'Activate / Verify license')),
+              if (s.allowed) ...[
+                const SizedBox(height: 6),
+                TextButton(
+                  key: const ValueKey('license-skip-button'),
+                  onPressed: _busy ? null : _skip,
+                  child: const Text('Skip')),
+              ],
             ])))));
-      }
-      // Reserve layout space above the navigator, never overlay its app bars.
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<WindowsLicenseState>(
+    valueListenable: WindowsPlatformClient.instance.state,
+    builder: (context, s, _) {
+      // Fresh installs see ONLY the licence key screen first.
+      if (!_resolved) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      final showFirstRun = !_skipped && s.allowed && s.status != 'licensed';
+      if (showFirstRun) return _licenseScreen(s: s, blocking: true);
+      // Expired/revoked licences keep blocking, as before.
+      if (!s.allowed) return _licenseScreen(s: s, blocking: true);
+      final activating = _showActivation;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [WindowsTrialBanner(state: s, onActivate: () => setState(() {
-          _showActivation = true; _editingConnections = false;
-        })), Expanded(child: Stack(fit: StackFit.expand, children: [
-          // Keep routes and unsaved forms mounted while visiting activation.
-          if (s.allowed) Offstage(offstage: _showActivation || _editingConnections,
-            child: TickerMode(enabled: s.allowed && !_showActivation && !_editingConnections, child: widget.child)),
-          if (!s.allowed || _showActivation || _editingConnections) page,
-        ]))],
+        children: [
+          WindowsTrialBanner(
+              state: s,
+              licenseSkipped: _resolved && _skipped,
+              onActivate: () => setState(() => _showActivation = true)),
+          Expanded(child: Stack(fit: StackFit.expand, children: [
+            // Keep routes and unsaved forms mounted while visiting activation.
+            Offstage(offstage: activating,
+              child: TickerMode(enabled: !activating, child: widget.child)),
+            if (activating) _licenseScreen(s: s),
+          ])),
+        ],
       );
     });
 }

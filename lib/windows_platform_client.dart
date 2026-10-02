@@ -413,6 +413,26 @@ class WindowsPlatformClient {
     }
   }
 
+  static const licenseSkippedKey =
+      'vidya_saarthi_windows_license_skipped_v1';
+
+  /// Test-only override so widget tests can pin the skip state without a
+  /// real secure-storage round trip. Null means "read from storage".
+  static bool? skippedOverride;
+
+  /// Remember that the user chose "Skip" on the first-run licence screen.
+  Future<void> markLicenseSkipped() async {
+    await _secure.write(key: licenseSkippedKey, value: 'true');
+  }
+
+  Future<bool> licenseSkipped() async =>
+      skippedOverride ?? await _secure.read(key: licenseSkippedKey) == 'true';
+
+  Future<void> clearLicenseSkipped() async {
+    skippedOverride = null;
+    await _secure.delete(key: licenseSkippedKey);
+  }
+
   Future<void> activate(String key) async {
     if (_paused || _activating) throw StateError('Licence operation is already running.');
     final normalized = key.trim().toUpperCase();
@@ -421,23 +441,26 @@ class WindowsPlatformClient {
     try {
     while (_running) { await Future<void>.delayed(const Duration(milliseconds: 100)); }
     final remote = await WindowsFirebaseRemote.status();
-    if (!remote.authenticated || remote.projectId.isEmpty)
-      throw StateError(
-          'Connect and verify this school before activating its licence.');
+    final boundProject = remote.projectId;
     final data =
         await call('license/activate', {'key': normalized});
     final current = await WindowsFirebaseRemote.status();
-    if (current.projectId != remote.projectId || !current.authenticated) throw StateError('School changed during activation. Retry for the active school.');
+    if (current.authenticated &&
+        current.projectId.isNotEmpty &&
+        current.projectId != boundProject) {
+      throw StateError('School changed during activation. Retry for the active school.');
+    }
     await _apply(data);
     if (data['allowed'] != true || data['status'] != 'licensed' || !state.value.allowed || state.value.status != 'licensed') {
       throw StateError('Licence is expired, revoked or could not be verified.');
     }
-    _boundProject=remote.projectId;
+    _boundProject=boundProject;
     _boundScript=await WindowsExternalConnections.googleScriptUrl();
     await _secure.write(
         key: 'vidya_saarthi_windows_license_status_v1', value: 'active');
     await _secure.write(key: 'vidya_saarthi_windows_license_key_v1', value: normalized);
     await _secure.write(key: 'vidya_saarthi_windows_license_saved_at_v1', value: DateTime.now().toIso8601String());
+    await clearLicenseSkipped();
     } finally { _activating = false; }
   }
 
