@@ -34,16 +34,17 @@ jobs:
         lib/windows_platform_client.dart lib/windows_license_gate.dart lib/windows_school_operations.dart lib/windows_document_templates.dart
         lib/mobile/school_session.dart lib/platform/platform_config.dart test/document_renderer_test.dart lib/windows_school_identity.dart
         lib/mobile/school_notifications.dart test/mobile_boundary_test.dart
-        lib/school_text_data.dart lib/school_backend_transport.dart test/school_text_data_test.dart
+        lib/school_text_data.dart lib/school_backend_transport.dart test/school_text_data_test.dart lib/platform/developer_service.dart lib/platform/spark_client.dart
+        lib/platform/github_updates.dart lib/platform/monitor_summary.dart lib/mobile/school_messaging.dart test/monitor_summary_test.dart test/spark_license_test.dart test/github_update_test.dart
     - name: Analyze developer portal
-      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart lib/platform
     - name: Analyze Windows school source
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_windows.dart lib/main_dashboard_screen_windows.dart
         lib/windows_school_operations.dart lib/windows_school_identity.dart lib/windows_platform_client.dart lib/windows_document_templates.dart
         lib/windows_backend_bridge.dart
         lib/windows_sync_engine.dart lib/windows_firebase_sync.dart lib/school_text_data.dart lib/school_backend_transport.dart
     - name: Verify documents and mobile school boundaries
-      run: flutter test test/document_renderer_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart
+      run: flutter test test/document_renderer_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/spark_license_test.dart test/github_update_test.dart
     - name: Build developer website
       run: flutter build web --release
     - uses: actions/upload-artifact@v4
@@ -52,6 +53,12 @@ jobs:
         path: |
           build/web
           build/document-previews
+    - name: Bundle school copy-paste backend
+      run: python .github/scripts/bundle_school_backend.py
+    - uses: actions/upload-artifact@v4
+      with:
+        name: school-backend-copy-paste
+        path: build/school-backend
     - uses: actions/upload-artifact@v4
       with:
         name: formatted-platform-source
@@ -66,7 +73,11 @@ jobs:
           lib/windows_school_operations.dart
           lib/windows_document_templates.dart
           lib/mobile/school_session.dart
-          lib/platform/platform_config.dart
+          lib/platform
+          lib/mobile/school_messaging.dart
+          test/monitor_summary_test.dart
+          test/spark_license_test.dart
+          test/github_update_test.dart
           test/document_renderer_test.dart
 
           lib/windows_school_identity.dart
@@ -160,6 +171,8 @@ jobs:
         PY
     - name: Configure notification desugaring
       run: python .github/scripts/configure_android_notifications.py
+    - name: Configure school-owned Firebase messaging
+      run: python .github/scripts/configure_school_messaging.py
     - name: Use dedicated Android dependencies
       run: |
         python - <<'PY'
@@ -174,7 +187,7 @@ jobs:
     - name: Align resolved Android plugin SDKs
       run: python .github/scripts/configure_android_plugins.py
     - name: Analyze universal mobile app
-      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/school_notifications.dart
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Build unsigned Android preview
       run: flutter build apk --debug -t lib/main_android.dart --dart-define=APP_VERSION=review --dart-define=APP_BUILD=0
     - uses: actions/upload-artifact@v4

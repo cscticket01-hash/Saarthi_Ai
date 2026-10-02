@@ -9,7 +9,7 @@ function backend(role = 'student') {
  const context = vm.createContext({Date,JSON,Math,Number,String,Object,Array,Error,PropertiesService:{getScriptProperties:()=>({getProperty:()=> 'school-one'})},Utilities:{DigestAlgorithm:{SHA_256:'SHA_256'},computeDigest:(_,s)=>[...crypto.createHash('sha256').update(s).digest()],getUuid:()=>crypto.randomUUID(),formatDate:()=> '2026-10-01'}});
  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../../school-backend/SaarthiMobile.gs'),'utf8'), context);
  context.VS_get=(col)=>col==='mobile_sessions'?{personId:person.id,documentId:person.id,role,linkToken:person.mobileLinkToken,expiresAt:Date.now()+60000}:col===`${role==='teacher'?'teachers':'students'}_directory`?person:null;
- context.VS_query=()=>[];context.VS_set=()=>({});context.VS_requireLicense=()=>{};
+ context.VS_query=()=>[];context.VS_set=()=>({});context.VS_requireLicense=()=>{};context.VS_messagingOptions=()=>null;context.VS_touchPresence=()=>{};
  return {context,person};
 }
 function credentials(p){return {action:'mobile_login',projectId:'school-one',role:'student',personId:p.id,linkToken:p.mobileLinkToken,studentClass:'Class 5',rollNo:'12',dob:'15/03/2015'};}

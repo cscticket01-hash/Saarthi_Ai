@@ -65,7 +65,7 @@ function school(project = 'school-one', world = drive()) {
       }
       return {getResponseCode: () => 200, getContentText: () => '{}'};
     }}});
-  for (const name of ['SaarthiSchool.gs', 'SaarthiStorage.gs', 'SaarthiMobile.gs']) {
+  for (const name of ['SaarthiSchool.gs', 'SaarthiStorage.gs', 'SaarthiMobile.gs', 'SaarthiPlatform.gs']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../../../school-backend', name), 'utf8'), context, {filename: name});
   }
   context.VS_setupSchool(project, 'AIza' + 'a'.repeat(33));

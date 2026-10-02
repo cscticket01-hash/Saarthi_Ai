@@ -7,6 +7,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_firestore.dart';
 import 'school_text_data.dart';
+import 'school_backend_transport.dart';
+import 'platform/platform_config.dart';
 
 class WindowsFirebaseRemoteStatus {
   const WindowsFirebaseRemoteStatus({
@@ -89,7 +91,7 @@ class WindowsFirebaseRemote {
           link.isNotEmpty &&
           email.isNotEmpty &&
           refreshToken.isNotEmpty &&
-          projectId.isNotEmpty,
+          projectId.isNotEmpty && projectId != platformProjectId,
       projectId: projectId,
       email: email,
     );
@@ -129,6 +131,8 @@ class WindowsFirebaseRemote {
                 ?.toString()
                 .trim() ??
             '';
+
+    requireSchoolProjectId(projectId);
 
     if (apiKey.isEmpty || projectId.isEmpty) {
       throw StateError(
@@ -223,6 +227,8 @@ class WindowsFirebaseRemote {
                 ?.toString()
                 .trim() ??
             '';
+
+    requireSchoolProjectId(projectId);
 
     final savedProjectId =
         (await _secure.read(
@@ -322,6 +328,8 @@ class WindowsFirebaseRemote {
         WindowsExternalConnections
             .decodeFirebaseLink(link);
 
+    requireSchoolProjectId(config['projectId']?.toString().trim() ?? '');
+
     final apiKey =
         config['apiKey']?.toString().trim() ??
         '';
@@ -389,6 +397,7 @@ class WindowsFirebaseRemote {
     required String idToken,
     required String collection,
   }) async {
+    requireSchoolProjectId(projectId);
     final output =
         <String, Map<String, dynamic>>{};
 
@@ -493,6 +502,7 @@ class WindowsFirebaseRemote {
     required String documentId,
     required Map<String, dynamic> data,
   }) async {
+    requireSchoolProjectId(projectId);
     final documentName =
         'projects/$projectId/'
         'databases/(default)/documents/'
@@ -538,6 +548,7 @@ class WindowsFirebaseRemote {
     required String collection,
     required String documentId,
   }) async {
+    requireSchoolProjectId(projectId);
     final documentName =
         'projects/$projectId/'
         'databases/(default)/documents/'
@@ -902,6 +913,7 @@ class WindowsFirebaseRemote {
     required String projectId,
     required String idToken,
   }) async {
+    requireSchoolProjectId(projectId);
     final uri = Uri.parse(
       'https://firestore.googleapis.com/v1/'
       'projects/${Uri.encodeComponent(projectId)}/'

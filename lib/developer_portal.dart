@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
-import 'platform/platform_config.dart';
+import 'platform/developer_service.dart';
 
 const _ink = Color(0xFF101B24),
     _surface = Color(0xFF16242E),
@@ -32,6 +30,8 @@ class _DeveloperAccess extends StatelessWidget {
   Widget build(BuildContext context) => FutureBuilder<IdTokenResult>(
       future: user.getIdTokenResult(true),
       builder: (context, s) {
+        if(s.hasError) return Scaffold(body:Center(child:TextButton(
+          onPressed:()=>FirebaseAuth.instance.signOut(),child:const Text('Sign in again to verify developer access'))));
         if (!s.hasData)
           return const Scaffold(
               body: Center(child: CircularProgressIndicator()));
@@ -163,6 +163,7 @@ class _DeveloperDashboard extends StatefulWidget {
 }
 
 class _DeveloperDashboardState extends State<_DeveloperDashboard> {
+  final _service = DeveloperService();
   int _page = 0;
   String _search = '', _filter = 'all';
   bool _loading = true;
@@ -185,7 +186,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     super.initState();
     _load();
     _timer =
-        Timer.periodic(const Duration(seconds: 45), (_) => _load(silent: true));
+        Timer.periodic(const Duration(minutes: 5), (_) => _load(silent: true));
   }
 
   @override
@@ -196,27 +197,13 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
 
   Future<Map<String, dynamic>> _call(
       String action, Map<String, dynamic> body) async {
-    final token = await FirebaseAuth.instance.currentUser!.getIdToken();
-    final r = await http
-        .post(Uri.parse(platformApiUrl),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json'
-            },
-            body: jsonEncode({'action': action, ...body}))
-        .timeout(const Duration(seconds: 30));
-    final d = jsonDecode(r.body);
-    if (d is! Map || d['success'] != true)
-      throw StateError(d is Map
-          ? d['message']?.toString() ?? 'Control service unavailable'
-          : 'Control service unavailable');
-    return Map<String, dynamic>.from(d);
+    return _service.call(action, body);
   }
 
   Future<void> _load({bool silent = false}) async {
     if (!silent) setState(() => _loading = true);
     try {
-      final d = await _call('developer/dashboard', {});
+      final d = await _call('developer/dashboard', {'refresh': !silent});
       if (mounted)
         setState(() {
           _data = d;
@@ -272,8 +259,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       child: child);
   Future<void> _issue([String? selected]) async {
     if (_schools.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('A school must connect its Windows app first.')));
+      await _addSchool();
       return;
     }
     String school = selected ?? _schools.first['id'].toString();
@@ -383,18 +369,69 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                               fontSize: 18,
                               fontWeight: FontWeight.bold)),
                       const SizedBox(height: 12),
-                      Text('Valid until ${_date(result['expiresAt'])}')
+                      Text('Valid until ${_date(result['expiresAt'])}'),
+                      if (result['setup'] != null) ...[
+                        const SizedBox(height: 12),
+                        const Text('Copy the school setup too. Paste it into this school’s Google Script only.'),
+                      ],
                     ]),
                 actions: [
                   TextButton(
                       onPressed: () => Clipboard.setData(
                           ClipboardData(text: result['key'].toString())),
                       child: const Text('Copy key')),
+                  if (result['setup'] != null) TextButton(
+                    onPressed: () => _copySetup(result['setup']),
+                    child: const Text('Copy school setup')),
                   FilledButton(
                       onPressed: () => Navigator.pop(ctx),
                       child: const Text('Done'))
                 ]));
     _load(silent: true);
+  }
+
+  Future<void> _copySetup(dynamic setup) async {
+    // All values are generated alphanumeric strings or a validated project ID.
+    final s = Map<String,dynamic>.from(setup);
+    final fields = s.entries.map((e) => "${e.key}: '${e.value}'").join(',\n  ');
+    await Clipboard.setData(ClipboardData(text: "function setupSchoolMonitoring() {\n  return VS_setupPlatform({\n  $fields\n  });\n}"));
+  }
+
+  Future<void> _addSchool() async {
+    final project = TextEditingController(), name = TextEditingController();
+    bool busy = false;
+    String? error;
+    final result = await showDialog<Map<String,dynamic>>(context: context,
+      barrierDismissible:false, builder:(ctx) => StatefulBuilder(builder:(ctx,setD) => AlertDialog(
+        title:const Text('School monitoring setup'),
+        content:SizedBox(width:420,child:Column(mainAxisSize:MainAxisSize.min,children:[
+          TextField(controller:name,decoration:const InputDecoration(labelText:'School name')),
+          const SizedBox(height:16),
+          TextField(controller:project,decoration:const InputDecoration(labelText:'School Firebase project ID')),
+          const SizedBox(height:16),
+          const Text('Copy the setup into that school’s Google Script. Generating it again replaces the previous monitoring credentials.'),
+          if(error!=null) Text(error!,style:const TextStyle(color:Colors.redAccent)),
+        ])),
+        actions:[
+          TextButton(onPressed:busy?null:()=>Navigator.pop(ctx),child:const Text('Cancel')),
+          FilledButton(onPressed:busy?null:() async {
+            setD(() {busy=true;error=null;});
+            try {
+              final r=await _call('school/create',{'schoolId':project.text.trim(),'schoolName':name.text.trim(),'replaceMonitor':true});
+              if(ctx.mounted) Navigator.pop(ctx,r);
+            }catch(e){setD((){busy=false;error=e.toString();});}
+          },child:Text(busy?'Creating…':'Generate setup')),
+        ],
+      )));
+    project.dispose();name.dispose();
+    if(result==null||!mounted) return;
+    await showDialog(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('School setup ready'),
+      content:const Text('Copy this now and run it as the owner in the school’s Google Script. These credentials can send only that school’s summary and support reports.'),
+      actions:[TextButton(onPressed:()=>_copySetup(result['setup']),child:const Text('Copy setup')),
+        FilledButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Done'))],
+    ));
+    await _load();
   }
 
   Future<void> _complaint(Map<String, dynamic> c) async {
@@ -537,7 +574,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         ])),
         const SizedBox(height: 16),
         const Text(
-            'Active schools: seen in the past 24 hours. Online students: a heartbeat in the past 5 minutes. Student app users are unique verified student sessions.',
+            'Active schools: a school summary in the past 24 hours. Online students: estimated recent activity, refreshed every 5 minutes. Student app users are counted by each school; individual sessions stay at the school.',
             style: TextStyle(color: Colors.white38, fontSize: 11))
       ]);
   Widget _schoolTable() {
@@ -553,6 +590,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     return _panel(
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Wrap(spacing: 12, runSpacing: 12, children: [
+        OutlinedButton.icon(onPressed: _addSchool, icon: const Icon(Icons.add),
+          label: const Text('School setup')),
         SizedBox(
             width: 300,
             child: TextField(

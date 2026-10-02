@@ -6,7 +6,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
-import 'platform/platform_config.dart';
+import 'platform/spark_client.dart';
+import 'school_backend_transport.dart';
 import 'windows_firebase_sync.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
@@ -35,6 +36,7 @@ class WindowsPlatformClient {
       _secret = '',
       _boundProject = '',
       _boundScript = '',
+      _fingerprint = '',
       _cacheProject = '';
   DateTime? _trialStart, _lastSeen, _verifiedAt;
   Timer? _timer, _refreshDebounce;
@@ -47,21 +49,49 @@ class WindowsPlatformClient {
       .replaceAll('=', '');
   Future<Map<String, dynamic>> call(
       String action, Map<String, dynamic> body) async {
-    final response = await http
-        .post(Uri.parse(platformApiUrl),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'action': action,
-              'installationId': _id,
-              'installationSecret': _secret,
-              ...body
-            }))
-        .timeout(const Duration(seconds: 15));
+    if (action == 'installation/register') {
+      final at = await SparkTrialClient.deviceTrial(body['deviceFingerprint'].toString());
+      return {'success':true, 'trialStartedAt':at.millisecondsSinceEpoch, 'installationSecret':_secret};
+    }
+    final remote = await WindowsFirebaseRemote.status();
+    if (!remote.authenticated || remote.projectId.isEmpty ||
+        body['projectId'] != null && body['projectId'] != remote.projectId) {
+      throw StateError('Connect this school administrator Firebase account first.');
+    }
+    final url = Uri.parse(await WindowsExternalConnections.googleScriptUrl());
+    requireSchoolBackendUri(url);
+    if (url.host != 'script.google.com' ||
+        !RegExp(r'^/macros/s/[A-Za-z0-9_-]+/exec$').hasMatch(url.path) || url.hasQuery || url.hasFragment) {
+      throw StateError('Use this school’s deployed Google Script /exec URL.');
+    }
+    const actions = {'school/bind':'platform_bind', 'school/heartbeat':'platform_heartbeat',
+      'installation/status':'platform_status', 'license/activate':'platform_activate',
+      'school/notice':'platform_notice', 'complaint/create':'platform_complaint'};
+    if (!actions.containsKey(action)) throw ArgumentError('Unknown platform action');
+    var response = await http.post(url,
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:jsonEncode({'action':actions[action], 'schoolProjectId':remote.projectId,
+        'schoolAdminIdToken':await WindowsFirebaseRemote.freshIdToken(),
+        for(final k in ['key','version','noticeId','message','deviceFingerprint']) if(body.containsKey(k)) k:body[k],
+      })).timeout(const Duration(seconds: 30));
+    if(response.isRedirect && response.headers['location'] != null) {
+      final redirect = Uri.parse(response.headers['location']!);
+      requireSchoolBackendUri(redirect);
+      response = await http.get(redirect).timeout(const Duration(seconds:20));
+    }
     final d = jsonDecode(response.body);
-    if (d is! Map || response.statusCode >= 400 || d['success'] != true)
+    if (d is! Map || response.statusCode >= 400 || d['success'] != true || d['projectId'] != remote.projectId)
       throw StateError(d is Map
           ? d['message']?.toString() ?? 'Platform unavailable'
           : 'Platform unavailable');
+    if({'school/bind','school/heartbeat','installation/status','license/activate'}.contains(action)) {
+      final hash=action=='license/activate'
+          ? sha256.convert(utf8.encode(body['key'].toString().trim().toUpperCase())).toString()
+          : d['licenseHash']?.toString();
+      final central=SparkLicenseClient();
+      try {return {...Map<String,dynamic>.from(d), ...await central.schoolStatus(remote.projectId,licenseHash:hash)};}
+      finally {central.close();}
+    }
     return Map<String, dynamic>.from(d);
   }
 
@@ -70,8 +100,9 @@ class WindowsPlatformClient {
     _id = await _secure.read(key: 'vs_installation_id') ?? _random();
     await _secure.write(key: 'vs_installation_id', value: _id);
     _secret = await _secure.read(key: 'vs_installation_secret') ?? '';
-    _registered = (await _secure.read(key: 'vs_installation_registered')) == 'true' ||
-        (_secret.isNotEmpty && await _secure.read(key: 'vs_installation_registered') == null);
+    _registered = await _secure.read(key: 'vs_spark_trial_verified') == 'true';
+    _fingerprint=await _secure.read(key:'vs_device_trial_fingerprint')??'';
+    if(_fingerprint.isEmpty) _registered=false;
     _trialStart =
         DateTime.tryParse(await _secure.read(key: 'vs_trial_start') ?? '') ??
             DateTime.now().toUtc();
@@ -194,19 +225,19 @@ class WindowsPlatformClient {
           ]);
           if (r.exitCode == 0) hardware = r.stdout.toString().trim();
         } catch (_) {}
-        final data = await call('installation/register', {
-          'deviceFingerprint': sha256.convert(utf8.encode(hardware)).toString()
-        });
-        _secret = data['installationSecret'].toString();
-        await _secure.write(key: 'vs_installation_secret', value: _secret);
-        _registered = true;
-        await _secure.write(key: 'vs_installation_registered', value: 'true');
-        final serverStart = DateTime.fromMillisecondsSinceEpoch(
-            (data['trialStartedAt'] as num).toInt(),
-            isUtc: true);
-        if (serverStart.isBefore(_trialStart!)) _trialStart = serverStart;
-        await _secure.write(
-            key: 'vs_trial_start', value: _trialStart!.toIso8601String());
+        _fingerprint=sha256.convert(utf8.encode(hardware)).toString();
+        await _secure.write(key:'vs_device_trial_fingerprint',value:_fingerprint);
+        try {
+          final data = await call('installation/register', {
+            'deviceFingerprint': _fingerprint
+          });
+          _registered = true;
+          await _secure.write(key: 'vs_spark_trial_verified', value: 'true');
+          final serverStart = DateTime.fromMillisecondsSinceEpoch(
+              (data['trialStartedAt'] as num).toInt(), isUtc: true);
+          if (serverStart.isBefore(_trialStart!)) _trialStart = serverStart;
+          await _secure.write(key: 'vs_trial_start', value: _trialStart!.toIso8601String());
+        } catch (e) { debugPrint('Server trial check pending: $e'); }
       }
       final remote = await WindowsFirebaseRemote.status();
       if (_cacheProject.isNotEmpty && remote.projectId != _cacheProject) {
@@ -224,6 +255,7 @@ class WindowsPlatformClient {
             .doc('school_profile_cache')
             .get();
         final bound = await call('school/bind', {
+          'deviceFingerprint':_fingerprint,
           'projectId': remote.projectId,
           'googleScriptUrl': script,
           'schoolIdToken': await WindowsFirebaseRemote.freshIdToken(),
@@ -251,8 +283,9 @@ class WindowsPlatformClient {
         throw StateError(
             'Connect and verify the active school before using its license.');
       _apply(heartbeat);
-      if (state.value.allowed && _boundProject.isNotEmpty)
-        await _relayNotices();
+      if (state.value.allowed && _boundProject.isNotEmpty) {
+        try { await _relayNotices(); } catch (e) { debugPrint('School notice retry pending: $e'); }
+      }
     } catch (e) {
       _offlineState(e.toString().replaceFirst('Bad state: ', ''));
     } finally {
@@ -295,14 +328,15 @@ class WindowsPlatformClient {
   }
 
   Future<void> activate(String key) async {
-    await refresh();
     final remote = await WindowsFirebaseRemote.status();
-    if (_boundProject.isEmpty || remote.projectId != _boundProject)
+    if (!remote.authenticated || remote.projectId.isEmpty)
       throw StateError(
           'Connect and verify this school before activating its licence.');
     final data =
         await call('license/activate', {'key': key.trim().toUpperCase()});
     _apply(data);
+    _boundProject=remote.projectId;
+    _boundScript=await WindowsExternalConnections.googleScriptUrl();
     await _secure.write(
         key: 'vidya_saarthi_windows_license_status_v1', value: 'active');
   }

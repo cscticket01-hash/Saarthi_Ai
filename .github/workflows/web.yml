@@ -10,7 +10,23 @@ permissions:
   contents: read
 
 jobs:
+  verify-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+        working-directory: security-tests
+      - run: npm test
+        working-directory: security-tests
   build-and-deploy:
+    needs: verify-rules
     runs-on: ubuntu-latest
 
     steps:
@@ -204,11 +220,12 @@ jobs:
       # =========================================================
       # DEPLOY ONLY VIDYASAARTHI HOSTING SITE
       # =========================================================
-      - name: Verify and deploy central platform backend
+      - name: Verify and deploy free central Firebase rules
         run: |
           npm --prefix functions test
           npm --prefix functions install
-          firebase deploy --project saarthi-ai-df12b --only functions:platform,firestore:rules
+          node .github/scripts/configure_platform_auth.cjs
+          firebase deploy --project saarthi-ai-df12b --only firestore:rules
 
       - name: Deploy to Firebase Hosting
         run: |

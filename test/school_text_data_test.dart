@@ -3,6 +3,11 @@ import 'package:saarthi_ai/school_text_data.dart';
 import 'package:saarthi_ai/school_backend_transport.dart';
 
 void main() {
+  test('school operational connections cannot use the developer monitoring Firebase', () {
+    expect(() => requireSchoolProjectId('school-one'), returnsNormally);
+    expect(() => requireSchoolProjectId('saarthi-ai-df12b'), throwsStateError);
+    expect(() => requireSchoolProjectId('invalid/project'), throwsStateError);
+  });
   test('administrator proof cannot follow a redirect to another host', () {
     for (final url in [
       'https://script.google.com/macros/s/School/exec',
