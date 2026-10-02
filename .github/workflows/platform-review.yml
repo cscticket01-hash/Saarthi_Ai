@@ -141,11 +141,20 @@ jobs:
         open(p,'w').write(s)
         PY
     - run: flutter pub get
+    - name: Verify configured public OAuth client in compiled Dart
+      env:
+        SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+        OAUTH_SECRET_PRESENT: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET != '' }}
+      run: |
+        if ($env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID -notmatch '^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$') { throw 'Valid repository Desktop OAuth Client ID is required for this preview.' }
+        Write-Host 'Public OAuth Client ID configured; compiling verification test with the build definition.'
+        Write-Host "OAuth secret present in GitHub: $env:OAUTH_SECRET_PRESENT. Secret is never supplied to the client build."
+        flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID
+        if ($LASTEXITCODE -ne 0) { throw 'Compiled OAuth configuration verification failed.' }
     - name: Compile Windows school app
       env:
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
-        SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET }}
-      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.79 --build-number=79 --dart-define=APP_VERSION=2.1.79 --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.79 --build-number=79 --dart-define=APP_VERSION=2.1.79 --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID
     - uses: actions/upload-artifact@v4
       with:
         name: windows-review-build

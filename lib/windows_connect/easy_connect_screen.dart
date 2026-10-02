@@ -157,7 +157,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.googleDrive ? 'Connect Google Drive' : 'Connect Firebase')),
+    appBar: AppBar(title: Text(widget.googleDrive ? 'Connect School Cloud' : 'Connect Firebase')),
     body: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640),
       child: ListView(padding: const EdgeInsets.all(24), shrinkWrap: true, children: [
         Icon(_done ? Icons.verified_user : Icons.cloud_outlined, size: 52,

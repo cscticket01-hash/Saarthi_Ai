@@ -21,16 +21,14 @@ class SetupCancelled implements Exception {
 
 class GoogleAuthorization {
   GoogleAuthorization({http.Client? client, this.openBrowser = openGooglePage,
-      this.oauthClientId = clientId, this.oauthClientSecret = clientSecret})
+      this.oauthClientId = clientId})
       : client = client ?? http.Client();
   final http.Client client;
-  final String oauthClientId, oauthClientSecret;
+  final String oauthClientId;
   bool _cancelled = false;
   final Future<void> Function(Uri) openBrowser;
   static const clientId = String.fromEnvironment('SAARTHI_GOOGLE_DESKTOP_CLIENT_ID');
-  // Desktop OAuth credentials identify a PUBLIC client. This is not a service
-  // account/private key and is never relied upon as an application secret.
-  static const clientSecret = String.fromEnvironment('SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET');
+  // Installed public client: PKCE, never embed an OAuth secret.
   static bool get configured => clientId.endsWith('.apps.googleusercontent.com');
   HttpServer? _server;
   Completer<String>? _pending;
@@ -91,7 +89,7 @@ class GoogleAuthorization {
       if (_cancelled) throw SetupCancelled();
       final tokenResponse = await _send(http.Request('POST', Uri.https('oauth2.googleapis.com', '/token'))
         ..bodyFields = {
-          'client_id': oauthClientId, if (oauthClientSecret.isNotEmpty) 'client_secret': oauthClientSecret,
+          'client_id': oauthClientId,
           'code': code, 'code_verifier': verifier, 'redirect_uri': redirect,
           'grant_type': 'authorization_code',
         });

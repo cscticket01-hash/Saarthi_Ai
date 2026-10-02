@@ -67,6 +67,8 @@ void main() {
         final form = Uri.splitQueryString(r.body);
         expect(GoogleAuthorization.challenge(form['code_verifier']!), verifierChallenge);
         expect(form['code'], 'approved-code');
+        expect(form.containsKey('client_secret'), isFalse);
+        expect(Uri.parse(form['redirect_uri']!).host, '127.0.0.1');
         return json({'access_token': 'access-only', 'scope': 'openid email https://www.googleapis.com/auth/cloud-platform'});
       }
       expect(r.headers['Authorization'], 'Bearer access-only');

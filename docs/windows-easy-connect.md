@@ -74,7 +74,6 @@ Supply at Windows build time:
 
 ```
 --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=<desktop-client-id>
---dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET=<desktop-client-secret-if-required>
 ```
 
 Installed desktop clients are public clients: this optional Google-issued client
@@ -140,13 +139,15 @@ saved version rather than creating a new version on every attempt.
 
 For an unpublished configured Windows test build, run **Platform review builds**
 with the optional public `google_oauth_client_id` input, or set the repository
-variable `SAARTHI_GOOGLE_DESKTOP_CLIENT_ID`. If Google's Desktop client requires
-its public-client secret, use the repository secret
-`SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET`. This only configures review artifacts;
-production release/deployment workflows are unchanged. Without this configuration,
-sign-in stays disabled. Do not put a service-account key into either setting.
+variable `SAARTHI_GOOGLE_DESKTOP_CLIENT_ID`. The installed client uses PKCE and does not embed or send an OAuth client secret.
+The repository secret stays in GitHub; CI checks only its presence as a boolean.
+The Windows review job requires a valid public ID and runs a compiled Dart
+configuration test using the same definition as the Windows build. No release
+or deployment is performed by this PR workflow. Live Google token exchange must
+still be tested with the configured Desktop client; a successful compile does
+not prove consent or resource provisioning works.
 
-School steps: Advanced Settings → Connect Google Drive → enter school name,
+School steps: Advanced Settings → Connect School Cloud → enter school name,
 choose India location and confirm new empty storage → sign in with the school
 Gmail account → grant access → follow any Firebase/Apps Script approval screen →
 Continue → wait for all verification statuses → Done. Selecting Connect Firebase

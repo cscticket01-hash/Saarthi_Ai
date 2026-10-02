@@ -224,7 +224,6 @@ jobs:
       - name: Build Windows Admin App
         env:
           SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
-          SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET }}
         shell: powershell
         run: |
           flutter build windows `
@@ -232,7 +231,6 @@ jobs:
             -t lib/main_windows.dart `
             --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
             --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID `
-            --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET `
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
       - name: Verify Windows Build
