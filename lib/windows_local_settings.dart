@@ -35,6 +35,13 @@ class WindowsLocalSecurity {
   static String get adminId =>
       configured ? _adminId! : 'Local Administrator';
 
+  static Future<void> clearAppLock() async {
+    await _secure.delete(key: _adminIdKey);
+    await _secure.delete(key: _adminPasswordKey);
+    _adminId = null;
+    _adminPassword = null;
+  }
+
   static Future<void> create({
     required String adminId,
     required String password,

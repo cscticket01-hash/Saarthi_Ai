@@ -39,6 +39,8 @@ class WindowsSyncEngine {
   Timer? _debounceTimer;
   bool _initialized = false;
   bool _syncing = false;
+  bool _resetPaused = false;
+  int _activating = 0;
   bool _syncBlocked = false;
 
   DateTime? lastSuccessfulSync;
@@ -54,6 +56,7 @@ class WindowsSyncEngine {
 
   Future<void> initialize() async {
     if (_initialized) return;
+    _resetPaused = false;
     _initialized = true;
 
     WindowsLocalFirestoreSyncControl.onTrackedMutation = () async {
@@ -74,6 +77,8 @@ class WindowsSyncEngine {
     await activateCurrentConnections(
       allowPairing: false,
     );
+
+    if (_resetPaused) return;
 
     _periodicTimer = Timer.periodic(
       const Duration(seconds: 45),
@@ -133,7 +138,7 @@ class WindowsSyncEngine {
   void scheduleSoon({
     Duration delay = const Duration(seconds: 2),
   }) {
-    if (!_initialized || _syncBlocked) return;
+    if (!_initialized || _syncBlocked || _resetPaused) return;
 
     _debounceTimer?.cancel();
     _debounceTimer = Timer(
@@ -258,9 +263,13 @@ class WindowsSyncEngine {
   Future<void> activateCurrentConnections({
     required bool allowPairing,
   }) async {
+    if (_resetPaused) return;
+    _activating++;
+    try {
     final profile = await _resolveProfile(
       allowPairing: allowPairing,
     );
+    if (_resetPaused) return;
 
     await _applyProfile(
       profile,
@@ -272,6 +281,29 @@ class WindowsSyncEngine {
         delay: const Duration(milliseconds: 350),
       );
     }
+    } finally { _activating--; }
+  }
+
+  Future<void> pauseForAppReset() async {
+    _resetPaused = true;
+    _periodicTimer?.cancel();
+    _debounceTimer?.cancel();
+    final deadline = DateTime.now().add(const Duration(seconds: 90));
+    while (_syncing || _activating > 0) {
+      if (DateTime.now().isAfter(deadline)) {
+        _resetPaused = false;
+        throw StateError('School sync is still finishing. Retry reset shortly.');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    WindowsLocalFirestoreSyncControl.onTrackedMutation = null;
+    WindowsFirebaseRemote.onConnectionChanged = null;
+    WindowsBackendBridge.onRemoteAvailable = null;
+    _initialized = false;
+    _activeFirebaseProject = '';
+    _activeGoogleUrl = '';
+    _activeSchoolSyncId = '';
+    _syncBlocked = true;
   }
 
   Future<_ResolvedSyncProfile> _resolveProfile({
@@ -710,7 +742,7 @@ class WindowsSyncEngine {
   }
 
   Future<void> syncNow() async {
-    if (_syncing || _syncBlocked) return;
+    if (_syncing || _syncBlocked || _resetPaused) return;
 
     _syncing = true;
     lastError = null;

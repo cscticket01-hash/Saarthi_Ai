@@ -5,6 +5,7 @@ import 'windows_exam_service.dart';
 import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
+import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
 import 'windows_platform_client.dart';
@@ -534,11 +535,17 @@ class _WindowsLicenseSettingsPanelState
   @override
   void initState() {
     super.initState();
+    WindowsPlatformClient.instance.state.addListener(_licenseChanged);
     _load();
+  }
+
+  void _licenseChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    WindowsPlatformClient.instance.state.removeListener(_licenseChanged);
     _licenseKey.dispose();
     super.dispose();
   }
@@ -561,15 +568,17 @@ class _WindowsLicenseSettingsPanelState
 
   String _statusText() {
     if (_savedKey.isEmpty) return 'License Key not added';
-    if (_status == 'active') return 'License Active';
-    if (_status == 'expired') return 'License Expired';
+    final state = WindowsPlatformClient.instance.state.value;
+    if (state.allowed && state.status == 'licensed') return 'License Active';
+    if (!state.allowed) return 'License Expired';
     return 'Key saved — online verification pending';
   }
 
   Color _statusColor() {
     if (_savedKey.isEmpty) return Colors.white54;
-    if (_status == 'active') return const Color(0xFF00D9A5);
-    if (_status == 'expired') return Colors.redAccent;
+    final state = WindowsPlatformClient.instance.state.value;
+    if (state.allowed && state.status == 'licensed') return const Color(0xFF00D9A5);
+    if (!state.allowed) return Colors.redAccent;
     return Colors.orangeAccent;
   }
 
@@ -1482,7 +1491,7 @@ Widget _windowsAdminModule(WindowsAdminPage page) => switch (page) {
   WindowsAdminPage.fees => const FeesCollectionScreen(),
   WindowsAdminPage.exams => const ExamCenterScreen(),
   WindowsAdminPage.teachers => const TeachersDirectoryScreen(),
-  WindowsAdminPage.salary => const TeacherSalaryPlaceholder(),
+  WindowsAdminPage.salary => const StaffSalaryScreen(),
   WindowsAdminPage.support => const WindowsSupportScreen(),
   WindowsAdminPage.expenses => const WindowsSchoolExpensesScreen(),
   WindowsAdminPage.attendance => const SchoolAttendanceOverview(),
@@ -1659,7 +1668,7 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
   String _selectedClass = 'Class 1';
 
   final List<String> _classList =
-      List.generate(10, (index) => 'Class ${index + 1}');
+      List.generate(12, (index) => 'Class ${index + 1}');
 
   @override
   void initState() {
@@ -4694,7 +4703,7 @@ void _handleLoginBack(bool didPop) {
   String? _studentPhotoUrl;
   bool _isSearchingStudent = false;
 
-  final List<String> _classList = List.generate(10, (index) => 'Class ${index + 1}');
+  final List<String> _classList = List.generate(12, (index) => 'Class ${index + 1}');
 
   final List<Map<String, String>> _teachersList = [
     {'name': 'Ramesh Sharma', 'subject': 'Mathematics', 'phone': '+91 9876543210'},
@@ -12249,7 +12258,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                   children: [
                     const Text(
                       'Kya school ke sabhi existing students Student Directory me add ho chuke hain?\n\n'
-                      'TEST UID activate hone par existing students ko Class 1 → Class 10 aur Roll No order me permanent TEST UID assign hoga. '
+                      'TEST UID activate hone par existing students ko Class 1 → Class 12 aur Roll No order me permanent TEST UID assign hoga. '
                       'Delete hone ke baad purana UID dobara issue nahi hoga. Final production UID baad me alag se activate kiya jayega.',
                       style: TextStyle(
                         color: Colors.white70,
@@ -13345,7 +13354,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
 
   final List<String> _classes = [
     'All Classes',
-    ...List.generate(10, (index) => 'Class ${index + 1}'),
+    ...List.generate(12, (index) => 'Class ${index + 1}'),
   ];
 
   String _selectedClass = 'All Classes';
@@ -13404,7 +13413,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   Future<void> _preloadFeeSettings() async {
   try {
     await Future.wait(
-      List.generate(10, (index) async {
+      List.generate(12, (index) async {
         final className = 'Class ${index + 1}';
         final settings = await _getClassFeeSettings(className);
         _feeSettingsCache[className] = settings;
@@ -15341,7 +15350,7 @@ class _FeeCollectionSettingsScreenState
   ];
 
   final List<String> _classes =
-      List.generate(10, (index) => 'Class ${index + 1}');
+      List.generate(12, (index) => 'Class ${index + 1}');
   final Map<String, TextEditingController> _controllers = {};
 
   String _selectedClass = 'Class 1';
@@ -19360,7 +19369,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
   final List<String> _classes = [
     'All Classes',
-    ...List.generate(10, (index) => 'Class ${index + 1}'),
+    ...List.generate(12, (index) => 'Class ${index + 1}'),
   ];
 
 
@@ -20572,7 +20581,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                           borderRadius: BorderRadius.circular(9),
                                         ),
                                       ),
-                                      onPressed: isMoving || classNumber >= 10
+                                      onPressed: isMoving || classNumber >= 12
                                           ? null
                                           : () => _changeStudentClass(
                                                 doc.id,
@@ -21790,7 +21799,7 @@ class _AdvancedStudentUidSettingsPanelState
                   children: [
                     const Text(
                       'Kya school ke sabhi existing students Student Directory me add ho chuke hain?\n\n'
-                      'TEST UID activate hone par existing students ko Class 1 → Class 10 aur Roll No order me permanent TEST UID assign hoga. '
+                      'TEST UID activate hone par existing students ko Class 1 → Class 12 aur Roll No order me permanent TEST UID assign hoga. '
                       'Delete hone ke baad purana UID dobara issue nahi hoga. Final production UID baad me alag se activate kiya jayega.',
                       style: TextStyle(
                         color: Colors.white70,
@@ -23448,7 +23457,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   Map<String, int> _studentCounts = <String, int>{};
 
   final List<String> _classList =
-      List.generate(10, (index) => 'Class ${index + 1}');
+      List.generate(12, (index) => 'Class ${index + 1}');
 
   @override
   void initState() {

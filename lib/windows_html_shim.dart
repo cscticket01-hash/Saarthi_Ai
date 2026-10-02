@@ -18,6 +18,22 @@ void setSchoolStorageNamespace(String projectId) {
 }
 
 class MouseEvent {}
+
+Future<void> clearAppLoginSessions() async {
+  final directory = window.localStorage._file.parent;
+  if (await directory.exists()) {
+    await for (final entry in directory.list(followLinks: false)) {
+      final name = entry.path.split(io.Platform.pathSeparator).last;
+      if (entry is! io.File || !name.startsWith('portal_session_') || !name.endsWith('.json')) continue;
+      final raw = jsonDecode(await entry.readAsString());
+      if (raw is! Map) continue;
+      final values = Map<String, dynamic>.from(raw);
+      values.removeWhere((key, _) => key.startsWith('saarthi_portal_') || key == 'vidya_windows_language_v1');
+      await entry.writeAsString(jsonEncode(values), flush: true);
+    }
+  }
+  window.localStorage._values.removeWhere((key, _) => key.startsWith('saarthi_portal_') || key == 'vidya_windows_language_v1');
+}
 class Event {}
 
 class Style {

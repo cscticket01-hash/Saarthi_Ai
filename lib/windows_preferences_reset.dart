@@ -1,19 +1,11 @@
 import 'package:flutter/material.dart' hide Text, InputDecoration;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'windows_ui_localization.dart';
-import 'windows_local_firestore.dart';
+import 'windows_app_reset.dart';
 import 'windows_local_settings.dart';
 
 class WindowsPreferencesReset {
   static const academicYearKey = 'vidya_saarthi_windows_academic_year_rollover_month_v1';
-  /// Whitelist reset: no database deletion, folder move, sign-out, secure-storage
-  /// wipe, connection change, trial reset or loss of an in-memory offline store.
-  static Future<void> reset() async {
-    await FirebaseFirestore.instance.collection('school_settings').doc('document_templates').set({});
-    await FirebaseFirestore.instance.collection('school_settings').doc('promotion_policy').set({'allowForcedPromotion': false});
-    await const FlutterSecureStorage().write(key: academicYearKey, value: '1');
-    WindowsUiLanguage.change('en');
-  }
+  static Future<void> reset() => WindowsAppReset.reset();
 
   static Future<void> confirmAndReset(BuildContext context) async {
     final password = TextEditingController();
@@ -21,14 +13,14 @@ class WindowsPreferencesReset {
       builder: (ctx, setDialog) => AlertDialog(
         title: const Text('Reset app settings'),
         content: SizedBox(width: 460, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Restore language, academic-year preference, document templates and force-promotion settings to defaults. School records, offline work, backend links, passwords, storage location and licence/trial dates are preserved.'),
+          const Text('Remove app passwords, logins, Google Drive and Firebase links, licence activation and app preferences. School data, local files, Drive files and pending work are kept. Reconnect the same school to restore its data. The original trial date stays unchanged.'),
           const SizedBox(height: 16),
-          TextField(controller: password, obscureText: true,
+          if (WindowsLocalSecurity.configured) TextField(controller: password, obscureText: true,
             decoration: const InputDecoration(labelText: 'Current Local Password')),
         ])),
         actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           FilledButton(onPressed: () {
-            if (!WindowsLocalSecurity.verifyPassword(password.text)) {
+            if (WindowsLocalSecurity.configured && !WindowsLocalSecurity.verifyPassword(password.text)) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Current Settings Password galat hai.')));
               return;
             }
@@ -37,13 +29,17 @@ class WindowsPreferencesReset {
       )));
     password.dispose();
     if (confirmed != true || !context.mounted) return;
+    showDialog<void>(context: context, barrierDismissible: false, builder: (_) => const PopScope(
+      canPop: false, child: AlertDialog(content: Row(children: [CircularProgressIndicator(), SizedBox(width: 20), Expanded(child: Text('Resetting app. Keeping school data safe…'))]))));
     try {
       await reset();
       if (!context.mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil('/dashboard', (_) => false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('App settings reset. School data and licence were preserved.')));
+      Navigator.of(context).pushNamedAndRemoveUntil('/first-run', (_) => false);
     } catch (e) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Reset failed: $e')));
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Reset failed: $e')));
+      }
     }
   }
 }

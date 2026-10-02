@@ -62,6 +62,11 @@ class WindowsConnectionCenter {
 
   static Future<void>? _initializing;
 
+  static Future<void> finishInitialization() async {
+    final pending = _initializing;
+    if (pending != null) await pending;
+  }
+
   static Future<void> initialize() {
     final existing = _initializing;
     if (existing != null) return existing;
