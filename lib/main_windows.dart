@@ -13,6 +13,7 @@ import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_connection_center.dart';
+import 'windows_online_startup.dart';
 import 'windows_update_service.dart' as update_service;
 import 'windows_update_manager.dart';
 
@@ -35,18 +36,15 @@ Future<void> main() async {
   await WindowsPlatformClient.instance.initialize();
   runApp(const VidyaSaarthiWindowsApp());
 
-  // App-level connection engine: Firebase + Google Drive/Apps Script become
-  // the single active school profile for every Windows feature screen.
-  // This runs independently of any individual page lifecycle.
-  unawaited(
-    WindowsConnectionCenter.initialize().catchError((Object error) {
-      debugPrint('Windows connection center background init warning: $error');
-    }),
-  );
 }
 
 class VidyaSaarthiWindowsApp extends StatelessWidget {
-  const VidyaSaarthiWindowsApp({super.key});
+  const VidyaSaarthiWindowsApp({
+    super.key,
+    this.initializeConnections = WindowsConnectionCenter.initialize,
+  });
+
+  final Future<void> Function() initializeConnections;
 
   @override
   Widget build(BuildContext context) {
@@ -78,6 +76,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
             behavior: HitTestBehavior.translucent,
             onPointerDown: (_) => windows_html.document.dispatchClick(),
             child: Stack(
+              fit: StackFit.expand,
               children: [
                 Positioned.fill(
                   child: child ?? const SizedBox.shrink(),
@@ -92,13 +91,16 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
         '/local-login': (_) => const WindowsLocalLoginScreen(),
         '/dashboard': (_) => const WindowsLocalDashboardGate(),
       },
-      home: !WindowsLocalSecurity.configured
+      home: WindowsOnlineStartupGate(
+        initializeConnections: initializeConnections,
+        child: !WindowsLocalSecurity.configured
           ? const WindowsFirstRunSecuritySetup()
           : WindowsLocalSession.loggedOut
               ? const WindowsLocalLoginScreen()
               : const WindowsStartupGate(
                   child: WindowsLocalDashboardGate(),
                 ),
+      ),
     ));
   }
 }
@@ -393,12 +395,19 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
       );
       await WindowsLocalSession.markLoggedIn();
       if (!mounted) return;
-      await WindowsUpdateManager.promptIfAvailable(context);
-      if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil(
+      final navigator = Navigator.of(context);
+      navigator.pushNamedAndRemoveUntil(
         '/dashboard',
         (route) => false,
       );
+      // Open the dashboard first. An optional network/update check must not
+      // leave a successfully authenticated user waiting on the login screen.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final overlayContext = navigator.overlay?.context;
+        if (overlayContext != null && overlayContext.mounted) {
+          unawaited(WindowsUpdateManager.promptIfAvailable(overlayContext));
+        }
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
