@@ -13,7 +13,6 @@ import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_connection_center.dart';
-import 'windows_online_startup.dart';
 import 'windows_admin_setup.dart';
 import 'windows_update_service.dart' as update_service;
 import 'windows_update_manager.dart';
@@ -140,7 +139,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _setupDone = true;
+        _setupDone = WindowsLocalSecurity.configured;
         _loading = false;
       });
     }
@@ -160,17 +159,11 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     if (!_setupDone && !WindowsLocalSecurity.configured) {
       return const WindowsAdminSetupScreen();
     }
-    // Existing installations keep their previous flow untouched.
-    return WindowsOnlineStartupGate(
-      initializeConnections: widget.initializeConnections,
-      child: !WindowsLocalSecurity.configured
-          ? const WindowsFirstRunSecuritySetup()
-          : WindowsLocalSession.loggedOut
-              ? const WindowsLocalLoginScreen()
-              : const WindowsStartupGate(
-                  child: WindowsLocalDashboardGate(),
-                ),
-    );
+    // School/cloud initialization is already running in the background.
+    // Never add a second online-startup screen or a duplicate connection check.
+    return WindowsLocalSession.loggedOut
+        ? const WindowsLocalLoginScreen()
+        : const WindowsStartupGate(child: WindowsLocalDashboardGate());
   }
 }
 

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 
+import 'windows_ui_localization.dart';
 import 'windows_local_auth.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
@@ -51,11 +52,11 @@ class WindowsAdminSetup {
   /// users are therefore never forced through this page again.
   static Future<bool> completed() async {
     if (completedOverride != null) return completedOverride!;
-    if (_cachedCompleted == true) return true;
+    if (_cachedCompleted == true && WindowsLocalSecurity.configured) return true;
     final data = await read();
     final basic = (data['schoolName']?.toString().isNotEmpty ?? false) &&
         (data['principalName']?.toString().isNotEmpty ?? false);
-    if (basic) {
+    if (basic && WindowsLocalSecurity.configured) {
       _cachedCompleted = true;
       return true;
     }
@@ -63,19 +64,6 @@ class WindowsAdminSetup {
       _cachedCompleted = true;
       return true;
     }
-    try {
-      final snap = await FirebaseFirestore.instance
-          .collection('school_config')
-          .doc('school_profile_cache')
-          .get();
-      final values = snap.data() ?? const {};
-      final legacy = (values['schoolName']?.toString().isNotEmpty ?? false) &&
-          (values['principalName']?.toString().isNotEmpty ?? false);
-      if (legacy) {
-        _cachedCompleted = true;
-        return true;
-      }
-    } catch (_) {}
     return false;
   }
 
@@ -98,17 +86,17 @@ class WindowsAdminSetup {
     if (principal.length < 2) {
       throw const FormatException('Principal Name is required.');
     }
-    if (adminPassword.length < 4) {
+    if (adminPassword.length < 6) {
       throw const FormatException(
-          'Admin Password must be at least 4 characters.');
+          'Admin Password must be at least 6 characters.');
     }
     final map = <String, dynamic>{
       'version': 1,
       'schoolName': name,
       'principalName': principal,
-      'logoFileId': await _encodeImage(logoPath),
-      'sealFileId': await _encodeImage(sealPath),
-      'principalSignatureFileId': await _encodeImage(signaturePath),
+      'logoUrl': await _encodeImage(logoPath),
+      'sealUrl': await _encodeImage(sealPath),
+      'principalSignatureUrl': await _encodeImage(signaturePath),
       'savedAt': DateTime.now().toIso8601String(),
     };
     // Persist locally first so the app works fully offline.
@@ -118,23 +106,22 @@ class WindowsAdminSetup {
       await tmp.writeAsString(jsonEncode(map), flush: true);
       await tmp.rename(_file.path);
       _data = map;
-      _cachedCompleted = true;
     } catch (e) {
       throw StateError('Could not save the setup on this PC: $e');
     }
     // Mirror into the same local cache document the dashboard branding uses,
     // best-effort and strictly offline (local Firestore store).
     try {
-      await FirebaseFirestore.instance
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => FirebaseFirestore.instance
           .collection('school_config')
           .doc('school_profile_cache')
           .set({
         'schoolName': name,
         'principalName': principal,
-        'logoFileId': map['logoFileId'],
-        'sealFileId': map['sealFileId'],
-        'principalSignatureFileId': map['principalSignatureFileId'],
-      }, SetOptions(merge: true));
+        'logoUrl': map['logoUrl'],
+        'sealUrl': map['sealUrl'],
+        'principalSignatureUrl': map['principalSignatureUrl'],
+      }, SetOptions(merge: true)));
     } catch (_) {}
     // Reuse the existing local security lock with the entered password.
     if (!WindowsLocalSecurity.configured) {
@@ -151,6 +138,7 @@ class WindowsAdminSetup {
     }
     await FirebaseAuth.instance.refreshLocalUser();
     await WindowsLocalSession.markLoggedIn();
+    _cachedCompleted = true;
   }
 
   static Future<String> _encodeImage(String? path) async {

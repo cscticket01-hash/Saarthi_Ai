@@ -19,6 +19,7 @@ void main() {
   final db = local.FirebaseFirestore.instance;
   setUp(() async {
     FlutterSecureStorage.setMockInitialValues({});
+    WindowsPlatformClient.skippedOverride = null;
     ui.WindowsUiLanguage.change('en');
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     await db.switchProfile('payroll-${DateTime.now().microsecondsSinceEpoch}');
@@ -73,6 +74,9 @@ void main() {
     final controller = TextEditingController(); addTearDown(controller.dispose);
     await tester.pumpWidget(MaterialApp(home:WindowsLicenseGate(connectionBuilder: (_) => const SizedBox(),
       child: Scaffold(body:TextField(controller:controller,key:const ValueKey('draft'))))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('license-skip-button')));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const ValueKey('draft')),'Unsaved student');
     final field = tester.state<EditableTextState>(find.byType(EditableText));
     await tester.tap(find.byType(WindowsTrialBanner)); await tester.pumpAndSettle();

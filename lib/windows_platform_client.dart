@@ -422,30 +422,14 @@ class WindowsPlatformClient {
 
   /// Remember that the user chose "Skip" on the first-run licence screen.
   Future<void> markLicenseSkipped() async {
-    skippedOverride = true;
     await _secure.write(key: licenseSkippedKey, value: 'true');
   }
 
   Future<bool> licenseSkipped() async =>
       skippedOverride ?? await _secure.read(key: licenseSkippedKey) == 'true';
 
-  /// Stable identity used when a licence is activated before any school
-  /// Firebase connection exists. Central verification still runs; the app no
-  /// longer requires a configured school just to activate a licence.
-  Future<String> localActivationProject() async {
-    final existing =
-        await _secure.read(key: 'vs_local_activation_project') ?? '';
-    if (existing.isNotEmpty) return existing;
-    final seed =
-        '$_id|${_fingerprint.isNotEmpty ? _fingerprint : _secret}|VidyaSaarthiLocal';
-    final generated =
-        'vs-local-${sha256.convert(utf8.encode(seed)).toString().substring(0, 24)}';
-    await _secure.write(
-        key: 'vs_local_activation_project', value: generated);
-    return generated;
-  }
-
   Future<void> clearLicenseSkipped() async {
+    skippedOverride = null;
     await _secure.delete(key: licenseSkippedKey);
   }
 
@@ -457,10 +441,7 @@ class WindowsPlatformClient {
     try {
     while (_running) { await Future<void>.delayed(const Duration(milliseconds: 100)); }
     final remote = await WindowsFirebaseRemote.status();
-    final boundProject =
-        remote.authenticated && remote.projectId.isNotEmpty
-            ? remote.projectId
-            : await localActivationProject();
+    final boundProject = remote.projectId;
     final data =
         await call('license/activate', {'key': normalized});
     final current = await WindowsFirebaseRemote.status();

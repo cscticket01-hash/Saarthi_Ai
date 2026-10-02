@@ -61,6 +61,8 @@ class WindowsTrialBanner extends StatelessWidget {
 /// The licence screen only asks for a key and offers Skip; no school/Firebase
 /// configuration, no "Check again", no connection-error UI is shown here.
 class WindowsLicenseGate extends StatefulWidget {
+  static final resetSignal = ValueNotifier<int>(0);
+  static void reopenAfterReset() => resetSignal.value++;
   const WindowsLicenseGate({
     super.key,
     required this.child,
@@ -84,13 +86,18 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
   @override
   void initState() {
     super.initState();
+    WindowsLicenseGate.resetSignal.addListener(_reset);
     WindowsPlatformClient.instance.licenseSkipped().then((value) {
       if (mounted) setState(() { _skipped = value; _resolved = true; });
     });
   }
 
+  void _reset() {
+    if (mounted) setState(() { _skipped = false; _showActivation = false; _resolved = true; _error = null; });
+  }
+
   @override
-  void dispose() { _key.dispose(); super.dispose(); }
+  void dispose() { WindowsLicenseGate.resetSignal.removeListener(_reset); _key.dispose(); super.dispose(); }
 
   Future<void> _activate() async {
     setState(() { _busy = true; _error = null; });
@@ -104,8 +111,16 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
   }
 
   Future<void> _skip() async {
+    if (_busy) return;
+    setState(() { _busy = true; _error = null; });
+    try {
     await WindowsPlatformClient.instance.markLicenseSkipped();
     if (mounted) setState(() { _skipped = true; _showActivation = false; });
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not save Skip: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Widget _licenseScreen({required WindowsLicenseState s, bool blocking = false}) => Scaffold(
@@ -134,7 +149,7 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
               const SizedBox(height: 12),
               FilledButton(onPressed: _busy ? null : _activate,
                 child: Text(_busy ? 'Verifying…' : 'Activate / Verify license')),
-              if (!blocking) ...[
+              if (s.allowed) ...[
                 const SizedBox(height: 6),
                 TextButton(
                   key: const ValueKey('license-skip-button'),
@@ -148,7 +163,8 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
     valueListenable: WindowsPlatformClient.instance.state,
     builder: (context, s, _) {
       // Fresh installs see ONLY the licence key screen first.
-      final showFirstRun = _resolved && !_skipped && s.allowed;
+      if (!_resolved) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      final showFirstRun = !_skipped && s.allowed && s.status != 'licensed';
       if (showFirstRun) return _licenseScreen(s: s, blocking: true);
       // Expired/revoked licences keep blocking, as before.
       if (!s.allowed) return _licenseScreen(s: s, blocking: true);

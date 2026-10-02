@@ -7,6 +7,7 @@ import 'windows_firebase_sync.dart';
 import 'windows_sync_engine.dart';
 import 'windows_connection_center.dart';
 import 'windows_platform_client.dart';
+import 'windows_license_gate.dart';
 import 'windows_html_shim.dart' as html;
 
 class WindowsAppReset {
@@ -32,6 +33,8 @@ class WindowsAppReset {
       await WindowsLocalSession.resetAppSession();
       await html.clearAppLoginSessions();
       WindowsUiLanguage.change('en');
+      await WindowsPlatformClient.instance.clearLicenseSkipped();
+      WindowsLicenseGate.reopenAfterReset();
       await WindowsConnectionCenter.initialize();
     } finally {
       WindowsPlatformClient.instance.resumeAfterAppReset();

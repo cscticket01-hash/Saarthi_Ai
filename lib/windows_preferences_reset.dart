@@ -34,7 +34,7 @@ class WindowsPreferencesReset {
     try {
       await reset();
       if (!context.mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil('/first-run', (_) => false);
+      Navigator.of(context).pushNamedAndRemoveUntil('/admin-setup', (_) => false);
     } catch (e) {
       if (context.mounted) {
         Navigator.of(context).pop();

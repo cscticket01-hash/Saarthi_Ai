@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/main_windows.dart';
 import '../lib/windows_license_gate.dart';
+import '../lib/windows_admin_setup.dart';
+import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_local_session.dart';
 import '../lib/windows_local_settings.dart';
 import '../lib/windows_online_startup.dart';
@@ -22,6 +24,7 @@ void main() {
     ui.WindowsUiLanguage.change('en');
     WindowsPlatformClient.skippedOverride = null;
     WindowsAdminSetup.completedOverride = null;
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     WindowsPlatformClient.instance.state.value = WindowsLicenseState(
       allowed: true,
       status: 'trial',
@@ -58,7 +61,6 @@ void main() {
     // Removed from the first screen: connection settings, Check again, login errors.
     expect(find.text('School connection settings'), findsNothing);
     expect(find.text('Check again'), findsNothing);
-    expect(find.byKey(const ValueKey('license-skip-button')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -145,22 +147,6 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('real app renders a full-width startup and opens local setup on skip',
-      (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1400, 1000));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await _skipLicence(tester);
-
-    expect(tester.getSize(find.byType(Navigator).first).width, 1400);
-    expect(find.textContaining('Free trial:'), findsOneWidget);
-
-    expect(find.text('CREATE LOCAL SETTINGS LOCK'), findsOneWidget);
-    expect(find.byType(TextField), findsNWidgets(3));
-    expect(tester.getSize(find.byType(TextField).first).width, greaterThan(300));
-    expect(find.text('Create Lock & Open App').hitTestable(), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets('expired licences cannot reach the startup skip button', (tester) async {
     WindowsPlatformClient.instance.state.value = WindowsLicenseState(
       allowed: false,
@@ -186,7 +172,7 @@ void main() {
     )));
     await tester.pump();
     expect(find.text('Local app'), findsOneWidget);
-    expect(find.byKey(const ValueKey('license-skip-button')), findsNothing);
+    expect(find.byKey(const ValueKey('windows-startup-skip')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -204,7 +190,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('windows-startup-retry')));
     await tester.pump();
     expect(checks, 2);
-    await tester.tap(find.byKey(const ValueKey('license-skip-button')));
+    await tester.tap(find.byKey(const ValueKey('windows-startup-skip')));
     await tester.pump();
     expect(find.text('Local app'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -216,7 +202,7 @@ void main() {
       initializeConnections: () => check.future,
       child: const Scaffold(body: TextField()),
     )));
-    await tester.tap(find.byKey(const ValueKey('license-skip-button')));
+    await tester.tap(find.byKey(const ValueKey('windows-startup-skip')));
     await tester.pump();
     await tester.enterText(find.byType(TextField), 'Keep my work');
     check.complete();
@@ -246,23 +232,40 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('full app routes and language changes retain their usable width',
+  testWidgets('offline setup saves a password and opens home without waiting for cloud',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 1000));
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(VidyaSaarthiWindowsApp(
-      initializeConnections: () async {},
-    ));
+    final check = Completer<void>();
+    WindowsPlatformClient.skippedOverride = false;
+    WindowsAdminSetup.completedOverride = false;
+    await tester.pumpWidget(VidyaSaarthiWindowsApp(initializeConnections: () => check.future));
     await tester.pumpAndSettle();
-    final context = tester.element(find.byType(WindowsFirstRunSecuritySetup));
-    Navigator.of(context).pushNamed('/local-login');
+    await tester.tap(find.byKey(const ValueKey('license-skip-button')));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, 'Existing school admin');
-    ui.WindowsUiLanguage.change('hi');
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), 'Offline School');
+    await tester.enterText(fields.at(1), 'Principal One');
+    await tester.enterText(fields.at(2), '1234');
+    await tester.enterText(fields.at(3), '1234');
+    await tester.tap(find.text('Save & Open App'));
     await tester.pumpAndSettle();
-    expect(tester.getSize(find.byType(Navigator).first).width, 1200);
-    expect(find.text('Existing school admin'), findsOneWidget);
-    expect(tester.getSize(find.byType(TextField).first).width, greaterThan(300));
+    expect(find.textContaining('at least 6 characters'), findsOneWidget);
+    expect(WindowsLocalSecurity.configured, isFalse);
+    await tester.enterText(fields.at(2), 'secure-password');
+    await tester.enterText(fields.at(3), 'secure-password');
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Save & Open App'));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    });
+    await tester.pumpAndSettle();
+    expect(WindowsLocalSecurity.verifyPassword('secure-password'), isTrue);
+    expect(find.text('Digital Notice Board'), findsOneWidget);
+    expect(find.text('License not activated — Activate now'), findsOneWidget);
+    expect(find.text('Admin Setup'), findsNothing);
+    expect(find.text('Checking school connections. You can open the app offline.'), findsNothing);
+    check.complete();
+    await tester.pump();
     expect(tester.takeException(), isNull);
   });
 }
