@@ -83,6 +83,9 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
             ])))));
       }
       // Reserve layout space above the navigator, never overlay its app bars.
-      return Column(children: [WindowsTrialBanner(state: s), Expanded(child: page)]);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [WindowsTrialBanner(state: s), Expanded(child: page)],
+      );
     });
 }

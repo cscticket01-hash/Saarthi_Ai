@@ -18,4 +18,17 @@ A saved/healthy Google Script link alone does not load school student records: t
 
 ## Verification
 
+The startup follow-up fixes a collapsed navigator beneath the trial header:
+the header layout now stretches its page horizontally, and the application
+stack expands to the available space. Full application widget tests verify
+startup, real local forms, route changes and translated screens have a usable
+width, rather than testing only a standalone scaffold.
+
+The optional online startup check displays `Skip / Open app` immediately. It
+opens automatically when the check succeeds, or offers retry after an error
+or an eight-second timeout. Skip continues to the existing local setup/login
+or password screen. It never overrides an expired licence, resets a trial,
+changes a school's connections or bypasses saved passwords. Update checks
+run after a successful login opens the dashboard.
+
 The platform review workflow runs Windows regression tests, Flutter analysis and a native Windows release build. The tests cover header layout, both sidebar modes, all four languages and preserved form state, offline exam records, school boundaries, notice recipient requirements, monthly controls and data-preserving reset.

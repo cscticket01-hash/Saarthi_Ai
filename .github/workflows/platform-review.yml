@@ -47,6 +47,10 @@ jobs:
       run: flutter test test/document_renderer_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/spark_license_test.dart test/github_update_test.dart
     - name: Verify Windows portal regressions
       run: flutter test test/windows_portal_test.dart
+    - name: Verify Windows startup and skip regression
+      env:
+        APPDATA: ${{ runner.temp }}/windows-startup-tests
+      run: flutter test test/windows_startup_test.dart
     - name: Build developer website
       run: flutter build web --release
     - uses: actions/upload-artifact@v4
