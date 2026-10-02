@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart' as m;
 import 'package:flutter/foundation.dart';
 import 'windows_html_shim.dart' as html;
@@ -6,13 +8,24 @@ import 'windows_ui_translations.dart';
 class WindowsUiLanguage {
   static const key = 'vidya_windows_language_v1';
   static final changed = ValueNotifier<String>(_read());
+  static File get _preferenceFile => File('${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}${Platform.pathSeparator}VidyaSaarthi${Platform.pathSeparator}windows_ui_preferences.json');
   static String _read() {
-    final saved = html.window.localStorage[key];
+    String? saved;
+    try {
+      if (_preferenceFile.existsSync()) saved = (jsonDecode(_preferenceFile.readAsStringSync()) as Map)['language']?.toString();
+    } catch (_) {}
+    saved ??= html.window.localStorage[key];
     return const {'en', 'hi', 'bn', 'as'}.contains(saved) ? saved! : 'en';
   }
   static String get current => changed.value;
+  static void restore() => changed.value = _read();
   static void change(String language) {
     if (!const {'en', 'hi', 'bn', 'as'}.contains(language)) return;
+    // Device UI preferences are independent of the active school data namespace.
+    try {
+      _preferenceFile.parent.createSync(recursive: true);
+      _preferenceFile.writeAsStringSync(jsonEncode({'language': language}), flush: true);
+    } catch (_) {}
     html.window.localStorage[key] = language;
     changed.value = language;
   }

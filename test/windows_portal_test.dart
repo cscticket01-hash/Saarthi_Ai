@@ -101,6 +101,12 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: ui.Text('Save', translate: false)));
     expect(find.text('Save'), findsOneWidget);
   });
+  test('language survives reopening and is independent of the school data namespace', () {
+    ui.WindowsUiLanguage.change('bn');
+    ui.WindowsUiLanguage.changed.value = 'en';
+    ui.WindowsUiLanguage.restore();
+    expect(ui.WindowsUiLanguage.current,'bn');
+  });
   test('translation templates preserve dates and counts', () {
     ui.WindowsUiLanguage.change('hi');
     final translated = ui.WindowsUiLanguage.translate('Free trial: 3 days remaining. Ends 9/10/2026. Add a licence key to continue.');
