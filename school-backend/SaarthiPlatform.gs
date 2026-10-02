@@ -22,13 +22,16 @@ function VS_centralAuth(action,data){
  if(r.getResponseCode()!==200)throw new Error('Developer Firebase authentication unavailable. Check the school monitoring setup and enabled sign-in providers.');
  return result;
 }
-function VS_schoolTrial(){
+function VS_schoolTrial(device){
  const path='platform_school_trials/'+VS_project();let raw=VS_central('get',path);
  if(!raw){
+  if(!/^[a-f0-9]{64}$/.test(String(device||'')))throw new Error('Connect the Windows app first to verify this school trial');
+  const original=VS_central('get','platform_device_trials/'+device);
+  if(!original||!original.fields||!original.fields.createdAt)throw new Error('Windows device trial has not been verified yet');
   const auth=VS_centralAuth('signUp',{returnSecureToken:true});
   try{
-   VS_central('post',':commit',{writes:[{update:{name:'projects/'+VS_CENTRAL_PROJECT+'/databases/(default)/documents/'+path,fields:{}},
-    currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]},
+   VS_central('post',':commit',{writes:[{update:{name:'projects/'+VS_CENTRAL_PROJECT+'/databases/(default)/documents/'+path,
+    fields:{createdAt:original.fields.createdAt,deviceTrialId:VS_encode(device)}},currentDocument:{exists:false}},
     {update:{name:'projects/'+VS_CENTRAL_PROJECT+'/databases/(default)/documents/platform_trial_claims/'+auth.localId,fields:{target:VS_encode(path)}},
      currentDocument:{exists:false},updateTransforms:[{fieldPath:'createdAt',setToServerValue:'REQUEST_TIME'}]}]},auth.idToken);
   }catch(err){if(err.httpCode!==409)throw err;}
@@ -81,6 +84,7 @@ function VS_platformAdmin(b){
  if(b.action==='platform_notice'){VS_notifySchoolNotice(String(b.noticeId||''));return {sent:true};}
  if(b.action==='platform_complaint')return VS_queueComplaint(b,'admin','windows');
  if(b.action==='platform_bind'||b.action==='platform_heartbeat'){
+  if(b.action==='platform_bind'&&!p.getProperty('VS_LICENSE_KEY_HASH'))VS_schoolTrial(b.deviceFingerprint);
   p.setProperty('VS_WINDOWS_LAST_ACTIVE',String(Date.now()));
   if(b.version)p.setProperty('VS_WINDOWS_VERSION',String(b.version).slice(0,32));
   // Publishing an aggregate can fail without blocking the school licence.
@@ -123,6 +127,7 @@ function VS_publishMonitor(){
   if(Date.now()-Number(p.getProperty('VS_MONITOR_LAST_SENT')||0)<301000)return;
   const online=VS_presenceCounts(),data={schoolId:VS_project(),studentCount:VS_count('students_directory'),teacherCount:VS_count('teachers_directory'),
    studentAppUsers:VS_count('mobile_users','role','student'),onlineStudents:online.students,onlineTeachers:online.teachers,
+   activeLicenseHash:p.getProperty('VS_LICENSE_KEY_HASH')||'',
    windowsVersion:p.getProperty('VS_WINDOWS_VERSION')||'',mobileVersion:CacheService.getScriptCache().get('VS_MOBILE_VERSION')||''};
   const lastActive=Math.max(Number(p.getProperty('VS_WINDOWS_LAST_ACTIVE')||0),Number(CacheService.getScriptCache().get('VS_ACTIVITY_AT')||0));
   const fields={lastSeenAt:{timestampValue:new Date(lastActive).toISOString()}};Object.keys(data).forEach(k=>fields[k]=VS_encode(data[k]));

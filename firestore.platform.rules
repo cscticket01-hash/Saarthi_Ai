@@ -13,8 +13,7 @@ service cloud.firestore {
         get(/databases/$(database)/documents/platform_monitor_access/$(request.auth.uid)).data.schoolId == school;
     }
     function trial(path) {
-      return anonymous() && request.resource.data.keys().hasOnly(['createdAt']) &&
-        request.resource.data.createdAt == request.time &&
+      return anonymous() &&
         getAfter(/databases/$(database)/documents/platform_trial_claims/$(request.auth.uid)).data.target == path &&
         getAfter(/databases/$(database)/documents/platform_trial_claims/$(request.auth.uid)).data.createdAt == request.time;
     }
@@ -25,11 +24,16 @@ service cloud.firestore {
     }
     match /platform_school_trials/{school} {
       allow get: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$');
-      allow create: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$') && trial('platform_school_trials/' + school);
+      allow create: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$') &&
+        request.resource.data.keys().hasOnly(['createdAt','deviceTrialId']) &&
+        request.resource.data.deviceTrialId.matches('^[a-f0-9]{64}$') &&
+        request.resource.data.createdAt == get(/databases/$(database)/documents/platform_device_trials/$(request.resource.data.deviceTrialId)).data.createdAt &&
+        trial('platform_school_trials/' + school);
     }
     match /platform_device_trials/{device} {
       allow get: if device.matches('^[a-f0-9]{64}$');
-      allow create: if device.matches('^[a-f0-9]{64}$') && trial('platform_device_trials/' + device);
+      allow create: if device.matches('^[a-f0-9]{64}$') && request.resource.data.keys().hasOnly(['createdAt']) &&
+        request.resource.data.createdAt == request.time && trial('platform_device_trials/' + device);
     }
     match /platform_trial_claims/{uid} {
       allow create: if anonymous() && request.auth.uid == uid &&
@@ -40,12 +44,16 @@ service cloud.firestore {
     match /platform_school_summaries/{school} {
       allow create, update: if monitor(school) &&
         request.resource.data.keys().hasOnly(['schoolId','lastSeenAt','reportedAt','studentCount','teacherCount',
-          'studentAppUsers','onlineStudents','onlineTeachers','windowsVersion','mobileVersion']) &&
+          'studentAppUsers','onlineStudents','onlineTeachers','windowsVersion','mobileVersion','activeLicenseHash']) &&
         request.resource.data.schoolId == school && request.resource.data.reportedAt == request.time &&
         request.resource.data.lastSeenAt is timestamp && request.resource.data.lastSeenAt <= request.time + duration.value(60,'s') &&
         count(request.resource.data.studentCount) && count(request.resource.data.teacherCount) &&
         count(request.resource.data.studentAppUsers) && count(request.resource.data.onlineStudents) &&
         count(request.resource.data.onlineTeachers) &&
+        request.resource.data.activeLicenseHash is string &&
+        (request.resource.data.activeLicenseHash == '' ||
+          (request.resource.data.activeLicenseHash.matches('^[a-f0-9]{64}$') &&
+            get(/databases/$(database)/documents/platform_license_status/$(request.resource.data.activeLicenseHash)).data.schoolId == school)) &&
         request.resource.data.windowsVersion is string && request.resource.data.windowsVersion.size() <= 32 &&
         request.resource.data.mobileVersion is string && request.resource.data.mobileVersion.size() <= 32 &&
         (!exists(/databases/$(database)/documents/platform_school_summaries/$(school)) ||

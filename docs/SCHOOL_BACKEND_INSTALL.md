@@ -86,7 +86,8 @@ school rules in the central developer Firebase project. Central rules stay in
    must contain this school's Firebase project, script URL and person link token.
 9. In the developer website Schools section, generate this school's monitoring
    setup. Copy `VS_setupPlatform({...})` into a temporary setup function in the
-   school editor and run it as owner. Keep its password in script properties only.
+   school editor and run it as owner. Delete the temporary setup helper after success;
+   its credentials remain in private script properties.
    The website also generates the school-bound licence key; activate it in Windows.
 10. Register the universal Android package `com.example.saarthi_ai` in this school's
     Firebase. Run `VS_setupMessaging(androidAppId, projectNumber)` with that school's

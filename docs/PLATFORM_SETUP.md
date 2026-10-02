@@ -3,7 +3,8 @@
 The website source is the developer control centre for vidyasaarthi.web.app. Existing
 Firebase email/password credentials are retained. The central account needs the
 existing `admin: true` claim or `developer: true`; school accounts cannot generate
-keys or read the central dashboard.
+keys or read the central dashboard. Windows, QR login and school script setup also
+reject the developer project as an operational school database.
 
 ## Review before publishing
 
@@ -22,7 +23,8 @@ is retained for regression coverage of the previous API; it is not deployed or
 called by the current clients. Billing is never upgraded automatically.
 
 The existing deployment account needs Firestore rules/Hosting access and Firebase
-Authentication Admin to verify/enable Anonymous sign-in for online trials. This
+Authentication Admin if Anonymous sign-in is not enabled yet. Already-enabled
+Anonymous sign-in is verified through its public API without requiring config-read access. This
 changes only that provider; existing developer Email/Password accounts stay intact.
 If the account lacks Auth config access, enable Anonymous in Firebase Console and
 grant the deployment account the stated role before retrying. School monitor
@@ -65,7 +67,8 @@ separate Apps Script automatically.
 ## Licence and trial
 
 Windows starts a five-day trial on first use. Server registration binds the trial
-to a hashed Windows MachineGuid and a school Firebase project; reinstallation does
+to a hashed Windows MachineGuid. The school trial retains that original device
+start when it first binds to its own Firebase project; reinstallation does
 not reset a previously registered device's trial. Clock rollback is rejected.
 After expiry, the license gate permits only activation and protected connection
 settings. Paid installations have an offline lease of at most 72 hours and never
@@ -135,8 +138,9 @@ limit writes. The developer can mark reports open, in progress or resolved.
 ## School setup and owned notifications
 
 In website **Schools → School setup**, enter the school name and its separate
-Firebase project ID. Copy the generated `VS_setupPlatform({...})` call and run it
-as the owner in that school's script. Credentials appear only at creation; they
+Firebase project ID. Copy the generated `setupSchoolMonitoring()` helper and run it
+as the owner in that school's script. Remove the temporary helper after it runs;
+the credentials remain in private script properties. Credentials appear only at creation; they
 are not embedded in QR cards or either app. Generating setup again revokes the old
 monitor identity's access; paste the replacement into the school script. The
 function installs one five-minute maintenance trigger. For a school detected
@@ -168,14 +172,19 @@ The compiled central google-services resource is not used to initialize messagin
 
 Windows relays a synced school notice through that school's authenticated script.
 The script sends a topic invalidation through that school's FCM project, with **only**
-school ID, notice ID and type. Private notice text is fetched separately using the
-recipient's authenticated school session before it is displayed. Knowing a public
+school ID, notice ID and type. The phone immediately shows a generic school-notice alert; private text is fetched
+through the authenticated school session when the app opens. Foreground dashboards
+refresh on the signal. A broadcast to thousands of sleeping phones therefore does
+not create thousands of simultaneous Apps Script/Firestore requests. Knowing a public
 Firebase config/topic cannot reveal private notice content. Queued messages from
 another school are ignored; logout unsubscribes, deletes the token and clears notices.
 Background delivery needs Android notification permission and a non-force-stopped app.
 
 Production APK signing/package identity are retained. Android checks this repository's
-GitHub Releases directly, so updates do not depend on the discontinued central API.
+static `android-update.json` GitHub Release asset, so routine update checks
+do not consume central Firestore reads or GitHub API requests. Windows releases
+do not replace the latest Android release. SHA-256 is verified before opening the APK;
+updates do not depend on the discontinued central API.
 The existing public Android update metadata remains readable for completed releases.
 Windows retains its GitHub-based installer/update system. Preview builds do not
 publish production update metadata.

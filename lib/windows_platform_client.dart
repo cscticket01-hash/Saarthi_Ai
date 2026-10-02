@@ -36,6 +36,7 @@ class WindowsPlatformClient {
       _secret = '',
       _boundProject = '',
       _boundScript = '',
+      _fingerprint = '',
       _cacheProject = '';
   DateTime? _trialStart, _lastSeen, _verifiedAt;
   Timer? _timer, _refreshDebounce;
@@ -71,7 +72,7 @@ class WindowsPlatformClient {
       headers:{'Content-Type':'text/plain;charset=utf-8'},
       body:jsonEncode({'action':actions[action], 'schoolProjectId':remote.projectId,
         'schoolAdminIdToken':await WindowsFirebaseRemote.freshIdToken(),
-        for(final k in ['key','version','noticeId','message']) if(body.containsKey(k)) k:body[k],
+        for(final k in ['key','version','noticeId','message','deviceFingerprint']) if(body.containsKey(k)) k:body[k],
       })).timeout(const Duration(seconds: 30));
     if(response.isRedirect && response.headers['location'] != null) {
       final redirect = Uri.parse(response.headers['location']!);
@@ -100,6 +101,8 @@ class WindowsPlatformClient {
     await _secure.write(key: 'vs_installation_id', value: _id);
     _secret = await _secure.read(key: 'vs_installation_secret') ?? '';
     _registered = await _secure.read(key: 'vs_spark_trial_verified') == 'true';
+    _fingerprint=await _secure.read(key:'vs_device_trial_fingerprint')??'';
+    if(_fingerprint.isEmpty) _registered=false;
     _trialStart =
         DateTime.tryParse(await _secure.read(key: 'vs_trial_start') ?? '') ??
             DateTime.now().toUtc();
@@ -222,9 +225,11 @@ class WindowsPlatformClient {
           ]);
           if (r.exitCode == 0) hardware = r.stdout.toString().trim();
         } catch (_) {}
+        _fingerprint=sha256.convert(utf8.encode(hardware)).toString();
+        await _secure.write(key:'vs_device_trial_fingerprint',value:_fingerprint);
         try {
           final data = await call('installation/register', {
-            'deviceFingerprint': sha256.convert(utf8.encode(hardware)).toString()
+            'deviceFingerprint': _fingerprint
           });
           _registered = true;
           await _secure.write(key: 'vs_spark_trial_verified', value: 'true');
@@ -250,6 +255,7 @@ class WindowsPlatformClient {
             .doc('school_profile_cache')
             .get();
         final bound = await call('school/bind', {
+          'deviceFingerprint':_fingerprint,
           'projectId': remote.projectId,
           'googleScriptUrl': script,
           'schoolIdToken': await WindowsFirebaseRemote.freshIdToken(),

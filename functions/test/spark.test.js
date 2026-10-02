@@ -39,6 +39,28 @@ test('school trial expires five days after its immutable central creation time',
  const {context}=backend();context.VS_schoolTrial=()=>Date.now()-5*86400000-1;
  const lease=context.VS_platformStatus(true);assert.equal(lease.status,'expired');assert.equal(lease.allowed,false);
 });
+test('binding a school four days later retains the original Windows trial start',()=>{
+ const {context}=backend(),device='a'.repeat(64),started=Date.now()-4*86400000;
+ const original={fields:{createdAt:{timestampValue:new Date(started).toISOString()}}};
+ let school=null,commit;const authActions=[];
+ context.VS_centralAuth=(action)=>{authActions.push(action);return {localId:'trial-user',idToken:'trial-token'};};
+ context.VS_central=(method,path,data)=>{
+  if(path==='platform_school_trials/school-one')return school;
+  if(path==='platform_device_trials/'+device)return original;
+  if(method==='post'&&path===':commit'){commit=data;school=data.writes[0].update;return {};}
+  throw Error('Unexpected central request');
+ };
+ assert.equal(context.VS_schoolTrial(device),started);
+ assert.equal(commit.writes[0].update.fields.deviceTrialId.stringValue,device);
+ assert.equal(context.VS_platformStatus(true).expiresAt,started+5*86400000);
+ assert.deepEqual(authActions,['signUp','delete']);
+});
+test('a new school trial requires a previously verified Windows device',()=>{
+ const {context}=backend();context.VS_central=()=>null;
+ context.VS_centralAuth=()=>{throw Error('Anonymous registration must not run');};
+ assert.throws(()=>context.VS_schoolTrial(),/Connect the Windows app/);
+ assert.throws(()=>context.VS_schoolTrial('a'.repeat(64)),/not been verified/);
+});
 test('school-owned FCM contains only an invalidation signal and the correct project',()=>{
  const {context,props,sent}=backend();props.set('VS_ANDROID_APP_ID','1:123:android:aabb');props.set('VS_FCM_SENDER_ID','123');
  context.VS_get=(col)=>col==='school_notices'?{title:'Private title',description:'Private message'}:null;
@@ -55,7 +77,7 @@ test('school monitor exports aggregate counts without records, QR, session or no
  let sent;context.VS_central=(method,path,data,token)=>{sent={method,path,data,token};return {};};
  context.VS_publishMonitor();const write=sent.data.writes[0];
  assert.equal(write.update.name.endsWith('/platform_school_summaries/school-one'),true);
- assert.deepEqual(Object.keys(write.update.fields).sort(),['lastSeenAt','schoolId','studentCount','teacherCount','studentAppUsers','onlineStudents','onlineTeachers','windowsVersion','mobileVersion'].sort());
+ assert.deepEqual(Object.keys(write.update.fields).sort(),['activeLicenseHash','lastSeenAt','schoolId','studentCount','teacherCount','studentAppUsers','onlineStudents','onlineTeachers','windowsVersion','mobileVersion'].sort());
  assert.equal(write.update.fields.studentCount.integerValue,'3000');
  assert.deepEqual(JSON.parse(JSON.stringify(write.updateTransforms)),[{fieldPath:'reportedAt',setToServerValue:'REQUEST_TIME'}]);
  context.VS_central=()=>{throw Error('Too frequent');};context.VS_publishMonitor();
@@ -63,6 +85,9 @@ test('school monitor exports aggregate counts without records, QR, session or no
 test('monitoring bundle from another school is rejected before authentication',()=>{
  const {context}=backend();context.VS_centralAuth=()=>{throw Error('Must not run');};
  assert.throws(()=>context.VS_setupPlatform({projectId:'school-two'}),/different school/);
+});
+test('the developer Firebase cannot be configured as a school operational backend',()=>{
+ const {context}=backend();assert.throws(()=>context.VS_setupSchool('saarthi-ai-df12b','AIza'+'a'.repeat(30)),/separate Firebase/);
 });
 test('school Firestore queries use the canonical REST action URL',()=>{
  const {context,sent}=backend();context.VS_firestore('post',':runQuery',{structuredQuery:{}});

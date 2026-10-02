@@ -4,6 +4,7 @@
  * All Firestore calls use the script owner's OAuth identity. Never expose it.
  */
 function VS_setupSchool(projectId, apiKey) {
+  if(projectId==='saarthi-ai-df12b')throw new Error('The developer Firebase is only for website monitoring/licensing. Use this school\'s separate Firebase project.');
   if (!/^[a-z][a-z0-9-]{4,61}[a-z0-9]$/.test(projectId)) throw new Error('Invalid Firebase project ID');
   if(!/^AIza[A-Za-z0-9_-]{20,}$/.test(String(apiKey||'')))throw new Error('Supply this school Firebase Web API key as the second setup argument');
   const props = PropertiesService.getScriptProperties();

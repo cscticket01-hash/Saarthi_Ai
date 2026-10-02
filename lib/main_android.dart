@@ -273,6 +273,8 @@ class _SchoolDashboard extends StatefulWidget {
 }
 
 class _SchoolDashboardState extends State<_SchoolDashboard> {
+  StreamSubscription<void>? _noticeOpened;
+  StreamSubscription<RemoteMessage>? _noticeReceived;
   final _s = SchoolSession.instance;
   int _page = 0;
   bool _loading = true, _busy = false, _blocked = false;
@@ -297,11 +299,16 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
     _load();
     _presence();
     _timer = Timer.periodic(const Duration(minutes: 5), (_) => _presence());
+    _noticeOpened=SchoolNotifications.opened.listen((_)=>_load());
+    _noticeReceived=FirebaseMessaging.onMessage.listen((m){
+      if(SchoolNotifications.belongsToSession(m.data,_s.link?.projectId)) _load();
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _noticeOpened?.cancel();_noticeReceived?.cancel();
     super.dispose();
   }
 

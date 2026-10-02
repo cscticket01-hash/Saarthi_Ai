@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import '../platform/github_updates.dart';
+import '../platform/platform_config.dart';
 import '../school_backend_transport.dart';
 
 class SchoolLink {
@@ -41,7 +42,7 @@ class SchoolLink {
     final token = d['linkToken']?.toString() ?? '';
     final person = d['personId']?.toString() ?? '';
     final url = Uri.tryParse(d['googleScriptUrl']?.toString() ?? '');
-    if (!RegExp(r'^[a-z][a-z0-9-]{4,61}[a-z0-9]$').hasMatch(project) ||
+    if (project == platformProjectId || !RegExp(r'^[a-z][a-z0-9-]{4,61}[a-z0-9]$').hasMatch(project) ||
         !{'student', 'teacher'}.contains(role) ||
         token.length < 20 ||
         person.isEmpty ||

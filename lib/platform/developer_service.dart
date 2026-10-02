@@ -79,7 +79,15 @@ class DeveloperService {
     }
     final summaries = await _list('platform_school_summaries');
     final byId = {for(final s in summaries) s['id']:s};
-    final schools = (_cached!['schools'] as List).map((s) => <String,dynamic>{...s, ...?byId[s['id']]}).toList();
+    final licenses={for(final l in _cached!['licenses'] as List) l['id']:l};
+    final schools = (_cached!['schools'] as List).map((s) {
+      final school=<String,dynamic>{...s, ...?byId[s['id']]};
+      final active=licenses[school['activeLicenseHash']];
+      if(active!=null && active['schoolId']==school['id']) {
+        school['licenseExpiresAt']=active['revoked']==true?0:active['expiresAt'];
+      }
+      return school;
+    }).toList();
     final now = DateTime.now().millisecondsSinceEpoch;
     return {'success':true, ..._cached!, 'schools':schools, 'serverTime':now, 'summary':monitorSummary(schools,now)};
   }

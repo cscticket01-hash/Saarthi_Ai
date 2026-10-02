@@ -20,6 +20,7 @@ void main() {
   test('incomplete and redirected school QR URLs are rejected', () {
     for (final change in [
       {'linkToken': ''}, {'type': 'admin'}, {'firebaseProjectId': ''},
+      {'firebaseProjectId':'saarthi-ai-df12b'},
       {'googleScriptUrl': 'https://script.google.com.evil.test/macros/s/SchoolScript/exec'},
       {'googleScriptUrl': 'https://user@script.google.com/macros/s/SchoolScript/exec'},
       {'googleScriptUrl': 'https://script.google.com/macros/s/SchoolScript/exec?redirect=other'},

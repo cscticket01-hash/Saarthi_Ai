@@ -13,7 +13,7 @@ const anon=(uid='installation')=>env.authenticatedContext(uid,{firebase:{sign_in
 const publicDb=()=>env.unauthenticatedContext().firestore();
 async function seed(path,data){await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),path),data));}
 async function access(){await seed('platform_monitor_access/school-one-monitor',{schoolId:'school-one'});await seed('platform_monitor_access/school-two-monitor',{schoolId:'school-two'});}
-function summary(id='school-one'){return {schoolId:id,lastSeenAt:Timestamp.now(),reportedAt:serverTimestamp(),studentCount:3000,teacherCount:50,studentAppUsers:3000,onlineStudents:30,onlineTeachers:2,windowsVersion:'2.1.80',mobileVersion:'1.0.473'};}
+function summary(id='school-one'){return {schoolId:id,lastSeenAt:Timestamp.now(),reportedAt:serverTimestamp(),activeLicenseHash:'',studentCount:3000,teacherCount:50,studentAppUsers:3000,onlineStudents:30,onlineTeachers:2,windowsVersion:'2.1.80',mobileVersion:'1.0.473'};}
 function report(db,id='school-one_'+'a'.repeat(32),schoolId='school-one'){
  const batch=writeBatch(db);
  batch.set(doc(db,'platform_complaints/'+id),{schoolId,source:'android',role:'student',message:'Attendance problem',version:'1.0.473',status:'open',createdAt:serverTimestamp()});
@@ -50,12 +50,21 @@ test('central summary writes are limited to one per school every five minutes',a
  await seed('platform_school_summaries/school-one',{...summary(),reportedAt:Timestamp.fromMillis(Date.now()-301000)});
  await assertSucceeds(setDoc(ref,summary()));
 });
+test('a summary can report only a licence hash belonging to that school',async()=>{
+ await access();const own='d'.repeat(64),foreign='f'.repeat(64);
+ await seed('platform_license_status/'+own,{schoolId:'school-one'});
+ await seed('platform_license_status/'+foreign,{schoolId:'school-two'});
+ await assertFails(setDoc(doc(school(),'platform_school_summaries/school-one'),{...summary(),activeLicenseHash:foreign}));
+ await assertSucceeds(setDoc(doc(school(),'platform_school_summaries/school-one'),{...summary(),activeLicenseHash:own}));
+});
 test('school and device trials use immutable server time and cannot be reset',async()=>{
+ const originalDevice='e'.repeat(64),started=Timestamp.fromMillis(Date.now()-4*86400000);
+ await seed('platform_device_trials/'+originalDevice,{createdAt:started});
  for(const path of ['platform_device_trials/'+'a'.repeat(64),'platform_school_trials/school-one']){
   const uid=path.split('/')[0],db=anon(uid),ref=doc(db,path);await assertFails(setDoc(ref,{createdAt:Timestamp.fromMillis(Date.now()+86400000)}));
   await assertFails(setDoc(ref,{createdAt:serverTimestamp(),expiresAt:Timestamp.fromMillis(Date.now()+86400000)}));
   await assertFails(setDoc(doc(publicDb(),path),{createdAt:serverTimestamp()}));
-  const batch=writeBatch(db);batch.set(ref,{createdAt:serverTimestamp()});
+  const batch=writeBatch(db);batch.set(ref,path.startsWith('platform_school_trials')?{createdAt:started,deviceTrialId:originalDevice}:{createdAt:serverTimestamp()});
   batch.set(doc(db,'platform_trial_claims/'+uid),{target:path,createdAt:serverTimestamp()});
   await assertSucceeds(batch.commit());
   const another=writeBatch(db);another.set(doc(db,'platform_device_trials/'+'c'.repeat(64)),{createdAt:serverTimestamp()});
