@@ -1470,6 +1470,9 @@ Future<Uint8List?> _downloadImageBytes(String url) async {
   if (clean.isEmpty) return null;
 
   try {
+    if (clean.startsWith('data:image/')) {
+      return Uint8List.fromList(UriData.parse(clean).contentAsBytes());
+    }
     final response = await http.get(Uri.parse(clean));
     if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
       return response.bodyBytes;
@@ -1480,6 +1483,16 @@ Future<Uint8List?> _downloadImageBytes(String url) async {
   return null;
 }
 
+
+Widget _windowsSchoolProfileImage(String source, {BoxFit fit = BoxFit.contain, required Widget fallback}) {
+  if (source.startsWith('data:image/')) {
+    try {
+      return Image.memory(Uint8List.fromList(UriData.parse(source).contentAsBytes()),
+          fit: fit, errorBuilder: (_, __, ___) => fallback);
+    } catch (_) { return fallback; }
+  }
+  return Image.network(source, fit: fit, errorBuilder: (_, __, ___) => fallback);
+}
 
 // ============================================================
 // EXAM CENTER MEMORY CACHE / PREFETCH
@@ -1518,7 +1531,7 @@ Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<W
           child: ListTile(onTap: onAnalytics,
             leading: SizedBox(width: 50, height: 50, child: logo.isEmpty
               ? const Icon(Icons.school_rounded, color: Color(0xFF00D9A5), size: 34)
-              : Image.network(logo, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.school_rounded))),
+              : _windowsSchoolProfileImage(logo, fallback: const Icon(Icons.school_rounded))),
             title: Text(_schoolName(profile), translate: false, maxLines: 2),
             subtitle: const Text('ADMIN NAVIGATION', style: TextStyle(color: Color(0xFF00D9A5), fontSize: 10)),
           )));
@@ -8308,6 +8321,7 @@ Widget _buildOverviewCards() {
                   final compact = constraints.maxWidth < 560;
 
                   final category = DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: _noticeCategory,
                     dropdownColor: const Color(0xFF1B2A32),
                     style: const TextStyle(color: Colors.white),
@@ -11435,10 +11449,9 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
               child: selectedBytes != null
                   ? Image.memory(selectedBytes, fit: BoxFit.contain)
                   : currentUrl.isNotEmpty
-                      ? Image.network(
+                      ? _windowsSchoolProfileImage(
                           currentUrl,
-                          fit: BoxFit.contain,
-errorBuilder: (_, __, ___) => Icon(
+                          fallback: Icon(
                             icon,
                             color: const Color(0xFF00A884),
                             size: 34,

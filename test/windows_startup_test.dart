@@ -102,10 +102,12 @@ void main() {
     expect(tester.getTopLeft(banner).dy, lessThan(60));
 
     await tester.tap(banner);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Activate Vidya Saarthi'), findsOneWidget);
     await tester.tap(find.byIcon(Icons.arrow_back));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('License not activated — Activate now'), findsOneWidget);
 
     // A valid activation removes the warning.
@@ -240,26 +242,33 @@ void main() {
     WindowsPlatformClient.skippedOverride = false;
     WindowsAdminSetup.completedOverride = false;
     await tester.pumpWidget(VidyaSaarthiWindowsApp(initializeConnections: () => check.future));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const ValueKey('license-skip-button')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     final fields = find.byType(TextField);
     await tester.enterText(fields.at(0), 'Offline School');
     await tester.enterText(fields.at(1), 'Principal One');
     await tester.enterText(fields.at(2), '1234');
     await tester.enterText(fields.at(3), '1234');
     await tester.tap(find.text('Save & Open App'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.textContaining('at least 6 characters'), findsOneWidget);
     expect(WindowsLocalSecurity.configured, isFalse);
     await tester.enterText(fields.at(2), 'secure-password');
     await tester.enterText(fields.at(3), 'secure-password');
     await tester.runAsync(() async {
       await tester.tap(find.text('Save & Open App'));
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      for (var i = 0; i < 100 && !WindowsLocalSecurity.configured; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
     });
-    await tester.pumpAndSettle();
-    expect(WindowsLocalSecurity.verifyPassword('secure-password'), isTrue);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(WindowsLocalSecurity.verifyPassword('secure-password'), isTrue,
+        reason: tester.widgetList<Text>(find.byType(Text)).map((t) => t.data).join(' | '));
     expect(find.text('Digital Notice Board'), findsOneWidget);
     expect(find.text('License not activated — Activate now'), findsOneWidget);
     expect(find.text('Admin Setup'), findsNothing);
