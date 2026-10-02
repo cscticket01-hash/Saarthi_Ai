@@ -273,6 +273,10 @@ void main() {
     }
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    // Finish the route animation before asserting the previous setup route
+    // has been removed (Home appears during the transition itself).
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
     expect(WindowsLocalSecurity.verifyPassword('secure-password'), isTrue,
         reason: tester.widgetList<Text>(find.byType(Text)).map((t) => t.data).join(' | '));
     expect(find.text('Digital Notice Board'), findsOneWidget);
