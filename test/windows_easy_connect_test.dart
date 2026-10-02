@@ -34,6 +34,15 @@ SchoolProvisioner provisioner(MemoryCheckpoint storage, http.Client client) => S
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('Cancelling an in-flight Google request remains a clean cancellation', () async {
+    late GoogleSetupApi api;
+    api = GoogleSetupApi('private-token', client: MockClient((request) async {
+      api.close();
+      throw http.ClientException('transport closed');
+    }));
+    await expectLater(api.request('GET', 'https://firebase.googleapis.com/v1beta1/projects'),
+        throwsA(isA<SetupCancelled>()));
+  });
   test('PKCE matches RFC 7636 S256 vector', () {
     expect(GoogleAuthorization.challenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'),
       'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');

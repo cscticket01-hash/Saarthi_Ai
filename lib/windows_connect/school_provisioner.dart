@@ -43,8 +43,16 @@ class GoogleSetupApi {
     final request = http.Request(method, uri)..followRedirects = false;
     request.headers.addAll({'Authorization': 'Bearer $token', 'Content-Type': 'application/json'});
     if (body != null) request.body = jsonEncode(body);
-    final response = await http.Response.fromStream(await client.send(request)
-      .timeout(const Duration(seconds: 45))).timeout(const Duration(seconds: 45));
+    late http.Response response;
+    try {
+      response = await http.Response.fromStream(await client.send(request)
+        .timeout(const Duration(seconds: 45))).timeout(const Duration(seconds: 45));
+    } catch (_) {
+      // Closing an in-flight client can fail before a response arrives.
+      // Treat that as cancellation so the wizard offers a fresh login on retry.
+      check();
+      rethrow;
+    }
     check();
     if (allowMissing && response.statusCode == 404) return null;
     if (response.statusCode < 200 || response.statusCode >= 300) {
