@@ -140,7 +140,8 @@ saved version rather than creating a new version on every attempt.
 For an unpublished configured Windows test build, run **Platform review builds**
 with the optional public `google_oauth_client_id` input, or set the repository
 variable `SAARTHI_GOOGLE_DESKTOP_CLIENT_ID`. The installed client uses PKCE and does not embed or send an OAuth client secret.
-The repository secret stays in GitHub; CI checks only its presence as a boolean.
+The repository secret is used only by the safe CI diagnostic and server-side
+exchange service. It is never compiled into or sent by the Windows client.
 The Windows review job requires a valid public ID and runs a compiled Dart
 configuration test using the same definition as the Windows build. No release
 or deployment is performed by this PR workflow. Live Google token exchange must
@@ -161,3 +162,33 @@ new-school/interruption/reconnect/revocation tests above. Automated mock tests a
 builds cannot establish that Google's actual consent and provisioning work for a
 particular organization. Workspace migration, recovery after app reset and mobile
 notification onboarding remain outside this preview.
+
+## Token-exchange correction after Windows acceptance failure
+
+Receiving the loopback callback only proves Google sent a code; it does not prove
+that token exchange succeeded. The previous build hid every non-200 token error
+behind one generic message and assumed secretless PKCE was sufficient. CI now
+probes this specific configured Desktop client with deliberately invalid codes,
+with/without the EXISTING GitHub secret. It logs only classified results, never
+credentials, response bodies, codes or tokens. A valid credential pair must reach
+Google's invalid_grant rejection for the fake code.
+
+The corrected client can exchange through a developer-controlled HTTPS broker.
+The new isolated `oauth-broker/` source uses the secret only on the server, preserves
+code/verifier/redirect binding, never forwards redirects or raw errors, and returns
+only the short-lived access-token fields. Windows still verifies granted scopes
+and verified Google identity before invoking the existing school provisioner.
+Missing broker configuration and expired/used codes now have separate actionable
+messages. No fallback embeds/downloads a secret to the Windows client.
+
+**Hosting is pending.** This PR does not deploy the broker or alter production.
+After a staging endpoint is authorized and hosted using the existing repository
+OAuth credential pair, set `SAARTHI_GOOGLE_OAUTH_BROKER_URL`, then run Platform
+review builds. CI verifies that host's client fingerprint and invalid-code
+exchange as well. A required missing broker disables sign-in rather than sending
+the school through a known-failing browser loop. Until a hosted broker and live
+school login are verified, the token-exchange failure is not fixed end-to-end.
+
+The review build uses APP_VERSION 2.1.84 to avoid the previous 2.1.79 preview
+prompting testers to install the stable 2.1.84 app. This is only an artifact build;
+no release version or production update metadata is published.

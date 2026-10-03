@@ -102,11 +102,21 @@ void main() {
     expect(result.email, 'school@gmail.com');
     auth.close();
   });
-  Future<GoogleSetupAccount> signInResponse(http.Response token, {http.Response? user}) async {
+  Future<GoogleSetupAccount> signInResponse(http.Response token, {http.Response? user, String broker = ''}) async {
     final auth = GoogleAuthorization(oauthClientId: 'test.apps.googleusercontent.com',
-      client: MockClient((request) async {
+      oauthBrokerUrl: broker, client: MockClient((request) async {
         expect(request.followRedirects, isFalse);
-        return request.url.host == 'oauth2.googleapis.com' ? token : user!;
+        if (request.url.host != 'openidconnect.googleapis.com') {
+          if (broker.isNotEmpty) {
+            expect(request.url.toString(), broker);
+            final fields = jsonDecode(request.body) as Map;
+            expect(fields.keys.toSet(), {'code', 'code_verifier', 'redirect_uri'});
+            expect(fields['code'], 'approved-code');
+            expect((fields['code_verifier'] as String).length, greaterThanOrEqualTo(43));
+          }
+          return token;
+        }
+        return user!;
       }), openBrowser: (uri) async {
         final callback = Uri.parse(uri.queryParameters['redirect_uri']!).replace(queryParameters: {
           'state': uri.queryParameters['state']!, 'code': 'approved-code'});
@@ -121,6 +131,46 @@ void main() {
     } finally { auth.close(); }
   }
 
+  test('Broker callback exchange preserves PKCE and verifies school identity', () async {
+    final result = await signInResponse(json({'access_token': 'access-only',
+      'scope': 'openid email https://www.googleapis.com/auth/cloud-platform'}),
+      broker: 'https://oauth.example.test/oauth/token',
+      user: json({'sub': 'school-owner', 'email': 'school@gmail.com', 'email_verified': true}));
+    expect(result.subject, 'school-owner');
+    expect(result.accessToken, 'access-only');
+  });
+  test('Broker URLs reject insecure transports, credentials and query/fragment leaks', () {
+    expect(GoogleAuthorization.validBrokerUrl('https://oauth.example.test/oauth/token'), isTrue);
+    for (final url in ['http://oauth.example.test/oauth/token',
+      'https://user:secret@oauth.example.test/oauth/token',
+      'https://oauth.example.test/oauth/token?code=secret',
+      'https://oauth.example.test/oauth/token#secret',
+      'https://oauth.example.test/other', 'https://oauth.example.test:444/oauth/token']) {
+      expect(GoogleAuthorization.validBrokerUrl(url), isFalse);
+    }
+  });
+  test('Required missing broker fails before opening browser', () async {
+    var opened = false;
+    final auth = GoogleAuthorization(oauthClientId: 'test.apps.googleusercontent.com',
+      requiresBroker: true, openBrowser: (_) async { opened = true; });
+    await expectLater(auth.authorize(script: false), throwsStateError);
+    expect(opened, isFalse);
+    auth.close();
+  });
+  test('Missing secret and expired codes give actionable sanitized token errors', () {
+    final missing = GoogleAuthorization.tokenError(json({'error': 'invalid_request',
+      'error_description': 'client_secret is missing. private-token'}, 400));
+    expect(missing.toString(), contains('secure OAuth token service'));
+    expect(missing.toString(), isNot(contains('private-token')));
+    final expired = GoogleAuthorization.tokenError(json({'error': 'invalid_grant',
+      'error_description': 'private-token'}, 400));
+    expect(expired.toString(), contains('fresh sign-in'));
+    expect(expired.toString(), isNot(contains('private-token')));
+  });
+  test('Broker failure never falls back to a secretless or redirected exchange', () async {
+    await expectLater(signInResponse(http.Response('', 302, headers: {'location': 'https://evil.test'}),
+      broker: 'https://oauth.example.test/oauth/token'), throwsStateError);
+  });
   test('OAuth refuses credential redirects, malformed responses and missing scopes', () async {
     for (final response in [
       http.Response('', 302, headers: {'location': 'https://evil.test'}),
