@@ -16,14 +16,15 @@ class SetupActionRequired implements Exception {
 
 class SetupApiError implements Exception {
   const SetupApiError(this.status, this.service, {this.reason = '',
-    this.consumerProject = '', this.permission = '', this.method = '', this.operation = ''});
+    this.consumerProject = '', this.permission = '', this.method = '', this.operation = '',
+    this.quotaMetric = '', this.quotaLimit = '', this.quotaLimitValue = ''});
   final int status;
-  final String service, reason, consumerProject, permission, method, operation;
+  final String service, reason, consumerProject, permission, method, operation, quotaMetric, quotaLimit, quotaLimitValue;
   static const reasons = {'SERVICE_DISABLED', 'ACCESS_TOKEN_SCOPE_INSUFFICIENT',
     'IAM_PERMISSION_DENIED', 'PERMISSION_DENIED', 'RESOURCE_EXHAUSTED',
     'QUOTA_EXCEEDED', 'RATE_LIMIT_EXCEEDED', 'BILLING_DISABLED', 'FIREBASE_TERMS_REQUIRED'};
   factory SetupApiError.fromGoogle(int status, String service, Object? body, {String method = '', String operation = ''}) {
-    var reason = '', consumer = '', permission = '';
+    var reason = '', consumer = '', permission = '', metric = '', limit = '', limitValue = '';
     try {
       final value = body is String ? jsonDecode(body) : body;
       final error = value is Map ? value['error'] : null;
@@ -35,10 +36,20 @@ class SetupApiError implements Exception {
       }
       for (final detail in error is Map && error['details'] is List ? error['details'] : []) {
         if (detail is! Map || detail['@type'] != 'type.googleapis.com/google.rpc.ErrorInfo' ||
-            !{'googleapis.com', 'firebase.googleapis.com'}.contains(detail['domain'])) continue;
+            !{'googleapis.com', ...GoogleSetupApi.hosts}.contains(detail['domain'])) continue;
         if (reason.isEmpty && reasons.contains(detail['reason'])) reason = detail['reason'];
         final metadata = detail['metadata'];
         if (metadata is Map) {
+          // Only structured, bounded quota identifiers are retained. Raw error
+          // messages and QuotaFailure descriptions may contain private data.
+          final candidateMetric = metadata['quota_metric'];
+          if (candidateMetric is String && candidateMetric.length <= 180 &&
+              RegExp(r'^[a-z]+[a-z0-9]*\.googleapis\.com/[a-zA-Z0-9_./-]+$').hasMatch(candidateMetric) &&
+              GoogleSetupApi.hosts.contains(candidateMetric.split('/').first)) metric = candidateMetric;
+          final candidateLimit = metadata['quota_limit'];
+          if (candidateLimit is String && RegExp(r'^[a-zA-Z][a-zA-Z0-9_-]{0,99}$').hasMatch(candidateLimit)) limit = candidateLimit;
+          final candidateValue = metadata['quota_limit_value'];
+          if (candidateValue is String && RegExp(r'^[0-9]{1,20}$').hasMatch(candidateValue)) limitValue = candidateValue;
           final project = metadata['consumer'];
           if (project is String && RegExp(r'^projects/[0-9]{1,30}$').hasMatch(project)) consumer = project;
           final candidate = metadata['permission'];
@@ -49,8 +60,9 @@ class SetupApiError implements Exception {
       }
     } catch (_) {}
     return SetupApiError(status, service, reason: reason, consumerProject: consumer,
+      quotaMetric: metric, quotaLimit: limit, quotaLimitValue: limitValue,
       permission: permission, method: {'GET', 'POST', 'PATCH', 'PUT'}.contains(method) ? method : '',
-      operation: {'addFirebase', 'registerWebApp', 'enableServices', 'verifyPermissions'}.contains(operation) ? operation : '');
+      operation: {'addFirebase', 'registerWebApp', 'enableServices', 'verifyPermissions', 'createProject', 'createFirestore', 'pollOperation'}.contains(operation) ? operation : '');
   }
   @override
   String toString() {
@@ -60,7 +72,18 @@ class SetupApiError implements Exception {
       return 'Google API $service is disabled${consumerProject.isEmpty ? '' : ' in $consumerProject'}. The owner of that Google project must enable this API, then retry. If this is the developer OAuth project, contact the developer; creating a school Firebase project manually is not required.';
     }
     if (reason == 'ACCESS_TOKEN_SCOPE_INSUFFICIENT') return 'Google did not grant all required cloud permissions. Reconnect with the same school account and allow the requested permissions.';
-    if ({'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED', 'RATE_LIMIT_EXCEEDED'}.contains(reason) || status == 429) return 'Google project/API quota is exhausted. Wait or have the account owner review the quota, then retry the same school setup.';
+    if ({'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED', 'RATE_LIMIT_EXCEEDED'}.contains(reason) || status == 429) {
+      final details = ['$service / ${operation.isEmpty ? method : operation}', 'HTTP $status',
+        if (reason.isNotEmpty) reason, if (consumerProject.isNotEmpty) 'consumer=$consumerProject',
+        if (quotaMetric.isNotEmpty) 'metric=$quotaMetric', if (quotaLimit.isNotEmpty) 'limit=$quotaLimit',
+        if (quotaLimitValue.isNotEmpty) 'limit value=$quotaLimitValue'].join('; ');
+      final guidance = quotaMetric == 'cloudresourcemanager.googleapis.com/projects_count'
+        ? 'Google project-count capacity is exhausted; waiting alone will not increase this limit.'
+        : reason == 'RATE_LIMIT_EXCEEDED'
+          ? 'Google reports an API rate limit; wait before retrying.'
+          : 'Google did not identify a project-count limit; this may be an API or resource quota.';
+      return 'Google quota exhausted: $details. $guidance ${quotaMetric.isEmpty && quotaLimit.isEmpty ? 'Exact quota identifier was not supplied by Google. ' : ''}Retry the same saved school setup; do not create or delete school projects to bypass the limit.';
+    }
     if (reason == 'BILLING_DISABLED') return 'Google requires billing for this operation. Automatic setup stopped; no paid plan or billing account was enabled.';
     if (status == 403) return 'Google denied ${operation.isEmpty ? method : operation} access to $service${permission.isEmpty ? '' : ' ($permission)'}. Check this school project’s permissions and account/service restrictions, then retry. Existing school data is unchanged.';
     return '$service could not finish (HTTP $status). Check account permissions, service availability and project quota, then retry.';
@@ -70,7 +93,8 @@ class SetupApiError implements Exception {
 class SetupOperationError extends SetupApiError {
   SetupOperationError(SetupApiError error) : super(error.status, error.service,
     reason: error.reason, consumerProject: error.consumerProject,
-    permission: error.permission, method: error.method, operation: error.operation);
+    permission: error.permission, method: error.method, operation: error.operation,
+    quotaMetric: error.quotaMetric, quotaLimit: error.quotaLimit, quotaLimitValue: error.quotaLimitValue);
 }
 
 class FirebaseActivationDenied implements Exception {
@@ -120,7 +144,10 @@ class GoogleSetupApi {
         uri.host == 'firebase.googleapis.com' && uri.path.endsWith(':addFirebase') ? 'addFirebase'
         : uri.host == 'firebase.googleapis.com' && method == 'POST' && uri.path.endsWith('/webApps') ? 'registerWebApp'
         : uri.path.endsWith(':batchEnable') ? 'enableServices'
-        : uri.path.endsWith(':testIamPermissions') ? 'verifyPermissions' : '');
+        : uri.path.endsWith(':testIamPermissions') ? 'verifyPermissions'
+        : uri.host == 'cloudresourcemanager.googleapis.com' && method == 'POST' && uri.path.endsWith('/projects') ? 'createProject'
+        : uri.host == 'firestore.googleapis.com' && method == 'POST' && uri.path.endsWith('/databases') ? 'createFirestore'
+        : uri.path.contains('/operations/') ? 'pollOperation' : '');
     }
     if (response.body.trim().isEmpty) return {};
     try {
@@ -129,7 +156,7 @@ class GoogleSetupApi {
     } catch (_) {}
     throw StateError('Unexpected Google setup response. Please retry.');
   }
-  Future<Map<String, dynamic>> waitOperation(String host, Map<String, dynamic> operation) async {
+  Future<Map<String, dynamic>> waitOperation(String host, Map<String, dynamic> operation, {String operationLabel = 'pollOperation'}) async {
     var op = operation;
     for (var attempt = 0; attempt < 90; attempt++) {
       check();
@@ -138,7 +165,7 @@ class GoogleSetupApi {
           final error = op['error'];
           final code = error is Map ? error['code'] : null;
           final status = {3: 400, 5: 404, 6: 409, 7: 403, 8: 429, 16: 401}[code] ?? 500;
-          throw SetupOperationError(SetupApiError.fromGoogle(status, host, {'error': error}));
+          throw SetupOperationError(SetupApiError.fromGoogle(status, host, {'error': error}, operation: operationLabel));
         }
         return Map<String, dynamic>.from(op['response'] as Map? ?? {});
       }
@@ -264,7 +291,7 @@ class SchoolProvisioner {
 
   Future<Map<String, dynamic>> _waitProjectOperation(Map<String, dynamic> op) async {
     try {
-      return await api.waitOperation('cloudresourcemanager.googleapis.com', op);
+      return await api.waitOperation('cloudresourcemanager.googleapis.com', op, operationLabel: 'createProject');
     } on SetupOperationError {
       // A terminal operation error is safe to retry with the SAME project ID.
       // Timeouts, cancellation and temporary polling permission errors retain it.
@@ -292,7 +319,7 @@ class SchoolProvisioner {
           'serviceIds': ['firebase.googleapis.com', 'firestore.googleapis.com', 'firebaserules.googleapis.com',
             'identitytoolkit.googleapis.com', 'fcm.googleapis.com'],
         });
-        await api.waitOperation('serviceusage.googleapis.com', {...op!, if (op['name'] != null) 'name': 'v1/${op['name']}'});
+        await api.waitOperation('serviceusage.googleapis.com', {...op!, if (op['name'] != null) 'name': 'v1/${op['name']}'}, operationLabel: 'enableServices');
         data['firebaseServicesEnabled'] = true;
         await save();
       }
@@ -306,7 +333,7 @@ class SchoolProvisioner {
       final op = await api.request('POST', 'https://firestore.googleapis.com/v1/projects/$project/databases?databaseId=(default)', body: {
         'locationId': data['location'], 'type': 'FIRESTORE_NATIVE', 'deleteProtectionState': 'DELETE_PROTECTION_ENABLED',
       });
-      await api.waitOperation('firestore.googleapis.com', {...op!, 'name': 'v1/${op['name']}'});
+      await api.waitOperation('firestore.googleapis.com', {...op!, 'name': 'v1/${op['name']}'}, operationLabel: 'createFirestore');
     }
     if (data['rulesReady'] != true) {
       progress('Applying school-only access rules');
@@ -343,7 +370,7 @@ class SchoolProvisioner {
         data['webAppId'] = apps.first['appId'];
       } else {
         final op = await api.request('POST', 'https://firebase.googleapis.com/v1beta1/projects/$project/webApps', body: {'displayName': 'Vidya Saarthi ${data['nonce']}'});
-        final app = await api.waitOperation('firebase.googleapis.com', {...op!, 'name': 'v1beta1/${op['name']}'});
+        final app = await api.waitOperation('firebase.googleapis.com', {...op!, 'name': 'v1beta1/${op['name']}'}, operationLabel: 'registerWebApp');
         data['webAppId'] = app['appId'];
       }
       await save();
@@ -420,7 +447,7 @@ class SchoolProvisioner {
       operation = {...operation, 'name': 'v1beta1/$name'};
     }
     try {
-      final activated = await api.waitOperation('firebase.googleapis.com', operation);
+      final activated = await api.waitOperation('firebase.googleapis.com', operation, operationLabel: 'addFirebase');
       if (activated['projectId'] != null && activated['projectId'] != project) {
         throw StateError('Firebase activation returned a different school project. Automatic connection stopped.');
       }

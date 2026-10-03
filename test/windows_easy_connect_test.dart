@@ -598,6 +598,41 @@ void main() {
     }
   });
 
+  test('Quota diagnostics retain structured identifiers without private bodies', () {
+    final error = SetupApiError.fromGoogle(429, 'cloudresourcemanager.googleapis.com', {
+      'error': {'message': 'private-token-body', 'details': [{
+        '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+        'domain': 'cloudresourcemanager.googleapis.com', 'reason': 'QUOTA_EXCEEDED',
+        'metadata': {'consumer': 'projects/123',
+          'quota_metric': 'cloudresourcemanager.googleapis.com/projects_count',
+          'quota_limit': 'ProjectsCount', 'quota_limit_value': '10'}}]}}, operation: 'createProject');
+    expect(error.toString(), contains('createProject'));
+    expect(error.toString(), contains('projects_count'));
+    expect(error.toString(), contains('consumer=projects/123'));
+    expect(error.toString(), contains('limit value=10'));
+    expect(error.toString(), contains('waiting alone will not'));
+    expect(error.toString(), isNot(contains('private-token-body')));
+  });
+  test('Unknown quota is not incorrectly classified as project count', () {
+    final error = SetupApiError.fromGoogle(429, 'firebase.googleapis.com', {'error': {
+      'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'domain': 'attacker.example',
+        'reason': 'QUOTA_EXCEEDED', 'metadata': {'quota_metric': 'private-token'}}]}});
+    expect(error.toString(), contains('Exact quota identifier was not supplied'));
+    expect(error.toString(), isNot(contains('capacity is exhausted')));
+    expect(error.toString(), isNot(contains('private-token')));
+  });
+  test('Terminal operation retains quota and original activation operation', () async {
+    final api = GoogleSetupApi('secret');
+    await expectLater(api.waitOperation('firebase.googleapis.com', {'done': true, 'error': {
+      'code': 8, 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+        'domain': 'googleapis.com', 'reason': 'RATE_LIMIT_EXCEEDED',
+        'metadata': {'quota_limit': 'RequestsPerMinute'}}]}}, operationLabel: 'addFirebase'),
+      throwsA(isA<SetupOperationError>().having((e) => e.operation, 'operation', 'addFirebase')
+        .having((e) => e.quotaLimit, 'limit', 'RequestsPerMinute')
+        .having((e) => e.toString(), 'rate guidance', contains('API rate limit'))));
+    api.close();
+  });
+
   test('Apps Script permission failure is resumable without duplicate project', () async {
     final storage = MemoryCheckpoint({...checkpoint(), 'firebaseConnected': true});
     final setup = provisioner(storage, MockClient((r) async {
