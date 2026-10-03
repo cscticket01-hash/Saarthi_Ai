@@ -80,7 +80,7 @@ class WindowsLicenseGate extends StatefulWidget {
 class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
   final _key = TextEditingController();
   bool _busy = false, _showActivation = false;
-  bool _resolved = false, _skipped = false;
+  bool _resolved = false, _skipped = false, _entered = false;
   String? _error;
 
   @override
@@ -93,7 +93,7 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
   }
 
   void _reset() {
-    if (mounted) setState(() { _skipped = false; _showActivation = false; _resolved = true; _error = null; });
+    if (mounted) setState(() { _skipped = false; _entered = false; _showActivation = false; _resolved = true; _error = null; });
   }
 
   @override
@@ -140,7 +140,7 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
               Text(s.status == 'clock_error'
                 ? 'Device date/time changed. Correct the clock and reconnect.'
                 : s.allowed ? 'Enter the school licence key issued by the developer website.'
-                : 'Your five-day trial or school license has ended. Ask the developer for your school license key.',
+                : 'Your trial or school license has ended. Activate a valid key, or Skip to continue using the app.',
                 textAlign: TextAlign.center),
               const SizedBox(height: 20),
               TextField(controller: _key, decoration: const InputDecoration(
@@ -149,7 +149,7 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
               const SizedBox(height: 12),
               FilledButton(onPressed: _busy ? null : _activate,
                 child: Text(_busy ? 'Verifying…' : 'Activate / Verify license')),
-              if (s.allowed) ...[
+              ...[
                 const SizedBox(height: 6),
                 TextButton(
                   key: const ValueKey('license-skip-button'),
@@ -164,17 +164,19 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
     builder: (context, s, _) {
       // Fresh installs see ONLY the licence key screen first.
       if (!_resolved) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-      final showFirstRun = !_skipped && s.allowed && s.status != 'licensed';
+      final licensed = s.allowed && s.status == 'licensed';
+      final showFirstRun = !_entered && !_skipped && !licensed;
       if (showFirstRun) return _licenseScreen(s: s, blocking: true);
-      // Expired/revoked licences keep blocking, as before.
-      if (!s.allowed) return _licenseScreen(s: s, blocking: true);
+      // Skip grants local app access independently of the licence/trial state.
+      // Keep verification strict: only a valid licence can remove the warning.
+      _entered = true;
       final activating = _showActivation;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           WindowsTrialBanner(
               state: s,
-              licenseSkipped: _resolved && _skipped,
+              licenseSkipped: !licensed,
               onActivate: () => setState(() => _showActivation = true)),
           Expanded(child: Stack(fit: StackFit.expand, children: [
             // Keep routes and unsaved forms mounted while visiting activation.
