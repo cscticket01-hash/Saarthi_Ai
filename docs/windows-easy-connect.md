@@ -230,3 +230,44 @@ The school is never asked to create API keys or paste secrets.
 References: official Resource Manager projects.list, projects.create and
 operations.get API contracts; Google ErrorInfo SERVICE_DISABLED documentation.
 Real Windows consent/provisioning remains necessary after this review build.
+
+## Firebase activation denial and zero-console limitation
+
+Google sign-in and Cloud project creation passed in the latest Windows acceptance
+screenshot, but a Firebase POST was denied. The old diagnostic did not retain its
+operation or Firebase terms reason. The screenshot cannot prove which upstream
+permission/terms/policy check caused the denial.
+
+Onboarding now tests the four official addFirebase IAM permissions on the marked
+school project before enabling services or activating Firebase: firebase.projects.update,
+resourcemanager.projects.get, serviceusage.services.enable, serviceusage.services.get.
+Bounded propagation waits retry permission checks and generic rejected activation; explicit terms, scope and API-disabled errors are not replayed. No IAM is granted or edited.
+Google project Owner normally contains these permissions. OAuth cloud-platform
+is sufficient; adding broad new scopes or sharing a developer-owned project is
+not a solution to a school-account terms restriction.
+
+Activation and web-app registration have distinct diagnostic labels. Explicit
+Firebase terms errors are classified using fixed messages; raw Google text is
+never shown or logged. A generic activation denial after successful IAM checks
+still reports terms/policy as possible causes, not confirmed facts. Successful
+service enablement and an activation operation are checkpointed for interruption
+recovery, including automatically deleted completed operation records.
+
+**Official blocker:** Firebase FAQ states every Google account must accept Firebase
+Terms once, and this cannot be performed through CLI, REST APIs or Terraform.
+The documented acceptance mechanism uses Firebase Console. Google OAuth Allow
+does not accept Firebase Terms. Therefore a zero-console flow for first-time
+Firebase accounts cannot be delivered under the current school-owned-project
+requirement. This change does not accept legal terms, use private console APIs,
+create service-account keys, change billing or claim all services are verified.
+No new console handoff is added as a workaround to the user's zero-console
+requirement. Existing Authentication/Apps Script approval limitations remain.
+
+Sources:
+- https://firebase.google.com/support/faq
+- https://firebase.google.com/docs/reference/firebase-management/rest/v1beta1/projects/addFirebase
+- https://docs.cloud.google.com/resource-manager/reference/rest/v1/projects/testIamPermissions
+
+Acceptance still requires the new Windows build to run under the same school
+account. If all IAM permissions pass but activation remains denied, account terms
+acceptance or Firebase policy needs resolution; code cannot bypass that gate.

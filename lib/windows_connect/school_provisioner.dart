@@ -16,44 +16,53 @@ class SetupActionRequired implements Exception {
 
 class SetupApiError implements Exception {
   const SetupApiError(this.status, this.service, {this.reason = '',
-    this.consumerProject = '', this.permission = '', this.method = ''});
+    this.consumerProject = '', this.permission = '', this.method = '', this.operation = ''});
   final int status;
-  final String service, reason, consumerProject, permission, method;
+  final String service, reason, consumerProject, permission, method, operation;
   static const reasons = {'SERVICE_DISABLED', 'ACCESS_TOKEN_SCOPE_INSUFFICIENT',
     'IAM_PERMISSION_DENIED', 'PERMISSION_DENIED', 'RESOURCE_EXHAUSTED',
-    'QUOTA_EXCEEDED', 'RATE_LIMIT_EXCEEDED', 'BILLING_DISABLED'};
-  factory SetupApiError.fromGoogle(int status, String service, Object? body, {String method = ''}) {
+    'QUOTA_EXCEEDED', 'RATE_LIMIT_EXCEEDED', 'BILLING_DISABLED', 'FIREBASE_TERMS_REQUIRED'};
+  factory SetupApiError.fromGoogle(int status, String service, Object? body, {String method = '', String operation = ''}) {
     var reason = '', consumer = '', permission = '';
     try {
       final value = body is String ? jsonDecode(body) : body;
       final error = value is Map ? value['error'] : null;
+      // Classify explicit terms failures without returning Google's raw text.
+      final message = error is Map ? error['message'] : null;
+      if (service == 'firebase.googleapis.com' && message is String && message.length <= 4096 &&
+          RegExp(r'(?:firebase.{0,30}(?:terms|tos).{0,80}(?:not.{0,20}accept|must.{0,20}accept|required)|(?:accept|agree).{0,40}firebase.{0,40}(?:terms|tos))', caseSensitive: false).hasMatch(message)) {
+        reason = 'FIREBASE_TERMS_REQUIRED';
+      }
       for (final detail in error is Map && error['details'] is List ? error['details'] : []) {
         if (detail is! Map || detail['@type'] != 'type.googleapis.com/google.rpc.ErrorInfo' ||
-            detail['domain'] != 'googleapis.com') continue;
-        if (reasons.contains(detail['reason'])) reason = detail['reason'];
+            !{'googleapis.com', 'firebase.googleapis.com'}.contains(detail['domain'])) continue;
+        if (reason.isEmpty && reasons.contains(detail['reason'])) reason = detail['reason'];
         final metadata = detail['metadata'];
         if (metadata is Map) {
           final project = metadata['consumer'];
           if (project is String && RegExp(r'^projects/[0-9]{1,30}$').hasMatch(project)) consumer = project;
           final candidate = metadata['permission'];
           if (candidate is String && {'resourcemanager.projects.get',
-            'resourcemanager.projects.create', 'serviceusage.services.enable'}.contains(candidate)) permission = candidate;
+            'resourcemanager.projects.create', 'serviceusage.services.enable', 'serviceusage.services.get',
+            'firebase.projects.update', 'firebase.clients.create'}.contains(candidate)) permission = candidate;
         }
       }
     } catch (_) {}
     return SetupApiError(status, service, reason: reason, consumerProject: consumer,
-      permission: permission, method: {'GET', 'POST', 'PATCH', 'PUT'}.contains(method) ? method : '');
+      permission: permission, method: {'GET', 'POST', 'PATCH', 'PUT'}.contains(method) ? method : '',
+      operation: {'addFirebase', 'registerWebApp', 'enableServices', 'verifyPermissions'}.contains(operation) ? operation : '');
   }
   @override
   String toString() {
     if (status == 401) return 'Google permission expired. Sign in again to continue.';
+    if (reason == 'FIREBASE_TERMS_REQUIRED') return 'Google requires this school Google account to accept Firebase Terms of Service once. Google offers no API to accept these terms. Automatic activation cannot continue until the account has accepted them; the saved school project is retained.';
     if (reason == 'SERVICE_DISABLED') {
       return 'Google API $service is disabled${consumerProject.isEmpty ? '' : ' in $consumerProject'}. The owner of that Google project must enable this API, then retry. If this is the developer OAuth project, contact the developer; creating a school Firebase project manually is not required.';
     }
     if (reason == 'ACCESS_TOKEN_SCOPE_INSUFFICIENT') return 'Google did not grant all required cloud permissions. Reconnect with the same school account and allow the requested permissions.';
     if ({'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED', 'RATE_LIMIT_EXCEEDED'}.contains(reason) || status == 429) return 'Google project/API quota is exhausted. Wait or have the account owner review the quota, then retry the same school setup.';
     if (reason == 'BILLING_DISABLED') return 'Google requires billing for this operation. Automatic setup stopped; no paid plan or billing account was enabled.';
-    if (status == 403) return 'Google denied $method access to $service${permission.isEmpty ? '' : ' ($permission)'}. Check the school account project-creation permission, Google Cloud terms and organization restrictions, then retry. Existing school data is unchanged.';
+    if (status == 403) return 'Google denied ${operation.isEmpty ? method : operation} access to $service${permission.isEmpty ? '' : ' ($permission)'}. Check this school project’s permissions and account/service restrictions, then retry. Existing school data is unchanged.';
     return '$service could not finish (HTTP $status). Check account permissions, service availability and project quota, then retry.';
   }
 }
@@ -61,8 +70,18 @@ class SetupApiError implements Exception {
 class SetupOperationError extends SetupApiError {
   SetupOperationError(SetupApiError error) : super(error.status, error.service,
     reason: error.reason, consumerProject: error.consumerProject,
-    permission: error.permission, method: error.method);
+    permission: error.permission, method: error.method, operation: error.operation);
 }
+
+class FirebaseActivationDenied implements Exception {
+  const FirebaseActivationDenied(this.error);
+  final SetupApiError error;
+  @override
+  String toString() => error.reason == 'FIREBASE_TERMS_REQUIRED' ? error.toString()
+    : 'Google denied Firebase activation (addFirebase) although the four required project IAM permissions were verified. Firebase Terms acceptance or another Firebase account/policy restriction may be blocking this account. Terms acceptance cannot be performed through Google OAuth or REST APIs. The same school project is saved; no new project, IAM change or billing upgrade was made.';
+}
+
+Future<void> schoolSetupDelay(Duration duration) => Future<void>.delayed(duration);
 
 class GoogleSetupApi {
   GoogleSetupApi(this.token, {http.Client? client}) : client = client ?? http.Client();
@@ -97,7 +116,11 @@ class GoogleSetupApi {
     if (allowMissing && response.statusCode == 404) return null;
     if (response.statusCode < 200 || response.statusCode >= 300) {
       // Never put Google error bodies, OAuth credentials or password requests in UI/logs.
-      throw SetupApiError.fromGoogle(response.statusCode, uri.host, response.body, method: method);
+      throw SetupApiError.fromGoogle(response.statusCode, uri.host, response.body, method: method, operation:
+        uri.host == 'firebase.googleapis.com' && uri.path.endsWith(':addFirebase') ? 'addFirebase'
+        : uri.host == 'firebase.googleapis.com' && method == 'POST' && uri.path.endsWith('/webApps') ? 'registerWebApp'
+        : uri.path.endsWith(':batchEnable') ? 'enableServices'
+        : uri.path.endsWith(':testIamPermissions') ? 'verifyPermissions' : '');
     }
     if (response.body.trim().isEmpty) return {};
     try {
@@ -152,7 +175,8 @@ class SecureSetupCheckpoint implements SetupCheckpoint {
 
 class SchoolProvisioner {
   SchoolProvisioner({required this.api, required this.account, required this.checkpoint,
-    required this.progress, required this.bundle});
+    required this.progress, required this.bundle, this.delay = schoolSetupDelay});
+  final Future<void> Function(Duration) delay;
   final GoogleSetupApi api;
   final GoogleSetupAccount account;
   final SetupCheckpoint checkpoint;
@@ -261,17 +285,18 @@ class SchoolProvisioner {
   Future<Map<String, dynamic>> firebase() async {
     await ensureProject();
     if (data['servicesReady'] != true) {
-      progress('Enabling school Firebase services');
-      final op = await api.request('POST', 'https://serviceusage.googleapis.com/v1/projects/$number/services:batchEnable', body: {
-        'serviceIds': ['firebase.googleapis.com', 'firestore.googleapis.com', 'firebaserules.googleapis.com',
-          'identitytoolkit.googleapis.com', 'fcm.googleapis.com'],
-      });
-      await api.waitOperation('serviceusage.googleapis.com', {...op!, if (op['name'] != null) 'name': 'v1/${op['name']}'});
-      final existing = await api.request('GET', 'https://firebase.googleapis.com/v1beta1/projects/$project', allowMissing: true);
-      if (existing == null) {
-        final add = await api.request('POST', 'https://firebase.googleapis.com/v1beta1/projects/$project:addFirebase', body: {});
-        await api.waitOperation('firebase.googleapis.com', {...add!, 'name': 'v1beta1/${add['name']}'});
+      await verifyFirebasePermissions();
+      if (data['firebaseServicesEnabled'] != true) {
+        progress('Enabling school Firebase services');
+        final op = await api.request('POST', 'https://serviceusage.googleapis.com/v1/projects/$number/services:batchEnable', body: {
+          'serviceIds': ['firebase.googleapis.com', 'firestore.googleapis.com', 'firebaserules.googleapis.com',
+            'identitytoolkit.googleapis.com', 'fcm.googleapis.com'],
+        });
+        await api.waitOperation('serviceusage.googleapis.com', {...op!, if (op['name'] != null) 'name': 'v1/${op['name']}'});
+        data['firebaseServicesEnabled'] = true;
+        await save();
       }
+      await activateFirebase();
       data['servicesReady'] = true;
       await save();
     }
@@ -327,6 +352,96 @@ class SchoolProvisioner {
     if (config!['projectId'] != project) throw StateError('School Firebase configuration mismatch.');
     data['firebaseConfig'] = config; await save();
     return config;
+  }
+
+  static const firebasePermissions = ['firebase.projects.update', 'resourcemanager.projects.get',
+    'serviceusage.services.enable', 'serviceusage.services.get'];
+
+  Future<void> verifyFirebasePermissions() async {
+    progress('Checking school Firebase activation permissions');
+    var missing = <String>[];
+    for (var attempt = 0; attempt < 4; attempt++) {
+      final result = (await api.request('POST',
+        'https://cloudresourcemanager.googleapis.com/v1/projects/$project:testIamPermissions',
+        body: {'permissions': firebasePermissions}))!;
+      final granted = (result['permissions'] as List? ?? []).toSet();
+      missing = firebasePermissions.where((permission) => !granted.contains(permission)).toList();
+      if (missing.isEmpty) return;
+      // New owner permissions can take time to propagate. Never self-grant IAM.
+      if (attempt < 3) {
+        progress('Waiting for school project permissions to become available');
+        await delay(Duration(seconds: 2 << attempt));
+        api.check();
+      }
+    }
+    throw StateError('Firebase activation is blocked because this school account is missing: ${missing.join(', ')}. Newly created project permissions may still be propagating; retry the same setup. No IAM roles, school data or billing settings were changed.');
+  }
+
+  Future<void> activateFirebase() async {
+    final url = 'https://firebase.googleapis.com/v1beta1/projects/$project';
+    var existing = await api.request('GET', url, allowMissing: true);
+    if (existing != null) {
+      data.remove('firebaseAddOperation');
+      await save();
+      return;
+    }
+    progress('Activating Firebase for your school');
+    Map<String, dynamic> operation;
+    final saved = data['firebaseAddOperation'];
+    if (saved != null) {
+      if (saved is! String || !RegExp(r'^operations/[a-zA-Z0-9_./():-]+$').hasMatch(saved) || saved.contains('..')) {
+        throw StateError('Saved Firebase activation operation is invalid. Existing resources were not changed.');
+      }
+      operation = {'name': 'v1beta1/$saved'};
+    } else {
+      operation = {};
+      for (var attempt = 0; attempt < 4; attempt++) {
+        try {
+          operation = (await api.request('POST', '$url:addFirebase', body: {}))!;
+          break;
+        } on SetupApiError catch (error) {
+          if (error.status != 403 || !{'', 'PERMISSION_DENIED', 'IAM_PERMISSION_DENIED', 'FIREBASE_TERMS_REQUIRED'}.contains(error.reason)) rethrow;
+          if (error.reason == 'FIREBASE_TERMS_REQUIRED' || attempt == 3) throw FirebaseActivationDenied(error);
+          // Firebase permission caches can lag behind project IAM. Retry only
+          // rejected activation on this marked school, never a different project.
+          progress('Waiting for Firebase activation permission to propagate');
+          await delay(Duration(seconds: 2 << attempt));
+          api.check();
+          existing = await api.request('GET', url, allowMissing: true);
+          if (existing != null) return;
+        }
+      }
+      final name = operation['name'];
+      if (name is! String || !RegExp(r'^operations/[a-zA-Z0-9_./():-]+$').hasMatch(name) || name.contains('..')) {
+        throw StateError('Google did not return a valid Firebase activation operation. Retry the same saved school project.');
+      }
+      data['firebaseAddOperation'] = name;
+      await save();
+      operation = {...operation, 'name': 'v1beta1/$name'};
+    }
+    try {
+      final activated = await api.waitOperation('firebase.googleapis.com', operation);
+      if (activated['projectId'] != null && activated['projectId'] != project) {
+        throw StateError('Firebase activation returned a different school project. Automatic connection stopped.');
+      }
+    } on SetupOperationError catch (error) {
+      data.remove('firebaseAddOperation');
+      await save();
+      if (error.status == 403 && {'', 'PERMISSION_DENIED', 'IAM_PERMISSION_DENIED', 'FIREBASE_TERMS_REQUIRED'}.contains(error.reason)) throw FirebaseActivationDenied(error);
+      rethrow;
+    } on SetupApiError catch (error) {
+      if (error.status != 404) rethrow;
+      // Firebase automatically deletes completed operation records. Recover by
+      // checking the existing school, without sending another activation POST.
+      existing = await api.request('GET', url, allowMissing: true);
+      if (existing == null) {
+        data.remove('firebaseAddOperation');
+        await save();
+        throw StateError('Firebase activation status is not available yet. Retry the same saved school project.');
+      }
+    }
+    data.remove('firebaseAddOperation');
+    await save();
   }
 
   Future<List<Map<String, dynamic>>> _pages(String url, String field) async {

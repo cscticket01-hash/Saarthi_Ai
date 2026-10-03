@@ -410,6 +410,7 @@ void main() {
     final calls = <String>[];
     final setup = provisioner(storage, MockClient((r) async {
       calls.add('${r.method} ${r.url}');
+      if (r.url.path.endsWith(':testIamPermissions')) return json({'permissions': SchoolProvisioner.firebasePermissions});
       if (r.url.host == 'cloudresourcemanager.googleapis.com') return json({
         'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'test123'}, 'projectNumber': '123456'});
       if (r.url.host == 'serviceusage.googleapis.com') {
@@ -437,7 +438,7 @@ void main() {
         if (r.method == 'PATCH') expect(r.url.queryParameters['updateMask'], 'signIn.email');
         return json({});
       }
-      if (r.url.path.endsWith(':addFirebase')) return json({'done': true});
+      if (r.url.path.endsWith(':addFirebase')) return json({'name': 'operations/firebase-test', 'done': true, 'response': {'projectId': school}});
       if (r.url.path.endsWith('/webApps')) {
         expect(r.method, 'GET');
         if (!r.url.queryParameters.containsKey('pageToken')) return json({'nextPageToken': 'second'});
@@ -452,6 +453,149 @@ void main() {
     expect(storage.value['rulesReady'], isTrue);
     expect(storage.value['webAppId'], 'existing-app');
     expect(calls.join(), isNot(contains('billing')));
+  });
+
+  SchoolProvisioner firebaseOnly(MemoryCheckpoint storage, http.Client client,
+      {Future<void> Function(Duration)? delay}) => SchoolProvisioner(api: GoogleSetupApi(account.accessToken, client: client),
+    account: account, checkpoint: storage, progress: (_) {}, bundle: {}, delay: delay ?? (_) async {});
+  test('Firebase permission preflight verifies exactly the four official permissions', () async {
+    final setup = firebaseOnly(MemoryCheckpoint(checkpoint()), MockClient((r) async {
+      expect(r.method, 'POST');
+      expect(r.url.path, '/v1/projects/$school:testIamPermissions');
+      expect(jsonDecode(r.body)['permissions'], SchoolProvisioner.firebasePermissions);
+      return json({'permissions': SchoolProvisioner.firebasePermissions});
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await setup.verifyFirebasePermissions();
+  });
+  test('Owner permission propagation is retried without setting any IAM policy', () async {
+    var calls = 0;
+    final pauses = <int>[];
+    final setup = firebaseOnly(MemoryCheckpoint(checkpoint()), MockClient((r) async {
+      expect(r.url.path.endsWith(':testIamPermissions'), isTrue);
+      calls++;
+      return json({'permissions': calls == 3 ? SchoolProvisioner.firebasePermissions : ['resourcemanager.projects.get']});
+    }), delay: (duration) async { pauses.add(duration.inSeconds); });
+    await setup.begin(schoolName: '', location: '');
+    await setup.verifyFirebasePermissions();
+    expect(calls, 3); expect(pauses, [2, 4]);
+  });
+  test('Missing Firebase IAM permissions block service enablement and activation', () async {
+    var calls = 0;
+    final setup = firebaseOnly(MemoryCheckpoint(checkpoint()), MockClient((r) async {
+      calls++;
+      if (r.method == 'GET') return json(activeSchool());
+      expect(r.url.path.endsWith(':testIamPermissions'), isTrue);
+      return json({'permissions': ['resourcemanager.projects.get']});
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.firebase(), throwsA(isA<StateError>().having((e) => e.message.toString(),
+      'missing permission', contains('firebase.projects.update'))));
+    expect(calls, 5);
+  });
+  test('Explicit Firebase terms failures are classified without copying error body', () async {
+    final error = SetupApiError.fromGoogle(403, 'firebase.googleapis.com', {
+      'error': {'message': 'Firebase Terms of Service must be accepted. private-token', 'details': []}}, operation: 'addFirebase');
+    expect(error.reason, 'FIREBASE_TERMS_REQUIRED');
+    expect(error.toString(), contains('no API'));
+    expect(error.toString(), isNot(contains('private-token')));
+    expect(SetupApiError.fromGoogle(403, 'firebase.googleapis.com',
+      {'error': {'message': 'The caller does not have permission'}}).reason, isEmpty);
+  });
+  test('Generic activation denial after IAM preflight does not falsely confirm missing terms', () async {
+    final storage = MemoryCheckpoint(checkpoint());
+    final setup = firebaseOnly(storage, MockClient((r) async {
+      if (r.url.path.endsWith(':testIamPermissions')) return json({'permissions': SchoolProvisioner.firebasePermissions});
+      if (r.method == 'GET') return json({}, 404);
+      expect(r.url.path.endsWith(':addFirebase'), isTrue);
+      return json({'error': {'message': 'private-token caller does not have permission'}}, 403);
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await setup.verifyFirebasePermissions();
+    await expectLater(setup.activateFirebase(), throwsA(isA<FirebaseActivationDenied>()
+      .having((e) => e.toString(), 'confirmed permissions', contains('four required'))
+      .having((e) => e.toString(), 'uncertain terms', contains('may be blocking'))
+      .having((e) => e.toString(), 'private', isNot(contains('private-token')))));
+    expect(storage.value['projectId'], school);
+    expect(storage.value['firebaseAddOperation'], isNull);
+  });
+  test('Transient Firebase permission denial retries only the same marked project', () async {
+    var posts = 0;
+    final pauses = <int>[];
+    final setup = firebaseOnly(MemoryCheckpoint(checkpoint()), MockClient((r) async {
+      if (r.method == 'GET') return json({}, 404);
+      expect(r.url.path, '/v1beta1/projects/$school:addFirebase');
+      posts++;
+      return posts == 1 ? json({}, 403) : json({'name': 'operations/firebase-test',
+        'done': true, 'response': {'projectId': school}});
+    }), delay: (duration) async { pauses.add(duration.inSeconds); });
+    await setup.begin(schoolName: '', location: '');
+    await setup.activateFirebase();
+    expect(posts, 2); expect(pauses, [2]);
+  });
+  test('Confirmed Firebase terms denial is never replayed or accepted automatically', () async {
+    var posts = 0;
+    final setup = firebaseOnly(MemoryCheckpoint(checkpoint()), MockClient((r) async {
+      if (r.method == 'GET') return json({}, 404);
+      posts++;
+      return json({'error': {'message': 'Firebase Terms of Service not accepted private-token'}}, 403);
+    }), delay: (_) async { fail('Terms rejection must not be retried'); });
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.activateFirebase(), throwsA(isA<FirebaseActivationDenied>()
+      .having((e) => e.error.reason, 'confirmed terms', 'FIREBASE_TERMS_REQUIRED')));
+    expect(posts, 1);
+  });
+  test('Disabled API and missing scopes are not misreported as Firebase terms', () async {
+    for (final reason in ['SERVICE_DISABLED', 'ACCESS_TOKEN_SCOPE_INSUFFICIENT']) {
+      final setup = firebaseOnly(MemoryCheckpoint(checkpoint()), MockClient((r) async {
+        if (r.method == 'GET') return json({}, 404);
+        return json({'error': {'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+          'domain': 'googleapis.com', 'reason': reason}]}}, 403);
+      }));
+      await setup.begin(schoolName: '', location: '');
+      await expectLater(setup.activateFirebase(), throwsA(isA<SetupApiError>().having((e) => e.reason, 'reason', reason)));
+    }
+  });
+  test('Firebase operation is saved before interrupted polling, preventing duplicate activation', () async {
+    final storage = MemoryCheckpoint(checkpoint());
+    final setup = firebaseOnly(storage, MockClient((r) async {
+      if (r.url.path.endsWith(':addFirebase')) return json({'name': 'operations/add-firebase'});
+      if (r.url.path.contains('/operations/')) throw http.ClientException('disconnected');
+      return json({}, 404);
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.activateFirebase(), throwsA(isA<http.ClientException>()));
+    expect(storage.value['firebaseAddOperation'], 'operations/add-firebase');
+    final resumed = firebaseOnly(storage, MockClient((r) async {
+      expect(r.method, 'GET');
+      if (r.url.path.contains('/operations/')) return json({'done': true, 'response': {'projectId': school}});
+      return json({}, 404);
+    }));
+    await resumed.begin(schoolName: '', location: '');
+    await resumed.activateFirebase();
+    expect(storage.value['firebaseAddOperation'], isNull);
+  });
+  test('Deleted completed Firebase operation recovers by checking the existing school', () async {
+    final storage = MemoryCheckpoint({...checkpoint(), 'firebaseAddOperation': 'operations/add-firebase'});
+    var reads = 0;
+    final setup = firebaseOnly(storage, MockClient((r) async {
+      expect(r.method, 'GET');
+      if (r.url.path.contains('/operations/')) return json({}, 404);
+      reads++;
+      return reads == 1 ? json({}, 404) : json({'projectId': school});
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await setup.activateFirebase();
+    expect(storage.value['firebaseAddOperation'], isNull);
+  });
+  test('Firebase registration and activation errors have different operation labels', () async {
+    for (final entry in {'/v1beta1/projects/$school:addFirebase': 'addFirebase',
+      '/v1beta1/projects/$school/webApps': 'registerWebApp'}.entries) {
+      final api = GoogleSetupApi('secret', client: MockClient((r) async => json({}, 403)));
+      await expectLater(api.request('POST', 'https://firebase.googleapis.com${entry.key}'),
+        throwsA(isA<SetupApiError>().having((e) => e.operation, 'exact operation', entry.value)));
+      api.close();
+    }
   });
 
   test('Apps Script permission failure is resumable without duplicate project', () async {
