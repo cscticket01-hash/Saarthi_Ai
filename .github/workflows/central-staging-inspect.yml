@@ -19,7 +19,7 @@ jobs:
         FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       run: |
         node <<'NODE'
-        const admin = require('./functions/node_modules/firebase-admin');
+        const {cert} = require('node:module').createRequire(process.cwd()+'/functions/package.json')('firebase-admin/app');
         let stage='credential_presence';
         (async () => {
           if (!process.env.FIREBASE_SERVICE_ACCOUNT) throw new Error('Existing FIREBASE_SERVICE_ACCOUNT secret is unavailable');
@@ -30,7 +30,7 @@ jobs:
           if (key.project_id !== 'saarthi-ai-df12b') throw new Error('Existing credential belongs to a different project');
           console.log(JSON.stringify({keyHasPemHeader:key.private_key?.startsWith('-----BEGIN PRIVATE KEY-----'),keyHasNewlines:key.private_key?.includes('\n'),keyHasEscapedNewlines:key.private_key?.includes('\\n')}));
           stage='credential_cert';
-          const credential=admin.credential.cert(key);
+          const credential=cert(key);
           stage='google_token';
           const {access_token:token} = await credential.getAccessToken();
           console.log('::add-mask::' + token);

@@ -37,18 +37,21 @@ function createHandler({handle,health,allowedOrigins=[]}) {
   };
 }
 function fromEnvironment(env) {
-  const admin=require('../functions/node_modules/firebase-admin');
+  const runtimeRequire=require('node:module').createRequire(require.resolve('../oauth-broker/package.json'));
+  const {initializeApp,getApps,cert}=runtimeRequire('firebase-admin/app');
+  const {getAuth}=runtimeRequire('firebase-admin/auth');
+  const {getFirestore}=runtimeRequire('firebase-admin/firestore');
   const key=JSON.parse(env.SAARTHI_FIREBASE_ADMIN_JSON || '{}');
   if(key.project_id!==PROJECT || !key.client_email?.endsWith('@'+PROJECT+'.iam.gserviceaccount.com') || !key.private_key) throw new Error('Invalid central staging credential configuration');
-  const app=admin.initializeApp({credential:admin.credential.cert(key),projectId:PROJECT},'central-render-staging');
-  const auth=app.auth(),db=app.firestore();
+  const app=initializeApp({credential:cert(key),projectId:PROJECT},'central-render-staging');
+  const auth=getAuth(app),db=getFirestore(app);
   db.settings({ignoreUndefinedProperties:true});
   const clientIds=(env.SAARTHI_GOOGLE_OAUTH_CLIENT_IDS || env.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID || '').split(',').filter(Boolean);
   if(!clientIds.length) throw new Error('Missing central OAuth audience configuration');
   const handle=createSchoolCloud({auth,db,projectId:PROJECT,clientIds,verifyLegacy:async(projectId,token)=>{
     const name='legacy-proof-'+projectId;
-    const legacy=admin.apps.find(a=>a.name===name) || admin.initializeApp({projectId},name);
-    return legacy.auth().verifyIdToken(String(token || ''));
+    const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
+    return getAuth(legacy).verifyIdToken(String(token || '')); 
   }});
   return createHandler({handle,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await db.doc('_central_staging_health/runtime').get();

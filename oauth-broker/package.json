@@ -1,1 +1,15 @@
-{"name":"saarthi-oauth-exchange","private":true,"version":"0.1.0","engines":{"node":">=22"},"scripts":{"start":"node server.cjs","test":"node --test test/*.test.cjs"}}
+{
+  "name": "saarthi-oauth-exchange",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.cjs",
+    "test": "node --test test/*.test.cjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.4.0"
+  }
+}
