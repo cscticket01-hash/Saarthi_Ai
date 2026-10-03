@@ -111,6 +111,17 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
       return {success:true,schoolId:member.schoolId,delivered:0,centralSubscription:true};
     }
 
+    if (b.action === 'profile/initialize') {
+      const allowed = new Set(['schoolName','principalName','logoUrl','logoFileId','sealUrl','sealFileId','principalSignatureUrl','principalSignatureFileId']);
+      if (!b.profile || Object.keys(b.profile).some(k=>!allowed.has(k)) ||
+          Object.values(b.profile).some(v=>typeof v !== 'string' || v.length > 500 || v.startsWith('data:'))) deny(400,'Invalid initial school profile');
+      const ref = db.doc('schools/' + member.schoolId + '/school_config/school_profile_cache');
+      await db.runTransaction(async tx => {
+        const existing = await tx.get(ref);
+        if (!existing.exists) tx.create(ref,{...b.profile,schoolId:member.schoolId});
+      });
+      return {success:true,schoolId:member.schoolId};
+    }
     if (b.action === 'migration/import') {
       if (!verifyLegacy || !/^[a-z][a-z0-9-]{4,61}[a-z0-9]$/.test(b.sourceProjectId || '') || b.sourceProjectId === projectId) deny(400,'Verified legacy project is required');
       const source = await verifyLegacy(b.sourceProjectId, b.sourceAdminToken);
@@ -128,12 +139,12 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
             if (Object.keys(v).length === 1 && typeof v.__vsTimestamp === 'string') {
               const date = new Date(v.__vsTimestamp); if (!Number.isFinite(date.getTime())) deny(400,'Invalid migration timestamp');return date;
             }
-            return Object.fromEntries(Object.entries(v).map(([k,value])=>[k,restore(value)]));
+            return Object.fromEntries(Object.entries(v).filter(([k,value])=>!(/password|base64|private_key|client_secret|localPath/i.test(k)) && (!/token/i.test(k) || k === 'mobileLinkToken') && !(typeof value === 'string' && value.startsWith('data:'))).map(([k,value])=>[k,restore(value)]));
           }
           return v;
         }
         const data = {...restore(r.data),schoolId:member.schoolId};
-        for (const key of Object.keys(data)) if (/password|token|base64|private_key|client_secret|localPath/i.test(key)) delete data[key];
+        for (const key of Object.keys(data)) if (/password|base64|private_key|client_secret|localPath/i.test(key) || (/token/i.test(key) && key !== 'mobileLinkToken')) delete data[key];
         return {ref:db.doc('schools/' + member.schoolId + '/' + r.collection + '/' + r.id), data};
       });
       if (new Set(records.map(r => r.ref.path)).size !== records.length) deny(400,'Duplicate migration document');

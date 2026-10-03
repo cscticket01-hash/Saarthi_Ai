@@ -1,7 +1,7 @@
+import 'windows_connect/school_drive_images.dart';
 import 'windows_ui_localization.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
-import 'package:http/http.dart' as http;
 import 'package:printing/printing.dart';
 import 'windows_local_firestore.dart';
 import 'school_document_renderer.dart';
@@ -18,10 +18,7 @@ class WindowsDocumentTemplates {
     final u = Uri.tryParse(raw?.toString() ?? '');
     if (u == null || u.scheme != 'https') return null;
     try {
-      final r = await http.get(u).timeout(const Duration(seconds: 8));
-      if (r.statusCode == 200 &&
-          (r.headers['content-type'] ?? '').startsWith('image/'))
-        return r.bodyBytes;
+      return await schoolImageBytes(u.toString());
     } catch (_) {}
     return null;
   }

@@ -21,10 +21,24 @@ String tenantCollectionPath(String schoolId, String collection) {
 }
 Map<String, dynamic> centralSchoolData(Map<String, dynamic> data, String schoolId) {
   if (!validSchoolId(schoolId)) throw StateError('Invalid school identity.');
-  final result = Map<String, dynamic>.from(data);
-  result.removeWhere((key, _) => key.toLowerCase().contains('password') ||
-    key.toLowerCase().contains('token') || key.endsWith('Base64') ||
-    {'private_key', 'client_secret', 'localPath'}.contains(key));
+  Object? scrub(Object? value) {
+    if (value is Map) {
+      final result = <String,dynamic>{};
+      for (final entry in value.entries) {
+        final key = entry.key.toString();
+        final normalized = key.toLowerCase();
+        if (normalized.contains('password') ||
+          (normalized.contains('token') && normalized != 'mobilelinktoken') || normalized.endsWith('base64') ||
+          {'private_key','client_secret','localpath'}.contains(normalized) ||
+          (entry.value is String && (entry.value as String).startsWith('data:'))) continue;
+        result[key] = scrub(entry.value);
+      }
+      return result;
+    }
+    if (value is List) return value.map(scrub).toList();
+    return value;
+  }
+  final result = scrub(data) as Map<String,dynamic>;
   result['schoolId'] = schoolId;
   return result;
 }
@@ -199,6 +213,35 @@ class CentralSchoolCloud {
     if (response.statusCode < 200 || response.statusCode >= 300) throw StateError('School Drive upload failed (HTTP ${response.statusCode}). Existing files were retained.');
     final file = jsonDecode(response.body) as Map;
     return {'fileId':file['id'], 'fileUrl':file['webViewLink'] ?? 'https://drive.google.com/file/d/${file['id']}/view'};
+  }
+  Future<void> backup() async {
+    final connection = await saved();
+    if (connection.isEmpty) throw StateError('Connect school cloud first.');
+    final token = await firebaseToken();
+    final records = <String,dynamic>{};
+    for (final collection in ['students_directory','teachers_directory','attendance_records',
+      'teacher_attendance','school_config','school_settings','school_notices','fee_payments',
+      'fee_ledger','fee_settings','school_expenses','school_calendar','exam_results','teacher_salary',
+      'documents','exams','exam_center_results']) {
+      final documents = <dynamic>[];
+      String? page;
+      do {
+        final result = await send('GET',Uri.parse('$platformFirestoreUrl/${tenantCollectionPath(connection['schoolId'],collection)}')
+          .replace(queryParameters:{'pageSize':'500',if(page != null) 'pageToken':page}),token:token);
+        documents.addAll(result['documents'] as List? ?? []);
+        final next=result['nextPageToken']?.toString();
+        if (next != null && next == page) throw StateError('Repeated backup page.');
+        page=next;
+      } while(page != null && page.isNotEmpty);
+      records[collection]=documents;
+    }
+    if ((await saved())['schoolId'] != connection['schoolId']) throw StateError('School changed during backup.');
+    final at=DateTime.now().toUtc();
+    final contents=jsonEncode({'schemaVersion':2,'schoolId':connection['schoolId'],'createdAt':at.toIso8601String(),'firestoreDocuments':records});
+    final file=await upload('School_Backup_${at.millisecondsSinceEpoch}.json','application/json',base64Encode(utf8.encode(contents)));
+    await send('PATCH',Uri.parse('$platformFirestoreUrl/schools/${connection['schoolId']}/backups/${at.millisecondsSinceEpoch}'),token:token,body:{'fields':{
+      'schoolId':{'stringValue':connection['schoolId']},'fileId':{'stringValue':file['fileId']},
+      'fileUrl':{'stringValue':file['fileUrl']},'createdAt':{'timestampValue':at.toIso8601String()}}});
   }
   void close() { cancelled=true; client.close(); }
 }

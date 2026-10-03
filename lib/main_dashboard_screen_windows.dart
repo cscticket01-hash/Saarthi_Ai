@@ -1,3 +1,4 @@
+import 'windows_connect/school_drive_images.dart';
 import 'windows_connect/easy_connect_screen.dart';
 import 'dart:async';
 import 'windows_admin_sidebar.dart';
@@ -1474,10 +1475,7 @@ Future<Uint8List?> _downloadImageBytes(String url) async {
     if (clean.startsWith('data:image/')) {
       return Uint8List.fromList(UriData.parse(clean).contentAsBytes());
     }
-    final response = await http.get(Uri.parse(clean));
-    if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
-      return response.bodyBytes;
-    }
+    return await schoolImageBytes(clean);
   } catch (e) {
     debugPrint('Image download warning: $e');
   }
@@ -1492,7 +1490,7 @@ Widget _windowsSchoolProfileImage(String source, {BoxFit fit = BoxFit.contain, r
           fit: fit, errorBuilder: (_, __, ___) => fallback);
     } catch (_) { return fallback; }
   }
-  return Image.network(source, fit: fit, errorBuilder: (_, __, ___) => fallback);
+  return schoolNetworkImage(source, fit: fit, errorBuilder: (_, __, ___) => fallback);
 }
 
 // ============================================================
@@ -2342,7 +2340,7 @@ void _startInlineScanner() {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: photoUrl.isNotEmpty
-                  ? Image.network(
+                  ? schoolNetworkImage(
                       photoUrl,
                       fit: BoxFit.cover,
 errorBuilder: (context, error, stackTrace) {
@@ -3971,7 +3969,7 @@ void _handleLoginBack(bool didPop) {
                           child: Center(child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5, color: Color(0xFF00A884)))),
                         )
                       : photoUrl.isNotEmpty
-                          ? Image.network(
+                          ? schoolNetworkImage(
                               photoUrl,
                               fit: BoxFit.cover,
 errorBuilder: (context, error, stackTrace) {
@@ -5620,7 +5618,7 @@ Future<void> _showIdCardPreview() async {
                                     ),
                                     child: ClipOval(
                                       child: schoolLogoUrl.isNotEmpty
-                                          ? Image.network(
+                                          ? schoolNetworkImage(
                                               schoolLogoUrl,
                                               fit: BoxFit.contain,
 errorBuilder: (_, __, ___) =>
@@ -5991,7 +5989,7 @@ errorBuilder: (_, __, ___) =>
                                                       .circular(8),
                                               child: photoUrl
                                                       .isNotEmpty
-                                                  ? Image.network(
+                                                  ? schoolNetworkImage(
                                                       photoUrl,
                                                       fit: BoxFit
                                                           .cover,
@@ -6081,7 +6079,7 @@ errorBuilder:
                                                   SizedBox(
                                                     width: 34,
                                                     height: 34,
-                                                    child: Image.network(
+                                                    child: schoolNetworkImage(
                                                       schoolSealUrl,
                                                       fit: BoxFit.contain,
 errorBuilder:
@@ -6093,7 +6091,7 @@ errorBuilder:
                                                 Expanded(
                                                   child: principalSignatureUrl
                                                           .isNotEmpty
-                                                      ? Image.network(
+                                                      ? schoolNetworkImage(
                                                           principalSignatureUrl,
                                                           fit: BoxFit.contain,
 errorBuilder:
@@ -6424,14 +6422,8 @@ Future<Uint8List> _buildIdCardPdf() async {
 
   if (photoUrl.isNotEmpty) {
     try {
-      final response =
-          await http.get(Uri.parse(photoUrl));
-
-      if (response.statusCode == 200 &&
-          response.bodyBytes.isNotEmpty) {
-        studentPhoto =
-            pw.MemoryImage(response.bodyBytes);
-      }
+      final photoBytes = await schoolImageBytes(photoUrl);
+      if (photoBytes != null) studentPhoto = pw.MemoryImage(photoBytes);
     } catch (e) {
       debugPrint(
           'PDF student photo load error: $e');
@@ -8493,7 +8485,7 @@ Widget _buildOverviewCards() {
                           ),
                         ),
                         child: ClipOval(
-                          child: Image.network(
+                          child: schoolNetworkImage(
                             _studentPhotoUrl!,
                             fit: BoxFit.cover,
 errorBuilder: (_, __, ___) => const ColoredBox(
@@ -15752,7 +15744,7 @@ class _TeachersDirectoryScreenState
         data['photoBase64']?.toString().trim() ?? '';
 
     if (photoUrl.isNotEmpty) {
-      return Image.network(
+      return schoolNetworkImage(
         photoUrl,
         width: double.infinity,
         height: double.infinity,
@@ -16336,7 +16328,7 @@ errorBuilder: (
               }
 
               if (existingPhotoUrl.isNotEmpty) {
-                return Image.network(
+                return schoolNetworkImage(
                   existingPhotoUrl,
                   width: double.infinity,
                   height: double.infinity,
@@ -19883,7 +19875,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
               }
 
               if (existingPhotoUrl.isNotEmpty) {
-                return Image.network(
+                return schoolNetworkImage(
                   existingPhotoUrl,
                   width: double.infinity,
                   height: double.infinity,
@@ -20430,7 +20422,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                             height: 56,
                             child: ClipOval(
                               child: (photoUrl != null && photoUrl.isNotEmpty)
-                                  ? Image.network(
+                                  ? schoolNetworkImage(
                                       photoUrl,
                                       fit: BoxFit.cover,
 errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF121B22), child: Icon(Icons.person, size: 30, color: Color(0xFF00A884))),

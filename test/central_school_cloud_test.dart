@@ -1,3 +1,4 @@
+import 'package:saarthi_ai/windows_connect/school_drive_images.dart';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -11,6 +12,12 @@ const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
+  test('Private Drive loader accepts only canonical Drive file identities',(){
+    expect(schoolDriveFileId('https://drive.google.com/file/d/own-file/view'),'own-file');
+    expect(schoolDriveFileId('https://attacker.example/file/d/token/view'),isNull);
+    expect(schoolDriveFileId('https://attacker@drive.google.com/file/d/token/view'),isNull);
+    expect(schoolDriveFileId('https://drive.google.com/file/d/../view'),isNull);
+  });
   test('All paths include a validated school ID and reject traversal',(){
     expect(tenantCollectionPath(school,'students_directory'),'schools/$school/students_directory');
     for(final id in ['', '../other','vs-school-legacy']) {

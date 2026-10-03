@@ -634,7 +634,7 @@ class WindowsBackendBridge {
       }
       if (action == 'save_school_profile') {
         final existing = (await read('school_config'))['school_profile_cache'] ?? {};
-        final profile = {...existing,...data};
+        final profile = <String,dynamic>{...existing,...data};
         for (final prefix in ['logo','seal','principalSignature']) {
           final raw = data['${prefix}Base64']?.toString() ?? '';
           if (raw.isNotEmpty) {

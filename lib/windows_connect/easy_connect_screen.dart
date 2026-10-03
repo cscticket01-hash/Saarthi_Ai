@@ -1,3 +1,4 @@
+import '../windows_admin_setup.dart';
 import '../windows_local_firestore.dart';
 import 'package:flutter/material.dart';
 import '../windows_connection_center.dart';
@@ -20,6 +21,8 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
   bool _busy = false, _done = false, _google = false, _firebase = false, _drive = false;
   String _message = '', _email = '';
   @override
+  void initState() {super.initState();_name.text=WindowsAdminSetup.schoolName;}
+  @override
   void dispose() { _cloud?.close(); _auth.close(); _name.dispose(); super.dispose(); }
   Future<void> _start() async {
     if (_busy) return;
@@ -27,6 +30,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
     try {
       final previous = await CentralSchoolCloud.saved();
       final existing = await WindowsFirebaseRemote.status();
+      final initialProfile=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data() ?? <String,dynamic>{};
       if (previous.isEmpty && existing.configSaved && !_migrate) throw StateError('An existing school connection is retained. To copy its verified records safely, select the migration option. Source data is never deleted.');
       Map<String,dynamic>? migration;
       if (previous.isEmpty && existing.authenticated && _migrate) {
@@ -54,7 +58,21 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
       if (migration != null && existing.email.toLowerCase() != account.email.toLowerCase()) throw StateError('Use the original verified school Google account for migration.');
       setState(() { _google=true; _email=account.email; _message='Preparing your school’s isolated cloud data and Google Drive folder'; });
       final cloud = CentralSchoolCloud(); _cloud=cloud;
-      await cloud.connect(account,name,migration:migration);
+      final connection=await cloud.connect(account,name,migration:migration);
+      if (previous.isEmpty && !existing.configSaved) {
+        final profile=<String,dynamic>{'schoolName':name,
+          'principalName':initialProfile['principalName']?.toString() ?? WindowsAdminSetup.principalName};
+        for(final prefix in ['logo','seal','principalSignature']) {
+          final source=initialProfile['${prefix}Url']?.toString() ?? '';
+          if (source.startsWith('data:image/')) {
+            final mime=source.substring(5,source.indexOf(';'));
+            final file=await cloud.upload('$prefix.png',mime,source);
+            profile['${prefix}Url']=file['fileUrl'];profile['${prefix}FileId']=file['fileId'];
+          }
+        }
+        await cloud.api({'action':'profile/initialize','schoolId':connection['schoolId'],'profile':profile},
+          token:await CentralSchoolCloud.firebaseToken());
+      }
       await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
       await WindowsConnectionCenter.reload();
       if (mounted) setState(() { _firebase=true; _drive=true; _done=true; _message='Connected. Your school data is isolated and files use your school’s Google Drive.'; });
@@ -92,6 +110,13 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
           onPressed:_busy || !GoogleAuthorization.configured || !CentralSchoolCloud.configured ? null:_start,
           icon:const Icon(Icons.login),label:const Text('Sign in with Google / Reconnect')),
         if (_busy) TextButton(onPressed:(){_auth.cancel();_cloud?.close();},child:const Text('Cancel')),
+        if (_done) OutlinedButton.icon(onPressed:_busy ? null:() async {
+          setState(()=>_busy=true);
+          final cloud=CentralSchoolCloud();
+          try {await cloud.backup();if(mounted)setState(()=>_message='School data backup saved to your Google Drive.');}
+          catch(e){if(mounted)setState(()=>_message=e.toString().replaceFirst('Bad state: ',''));}
+          finally{cloud.close();if(mounted)setState(()=>_busy=false);}
+        },icon:const Icon(Icons.backup),label:const Text('Back up school data to Google Drive')),
         if (_done) FilledButton(onPressed:()=>Navigator.of(context).pop(true),child:const Text('Done')),
       ]))),
   );

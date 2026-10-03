@@ -50,8 +50,8 @@ test('Untagged, mismatched, private credential and root-level writes fail',async
  await assertFails(getDocs(collectionGroup(a(),'students_directory')));
  await assertFails(getDocs(collection(a(),'schools')));
  await assertFails(setDoc(doc(a(),'schools/'+A+'/unknown/test'),{schoolId:A}));
- const batch=writeBatch(a());batch.set(doc(a(),'schools/'+A+'/fee_payments/own'),{schoolId:A});
- batch.set(doc(a(),'schools/'+B+'/fee_payments/foreign'),{schoolId:B});await assertFails(batch.commit());
+ const ownDb=a();const batch=writeBatch(ownDb);batch.set(doc(ownDb,'schools/'+A+'/fee_payments/own'),{schoolId:A});
+ batch.set(doc(ownDb,'schools/'+B+'/fee_payments/foreign'),{schoolId:B});await assertFails(batch.commit());
 });
 test('Anonymous users and revoked memberships cannot access either tenant',async()=>{
  for(const db of [env.unauthenticatedContext().firestore(),env.authenticatedContext('stranger',{schoolId:A,schoolRole:'school_admin'}).firestore()])
