@@ -85,10 +85,12 @@ class CentralSchoolCloud {
     if (_diagnosticToken == null || _diagnosticSchool == null || stage == 'school_cloud') return;
     try {
       // Allowlisted diagnostic metadata only. No upstream body, file ID, key or Google token.
-      await client.post(Uri.parse(endpoint), headers:{'Content-Type':'application/json',
-        'Authorization':'Bearer $_diagnosticToken'}, body:jsonEncode({'action':'setup/diagnostic',
-          'schoolId':_diagnosticSchool,'stage':stage,'httpStatus':status,'reason':reason}))
-        .timeout(const Duration(seconds:5));
+      final request = http.Request('POST',Uri.parse(endpoint))..followRedirects=false;
+      request.headers.addAll({'Content-Type':'application/json','Authorization':'Bearer $_diagnosticToken'});
+      request.body=jsonEncode({'action':'setup/diagnostic','schoolId':_diagnosticSchool,
+        'stage':stage,'httpStatus':status,'reason':reason});
+      final response = await client.send(request).timeout(const Duration(seconds:5));
+      await response.stream.drain<void>().timeout(const Duration(seconds:5));
     } catch (_) { /* Never replace the original setup failure. */ }
   }
 

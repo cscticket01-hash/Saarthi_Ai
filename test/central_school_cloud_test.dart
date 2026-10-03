@@ -105,7 +105,7 @@ void main() {
         final b=jsonDecode(r.body);
         if(b['action']=='onboard') return http.Response(jsonEncode({'schoolId':school,'projectId':platformProjectId,
           'email':'school@gmail.com','customToken':'server-token','uid':'verified-uid'}),200);
-        if(b['action']=='setup/diagnostic') {reports.add(b); return http.Response('{"success":true}',200);}
+        if(b['action']=='setup/diagnostic') {expect(r.followRedirects,false);reports.add(b); return http.Response('{"success":true}',200);}
         return http.Response(jsonEncode({'schoolId':school,'projectId':platformProjectId,'uid':'verified-uid'}),200);
       }
       if(r.url.host=='identitytoolkit.googleapis.com') return http.Response('{"idToken":"firebase-token","refreshToken":"firebase-refresh"}',200);
