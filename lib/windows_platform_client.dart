@@ -66,7 +66,7 @@ class WindowsPlatformClient {
     if (centralConnection.isNotEmpty) {
       final cloud = CentralSchoolCloud(endpoint:centralConnection['endpoint']);
       try { return await cloud.api({'action':action,'schoolId':centralConnection['schoolId'],
-        for (final k in ['key','version','noticeId','message','deviceFingerprint']) if (body.containsKey(k)) k:body[k]},
+        for (final k in ['key','version','noticeId','message','deviceFingerprint','studentCount','teacherCount','studentAppUsers','onlineStudents','onlineTeachers']) if (body.containsKey(k)) k:body[k]},
         token:await WindowsFirebaseRemote.freshIdToken()); }
       finally {cloud.close();}
     }

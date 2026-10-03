@@ -627,6 +627,7 @@ class WindowsBackendBridge {
     }
     try {
       final data = Map<String,dynamic>.from(body)..remove('action');
+      if (action == 'add_teacher' && (data['teacherId']?.toString() ?? '').isEmpty) data['teacherId']='T-${secureSetupToken(12)}';
       if ((data['photoBase64']?.toString() ?? '').isNotEmpty) {
         final file = await cloud.upload(data['photoFileName']?.toString() ?? 'School_Photo.jpg',
           data['photoMimeType']?.toString() ?? 'image/jpeg',data['photoBase64']);
@@ -669,6 +670,12 @@ class WindowsBackendBridge {
         final pair = lists[action]!;
         final rows = (await read(pair.$1)).entries.map((e)=>{'documentId':e.key,...e.value});
         return {'success':true,pair.$2:rows.where((e)=>action != 'list_student_documents' || e['studentId'] == data['studentId']).toList()};
+      }
+      if (action == 'delete_school_expense') {
+        final id=data['expenseId']?.toString() ?? '';
+        await WindowsFirebaseRemote.deleteDocument(projectId:connection['projectId'],idToken:token,collection:'school_expenses',documentId:id);
+        await FirebaseFirestore.instance.collection('school_expenses').doc(id).delete();
+        return {'success':true};
       }
       if (action == 'save_school_expense') {
         final id = data['expenseId']?.toString() ?? 'EXP-${secureSetupToken(12)}';

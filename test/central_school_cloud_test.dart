@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:saarthi_ai/windows_connect/school_drive_images.dart';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +18,29 @@ void main() {
     expect(schoolDriveFileId('https://attacker.example/file/d/token/view'),isNull);
     expect(schoolDriveFileId('https://attacker@drive.google.com/file/d/token/view'),isNull);
     expect(schoolDriveFileId('https://drive.google.com/file/d/../view'),isNull);
+  });
+  test('School OAuth uses offline Drive permission and verifies loopback callback',() async {
+    final auth=GoogleAuthorization(oauthClientId:'desktop.apps.googleusercontent.com',
+      client:MockClient((r) async {
+        if(r.url.host=='oauth2.googleapis.com') {
+          expect(Uri.splitQueryString(r.body).containsKey('client_secret'),false);
+          return http.Response(jsonEncode({'access_token':'access','refresh_token':'refresh',
+            'scope':'openid email https://www.googleapis.com/auth/drive.file','expires_in':3600}),200);
+        }
+        expect(r.headers['Authorization'],'Bearer access');
+        return http.Response('{"sub":"123","email":"school@gmail.com","email_verified":true}',200);
+      }),openBrowser:(uri) async {
+        final scopes=uri.queryParameters['scope']!;
+        expect(scopes,contains('/auth/drive.file'));expect(scopes,isNot(contains('cloud-platform')));
+        expect(scopes,isNot(contains('script.')));expect(uri.queryParameters['access_type'],'offline');
+        final callback=Uri.parse(uri.queryParameters['redirect_uri']!).replace(queryParameters:{
+          'state':uri.queryParameters['state']!,'code':'approved-code'});
+        final browser=HttpClient();
+        try{await (await (await browser.getUrl(callback)).close()).drain<void>();}finally{browser.close();}
+      });
+    final account=await HttpOverrides.runWithHttpOverrides(()=>auth.authorize(script:false,schoolCloud:true),_LoopbackOverrides());
+    expect(account.email,'school@gmail.com');expect(account.refreshToken,'refresh');expect(account.expiresIn,3600);
+    auth.close();
   });
   test('All paths include a validated school ID and reject traversal',(){
     expect(tenantCollectionPath(school,'students_directory'),'schools/$school/students_directory');
@@ -69,3 +93,5 @@ class _Checkpoint implements SetupCheckpoint {
   @override Future<Map<String,dynamic>> read() async=>{};
   @override Future<void> write(Map<String,dynamic> value) async{}
 }
+
+class _LoopbackOverrides extends HttpOverrides {}

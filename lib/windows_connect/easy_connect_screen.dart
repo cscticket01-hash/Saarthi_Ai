@@ -19,7 +19,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
   CentralSchoolCloud? _cloud;
   bool _migrate = false;
   bool _busy = false, _done = false, _google = false, _firebase = false, _drive = false;
-  String _message = '', _email = '';
+  String _message = '', _email = '', _schoolId = '';
   @override
   void initState() {super.initState();_name.text=WindowsAdminSetup.schoolName;}
   @override
@@ -75,7 +75,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
       }
       await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
       await WindowsConnectionCenter.reload();
-      if (mounted) setState(() { _firebase=true; _drive=true; _done=true; _message='Connected. Your school data is isolated and files use your school’s Google Drive.'; });
+      if (mounted) setState(() { _firebase=true; _drive=true; _done=true; _schoolId=connection['schoolId']; _message='Connected. Your school data is isolated and files use your school’s Google Drive.'; });
     } catch(e) {
       if (mounted) setState(() => _message=e.toString().replaceFirst('Bad state: ',''));
     } finally { if (mounted) setState(() => _busy=false); }
@@ -102,6 +102,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
           title:const Text('Copy records from an existing verified school connection'),
           subtitle:const Text('Only for migration. Existing source data, files and credentials are retained; existing destination records are never overwritten.')),
         if (_email.isNotEmpty) Text('School account: $_email'),
+        if (_schoolId.isNotEmpty) SelectableText('School ID: $_schoolId'),
         _status('Google account',_google), _status('Firebase',_firebase), _status('Firestore',_firebase,ready:true),
         _status('Google Drive',_drive), _status('School storage',_drive,ready:true),
         if (_busy) const LinearProgressIndicator(),

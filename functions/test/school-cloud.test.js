@@ -64,3 +64,32 @@ test('License activation rejects a foreign school and preserves existing trial s
  assert.equal((await f.req({action:'license/activate',key:'key'})).status,'licensed');
  f.documents.get('platform_license_status/'+hash).revoked=true;assert.equal((await f.req({action:'installation/status'})).status,'blocked');
 });
+
+test('Expired Google login and unverified email never create a school',async()=>{
+ const fetchExpired=async()=>({ok:true,json:async()=>({aud:clientId,scope:'https://www.googleapis.com/auth/drive.file',expires_in:0})});
+ await assert.rejects(verifyGoogle('google-access-token',[clientId],fetchExpired),e=>e.status===401);
+ const fetchUnverified=async url=>({ok:true,json:async()=>url.includes('tokeninfo')
+  ? {aud:clientId,scope:'https://www.googleapis.com/auth/drive.file',expires_in:3600}
+  : {sub:'123',email:'unverified@gmail.com',email_verified:false}});
+ await assert.rejects(verifyGoogle('google-access-token',[clientId],fetchUnverified),e=>e.status===401);
+});
+test('Initial branding and timestamp migration preserve existing destination values',async()=>{
+ const f=fixture();f.seed();await f.req({action:'profile/initialize',profile:{schoolName:'Original',principalName:'Principal'}});
+ await f.req({action:'profile/initialize',profile:{schoolName:'Overwrite'}});
+ assert.equal(f.documents.get('schools/'+A+'/school_config/school_profile_cache').schoolName,'Original');
+ await assert.rejects(f.req({action:'profile/initialize',profile:{adminPassword:'secret'}}),e=>e.status===400);
+ await f.req({action:'migration/import',sourceProjectId:'legacy-school',sourceAdminToken:'legacy-admin',records:[
+  {collection:'attendance_records',id:'date',data:{timestamp:{__vsTimestamp:'2026-10-03T00:00:00.000Z'},nested:{refreshToken:'secret',name:'safe'}}}]
+ });
+ const data=f.documents.get('schools/'+A+'/attendance_records/date');
+ assert.equal(data.timestamp.toISOString(),'2026-10-03T00:00:00.000Z');assert.deepEqual(data.nested,{name:'safe'});
+});
+
+test('Expired Firebase session is rejected and heartbeat cannot write another school',async()=>{
+ const f=fixture();f.seed();await assert.rejects(f.req({action:'status'},'expired'),e=>e.status===401);
+ await f.req({action:'school/heartbeat',studentCount:10,teacherCount:2});
+ assert.equal(f.documents.get('platform_schools/'+A).studentCount,10);
+ assert.equal(f.documents.has('platform_schools/'+B),false);
+ await assert.rejects(f.req({action:'school/heartbeat',schoolId:B,studentCount:999}),e=>e.status===403);
+ await assert.rejects(f.req({action:'school/heartbeat',studentCount:-1}),e=>e.status===400);
+});

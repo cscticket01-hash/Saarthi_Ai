@@ -6,7 +6,8 @@ function deny(status, message) { const e = new Error(message); e.status = status
 function requireSchool(id) { if (!schoolPattern.test(id || '')) deny(400, 'Invalid school identity'); return id; }
 // No caller chooses another tenant. The server-owned membership is authoritative.
 async function authorizeSchool(auth, db, token, expected) {
-  const user = await auth.verifyIdToken(token, true);
+  let user;
+  try {user = await auth.verifyIdToken(token, true);} catch {deny(401,'School login expired or was revoked');}
   const member = await db.doc('school_memberships/' + user.uid).get();
   if (!member.exists || member.data().active !== true || member.data().role !== 'school_admin') deny(403, 'School membership is inactive');
   const schoolId = requireSchool(member.data().schoolId);
@@ -68,13 +69,14 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
     async function licenseStatus() {
       const settings = await db.doc('schools/' + member.schoolId + '/school_config/license').get();
       const hash = settings.exists ? settings.data().licenseHash : '';
+      if (hash && !/^[a-f0-9]{64}$/.test(hash)) deny(403,'Saved license reference is invalid');
       const doc = hash ? await db.doc('platform_license_status/' + hash).get() : null;
       const trial = await db.doc('platform_school_trials/' + member.schoolId).get();
       const data = doc?.exists ? doc.data() : null;
       const validOwner = data?.schoolId === member.schoolId;
       const end = hash ? (validOwner ? milliseconds(data.expiresAt) : 0)
         : trial.exists ? milliseconds(trial.data().createdAt) + 5*86400000 : 0;
-      const status = hash ? (!validOwner || data.revoked === true ? 'blocked' : end > Date.now() ? 'licensed':'expired')
+      const status = hash ? (!validOwner || data.revoked !== false ? 'blocked' : end > Date.now() ? 'licensed':'expired')
         : end > Date.now() ? 'trial':'expired';
       return {success:true,schoolId:member.schoolId,projectId,serverTime:Date.now(),expiresAt:end,
         allowed:['licensed','trial'].includes(status),status,...(hash ? {licenseHash:hash} : {})};
@@ -97,7 +99,16 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
       await db.doc('schools/' + member.schoolId + '/school_config/license').set({schoolId:member.schoolId,licenseHash:hash});
       return licenseStatus();
     }
-    if (['installation/status','school/heartbeat'].includes(b.action)) return licenseStatus();
+    if (b.action === 'school/heartbeat') {
+      const counts = {};
+      for (const key of ['studentCount','teacherCount','studentAppUsers','onlineStudents','onlineTeachers']) {
+        if (b[key] !== undefined && (!Number.isInteger(b[key]) || b[key] < 0 || b[key] > 1000000)) deny(400,'Invalid aggregate count');
+        counts[key] = b[key] || 0;
+      }
+      await db.doc('platform_schools/' + member.schoolId).set({...counts,lastSeenAt:Date.now(),windowsVersion:String(b.version || '').slice(0,32)}, {merge:true});
+      return licenseStatus();
+    }
+    if (b.action === 'installation/status') return licenseStatus();
     if (b.action === 'complaint/create') {
       const message = String(b.message || '').trim();
       if (message.length < 3 || message.length > 3000) deny(400,'Invalid complaint');
