@@ -1,6 +1,8 @@
 'use strict';
 const {onRequest} = require('firebase-functions/v2/https');
-const admin = require('firebase-admin');
+const {getApp,getApps,initializeApp} = require('firebase-admin/app');
+const {getAuth} = require('firebase-admin/auth');
+const {getFirestore} = require('firebase-admin/firestore');
 const {createSchoolCloud} = require('./school-cloud-core');
 // Uses the managed runtime identity (ADC). No service-account JSON in clients.
 exports.schoolCloudApi = onRequest({region:'asia-south1', maxInstances:3, concurrency:20, cors:false}, async (req,res) => {
@@ -12,13 +14,13 @@ exports.schoolCloudApi = onRequest({region:'asia-south1', maxInstances:3, concur
   if (origin) { res.set('Access-Control-Allow-Origin',origin); res.set('Vary','Origin'); }
   if (req.method === 'OPTIONS') { res.set('Access-Control-Allow-Methods','POST');res.set('Access-Control-Allow-Headers','Authorization,Content-Type');return res.status(204).send(''); }
   try {
-    const handle = createSchoolCloud({auth:admin.auth(),db:admin.firestore(),
-      projectId:process.env.GCLOUD_PROJECT || admin.app().options.projectId,
+    const handle = createSchoolCloud({auth:getAuth(),db:getFirestore(),
+      projectId:process.env.GCLOUD_PROJECT || getApp().options.projectId,
       clientIds:(process.env.SAARTHI_GOOGLE_OAUTH_CLIENT_IDS || '').split(',').filter(Boolean),
       verifyLegacy:async (projectId,token) => {
         const name = 'legacy-proof-' + projectId;
-        const app = admin.apps.find(a=>a.name === name) || admin.initializeApp({projectId},name);
-        return app.auth().verifyIdToken(String(token || ''));
+        const app = getApps().find(a=>a.name === name) || initializeApp({projectId},name);
+        return getAuth(app).verifyIdToken(String(token || ''));
       }});
     return res.json(await handle(req));
   } catch(e) {

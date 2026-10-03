@@ -2,7 +2,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {createServer}=require('../server.cjs');
-const {createHandler}=require('../../staging-school-cloud/server.cjs');
+const {createHandler,fromEnvironment}=require('../../staging-school-cloud/server.cjs');
 async function withServer(handler,fn){const server=createServer({schoolCloud:handler});await new Promise(r=>server.listen(0,'127.0.0.1',r));try{await fn('http://127.0.0.1:'+server.address().port);}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}}
 test('central staging fails closed when disabled and validates real backend health',async()=>{
  await withServer(undefined,async base=>assert.equal((await fetch(base+'/school-cloud')).status,503));
@@ -25,4 +25,13 @@ test('future central web origin must be explicitly allowlisted and preflight can
  let calls=0;
  const handler=createHandler({health:async()=>{},allowedOrigins:['https://school.example'],handle:async()=>{calls++;return{success:true};}});
  await withServer(handler,async base=>{const r=await fetch(base+'/school-cloud',{method:'OPTIONS',headers:{Origin:'https://school.example'}});assert.equal(r.status,204);assert.equal(r.headers.get('access-control-allow-origin'),'https://school.example');assert.equal(calls,0);});
+});
+test('real installed modular Admin SDK initializes staging with a disposable test key and rejects another project',async()=>{
+ const {generateKeyPairSync}=require('node:crypto');
+ const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs8',format:'pem'},publicKeyEncoding:{type:'spki',format:'pem'}});
+ const env={SAARTHI_GOOGLE_DESKTOP_CLIENT_ID:'test.apps.googleusercontent.com',SAARTHI_FIREBASE_ADMIN_JSON:JSON.stringify({project_id:'saarthi-ai-df12b',client_email:'test-only@saarthi-ai-df12b.iam.gserviceaccount.com',private_key:privateKey})};
+ assert.throws(()=>fromEnvironment({...env,SAARTHI_FIREBASE_ADMIN_JSON:'{"project_id":"foreign-project"}'}),/Invalid central/);
+ assert.equal(typeof fromEnvironment(env),'function');
+ const {getApp,deleteApp}=require('firebase-admin/app');
+ await deleteApp(getApp('central-render-staging'));
 });

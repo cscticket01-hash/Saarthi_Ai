@@ -6,8 +6,10 @@ remain on a trusted server, not in the executable. This isolated Node service
 uses the EXISTING client ID/secret from runtime environment and proxies only
 one-use authorization-code exchange to Google's fixed token endpoint.
 
-No school Firebase project, service-account key, database, Drive data, Google
-password, OAuth refresh token or central school-data credential is used here.
+The OAuth routes do not create school Firebase projects or use Firebase admin credentials.
+The native Drive flow may receive an offline refresh token; the broker handles it
+only in memory, forwards refresh requests to the fixed Google endpoint and never
+logs it. Google passwords and school file contents do not pass through these routes.
 Codes/verifiers/access tokens pass through memory over HTTPS. Do not configure
 request-body logging, token response logging, response caching or HTTP redirects.
 Deploy behind managed HTTPS, restrict instances/concurrency, apply host-level rate
@@ -42,3 +44,28 @@ builds still use the repository variable `SAARTHI_GOOGLE_OAUTH_BROKER_URL` and d
 not default to staging. Windows warms and validates the service before browser
 sign-in because a free Render instance can sleep. Live Windows school consent
 and provisioning remain acceptance tests; no production release is published.
+
+## Optional central API on the existing free Render service
+
+The full Git-backed service can additionally serve `/school-cloud` and
+`/school-cloud/healthz` using `staging-school-cloud/server.cjs`. This is separate
+from the standalone OAuth-only Docker image. `npm --prefix oauth-broker install
+--ignore-scripts` installs the modular Firebase Admin SDK needed by that adapter.
+The Firebase project remains `saarthi-ai-df12b` on Spark; no Cloud Functions,
+project creation, billing activation or school-managed credentials are needed.
+
+The adapter is disabled until explicitly configured with
+`SAARTHI_SCHOOL_CLOUD_ENABLED=true` and `SAARTHI_FIREBASE_ADMIN_JSON` in Render's
+server-only environment. It uses the existing public Desktop OAuth client ID
+for audience validation; optional additional approved IDs can be supplied via
+`SAARTHI_GOOGLE_OAUTH_CLIENT_IDS`. Browser origins require the explicit
+`SAARTHI_SCHOOL_WEB_ORIGINS` allowlist. Never compile the admin JSON into Windows.
+The central health check performs read-only Firestore/Auth checks and caches its
+result for 30 seconds; it never creates records or returns credentials.
+
+At the 2026-10-03 staging checkpoint the updated OAuth token/refresh routes are
+live. Credential transfer and the default database rule deployment are blocked
+by automatic approval review pending explicit approval of their exact scope.
+The central endpoint deliberately returns 503 while disabled. Do not present
+the Windows review build as ready for real A/B cloud acceptance until central
+health, rules deployment and compiled endpoint configuration are verified.
