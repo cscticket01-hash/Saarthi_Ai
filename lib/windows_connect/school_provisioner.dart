@@ -230,6 +230,7 @@ class SchoolProvisioner {
   }
 
   Future<Map<String, dynamic>> ensureProject() async {
+    if (!const bool.fromEnvironment('SAARTHI_LEGACY_PROVISIONING_TEST_ONLY')) throw StateError('Per-school project provisioning is disabled.');
     requireSchoolProjectId(project);
     const host = 'cloudresourcemanager.googleapis.com';
     final url = 'https://$host/v1/projects/$project';
@@ -310,6 +311,7 @@ class SchoolProvisioner {
   }
 
   Future<Map<String, dynamic>> firebase() async {
+    if (!const bool.fromEnvironment('SAARTHI_LEGACY_PROVISIONING_TEST_ONLY')) throw StateError('Per-school Firebase provisioning is disabled. Use Connect School Cloud. Existing school projects were retained.');
     await ensureProject();
     if (data['servicesReady'] != true) {
       await verifyFirebasePermissions();
@@ -405,6 +407,7 @@ class SchoolProvisioner {
   }
 
   Future<void> activateFirebase() async {
+    if (!const bool.fromEnvironment('SAARTHI_LEGACY_PROVISIONING_TEST_ONLY')) throw StateError('Per-school Firebase activation is disabled.');
     final url = 'https://firebase.googleapis.com/v1beta1/projects/$project';
     var existing = await api.request('GET', url, allowMissing: true);
     if (existing != null) {

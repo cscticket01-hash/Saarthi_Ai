@@ -1,12 +1,10 @@
-import 'dart:convert';
+import '../windows_local_firestore.dart';
 import 'package:flutter/material.dart';
-import 'school_backend_probe.dart';
 import '../windows_connection_center.dart';
 import '../windows_firebase_sync.dart';
-import '../windows_local_settings.dart';
 import '../windows_sync_engine.dart';
 import 'google_authorization.dart';
-import 'school_provisioner.dart';
+import 'central_school_cloud.dart';
 
 class EasySchoolConnectScreen extends StatefulWidget {
   const EasySchoolConnectScreen({super.key, this.googleDrive = false});
@@ -16,191 +14,85 @@ class EasySchoolConnectScreen extends StatefulWidget {
 }
 class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
   final _name = TextEditingController();
-  final _checkpoint = SecureSetupCheckpoint();
   final _auth = GoogleAuthorization();
-  GoogleSetupApi? _api;
-  SchoolProvisioner? _setup;
-  bool _busy = false, _newSchool = false, _done = false, _scriptApproval = false;
-  bool _googleConnected = false, _firebaseConnected = false, _driveConnected = false;
-  String _location = 'asia-south1', _message = '', _email = '';
-  SetupActionRequired? _action;
-
+  CentralSchoolCloud? _cloud;
+  bool _migrate = false;
+  bool _busy = false, _done = false, _google = false, _firebase = false, _drive = false;
+  String _message = '', _email = '';
   @override
-  void dispose() {
-    _api?.close(); _auth.close(); _name.dispose(); super.dispose();
-  }
-  void _progress(String message) {
-    if (mounted) setState(() => _message = message);
-  }
+  void dispose() { _cloud?.close(); _auth.close(); _name.dispose(); super.dispose(); }
   Future<void> _start() async {
     if (_busy) return;
-    setState(() { _busy = true; _action = null; _done = false; _scriptApproval = false; _googleConnected = false; });
+    setState(() { _busy=true; _done=false; _google=false; _firebase=false; _drive=false; });
     try {
-      final saved = await _checkpoint.read();
-      final links = await WindowsExternalConnections.load();
-      if (saved.isEmpty) {
-        if (!_newSchool || _name.text.trim().length < 2) {
-          throw StateError('Enter the school name and confirm that this is a new school cloud setup.');
+      final previous = await CentralSchoolCloud.saved();
+      final existing = await WindowsFirebaseRemote.status();
+      if (previous.isEmpty && existing.configSaved && !_migrate) throw StateError('An existing school connection is retained. To copy its verified records safely, select the migration option. Source data is never deleted.');
+      Map<String,dynamic>? migration;
+      if (previous.isEmpty && existing.authenticated && _migrate) {
+        final sourceToken = await WindowsFirebaseRemote.freshIdToken();
+        final records = <Map<String,dynamic>>[];
+        for (final collection in ['students_directory','teachers_directory','school_config','school_settings',
+          'school_notices','school_calendar','attendance_records','exam_results','teacher_salary',
+          'fee_settings','fee_ledger','fee_payments']) {
+          final rows = await WindowsFirebaseRemote.readCollection(projectId:existing.projectId,idToken:sourceToken,collection:collection);
+          if (FirebaseFirestore.instance.activeProfileIdentity['firebaseProjectId'] == existing.projectId) {
+            final local = await FirebaseFirestore.instance.collection(collection).get();
+            for (final doc in local.docs) { rows[doc.id] = doc.data(); }
+          }
+          for (final entry in rows.entries) {
+            records.add({'collection':collection,'id':entry.key,'data':entry.value});
+          }
         }
-        if ((links['firebaseLink']?.toString() ?? '').isNotEmpty ||
-            (links['googleScriptUrl']?.toString() ?? '').isNotEmpty) {
-          throw StateError('This app already has school connections. Use the existing settings to manage them. Automatic setup will not replace existing school data or links.');
-        }
-      } else {
-        final savedLink = links['firebaseLink']?.toString() ?? '';
-        if (savedLink.isNotEmpty && WindowsExternalConnections.decodeFirebaseLink(savedLink)['projectId'] != saved['projectId']) {
-          throw StateError('A different school is connected. This setup cannot replace it.');
-        }
-        final savedScript = links['googleScriptUrl']?.toString() ?? '';
-        if (savedScript.isNotEmpty && savedScript != saved['scriptUrl']) {
-          throw StateError('A different school Google backend is connected. Automatic replacement is blocked.');
-        }
-      }
-      _progress('Sign in to the school’s Google account in your browser');
-      final account = await _auth.authorize(script: widget.googleDrive);
+        migration={'projectId':existing.projectId,'token':sourceToken,'records':records};
+      } else if (previous.isEmpty && existing.configSaved) throw StateError('Verify the existing school administrator connection before migration.');
+      final name = _name.text.trim().isEmpty ? previous['schoolName']?.toString() ?? '' : _name.text.trim();
+      if (name.length < 2) throw StateError('Enter your school name.');
+      setState(() => _message='Sign in to your school Google account and allow Drive access');
+      final account = await _auth.authorize(script:false,schoolCloud:true);
       if (!mounted) return;
-      if (!account.email.toLowerCase().endsWith('@gmail.com')) {
-        throw StateError('This preview supports school Gmail accounts. Workspace/domain accounts still require the existing connection setup.');
-      }
-      setState(() { _email = account.email; _googleConnected = true; });
-      _api?.close();
-      final api = GoogleSetupApi(account.accessToken); _api = api;
-      final setup = SchoolProvisioner(api: api, account: account, checkpoint: _checkpoint,
-        progress: _progress, bundle: await loadSetupBundle());
-      _setup = setup;
-      await setup.begin(schoolName: _name.text, location: _location);
-      await _connect(setup);
-    } catch (e) { _handle(e); }
-    finally { if (mounted) setState(() => _busy = false); }
+      if (migration != null && existing.email.toLowerCase() != account.email.toLowerCase()) throw StateError('Use the original verified school Google account for migration.');
+      setState(() { _google=true; _email=account.email; _message='Preparing your school’s isolated cloud data and Google Drive folder'; });
+      final cloud = CentralSchoolCloud(); _cloud=cloud;
+      await cloud.connect(account,name,migration:migration);
+      await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
+      await WindowsConnectionCenter.reload();
+      if (mounted) setState(() { _firebase=true; _drive=true; _done=true; _message='Connected. Your school data is isolated and files use your school’s Google Drive.'; });
+    } catch(e) {
+      if (mounted) setState(() => _message=e.toString().replaceFirst('Bad state: ',''));
+    } finally { if (mounted) setState(() => _busy=false); }
   }
-
-  Future<void> _connect(SchoolProvisioner setup) async {
-    final config = await setup.firebase();
-    final status = await WindowsFirebaseRemote.status();
-    if (!status.authenticated || status.projectId != setup.project) {
-      _progress('Verifying your school administrator and database access');
-      final password = await setup.adminPassword();
-      final link = Uri(scheme: 'vidyasaarthi', host: 'firebase', queryParameters: {
-        'config': base64Url.encode(utf8.encode(jsonEncode(config))).replaceAll('=', ''),
-      }).toString();
-      await WindowsFirebaseRemote.connectAndVerify(firebaseLink: link,
-        email: setup.account.email, password: password);
-    } else {
-      await WindowsFirebaseRemote.testSavedConnection();
-    }
-    if (mounted) setState(() => _firebaseConnected = true);
-    await setup.firebaseConnected();
-    await WindowsConnectionCenter.reload();
-    if (!widget.googleDrive) {
-      if (mounted) setState(() { _done = true; _message = 'Firebase connected and verified. Next, connect Google Drive using this same school account.'; });
-      return;
-    }
-    final editor = await setup.prepareScript();
-    if (setup.data['scriptAuthorized'] != true) {
-      _scriptApproval = true;
-      throw SetupActionRequired('Your school script is ready. Open Google, select VS_easyConnectSetup and click Run, then allow the requested permissions. Return here and press Continue. You do not need to copy any code or link.', editor);
-    }
-    await _finishScript(setup);
-  }
-
-  Future<void> _finishScript(SchoolProvisioner setup) async {
-    final url = await setup.deployScript();
-    _progress('Verifying that Google Drive and Firebase belong to the same school');
-    // No OAuth token or local fallback is used to inspect this unsaved backend.
-    try {
-      await verifySchoolBackend(Uri.parse(url), setup.project);
-    } catch (_) {
-      throw SetupActionRequired('Google authorization/storage is incomplete or the backend belongs to another school. Run VS_easyConnectSetup successfully before continuing.',
-        Uri.parse('https://script.google.com/home/projects/${setup.data['scriptId']}/edit'));
-    }
-    await WindowsSyncEngine.instance.changeGoogleConnection(email: setup.account.email, scriptUrl: url);
-    setup.data['scriptAuthorized'] = true;
-    setup.data['complete'] = true;
-    await setup.save();
-    await WindowsConnectionCenter.reload();
-    if (mounted) setState(() { _driveConnected = true; _done = true; _message = 'Google Drive and Firebase are connected to this school. Existing school isolation checks remain active.'; });
-  }
-
-  Future<void> _continue() async {
-    final setup = _setup;
-    if (setup == null) { await _start(); return; }
-    if (_busy) return;
-    setState(() { _busy = true; _action = null; });
-    try {
-      if (_scriptApproval) {
-        await _finishScript(setup);
-      } else {
-        await _connect(setup);
-      }
-    } catch (e) { _handle(e); }
-    finally { if (mounted) setState(() => _busy = false); }
-  }
-  void _handle(Object error) {
-    if (!mounted) return;
-    setState(() {
-      if (error is SetupApiError && error.status == 401 || error is SetupCancelled) {
-        _googleConnected = false;
-        _setup = null;
-        _scriptApproval = false;
-        _api?.close();
-      }
-      _action = error is SetupActionRequired ? error : null;
-      _message = error.toString().replaceFirst('Bad state: ', '');
-    });
-  }
-  Widget _status(String label, bool verified, {bool ready = false}) => ListTile(
-    dense: true, contentPadding: EdgeInsets.zero,
-    leading: Icon(verified ? Icons.check_circle : Icons.radio_button_unchecked,
-      color: verified ? Colors.greenAccent : Colors.white54),
-    title: Text('$label: ${verified ? (ready ? 'Ready' : 'Connected') : 'Not verified'}'),
-  );
-
+  Widget _status(String label,bool verified,{bool ready=false}) => ListTile(
+    dense:true,contentPadding:EdgeInsets.zero,
+    leading:Icon(verified ? Icons.check_circle:Icons.radio_button_unchecked,color:verified ? Colors.greenAccent:Colors.white54),
+    title:Text('$label: ${verified ? (ready ? 'Ready':'Connected'):'Not verified'}'));
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.googleDrive ? 'Connect School Cloud' : 'Connect Firebase')),
-    body: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640),
-      child: ListView(padding: const EdgeInsets.all(24), shrinkWrap: true, children: [
-        Icon(_done ? Icons.verified_user : Icons.cloud_outlined, size: 52,
-          color: _done ? Colors.greenAccent : Colors.tealAccent),
-        const SizedBox(height: 18),
-        const Text('Your school. Your Google account.', style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 10),
-        const Text('Sign in and allow access in Google’s browser window. Vidya Saarthi creates a separate school project and fills connection links automatically. No Google password is entered in this app.'),
-        const SizedBox(height: 16),
-        if (!GoogleAuthorization.configured) Card(child: Padding(padding: EdgeInsets.all(16),
-          child: Text(GoogleAuthorization.configurationIssue))),
-        TextField(controller: _name, enabled: !_busy, decoration: const InputDecoration(labelText: 'School name')),
-        DropdownButtonFormField<String>(value: _location, isExpanded: true,
-          decoration: const InputDecoration(labelText: 'School database location'),
-          items: const [DropdownMenuItem(value: 'asia-south1', child: Text('India — Mumbai')),
-            DropdownMenuItem(value: 'asia-south2', child: Text('India — Delhi'))],
-          onChanged: _busy ? null : (v) => setState(() => _location = v!)),
-        CheckboxListTile(contentPadding: EdgeInsets.zero, value: _newSchool,
-          title: const Text('Create new, empty school cloud storage'),
-          subtitle: const Text('Existing school cloud data must be connected through the existing settings. No billing account or paid plan will be enabled.'),
-          onChanged: _busy ? null : (v) => setState(() => _newSchool = v ?? false)),
+    appBar:AppBar(title:const Text('Connect School Cloud')),
+    body:Center(child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:640),
+      child:ListView(padding:const EdgeInsets.all(24),shrinkWrap:true,children:[
+        Icon(_done ? Icons.verified_user:Icons.cloud_outlined,size:52,color:Colors.tealAccent),
+        const SizedBox(height:18),
+        const Text('Your school. Your Google account.',style:TextStyle(fontSize:23,fontWeight:FontWeight.bold)),
+        const SizedBox(height:10),
+        const Text('Sign in with Google and allow access. Your school data stays separate, and school files use your own Google Drive. No Firebase Console, project creation, API keys or scripts are needed from the school.'),
+        if (!GoogleAuthorization.configured) Card(child:Padding(padding:const EdgeInsets.all(16),child:Text(GoogleAuthorization.configurationIssue))),
+        if (!CentralSchoolCloud.configured) const Card(child:Padding(padding:EdgeInsets.all(16),child:Text('Developer setup is pending for the central school cloud service in this preview. Existing connections and data are retained.'))),
+        TextField(controller:_name,enabled:!_busy,decoration:const InputDecoration(labelText:'School name')),
+        CheckboxListTile(contentPadding:EdgeInsets.zero,value:_migrate,
+          onChanged:_busy ? null:(v)=>setState(()=>_migrate=v ?? false),
+          title:const Text('Copy records from an existing verified school connection'),
+          subtitle:const Text('Only for migration. Existing source data, files and credentials are retained; existing destination records are never overwritten.')),
         if (_email.isNotEmpty) Text('School account: $_email'),
-        const SizedBox(height: 12),
-        _status('Google account', _googleConnected),
-        _status('Firebase', _firebaseConnected),
-        _status('Firestore', _firebaseConnected, ready: true),
-        if (widget.googleDrive) ...[
-          _status('Google Drive', _driveConnected),
-          _status('School storage', _driveConnected, ready: true),
-        ],
-        if (_busy) const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: LinearProgressIndicator()),
-        if (_message.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text(_message)),
-        if (_action != null) ...[
-          OutlinedButton.icon(onPressed: _busy ? null : () async {
-            try { await openGooglePage(_action!.url); } catch (e) { _handle(e); }
-          }, icon: const Icon(Icons.open_in_browser), label: const Text('Open Google approval')),
-          FilledButton(onPressed: _busy ? null : _continue, child: const Text('Continue after approval')),
-        ] else if (!_done) FilledButton.icon(
-          key: const ValueKey('school-google-sign-in'),
-          onPressed: _busy || !GoogleAuthorization.configured ? null : _start,
-          icon: const Icon(Icons.login), label: const Text('Sign in with Google / Resume setup')),
-        if (_busy) TextButton(onPressed: () { _auth.cancel(); _api?.close(); }, child: const Text('Cancel')),
-        if (_done) FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Done')),
+        _status('Google account',_google), _status('Firebase',_firebase), _status('Firestore',_firebase,ready:true),
+        _status('Google Drive',_drive), _status('School storage',_drive,ready:true),
+        if (_busy) const LinearProgressIndicator(),
+        if (_message.isNotEmpty) Padding(padding:const EdgeInsets.symmetric(vertical:14),child:Text(_message)),
+        if (!_done) FilledButton.icon(key:const ValueKey('school-google-sign-in'),
+          onPressed:_busy || !GoogleAuthorization.configured || !CentralSchoolCloud.configured ? null:_start,
+          icon:const Icon(Icons.login),label:const Text('Sign in with Google / Reconnect')),
+        if (_busy) TextButton(onPressed:(){_auth.cancel();_cloud?.close();},child:const Text('Cancel')),
+        if (_done) FilledButton(onPressed:()=>Navigator.of(context).pop(true),child:const Text('Done')),
       ]))),
   );
 }

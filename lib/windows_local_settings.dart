@@ -1,3 +1,4 @@
+import 'windows_connect/central_school_cloud.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -226,11 +227,15 @@ class WindowsExternalConnections {
   }
 
   static Future<String> googleScriptUrl() async {
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty) return 'https://www.googleapis.com/drive/v3/files/${central['folderId']}';
     final data = await load();
     return data['googleScriptUrl']?.toString().trim() ?? '';
   }
 
   static Future<String> googleEmail() async {
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty) return central['email'];
     final data = await load();
     return data['googleEmail']?.toString().trim() ?? '';
   }

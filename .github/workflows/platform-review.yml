@@ -76,10 +76,12 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/windows-startup-tests
       run: flutter test test/windows_startup_test.dart
+    - name: Verify central school cloud and paths
+      run: flutter test test/central_school_cloud_test.dart
     - name: Verify school connection automation
       run: |
         python tool/build_school_setup_bundle.py --check
-        flutter test test/windows_easy_connect_test.dart
+        flutter test test/windows_easy_connect_test.dart --dart-define=SAARTHI_LEGACY_PROVISIONING_TEST_ONLY=true
     - name: Build developer website
       run: flutter build web --release
     - uses: actions/upload-artifact@v4
@@ -178,7 +180,8 @@ jobs:
         SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
-      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.84 --build-number=84 --dart-define=APP_VERSION=2.1.84 --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL }}
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.84 --build-number=84 --dart-define=APP_VERSION=2.1.84 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
     - uses: actions/upload-artifact@v4
       with:
         name: windows-review-build

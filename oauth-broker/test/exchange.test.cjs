@@ -80,3 +80,19 @@ test('HTTP route bounds body, blocks browser origins and never follows arbitrary
     }
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
+test('Drive offline token reaches only native PKCE client and refresh uses fixed Google client',async()=>{
+ const {refresh}=require('../exchange.cjs');
+ const result=await exchange(input,{...options,fetchImpl:async()=>response({access_token:'access',refresh_token:'drive-refresh',
+   scope:'openid email https://www.googleapis.com/auth/drive.file',expires_in:3600,token_type:'Bearer',client_secret:'must-not-return',id_token:'must-not-return'})});
+ assert.equal(result.body.refresh_token,'drive-refresh');assert.equal(result.body.client_secret,undefined);assert.equal(result.body.id_token,undefined);
+ const renewed=await refresh({refresh_token:'drive-refresh-token'},{...options,fetchImpl:async(url,req)=>{
+  assert.equal(url,'https://oauth2.googleapis.com/token');assert.equal(req.redirect,'manual');
+  const form=new URLSearchParams(req.body);assert.equal(form.get('client_id'),options.clientId);assert.equal(form.get('grant_type'),'refresh_token');
+  return response({access_token:'new-access',expires_in:3600,client_secret:'must-not-return'});
+ }});
+ assert.deepEqual(renewed.body,{access_token:'new-access',expires_in:3600,token_type:'Bearer'});
+ for(const input of [{refresh_token:'short'},{refresh_token:'drive-refresh-token',client_id:'attacker'},null])
+  assert.equal((await refresh(input,options)).status,400);
+ const denied=await refresh({refresh_token:'drive-refresh-token'},{...options,fetchImpl:async()=>response({error:'invalid_grant',error_description:'private-token'},400)});
+ assert.equal(denied.body.error,'invalid_grant');assert.doesNotMatch(JSON.stringify(denied),/private-token/);
+});

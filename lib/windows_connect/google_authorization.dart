@@ -10,8 +10,9 @@ String secureSetupToken([int bytes = 32]) => base64Url
     .replaceAll('=', '');
 
 class GoogleSetupAccount {
-  const GoogleSetupAccount(this.subject, this.email, this.accessToken);
-  final String subject, email, accessToken;
+  const GoogleSetupAccount(this.subject, this.email, this.accessToken, {this.refreshToken = '', this.expiresIn = 3600});
+  final String subject, email, accessToken, refreshToken;
+  final int expiresIn;
 }
 
 class SetupCancelled implements Exception {
@@ -59,15 +60,16 @@ class GoogleAuthorization {
           (uri.queryParameters['code']?.isNotEmpty ?? false) && !uri.queryParameters.containsKey('error')) ||
           (uri.queryParametersAll['error']?.length == 1 && !uri.queryParameters.containsKey('code')));
 
-  Future<GoogleSetupAccount> authorize({required bool script}) async {
+  Future<GoogleSetupAccount> authorize({required bool script, bool schoolCloud = false}) async {
     if (!oauthClientId.endsWith('.apps.googleusercontent.com')) throw StateError('Google Connect is not enabled in this build. Ask the developer to configure the Google Desktop OAuth client.');
     if ((requiresBroker || oauthBrokerUrl.isNotEmpty) && !validBrokerUrl(oauthBrokerUrl)) {
       throw StateError('The secure Google OAuth token service is not configured. Contact the developer; do not enter a client secret in the app.');
     }
     if (_pending != null) throw StateError('Google sign-in is already open.');
     _cancelled = false;
-    final scopes = <String>['openid', 'email', 'https://www.googleapis.com/auth/cloud-platform',
-      if (script) ...['https://www.googleapis.com/auth/script.projects',
+    final scopes = <String>['openid', 'email', if (schoolCloud) 'https://www.googleapis.com/auth/drive.file'
+      else 'https://www.googleapis.com/auth/cloud-platform',
+      if (script && !schoolCloud) ...['https://www.googleapis.com/auth/script.projects',
         'https://www.googleapis.com/auth/script.deployments']];
     final verifier = secureSetupToken(48), state = secureSetupToken();
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -115,7 +117,7 @@ class GoogleAuthorization {
         'client_id': oauthClientId, 'redirect_uri': redirect, 'response_type': 'code',
         'scope': scopes.join(' '), 'state': state,
         'code_challenge': challenge(verifier), 'code_challenge_method': 'S256',
-        'access_type': 'online', 'prompt': 'select_account consent',
+        'access_type': schoolCloud ? 'offline' : 'online', 'prompt': 'select_account consent',
       }));
       final code = await codeFuture;
       if (_cancelled) throw SetupCancelled();
@@ -144,7 +146,8 @@ class GoogleAuthorization {
         throw StateError('A verified school Google account is required.');
       }
       if (_cancelled) throw SetupCancelled();
-      return GoogleSetupAccount(info['sub'], info['email'], access);
+      return GoogleSetupAccount(info['sub'], info['email'], access,
+        refreshToken: token['refresh_token']?.toString() ?? '', expiresIn: (token['expires_in'] as num? ?? 3600).toInt());
     } finally {
       if (!pending.isCompleted) pending.completeError(SetupCancelled());
       _pending = null;

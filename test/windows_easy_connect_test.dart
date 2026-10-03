@@ -781,10 +781,10 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1000, 1400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(const MaterialApp(home: EasySchoolConnectScreen()));
-    expect(find.textContaining('Developer setup is pending'), findsOneWidget);
+    expect(find.textContaining('Developer setup is pending'), findsWidgets);
     final signIn = tester.widget<FilledButton>(find.byKey(const ValueKey('school-google-sign-in')));
     expect(signIn.onPressed, isNull);
-    expect(find.textContaining('No billing account'), findsOneWidget);
+    expect(find.textContaining('No Firebase Console'), findsOneWidget);
     expect(find.text('Google account: Not verified'), findsOneWidget);
     expect(find.text('Firebase: Not verified'), findsOneWidget);
     expect(find.text('Firestore: Not verified'), findsOneWidget);

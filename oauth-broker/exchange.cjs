@@ -37,9 +37,27 @@ async function exchange(body, { clientId, clientSecret, fetchImpl = fetch }) {
         !Number.isInteger(data.expires_in) || data.expires_in <= 0) {
       return { status: 502, body: { error: 'invalid_token_response' } };
     }
-    // Never forward client credentials, raw errors, ID tokens or refresh tokens.
+    // Desktop Drive session tokens go only to the PKCE-authorized native client.
+    // It stores them in OS secure storage. Never forward client secrets or ID tokens.
     return { status: 200, body: { access_token: data.access_token, scope: data.scope,
-      token_type: 'Bearer', expires_in: data.expires_in } };
+      token_type: 'Bearer', expires_in: data.expires_in,
+      ...(data.scope.split(' ').includes('https://www.googleapis.com/auth/drive.file') &&
+        typeof data.refresh_token === 'string' ? { refresh_token: data.refresh_token } : {}) } };
   } catch { return { status: 502, body: { error: 'temporarily_unavailable' } }; }
 }
-module.exports = { exchange, validInput, clientPattern };
+async function refresh(body, {clientId, clientSecret, fetchImpl = fetch}) {
+  if (!body || Object.keys(body).length !== 1 || typeof body.refresh_token !== 'string' ||
+      !/^[A-Za-z0-9_./~-]{10,4096}$/.test(body.refresh_token)) return {status:400,body:{error:'invalid_request'}};
+  if (!clientPattern.test(clientId || '') || !clientSecret?.trim()) return {status:503,body:{error:'server_configuration_error'}};
+  try {
+    const r = await fetchImpl('https://oauth2.googleapis.com/token', {method:'POST',redirect:'manual',signal:AbortSignal.timeout(20000),
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({client_id:clientId,client_secret:clientSecret,grant_type:'refresh_token',refresh_token:body.refresh_token}).toString()});
+    const data = await r.json();
+    if (r.status !== 200) return {status:400,body:{error:errors.has(data?.error) ? data.error : 'invalid_grant'}};
+    if (typeof data.access_token !== 'string' || !data.access_token || !Number.isInteger(data.expires_in) || data.expires_in <= 0)
+      return {status:502,body:{error:'invalid_token_response'}};
+    return {status:200,body:{access_token:data.access_token,expires_in:data.expires_in,token_type:'Bearer'}};
+  } catch {return {status:502,body:{error:'temporarily_unavailable'}};}
+}
+module.exports = { exchange, refresh, validInput, clientPattern };

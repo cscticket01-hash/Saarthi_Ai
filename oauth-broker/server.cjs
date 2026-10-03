@@ -1,6 +1,6 @@
 'use strict';
 const http = require('node:http');
-const { exchange, clientPattern } = require('./exchange.cjs');
+const { exchange, refresh, clientPattern } = require('./exchange.cjs');
 const { createHash } = require('node:crypto');
 // Deploy behind a managed HTTPS endpoint. No school database or service-account
 // SDK is used. Only Google's one-use code + PKCE verifier is exchanged.
@@ -19,7 +19,7 @@ function createServer(options = {}) {
       return send(ready ? 200 : 503, { service: 'saarthi-oauth-exchange', version: 1,
         clientIdFingerprint: createHash('sha256').update(options.clientId || '').digest('hex') });
     }
-    if (req.method !== 'POST' || req.url !== '/oauth/token') return send(404, { error: 'not_found' });
+    if (req.method !== 'POST' || !['/oauth/token','/oauth/refresh'].includes(req.url)) return send(404, { error: 'not_found' });
     if (req.headers.origin || !/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) {
       return send(400, { error: 'invalid_request' });
     }
@@ -33,7 +33,7 @@ function createServer(options = {}) {
         if (bytes > 8192) { send(413, { error: 'invalid_request' }); return; }
         raw += chunk.toString('utf8');
       }
-      const result = await exchange(JSON.parse(raw), options);
+      const result = await (req.url === '/oauth/refresh' ? refresh : exchange)(JSON.parse(raw), options);
       send(result.status, result.body);
     } catch { send(400, { error: 'invalid_request' }); }
   });
