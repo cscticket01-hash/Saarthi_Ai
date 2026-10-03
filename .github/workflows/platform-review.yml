@@ -30,30 +30,9 @@ jobs:
       if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
       env:
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
-        SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL }}
+        SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET }}
       run: node oauth-broker/probe.cjs
-    - name: Seal one-time staging credentials for authorized Render deployment
-      if: github.event_name == 'pull_request' && github.event.pull_request.number == 7 && github.event.pull_request.head.repo.full_name == github.repository
-      env:
-        CLIENT_ID: ${{ vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
-        CLIENT_SECRET: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET }}
-        SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-      run: |
-        node - <<'NODE'
-        const crypto = require('node:crypto');
-        const fs = require('node:fs');
-        if (!process.env.CLIENT_ID || !process.env.CLIENT_SECRET) throw new Error('Required staging credentials unavailable');
-        const payload = JSON.stringify({clientId: process.env.CLIENT_ID, clientSecret: process.env.CLIENT_SECRET, sourceCommit: process.env.SOURCE_SHA, issuedAt: Date.now()});
-        const sealed = crypto.publicEncrypt({key: fs.readFileSync('oauth-broker/staging-transfer-public.pem'), oaepHash: 'sha256', oaepLabel: Buffer.from('Saarthi OAuth staging Render transfer v1')}, Buffer.from(payload));
-        fs.writeFileSync(process.env.RUNNER_TEMP + '/oauth-staging-sealed.bin', sealed, {mode: 0o600});
-        NODE
-    - uses: actions/upload-artifact@v4
-      if: github.event_name == 'pull_request' && github.event.pull_request.number == 7 && github.event.pull_request.head.repo.full_name == github.repository
-      with:
-        name: oauth-staging-sealed-credentials
-        path: ${{ runner.temp }}/oauth-staging-sealed.bin
-        retention-days: 1
     - uses: actions/upload-artifact@v4
       with:
         name: oauth-broker-review-source
@@ -184,7 +163,7 @@ jobs:
     - name: Verify configured public OAuth client in compiled Dart
       env:
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
-        SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL }}
+        SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         OAUTH_SECRET_PRESENT: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET != '' }}
       run: |
@@ -196,7 +175,7 @@ jobs:
         if ($env:SAARTHI_GOOGLE_REQUIRES_BROKER -eq 'true' -and !$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL) { Write-Host 'Live school connection blocked until the secure OAuth broker is hosted and its URL is configured.' }
     - name: Compile Windows school app
       env:
-        SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL }}
+        SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
       run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.84 --build-number=84 --dart-define=APP_VERSION=2.1.84 --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER

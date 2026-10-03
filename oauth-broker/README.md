@@ -1,4 +1,4 @@
-# Unpublished OAuth token exchange service
+# Staging OAuth token exchange service
 
 The installed app uses a system browser and random loopback state/PKCE. Some Google
 Desktop clients still demand `client_secret` on code exchange. That secret must
@@ -29,15 +29,16 @@ Origins and oversized requests, limits requests per instance, and never follows
 upstream redirects. Google still validates the one-use code and PKCE binding.
 A native public OAuth client needs no additional shared application password.
 
-After the developer authorizes a staging deployment, transfer the existing
-GitHub secret directly in that deployment job, and set repository VARIABLE
-`SAARTHI_GOOGLE_OAUTH_BROKER_URL` to that HTTPS endpoint. Re-run Platform review
-builds. CI compares the broker client fingerprint and tests an intentionally
-INVALID code through the broker; no school tokens/resources are created.
-The Windows preview embeds only ID, URL and the diagnostic broker-required flag.
-A broker-required build without a URL deliberately disables sign-in.
+The authorized free Render staging service is
+`https://saarthi-oauth-staging.onrender.com/oauth/token`, on the development branch
+with auto-deploy disabled. Runtime credentials came from the existing GitHub
+variable/secret through a one-time RSA-OAEP encrypted transfer. The transfer key
+and workflow steps are removed after configuration. No secrets belong in source,
+Windows artifacts or images.
 
-Nothing in this PR deploys/publishes this server or touches existing production
-resources. No usable staging host/hosting credentials have been identified or
-authorized in this session. This service must be hosted and live-school consent
-must pass before declaring the issue resolved end-to-end.
+Platform review CI defaults to that public staging endpoint and verifies the
+client fingerprint plus an intentionally invalid code through Google. Production
+builds still use the repository variable `SAARTHI_GOOGLE_OAUTH_BROKER_URL` and do
+not default to staging. Windows warms and validates the service before browser
+sign-in because a free Render instance can sleep. Live Windows school consent
+and provisioning remain acceptance tests; no production release is published.

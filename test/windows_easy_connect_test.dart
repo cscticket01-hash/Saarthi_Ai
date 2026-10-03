@@ -1,3 +1,4 @@
+import 'package:crypto/crypto.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -106,6 +107,11 @@ void main() {
     final auth = GoogleAuthorization(oauthClientId: 'test.apps.googleusercontent.com',
       oauthBrokerUrl: broker, client: MockClient((request) async {
         expect(request.followRedirects, isFalse);
+        if (request.url.path == '/healthz') {
+          expect(request.method, 'GET');
+          return json({'service': 'saarthi-oauth-exchange',
+            'clientIdFingerprint': sha256.convert(utf8.encode('test.apps.googleusercontent.com')).toString()});
+        }
         if (request.url.host != 'openidconnect.googleapis.com') {
           if (broker.isNotEmpty) {
             expect(request.url.toString(), broker);
@@ -138,6 +144,27 @@ void main() {
       user: json({'sub': 'school-owner', 'email': 'school@gmail.com', 'email_verified': true}));
     expect(result.subject, 'school-owner');
     expect(result.accessToken, 'access-only');
+  });
+  test('Unavailable or mismatched broker never opens Google or exchanges a code', () async {
+    for (final response in [http.Response('unavailable', 503),
+        json({'service': 'saarthi-oauth-exchange', 'clientIdFingerprint': 'wrong'})]) {
+      var opened = false;
+      var requests = 0;
+      final auth = GoogleAuthorization(oauthClientId: 'test.apps.googleusercontent.com',
+        oauthBrokerUrl: 'https://oauth.example.test/oauth/token',
+        client: MockClient((request) async {
+          requests++;
+          expect(request.url.path, '/healthz');
+          expect(request.method, 'GET');
+          return response;
+        }), openBrowser: (_) async { opened = true; });
+      try {
+        await expectLater(HttpOverrides.runWithHttpOverrides(
+          () => auth.authorize(script: false), LoopbackHttpOverrides()), throwsStateError);
+        expect(opened, isFalse);
+        expect(requests, 1);
+      } finally { auth.close(); }
+    }
   });
   test('Broker URLs reject insecure transports, credentials and query/fragment leaks', () {
     expect(GoogleAuthorization.validBrokerUrl('https://oauth.example.test/oauth/token'), isTrue);

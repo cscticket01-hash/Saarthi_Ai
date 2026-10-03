@@ -29,7 +29,7 @@ async function probe({ clientId, clientSecret, brokerUrl = '', fetchImpl = fetch
     const url = new URL(brokerUrl);
     if (url.protocol !== 'https:' || url.pathname !== '/oauth/token' || url.username ||
         url.password || url.search || url.hash || (url.port && url.port !== '443')) throw new Error('Invalid broker URL');
-    const health = await fetchImpl(new URL('/healthz', url), { redirect: 'manual', signal: AbortSignal.timeout(20000) });
+    const health = await fetchImpl(new URL('/healthz', url), { redirect: 'manual', signal: AbortSignal.timeout(90000) });
     const info = await health.json();
     if (health.status !== 200 || info.service !== 'saarthi-oauth-exchange' ||
         info.clientIdFingerprint !== createHash('sha256').update(clientId).digest('hex')) throw new Error('Broker client mismatch');

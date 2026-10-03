@@ -97,6 +97,20 @@ class GoogleAuthorization {
       final codeFuture = pending.future.timeout(const Duration(minutes: 5));
       // Observe early cancellation/browser failures before awaiting the code.
       unawaited(codeFuture.then<void>((_) {}, onError: (Object _, StackTrace __) {}));
+      // Wake a free staging instance before Google issues a short-lived code.
+      if (oauthBrokerUrl.isNotEmpty) {
+        final health = await _send(http.Request('GET',
+            Uri.parse(oauthBrokerUrl).replace(path: '/healthz')),
+            timeout: const Duration(seconds: 90));
+        if (health.statusCode != 200) {
+          throw StateError('Google connection service is starting or unavailable. Wait a moment and reconnect. No school setup was started.');
+        }
+        final info = _decode(health.body);
+        if (info['service'] != 'saarthi-oauth-exchange' ||
+            info['clientIdFingerprint'] != sha256.convert(utf8.encode(oauthClientId)).toString()) {
+          throw StateError('Google connection service configuration does not match this app. Contact the developer.');
+        }
+      }
       await openBrowser(Uri.https('accounts.google.com', '/o/oauth2/v2/auth', {
         'client_id': oauthClientId, 'redirect_uri': redirect, 'response_type': 'code',
         'scope': scopes.join(' '), 'state': state,
@@ -140,10 +154,11 @@ class GoogleAuthorization {
     }
   }
 
-  Future<http.Response> _send(http.Request request) async {
+  Future<http.Response> _send(http.Request request,
+      {Duration timeout = const Duration(seconds: 30)}) async {
     request.followRedirects = false;
     final response = await http.Response.fromStream(await client.send(request)
-        .timeout(const Duration(seconds: 30))).timeout(const Duration(seconds: 30));
+        .timeout(timeout)).timeout(timeout);
     if (_cancelled) throw SetupCancelled();
     return response;
   }

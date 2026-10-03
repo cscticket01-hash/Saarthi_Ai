@@ -181,13 +181,24 @@ and verified Google identity before invoking the existing school provisioner.
 Missing broker configuration and expired/used codes now have separate actionable
 messages. No fallback embeds/downloads a secret to the Windows client.
 
-**Hosting is pending.** This PR does not deploy the broker or alter production.
-After a staging endpoint is authorized and hosted using the existing repository
-OAuth credential pair, set `SAARTHI_GOOGLE_OAUTH_BROKER_URL`, then run Platform
-review builds. CI verifies that host's client fingerprint and invalid-code
-exchange as well. A required missing broker disables sign-in rather than sending
-the school through a known-failing browser loop. Until a hosted broker and live
-school login are verified, the token-exchange failure is not fixed end-to-end.
+**Authorized free staging host:** `https://saarthi-oauth-staging.onrender.com`.
+The existing GitHub OAuth credential pair was transferred using a one-time
+RSA-OAEP encrypted artifact; plaintext credentials were never logged or compiled
+into Windows. The one-time CI transfer and public key were then removed.
+Render uses the development branch with automatic deploys disabled. Production
+and main remain unchanged.
+
+The review workflow uses the public staging `/oauth/token` URL when no repository
+broker variable is configured; the production build still requires its own
+configured variable. CI checks client fingerprint and deliberately invalid-code
+exchange against Google through the hosted service. Windows checks readiness and
+client fingerprint before browser sign-in, allowing up to 90 seconds for a free
+instance to wake. No sign-in code is issued during that startup delay.
+
+Real school consent/provisioning must still be tested on Windows: mock tests,
+health checks and invalid-code probes do not establish successful live Google
+sign-in or resource creation. School-owned configuration, existing data protection
+and the official-API/manual-step limitations documented above still apply.
 
 The review build uses APP_VERSION 2.1.84 to avoid the previous 2.1.79 preview
 prompting testers to install the stable 2.1.84 app. This is only an artifact build;
