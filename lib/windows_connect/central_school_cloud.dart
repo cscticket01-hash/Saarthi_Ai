@@ -111,11 +111,18 @@ class CentralSchoolCloud {
     final school = result['schoolId']?.toString() ?? '';
     if (!validSchoolId(school) || result['projectId'] != platformProjectId ||
         result['email'] != account.email || result['customToken'] is! String ||
+        result['uid'] is! String || (result['uid'] as String).isEmpty ||
         (old.isNotEmpty && old['schoolId'] != school)) throw StateError('School cloud identity verification failed.');
     final auth = await send('POST', Uri.https('identitytoolkit.googleapis.com', '/v1/accounts:signInWithCustomToken', {'key':platformApiKey}),
       body:{'token':result['customToken'], 'returnSecureToken':true});
-    if (auth['idToken'] is! String || auth['refreshToken'] is! String || auth['localId'] is! String) throw StateError('School Firebase login failed.');
-    await api({'action':'status', 'schoolId':school}, token:auth['idToken']);
+    if (auth['idToken'] is! String || auth['refreshToken'] is! String ||
+        (auth['idToken'] as String).isEmpty || (auth['refreshToken'] as String).isEmpty) throw StateError('School Firebase login failed.');
+    // The official custom-token response has no localId. Bind the session to
+    // the UID verified from this ID token by the authenticated central API.
+    final verified = await api({'action':'status', 'schoolId':school}, token:auth['idToken']);
+    if (verified['uid'] != result['uid'] || verified['schoolId'] != school ||
+        verified['projectId'] != platformProjectId ||
+        (auth['localId'] != null && auth['localId'] != verified['uid'])) throw StateError('School Firebase identity verification failed.');
     // Also verify deployed security rules allow this tenant before saving.
     await send('GET', Uri.parse('$platformFirestoreUrl/schools/$school/school_config?pageSize=1'), token:auth['idToken']);
     if (migration != null) {
@@ -132,7 +139,7 @@ class CentralSchoolCloud {
     await api({'action':'drive/link', 'schoolId':school, 'folderId':folder,
       'googleAccessToken':account.accessToken}, token:auth['idToken']);
     final connection = <String,dynamic>{'schemaVersion':2, 'projectId':platformProjectId,
-      'schoolId':school, 'schoolName':name, 'uid':auth['localId'], 'email':account.email,
+      'schoolId':school, 'schoolName':name, 'uid':verified['uid'], 'email':account.email,
       'accountSub':account.subject, 'endpoint':endpoint, 'folderId':folder,
       'firebaseRefreshToken':auth['refreshToken'],
       'googleRefreshToken':account.refreshToken.isNotEmpty ? account.refreshToken : old['googleRefreshToken'] ?? '',

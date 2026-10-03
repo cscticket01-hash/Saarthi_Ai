@@ -21,7 +21,7 @@ function fixture(){
 }
 test('Onboarding is server-assigned, idempotent and never issues developer/admin claims',async()=>{
  const f=fixture(),body={action:'onboard',schoolName:'School',googleAccessToken:'google-access-token'};
- const first=await f.req(body),second=await f.req(body);assert.equal(first.schoolId,second.schoolId);assert.match(first.schoolId,/^vs-[a-f0-9]{32}$/);
+ const first=await f.req(body),second=await f.req(body);assert.equal(first.schoolId,second.schoolId);assert.match(first.schoolId,/^vs-[a-f0-9]{32}$/);assert.equal(first.uid,uidFor('123'));
  assert.equal([...f.documents.keys()].filter(k=>k.startsWith('schools/')).length,1);
  await assert.rejects(f.req({...body,schoolId:B}),e=>e.status===400);
  await assert.rejects(f.req({...body,expectedSchoolId:B}),e=>e.status===409);
@@ -34,7 +34,7 @@ test('Wrong OAuth audience, missing Drive permission and expired verification fa
 });
 test('School A cannot request School B status or change membership with a client schoolId',async()=>{
  const f=fixture();f.seed();await assert.rejects(f.req({action:'status',schoolId:B}),e=>e.status===403);
- assert.equal((await f.req({action:'status',schoolId:A})).schoolId,A);
+ const status=await f.req({action:'status',schoolId:A});assert.equal(status.schoolId,A);assert.equal(status.uid,uidFor('123'));
  f.documents.set('school_memberships/'+uidFor('123'),{schoolId:A,role:'school_admin',active:false});
  await assert.rejects(f.req({action:'status'}),e=>e.status===403);
 });

@@ -62,19 +62,36 @@ void main() {
       hosts.add(r.url.host);expect(r.followRedirects,false);
       if (r.url.host == 'school.example') {
         final body = jsonDecode(r.body);
-        if (body['action']=='onboard') return http.Response(jsonEncode({'schoolId':school,'projectId':platformProjectId,'email':'school@gmail.com','customToken':'server-token'}),200);
-        return http.Response(jsonEncode({'success':true,'schoolId':school}),200);
+        if (body['action']=='onboard') return http.Response(jsonEncode({'schoolId':school,'projectId':platformProjectId,'email':'school@gmail.com','customToken':'server-token','uid':'verified-uid'}),200);
+        return http.Response(jsonEncode({'success':true,'schoolId':school,'projectId':platformProjectId,'uid':'verified-uid'}),200);
       }
-      if(r.url.host=='identitytoolkit.googleapis.com') return http.Response(jsonEncode({'idToken':'firebase-token','refreshToken':'firebase-refresh','localId':'verified-uid'}),200);
+      if(r.url.host=='identitytoolkit.googleapis.com') return http.Response(jsonEncode({'idToken':'firebase-token','refreshToken':'firebase-refresh','expiresIn':'3600'}),200);
       if(r.url.host=='firestore.googleapis.com') return http.Response('{}',200);
       if(r.method=='GET') return http.Response('{"files":[]}',200);
       return http.Response('{"id":"school-folder"}',200);
     }));
     await cloud.connect(const GoogleSetupAccount('123','school@gmail.com','google-token',refreshToken:'google-refresh'),'My school');
-    final saved=await CentralSchoolCloud.saved();expect(saved['schoolId'],school);expect(saved['folderId'],'school-folder');
+    final saved=await CentralSchoolCloud.saved();expect(saved['schoolId'],school);expect(saved['folderId'],'school-folder');expect(saved['uid'],'verified-uid');
     expect(hosts, isNot(contains('cloudresourcemanager.googleapis.com')));
     expect(hosts, isNot(contains('firebase.googleapis.com')));expect(hosts,isNot(contains('script.googleapis.com')));
     cloud.close();
+  });
+  test('Server-verified Firebase identity mismatch stops before Drive or session persistence',() async {
+    for (final changed in [<String,dynamic>{'uid':'foreign-uid'},<String,dynamic>{'uid':null},
+      <String,dynamic>{'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},<String,dynamic>{'projectId':'foreign-project'}]) {
+      final cloud=CentralSchoolCloud(endpoint:'https://school.example/api',client:MockClient((r) async {
+        if (r.url.host=='school.example') {
+          final body=jsonDecode(r.body);
+          if(body['action']=='onboard') return http.Response(jsonEncode({'schoolId':school,'projectId':platformProjectId,
+            'email':'school@gmail.com','customToken':'server-token','uid':'verified-uid'}),200);
+          return http.Response(jsonEncode({'success':true,'schoolId':school,'projectId':platformProjectId,'uid':'verified-uid',...changed}),200);
+        }
+        expect(r.url.host,'identitytoolkit.googleapis.com');
+        return http.Response('{"idToken":"firebase-token","refreshToken":"firebase-refresh","expiresIn":"3600"}',200);
+      }));
+      await expectLater(cloud.connect(const GoogleSetupAccount('123','school@gmail.com','google-token'),'School'),throwsStateError);
+      expect(await CentralSchoolCloud.saved(),isEmpty);cloud.close();
+    }
   });
   test('Partial Firebase/Drive setup never saves a connected session',() async {
     final cloud=CentralSchoolCloud(endpoint:'https://school.example/api',client:MockClient((r) async => http.Response('{}',403)));

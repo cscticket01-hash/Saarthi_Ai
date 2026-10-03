@@ -59,12 +59,12 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
       });
       // No admin/developer claim: school administrators cannot use platform admin APIs.
       const customToken = await auth.createCustomToken(google.uid, {schoolId, schoolRole:'school_admin'});
-      return {success:true, schoolId, projectId, email:google.email, customToken};
+      return {success:true, schoolId, projectId, uid:google.uid, email:google.email, customToken};
     }
     const token = String(req.headers.authorization || '').match(/^Bearer (.+)$/)?.[1];
     if (!token) deny(401, 'School login required');
     const member = await authorizeSchool(auth, db, token, b.schoolId);
-    if (b.action === 'status') return {success:true, schoolId:member.schoolId, projectId};
+    if (b.action === 'status') return {success:true, schoolId:member.schoolId, projectId, uid:member.uid};
     const milliseconds = value => typeof value?.toMillis === 'function' ? value.toMillis() : Number(value || 0);
     async function licenseStatus() {
       const settings = await db.doc('schools/' + member.schoolId + '/school_config/license').get();
