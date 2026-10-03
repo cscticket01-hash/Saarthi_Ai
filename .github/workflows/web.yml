@@ -191,6 +191,18 @@ jobs:
           PY
 
       # =========================================================
+      # ADD PUBLIC OAUTH BRANDING PAGES
+      # These remain plain HTML so Google can access them without login.
+      # =========================================================
+      - name: Add Public OAuth Pages
+        run: |
+          mkdir -p build/web/home build/web/privacy
+          cp oauth-public/home/index.html build/web/home/index.html
+          cp oauth-public/privacy/index.html build/web/privacy/index.html
+          test -f build/web/home/index.html
+          test -f build/web/privacy/index.html
+
+      # =========================================================
       # VERIFY BUILD
       # =========================================================
       - name: Verify Built Assets
