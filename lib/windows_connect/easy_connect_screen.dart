@@ -58,7 +58,9 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
       if (migration != null && existing.email.toLowerCase() != account.email.toLowerCase()) throw StateError('Use the original verified school Google account for migration.');
       setState(() { _google=true; _email=account.email; _message='Preparing your school’s isolated cloud data and Google Drive folder'; });
       final cloud = CentralSchoolCloud(); _cloud=cloud;
-      final connection=await cloud.connect(account,name,migration:migration);
+      final connection=await cloud.connect(account,name,migration:migration,progress:(stage){
+        if (mounted) setState(() {if(stage=='firebase') _firebase=true; if(stage=='drive') _drive=true;});
+      });
       if (previous.isEmpty && !existing.configSaved) {
         final profile=<String,dynamic>{'schoolName':name,
           'principalName':initialProfile['principalName']?.toString() ?? WindowsAdminSetup.principalName};

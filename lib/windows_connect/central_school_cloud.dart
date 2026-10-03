@@ -65,6 +65,33 @@ class CentralSchoolCloud {
   final FlutterSecureStorage storage;
   final http.Client client;
   bool cancelled = false;
+  String? _diagnosticToken;
+  String? _diagnosticSchool;
+  static const _reasons = {'SERVICE_DISABLED','ACCESS_TOKEN_SCOPE_INSUFFICIENT',
+    'API_KEY_SERVICE_BLOCKED','API_KEY_HTTP_REFERRER_BLOCKED','API_KEY_IP_ADDRESS_BLOCKED',
+    'PERMISSION_DENIED','UNAUTHENTICATED','RATE_LIMIT_EXCEEDED','RESOURCE_EXHAUSTED',
+    'accessNotConfigured','insufficientPermissions','forbidden'};
+  String _stage(String method, Uri uri) {
+    if (uri.host == 'identitytoolkit.googleapis.com') return 'firebase_login';
+    if (uri.host == 'securetoken.googleapis.com') return 'firebase_refresh';
+    if (uri.host == 'firestore.googleapis.com') return 'firestore_verify';
+    if (uri.host == 'www.googleapis.com' && uri.path.startsWith('/upload/')) return 'drive_upload';
+    if (uri.host == 'www.googleapis.com' && uri.path.startsWith('/drive/v3/files')) {
+      return method == 'POST' ? 'drive_create' : uri.path == '/drive/v3/files' ? 'drive_list' : 'drive_read';
+    }
+    return 'school_cloud';
+  }
+  Future<void> _reportFailure(String stage, int status, String reason) async {
+    if (_diagnosticToken == null || _diagnosticSchool == null || stage == 'school_cloud') return;
+    try {
+      // Allowlisted diagnostic metadata only. No upstream body, file ID, key or Google token.
+      await client.post(Uri.parse(endpoint), headers:{'Content-Type':'application/json',
+        'Authorization':'Bearer $_diagnosticToken'}, body:jsonEncode({'action':'setup/diagnostic',
+          'schoolId':_diagnosticSchool,'stage':stage,'httpStatus':status,'reason':reason}))
+        .timeout(const Duration(seconds:5));
+    } catch (_) { /* Never replace the original setup failure. */ }
+  }
+
   static bool validEndpoint(String value) {
     final u = Uri.tryParse(value);
     return u != null && u.scheme == 'https' && u.host.isNotEmpty &&
@@ -92,8 +119,43 @@ class CentralSchoolCloud {
     final response = await http.Response.fromStream(await client.send(r).timeout(const Duration(seconds:45)));
     check();
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(response.statusCode == 401 ? 'Permission expired. Reconnect the same school Google account.'
-        : 'School cloud request failed (HTTP ${response.statusCode}). Retry the same school; existing data is retained.');
+      final stage = _stage(method, uri);
+      Map errorBody = {};
+      try { final parsed = jsonDecode(response.body); if (parsed is Map) errorBody = parsed; } catch (_) {}
+      final error = errorBody['error'];
+      String reason = 'UNKNOWN';
+      if (error is Map) {
+        final details = error['details'];
+        final errors = error['errors'];
+        final candidates = [error['status'], if (details is List) ...details.whereType<Map>().map((d)=>d['reason']),
+          if (errors is List) ...errors.whereType<Map>().map((d)=>d['reason'])];
+        for (final candidate in candidates.reversed) { if (_reasons.contains(candidate)) { reason = candidate; break; } }
+      }
+      await _reportFailure(stage, response.statusCode, reason);
+      final labels = {'firebase_login':'Firebase sign-in', 'firebase_refresh':'Firebase refresh',
+        'firestore_verify':'Firestore verification', 'drive_list':'Google Drive folder search',
+        'drive_create':'Google Drive folder creation', 'drive_read':'Google Drive access',
+        'drive_upload':'Google Drive upload', 'school_cloud':'Central school API'};
+      String detail = reason == 'UNKNOWN' ? '' : ' [$reason]';
+      // Server messages are accepted only from the configured central endpoint,
+      // and only when they exactly match a fixed, non-secret public explanation.
+      const publicMessages = {'School membership is inactive','Another school is not accessible',
+        'Legacy school administrator proof is required','Legacy school is already assigned to another tenant',
+        'Drive must belong to the same school Google account','School Drive folder is not accessible',
+        'Drive ownership or school marker is invalid','Verify the existing installation trial first'};
+      if (uri.toString() == endpoint && publicMessages.contains(errorBody['message'])) detail = ' ${errorBody['message']}.';
+      final action = uri.toString() == endpoint && body is Map ? body['action'] : null;
+      final actionLabel = {'onboard':'onboarding','status':'identity verification','migration/import':'legacy migration',
+        'drive/link':'Drive ownership verification','profile/initialize':'school profile setup'}[action];
+      final endpointLabel = labels[stage]! + (actionLabel == null ? '' : ' ($actionLabel)');
+      final help = {'SERVICE_DISABLED':'The developer must enable this API in the OAuth project; school data is retained.',
+        'accessNotConfigured':'The developer must enable Google Drive API in the OAuth project; school data is retained.',
+        'ACCESS_TOKEN_SCOPE_INSUFFICIENT':'Reconnect the same Google account and allow Drive permission.',
+        'insufficientPermissions':'Reconnect the same Google account and allow Drive permission.'}[reason] ??
+        (response.statusCode == 401 ? 'Reconnect the same school Google account.' : 'Retry the same school; existing data is retained.');
+      final reference = errorBody['requestId'];
+      final ref = reference is String && RegExp(r'^[a-f0-9-]{36}$').hasMatch(reference) && uri.toString() == endpoint ? ' Ref: $reference.' : '';
+      throw StateError('$endpointLabel failed (HTTP ${response.statusCode}).$detail $help$ref');
     }
     if (response.body.isEmpty) return {};
     final value = jsonDecode(response.body);
@@ -104,7 +166,7 @@ class CentralSchoolCloud {
     if (!validEndpoint(endpoint)) throw StateError('Developer must configure the central school cloud service. Schools do not need Firebase configuration.');
     return send('POST', Uri.parse(endpoint), token:token, body:body);
   }
-  Future<Map<String, dynamic>> connect(GoogleSetupAccount account, String name, {Map<String,dynamic>? migration}) async {
+  Future<Map<String, dynamic>> connect(GoogleSetupAccount account, String name, {Map<String,dynamic>? migration, void Function(String stage)? progress}) async {
     final old = await saved();
     final result = await api({'action':'onboard', 'schoolName':name,
       'googleAccessToken':account.accessToken, if (old.isNotEmpty) 'expectedSchoolId':old['schoolId']});
@@ -123,8 +185,10 @@ class CentralSchoolCloud {
     if (verified['uid'] != result['uid'] || verified['schoolId'] != school ||
         verified['projectId'] != platformProjectId ||
         (auth['localId'] != null && auth['localId'] != verified['uid'])) throw StateError('School Firebase identity verification failed.');
+    _diagnosticToken = auth['idToken']; _diagnosticSchool = school;
     // Also verify deployed security rules allow this tenant before saving.
     await send('GET', Uri.parse('$platformFirestoreUrl/schools/$school/school_config?pageSize=1'), token:auth['idToken']);
+    progress?.call('firebase');
     if (migration != null) {
       final records = migration['records'] as List;
       // Small independently retryable create-only batches. Never overwrite target
@@ -138,6 +202,7 @@ class CentralSchoolCloud {
     final folder = await ensureFolder(account.accessToken, school, old['folderId']?.toString());
     await api({'action':'drive/link', 'schoolId':school, 'folderId':folder,
       'googleAccessToken':account.accessToken}, token:auth['idToken']);
+    progress?.call('drive');
     final connection = <String,dynamic>{'schemaVersion':2, 'projectId':platformProjectId,
       'schoolId':school, 'schoolName':name, 'uid':verified['uid'], 'email':account.email,
       'accountSub':account.subject, 'endpoint':endpoint, 'folderId':folder,

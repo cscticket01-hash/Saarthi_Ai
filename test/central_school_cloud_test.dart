@@ -98,6 +98,40 @@ void main() {
     await expectLater(cloud.connect(const GoogleSetupAccount('123','school@gmail.com','token'),'School'),throwsStateError);
     expect(await CentralSchoolCloud.saved(),isEmpty);cloud.close();
   });
+  test('Drive API denial identifies the failed endpoint and reports only safe diagnostic metadata',() async {
+    final stages=<String>[]; final reports=<Map>[];
+    final cloud=CentralSchoolCloud(endpoint:'https://school.example/api',client:MockClient((r) async {
+      if(r.url.host=='school.example') {
+        final b=jsonDecode(r.body);
+        if(b['action']=='onboard') return http.Response(jsonEncode({'schoolId':school,'projectId':platformProjectId,
+          'email':'school@gmail.com','customToken':'server-token','uid':'verified-uid'}),200);
+        if(b['action']=='setup/diagnostic') {reports.add(b); return http.Response('{"success":true}',200);}
+        return http.Response(jsonEncode({'schoolId':school,'projectId':platformProjectId,'uid':'verified-uid'}),200);
+      }
+      if(r.url.host=='identitytoolkit.googleapis.com') return http.Response('{"idToken":"firebase-token","refreshToken":"firebase-refresh"}',200);
+      if(r.url.host=='firestore.googleapis.com') return http.Response('{}',200);
+      return http.Response(jsonEncode({'error':{'message':'private-google-token and key', 'status':'PERMISSION_DENIED',
+        'details':[{'reason':'SERVICE_DISABLED','metadata':{'credential':'private-google-token'}}]}}),403);
+    }));
+    await expectLater(cloud.connect(const GoogleSetupAccount('123','school@gmail.com','google-token'),'School',progress:stages.add),
+      throwsA(isA<StateError>().having((e)=>e.message,'endpoint',contains('Google Drive folder search'))
+        .having((e)=>e.message,'reason',contains('SERVICE_DISABLED'))
+        .having((e)=>e.message,'privacy',isNot(contains('private-google-token')))));
+    expect(stages,['firebase']);expect(await CentralSchoolCloud.saved(),isEmpty);
+    expect(reports,[{'action':'setup/diagnostic','schoolId':school,'stage':'drive_list','httpStatus':403,'reason':'SERVICE_DISABLED'}]);cloud.close();
+  });
+  test('Central migration denial remains explicit and never bypasses authorization or exposes arbitrary error bodies',() async {
+    final cloud=CentralSchoolCloud(endpoint:'https://school.example/api',client:MockClient((r) async =>
+      http.Response('{"message":"Legacy school administrator proof is required"}',403)));
+    await expectLater(cloud.api({'action':'migration/import'}),throwsA(isA<StateError>()
+      .having((e)=>e.message,'operation',contains('legacy migration'))
+      .having((e)=>e.message,'reason',contains('Legacy school administrator proof is required'))));
+    expect(await CentralSchoolCloud.saved(),isEmpty);cloud.close();
+    final other=CentralSchoolCloud(endpoint:'https://school.example/api',client:MockClient((r) async =>
+      http.Response('{"message":"private-token-value"}',403)));
+    await expectLater(other.api({'action':'onboard'}),throwsA(isA<StateError>()
+      .having((e)=>e.message,'privacy',isNot(contains('private-token-value')))));other.close();
+  });
   test('Legacy project provisioning is disabled in the normal client build',() async {
     final setup=SchoolProvisioner(api:GoogleSetupApi('secret'),account:const GoogleSetupAccount('123','school@gmail.com','token'),
       checkpoint:_Checkpoint(),progress:(_){},bundle:{});

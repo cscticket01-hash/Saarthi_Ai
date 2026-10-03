@@ -10,14 +10,15 @@ function fixture(){
  function snap(path){return {exists:documents.has(path),data:()=>documents.get(path)};}
  const auth={verifyIdToken:async token=>{if(!['A','B'].includes(token))throw Error('invalid token');return {uid:token==='A'?uidFor('123'):uidFor('456')};},
   createCustomToken:async(uid,claims)=>{assert.equal(claims.admin,undefined);assert.equal(claims.developer,undefined);return 'custom-'+uid;}};
+ const diagnostics=[];
  let googleSub='123',aud=clientId,scope='openid email https://www.googleapis.com/auth/drive.file',folderSchool=A;
  const fetchImpl=async url=>({ok:true,json:async()=>url.includes('tokeninfo')?{aud,scope,expires_in:3600,sub:googleSub}:
   url.includes('userinfo')?{sub:googleSub,email:'school'+googleSub+'@gmail.com',email_verified:true}:
   {id:'folder',mimeType:'application/vnd.google-apps.folder',owners:[{me:true}],capabilities:{canAddChildren:true},appProperties:{schoolId:folderSchool}}});
- const handle=createSchoolCloud({auth,db,projectId:'central-project',clientIds:[clientId],fetchImpl,verifyLegacy:async(project,token)=>{if(token!=='legacy-admin')throw Error('invalid source');return {admin:true};}});
+ const handle=createSchoolCloud({auth,db,projectId:'central-project',clientIds:[clientId],fetchImpl,diagnostics:entry=>diagnostics.push(entry),verifyLegacy:async(project,token)=>{if(token!=='legacy-admin')throw Error('invalid source');return {admin:true};}});
  const req=(body,token='A')=>handle({method:'POST',headers:{authorization:'Bearer '+token},body});
  const seed=()=>{documents.set('school_memberships/'+uidFor('123'),{schoolId:A,role:'school_admin',active:true});documents.set('school_memberships/'+uidFor('456'),{schoolId:B,role:'school_admin',active:true});};
- return {documents,req,seed,auth,db,fetchImpl,setSub:v=>googleSub=v,setAud:v=>aud=v,setScope:v=>scope=v,setFolder:v=>folderSchool=v};
+ return {documents,req,seed,auth,db,fetchImpl,diagnostics,setSub:v=>googleSub=v,setAud:v=>aud=v,setScope:v=>scope=v,setFolder:v=>folderSchool=v};
 }
 test('Onboarding is server-assigned, idempotent and never issues developer/admin claims',async()=>{
  const f=fixture(),body={action:'onboard',schoolName:'School',googleAccessToken:'google-access-token'};
@@ -92,4 +93,17 @@ test('Expired Firebase session is rejected and heartbeat cannot write another sc
  assert.equal(f.documents.has('platform_schools/'+B),false);
  await assert.rejects(f.req({action:'school/heartbeat',schoolId:B,studentCount:999}),e=>e.status===403);
  await assert.rejects(f.req({action:'school/heartbeat',studentCount:-1}),e=>e.status===400);
+});
+
+test('Setup diagnostics require active own-school authorization, reject secrets and never change records',async()=>{
+ const f=fixture();f.seed();const before=JSON.stringify([...f.documents]);
+ const b={action:'setup/diagnostic',schoolId:A,stage:'drive_list',httpStatus:403,reason:'SERVICE_DISABLED'};
+ assert.equal((await f.req(b)).success,true);
+ assert.deepEqual(f.diagnostics,[{event:'central_setup_upstream_failed',stage:'drive_list',httpStatus:403,reason:'SERVICE_DISABLED'}]);
+ assert.equal(JSON.stringify([...f.documents]),before);
+ await assert.rejects(f.req({...b,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.req(b,'expired'),e=>e.status===401);
+ await assert.rejects(f.req({...b,reason:'private-secret'}),e=>e.status===400);
+ await assert.rejects(f.req({...b,googleAccessToken:'secret'}),e=>e.status===400);
+ assert.equal(f.diagnostics.length,1);
 });

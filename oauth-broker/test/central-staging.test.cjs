@@ -35,3 +35,17 @@ test('real installed modular Admin SDK initializes staging with a disposable tes
  const {getApp,deleteApp}=require('firebase-admin/app');
  await deleteApp(getApp('central-render-staging'));
 });
+
+test('Central request traces expose only allowlisted actions, status and generated request IDs',async()=>{
+ const logs=[];
+ const handler=createHandler({health:async()=>{},logger:entry=>logs.push(entry),handle:async()=>{const e=Error('private-token-value');e.status=403;throw e;}});
+ await withServer(handler,async base=>{
+  const r=await fetch(base+'/school-cloud',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer secret-token'},
+    body:JSON.stringify({action:'migration/import',sourceAdminToken:'secret-admin',googleAccessToken:'secret-google',schoolId:'private-school'})});
+  assert.equal(r.status,403);const body=await r.json();assert(!JSON.stringify(body).includes('private-token'));
+  assert.match(body.requestId,/^[a-f0-9-]{36}$/);assert.equal(r.headers.get('x-saarthi-request-id'),body.requestId);
+  assert.deepEqual(logs,[{event:'central_request',endpoint:'/school-cloud',action:'migration/import',status:403,requestId:body.requestId}]);
+  await fetch(base+'/school-cloud',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"action":"secret-token"}'});
+  assert.equal(logs[1].action,'UNKNOWN');assert(!JSON.stringify(logs).includes('secret'));
+ });
+});

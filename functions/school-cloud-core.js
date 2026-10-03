@@ -2,7 +2,7 @@
 const {createHash, randomUUID} = require('node:crypto');
 const schoolPattern = /^vs-[a-f0-9]{32}$/;
 const uidFor = sub => 'g_' + createHash('sha256').update(sub).digest('hex');
-function deny(status, message) { const e = new Error(message); e.status = status; throw e; }
+function deny(status, message) { const e = new Error(message); e.status = status; e.publicMessage = true; throw e; }
 function requireSchool(id) { if (!schoolPattern.test(id || '')) deny(400, 'Invalid school identity'); return id; }
 // No caller chooses another tenant. The server-owned membership is authoritative.
 async function authorizeSchool(auth, db, token, expected) {
@@ -29,7 +29,7 @@ async function verifyGoogle(token, clientIds, fetchImpl = fetch) {
   if (info.sub && info.sub !== user.sub) deny(401, 'Google identity mismatch');
   return {uid:uidFor(user.sub), email:user.email};
 }
-function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, verifyLegacy}) {
+function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, verifyLegacy, diagnostics = () => {}}) {
   return async function handle(req) {
     if (req.method !== 'POST') deny(405, 'Use POST');
     const b = req.body;
@@ -64,6 +64,14 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
     const token = String(req.headers.authorization || '').match(/^Bearer (.+)$/)?.[1];
     if (!token) deny(401, 'School login required');
     const member = await authorizeSchool(auth, db, token, b.schoolId);
+    if (b.action === 'setup/diagnostic') {
+      if(Object.keys(b).some(k=>!['action','schoolId','stage','httpStatus','reason'].includes(k)) ||
+          !['firebase_login','firebase_refresh','firestore_verify','drive_list','drive_create','drive_read','drive_upload'].includes(b.stage) ||
+          !Number.isInteger(b.httpStatus) || b.httpStatus<400 || b.httpStatus>599 ||
+          !['SERVICE_DISABLED','ACCESS_TOKEN_SCOPE_INSUFFICIENT','API_KEY_SERVICE_BLOCKED','API_KEY_HTTP_REFERRER_BLOCKED','API_KEY_IP_ADDRESS_BLOCKED','PERMISSION_DENIED','UNAUTHENTICATED','RATE_LIMIT_EXCEEDED','RESOURCE_EXHAUSTED','accessNotConfigured','insufficientPermissions','forbidden','UNKNOWN'].includes(b.reason)) deny(400,'Invalid setup diagnostic');
+      diagnostics({event:'central_setup_upstream_failed',stage:b.stage,httpStatus:b.httpStatus,reason:b.reason});
+      return {success:true};
+    }
     if (b.action === 'status') return {success:true, schoolId:member.schoolId, projectId, uid:member.uid};
     const milliseconds = value => typeof value?.toMillis === 'function' ? value.toMillis() : Number(value || 0);
     async function licenseStatus() {
