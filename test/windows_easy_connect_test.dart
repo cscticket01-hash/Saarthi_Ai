@@ -257,6 +257,135 @@ void main() {
     await setup.begin(schoolName: '', location: '');
     await expectLater(setup.ensureProject(), throwsStateError);
   });
+  Map<String, dynamic> activeSchool() => {'projectId': school,
+    'projectNumber': '123456', 'lifecycleState': 'ACTIVE', 'labels': {'vs-setup': 'test123'}};
+  Map<String, dynamic> uncreated() => checkpoint()..remove('projectNumber');
+  test('New project is discovered then created without a forbidden pre-creation GET', () async {
+    final storage = MemoryCheckpoint(uncreated());
+    final calls = <String>[];
+    final setup = provisioner(storage, MockClient((r) async {
+      calls.add('${r.method} ${r.url.path}');
+      if (r.method == 'GET' && r.url.path == '/v1/projects') {
+        expect(r.url.queryParameters['filter'], 'id:$school');
+        return json({});
+      }
+      if (r.method == 'POST') {
+        expect(jsonDecode(r.body)['projectId'], school);
+        expect(jsonDecode(r.body)['labels'], {'vs-setup': 'test123'});
+        expect(jsonDecode(r.body).containsKey('parent'), isFalse);
+        return json({'name': 'operations/create-test', 'done': true, 'response': activeSchool()});
+      }
+      fail('Pre-creation GET must not occur: ${r.url}');
+    }));
+    await setup.begin(schoolName: '', location: '');
+    expect((await setup.ensureProject())['projectNumber'], '123456');
+    expect(calls, ['GET /v1/projects', 'POST /v1/projects']);
+    expect(storage.value['projectCreateOperation'], isNull);
+    expect(storage.value['projectNumber'], '123456');
+  });
+  test('Project discovery preserves exact filter across pages and reuses marked project', () async {
+    final setup = provisioner(MemoryCheckpoint(uncreated()), MockClient((r) async {
+      expect(r.method, 'GET');
+      expect(r.url.path, '/v1/projects');
+      expect(r.url.queryParameters['filter'], 'id:$school');
+      if (!r.url.queryParameters.containsKey('pageToken')) return json({'nextPageToken': 'page2'});
+      return json({'projects': [activeSchool()]});
+    }));
+    await setup.begin(schoolName: '', location: '');
+    expect((await setup.ensureProject())['projectId'], school);
+  });
+  test('Discovery cannot adopt a different school marker or a deleted project', () async {
+    for (final cloud in [{...activeSchool(), 'labels': {'vs-setup': 'another'}},
+      {...activeSchool(), 'lifecycleState': 'DELETE_REQUESTED'}]) {
+      final setup = provisioner(MemoryCheckpoint(uncreated()), MockClient((r) async {
+        expect(r.method, 'GET');
+        return json({'projects': [cloud]});
+      }));
+      await setup.begin(schoolName: '', location: '');
+      await expectLater(setup.ensureProject(), throwsStateError);
+    }
+  });
+  test('Saved project creation operation resumes without duplicate POST', () async {
+    final storage = MemoryCheckpoint({...uncreated(), 'projectCreateOperation': 'operations/create-test'});
+    final setup = provisioner(storage, MockClient((r) async {
+      expect(r.method, 'GET');
+      expect(r.url.path, '/v1/operations/create-test');
+      return json({'done': true, 'response': activeSchool()});
+    }));
+    await setup.begin(schoolName: '', location: '');
+    expect((await setup.ensureProject())['projectId'], school);
+    expect(storage.value['projectCreateOperation'], isNull);
+  });
+  test('Interrupted creation saves operation and next attempt resumes it', () async {
+    final storage = MemoryCheckpoint(uncreated());
+    final setup = provisioner(storage, MockClient((r) async {
+      if (r.method == 'POST') return json({'name': 'operations/create-test'});
+      if (r.url.path == '/v1/projects') return json({});
+      throw http.ClientException('disconnected');
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.ensureProject(), throwsA(isA<http.ClientException>()));
+    expect(storage.value['projectCreateOperation'], 'operations/create-test');
+  });
+  test('Known school project losing access never creates another project', () async {
+    final setup = provisioner(MemoryCheckpoint(checkpoint()), MockClient((r) async {
+      expect(r.method, 'GET');
+      expect(r.url.path, '/v1/projects/$school');
+      return json({}, 403);
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.ensureProject(), throwsA(isA<SetupApiError>()));
+  });
+  test('Project ID collision never modifies another school', () async {
+    final setup = provisioner(MemoryCheckpoint(uncreated()), MockClient((r) async {
+      if (r.url.path == '/v1/projects' && r.method == 'GET') return json({});
+      if (r.method == 'POST') return json({}, 409);
+      expect(r.method, 'GET');
+      return json({...activeSchool(), 'labels': {'vs-setup': 'another'}});
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.ensureProject(), throwsStateError);
+  });
+  test('Disabled API and missing scope errors remain distinct and never expose raw fields', () async {
+    for (final reason in ['SERVICE_DISABLED', 'ACCESS_TOKEN_SCOPE_INSUFFICIENT', 'IAM_PERMISSION_DENIED']) {
+      final api = GoogleSetupApi('private-token', client: MockClient((r) async => json({'error': {
+        'message': 'private-token private-password', 'details': [{
+          '@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'domain': 'googleapis.com', 'reason': reason,
+          'metadata': {'consumer': 'projects/123456', 'permission': 'resourcemanager.projects.create',
+            'activationUrl': 'https://evil.test/private-token'}}]}}, 403)));
+      await expectLater(api.request('POST', 'https://cloudresourcemanager.googleapis.com/v1/projects'),
+        throwsA(isA<SetupApiError>().having((e) => e.reason, 'reason', reason)
+          .having((e) => e.toString(), 'sanitized', allOf(isNot(contains('private-token')),
+            isNot(contains('private-password')), isNot(contains('evil.test'))))));
+      api.close();
+    }
+  });
+  test('Discovery API disabled does not fall through to project creation', () async {
+    var calls = 0;
+    final setup = provisioner(MemoryCheckpoint(uncreated()), MockClient((r) async {
+      calls++;
+      expect(r.method, 'GET');
+      return json({'error': {'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+        'domain': 'googleapis.com', 'reason': 'SERVICE_DISABLED'}]}}, 403);
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.ensureProject(), throwsA(isA<SetupApiError>().having((e) => e.reason, 'reason', 'SERVICE_DISABLED')));
+    expect(calls, 1);
+  });
+  test('Terminal operation quota failure clears operation for safe same-ID retry', () async {
+    final storage = MemoryCheckpoint(uncreated());
+    final setup = provisioner(storage, MockClient((r) async {
+      if (r.method == 'GET') return json({});
+      return json({'name': 'operations/create-test', 'done': true,
+        'error': {'code': 8, 'message': 'private-body'}});
+    }));
+    await setup.begin(schoolName: '', location: '');
+    await expectLater(setup.ensureProject(), throwsA(isA<SetupOperationError>()
+      .having((e) => e.status, 'quota', 429).having((e) => e.toString(), 'safe', isNot(contains('private-body')))));
+    expect(storage.value['projectCreateOperation'], isNull);
+    expect(storage.value['projectId'], school);
+  });
+
   test('Authentication initialization asks for Google approval, never enables billing', () async {
     final calls = <String>[];
     final setup = provisioner(MemoryCheckpoint({...checkpoint(), 'servicesReady': true, 'rulesReady': true}),

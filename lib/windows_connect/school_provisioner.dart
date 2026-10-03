@@ -15,13 +15,53 @@ class SetupActionRequired implements Exception {
 }
 
 class SetupApiError implements Exception {
-  const SetupApiError(this.status, this.service);
+  const SetupApiError(this.status, this.service, {this.reason = '',
+    this.consumerProject = '', this.permission = '', this.method = ''});
   final int status;
-  final String service;
+  final String service, reason, consumerProject, permission, method;
+  static const reasons = {'SERVICE_DISABLED', 'ACCESS_TOKEN_SCOPE_INSUFFICIENT',
+    'IAM_PERMISSION_DENIED', 'PERMISSION_DENIED', 'RESOURCE_EXHAUSTED',
+    'QUOTA_EXCEEDED', 'RATE_LIMIT_EXCEEDED', 'BILLING_DISABLED'};
+  factory SetupApiError.fromGoogle(int status, String service, Object? body, {String method = ''}) {
+    var reason = '', consumer = '', permission = '';
+    try {
+      final value = body is String ? jsonDecode(body) : body;
+      final error = value is Map ? value['error'] : null;
+      for (final detail in error is Map && error['details'] is List ? error['details'] : []) {
+        if (detail is! Map || detail['@type'] != 'type.googleapis.com/google.rpc.ErrorInfo' ||
+            detail['domain'] != 'googleapis.com') continue;
+        if (reasons.contains(detail['reason'])) reason = detail['reason'];
+        final metadata = detail['metadata'];
+        if (metadata is Map) {
+          final project = metadata['consumer'];
+          if (project is String && RegExp(r'^projects/[0-9]{1,30}$').hasMatch(project)) consumer = project;
+          final candidate = metadata['permission'];
+          if (candidate is String && {'resourcemanager.projects.get',
+            'resourcemanager.projects.create', 'serviceusage.services.enable'}.contains(candidate)) permission = candidate;
+        }
+      }
+    } catch (_) {}
+    return SetupApiError(status, service, reason: reason, consumerProject: consumer,
+      permission: permission, method: {'GET', 'POST', 'PATCH', 'PUT'}.contains(method) ? method : '');
+  }
   @override
-  String toString() => status == 401
-      ? 'Google permission expired. Sign in again to continue.'
-      : '$service could not finish (HTTP $status). Check account permissions, service availability and project quota, then retry.';
+  String toString() {
+    if (status == 401) return 'Google permission expired. Sign in again to continue.';
+    if (reason == 'SERVICE_DISABLED') {
+      return 'Google API $service is disabled${consumerProject.isEmpty ? '' : ' in $consumerProject'}. The owner of that Google project must enable this API, then retry. If this is the developer OAuth project, contact the developer; creating a school Firebase project manually is not required.';
+    }
+    if (reason == 'ACCESS_TOKEN_SCOPE_INSUFFICIENT') return 'Google did not grant all required cloud permissions. Reconnect with the same school account and allow the requested permissions.';
+    if ({'RESOURCE_EXHAUSTED', 'QUOTA_EXCEEDED', 'RATE_LIMIT_EXCEEDED'}.contains(reason) || status == 429) return 'Google project/API quota is exhausted. Wait or have the account owner review the quota, then retry the same school setup.';
+    if (reason == 'BILLING_DISABLED') return 'Google requires billing for this operation. Automatic setup stopped; no paid plan or billing account was enabled.';
+    if (status == 403) return 'Google denied $method access to $service${permission.isEmpty ? '' : ' ($permission)'}. Check the school account project-creation permission, Google Cloud terms and organization restrictions, then retry. Existing school data is unchanged.';
+    return '$service could not finish (HTTP $status). Check account permissions, service availability and project quota, then retry.';
+  }
+}
+
+class SetupOperationError extends SetupApiError {
+  SetupOperationError(SetupApiError error) : super(error.status, error.service,
+    reason: error.reason, consumerProject: error.consumerProject,
+    permission: error.permission, method: error.method);
 }
 
 class GoogleSetupApi {
@@ -57,7 +97,7 @@ class GoogleSetupApi {
     if (allowMissing && response.statusCode == 404) return null;
     if (response.statusCode < 200 || response.statusCode >= 300) {
       // Never put Google error bodies, OAuth credentials or password requests in UI/logs.
-      throw SetupApiError(response.statusCode, uri.host);
+      throw SetupApiError.fromGoogle(response.statusCode, uri.host, response.body, method: method);
     }
     if (response.body.trim().isEmpty) return {};
     try {
@@ -71,7 +111,12 @@ class GoogleSetupApi {
     for (var attempt = 0; attempt < 90; attempt++) {
       check();
       if (op['done'] == true) {
-        if (op['error'] != null) throw StateError('Google could not complete this setup step. Check project quota/permissions and retry.');
+        if (op['error'] != null) {
+          final error = op['error'];
+          final code = error is Map ? error['code'] : null;
+          final status = {3: 400, 5: 404, 6: 409, 7: 403, 8: 429, 16: 401}[code] ?? 500;
+          throw SetupOperationError(SetupApiError.fromGoogle(status, host, {'error': error}));
+        }
         return Map<String, dynamic>.from(op['response'] as Map? ?? {});
       }
       final name = op['name']?.toString() ?? '';
@@ -135,26 +180,82 @@ class SchoolProvisioner {
 
   Future<Map<String, dynamic>> ensureProject() async {
     requireSchoolProjectId(project);
-    final url = 'https://cloudresourcemanager.googleapis.com/v1/projects/$project';
-    var cloud = await api.request('GET', url, allowMissing: true);
-    if (cloud == null) {
-      progress('Creating your school’s Google project');
-      await api.request('POST', 'https://cloudresourcemanager.googleapis.com/v1/projects', body: {
-        'projectId': project, 'name': 'Vidya Saarthi School', 'labels': {'vs-setup': data['nonce']},
-      });
-      for (var i = 0; i < 60; i++) {
-        await Future<void>.delayed(const Duration(seconds: 2));
-        cloud = await api.request('GET', url, allowMissing: true);
-        if (cloud?['lifecycleState'] == 'ACTIVE') break;
+    const host = 'cloudresourcemanager.googleapis.com';
+    final url = 'https://$host/v1/projects/$project';
+    Map<String, dynamic>? cloud;
+    if (data['projectNumber'] != null) {
+      // Previously verified ownership: never turn lost access into a new project.
+      cloud = await api.request('GET', url);
+    } else if (data['projectCreateOperation'] == null) {
+      // A get of a not-yet-created project can deny access instead of returning
+      // 404. Search only the caller's accessible projects before creation.
+      final matches = await _pages(Uri.https(host, '/v1/projects',
+        {'filter': 'id:$project'}).toString(), 'projects');
+      final exact = matches.where((p) => p['projectId'] == project).toList();
+      if (exact.length > 1) throw StateError('Google returned conflicting school projects. Setup stopped.');
+      if (exact.isNotEmpty) cloud = exact.single;
+      if (cloud == null) {
+        progress('Creating your school’s Google project');
+        // Keep the same ID on retries. Google rejects duplicate IDs, and only
+        // this checkpoint's ownership marker may ever be adopted.
+        try {
+          final op = (await api.request('POST', 'https://$host/v1/projects', body: {
+            'projectId': project, 'name': 'Vidya Saarthi School', 'labels': {'vs-setup': data['nonce']},
+          }))!;
+          final name = op['name'];
+          if (name is! String || !RegExp(r'^operations/[a-zA-Z0-9_./():-]+$').hasMatch(name) || name.contains('..')) {
+            throw StateError('Google did not return a valid project creation operation. Retry the same school setup.');
+          }
+          data['projectCreateOperation'] = name;
+          await save();
+          cloud = await _waitProjectOperation({...op, 'name': 'v1/$name'});
+        } on SetupApiError catch (e) {
+          if (e.status != 409) rethrow;
+          // A previous interrupted request or a collision may already occupy
+          // this ID. Read it and validate the marker; never replace/relabel it.
+          cloud = await api.request('GET', url);
+        }
       }
     }
-    // Never adopt or rewrite a pre-existing project on a name collision.
-    if (cloud == null || cloud['labels']?['vs-setup'] != data['nonce'] || cloud['lifecycleState'] != 'ACTIVE') {
-      throw StateError('School project ownership marker is missing or creation is still pending. Retry after checking the school Google account.');
+    if (cloud == null) {
+      final name = data['projectCreateOperation'];
+      if (name is! String || !RegExp(r'^operations/[a-zA-Z0-9_./():-]+$').hasMatch(name) || name.contains('..')) {
+        throw StateError('Saved Google operation is invalid. Existing projects were not changed.');
+      }
+      cloud = await _waitProjectOperation({'name': 'v1/$name'});
+    }
+    // Some operations omit the resource in their response. Read it only after
+    // creation has completed, never poll a nonexistent project for permission.
+    if (cloud['projectId'] == null) cloud = await api.request('GET', url);
+    if (cloud == null || (cloud['projectId'] != null && cloud['projectId'] != project) ||
+        cloud['labels']?['vs-setup'] != data['nonce'] || cloud['lifecycleState'] != 'ACTIVE' ||
+        !RegExp(r'^[0-9]+$').hasMatch(cloud['projectNumber']?.toString() ?? '')) {
+      throw StateError('School project ownership marker is missing or creation is still pending. Retry with the same school Google account.');
     }
     data['projectNumber'] = cloud['projectNumber'].toString();
+    data.remove('projectCreateOperation');
     await save();
     return cloud;
+  }
+
+  Future<Map<String, dynamic>> _waitProjectOperation(Map<String, dynamic> op) async {
+    try {
+      return await api.waitOperation('cloudresourcemanager.googleapis.com', op);
+    } on SetupOperationError {
+      // A terminal operation error is safe to retry with the SAME project ID.
+      // Timeouts, cancellation and temporary polling permission errors retain it.
+      data.remove('projectCreateOperation');
+      await save();
+      rethrow;
+    } on SetupApiError catch (error) {
+      if (error.status != 404) rethrow;
+      // Google deletes old operation records. Recover by ownership-checked read.
+      data.remove('projectCreateOperation');
+      await save();
+      return (await api.request('GET',
+        'https://cloudresourcemanager.googleapis.com/v1/projects/$project',
+        allowMissing: true)) ?? {};
+    }
   }
 
   Future<Map<String, dynamic>> firebase() async {
@@ -233,7 +334,9 @@ class SchoolProvisioner {
     final seen = <String>{};
     String? page;
     do {
-      final target = Uri.parse(url).replace(queryParameters: {
+      final base = Uri.parse(url);
+      final target = base.replace(queryParameters: {
+        ...base.queryParameters,
         if (page != null) 'pageToken': page,
       });
       final response = (await api.request('GET', target.toString()))!;

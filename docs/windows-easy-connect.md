@@ -203,3 +203,30 @@ and the official-API/manual-step limitations documented above still apply.
 The review build uses APP_VERSION 2.1.84 to avoid the previous 2.1.79 preview
 prompting testers to install the stable 2.1.84 app. This is only an artifact build;
 no release version or production update metadata is published.
+
+## Project creation HTTP 403 correction
+
+The first school-project lookup previously used `projects.get` before creation
+and treated only 404 as missing. A permission-based get cannot establish that a
+random new project exists. New setups now list accessible projects with an exact
+ID filter, preserve that filter through pagination, and create when no exact
+project is accessible. Saved, verified projects still require a successful get;
+losing access never starts a different school. Every adopted or created project
+requires the saved nonce ownership label, ACTIVE state and a project number.
+
+Project creation uses its returned long-running operation, saves the operation
+before polling, and resumes it after interruption. A terminal quota/permission
+failure permits same-ID retry; an uncertain timeout keeps the saved operation.
+409 collisions require an ownership-checked read and never relabel another project.
+
+The screenshot only contained the old generic 403 text, so its exact Google
+reason cannot be recovered. Structured ErrorInfo is now classified without
+logging response bodies or credentials: disabled API/consumer project, missing
+OAuth scope, IAM permission, quota and billing errors are distinct. An API disabled
+in the developer OAuth project still requires its owner to enable it; Google
+terms, organization restrictions and quotas cannot be bypassed by app code.
+The school is never asked to create API keys or paste secrets.
+
+References: official Resource Manager projects.list, projects.create and
+operations.get API contracts; Google ErrorInfo SERVICE_DISABLED documentation.
+Real Windows consent/provisioning remains necessary after this review build.
