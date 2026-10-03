@@ -48,6 +48,32 @@ function fromEnvironment(env) {
   db.settings({ignoreUndefinedProperties:true});
   const clientIds=(env.SAARTHI_GOOGLE_OAUTH_CLIENT_IDS || env.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID || '').split(',').filter(Boolean);
   if(!clientIds.length) throw new Error('Missing central OAuth audience configuration');
+  // Temporary incident diagnostic: read-only, server-side, no account identifiers/tokens.
+  if(env.RENDER_SERVICE_NAME==='saarthi-oauth-staging') {
+    (async()=>{
+      const recent=await db.collection('platform_schools').orderBy('registeredAt','desc').limit(5).get();
+      const checkpoints=[];
+      for(const doc of recent.docs){
+        if(doc.data().architecture!=='central-v2') continue;
+        const school=await db.doc('schools/'+doc.id).get();
+        const uid=school.data()?.ownerUid;
+        const membership=uid?await db.doc('school_memberships/'+uid).get():null;
+        let firebaseUser=false;
+        if(uid)try{await auth.getUser(uid);firebaseUser=true;}catch(e){if(e.code!=='auth/user-not-found')throw e;}
+        const drive=await db.doc('schools/'+doc.id+'/school_config/drive').get();
+        checkpoints.push({membershipActive:membership?.data()?.active===true,firebaseUser,driveLinked:drive.exists});
+      }
+      console.info(JSON.stringify({event:'central_readonly_checkpoints',checkpoints}));
+      const number=clientIds[0].match(/^(\d+)-/)?.[1];
+      if(number){
+        const token=await app.options.credential.getAccessToken();
+        const r=await fetch('https://serviceusage.googleapis.com/v1/projects/'+number+'/services/drive.googleapis.com',
+          {headers:{Authorization:'Bearer '+token.access_token},signal:AbortSignal.timeout(15000)});
+        const body=await r.json();
+        console.info(JSON.stringify({event:'central_readonly_drive_api',status:r.status,state:['ENABLED','DISABLED'].includes(body.state)?body.state:'UNAVAILABLE',reason:body.error?.details?.find(d=>d['@type']==='type.googleapis.com/google.rpc.ErrorInfo')?.reason?.match(/^[A-Z_]{1,80}$/)?.[0] || 'NONE'}));
+      }
+    })().catch(()=>console.info(JSON.stringify({event:'central_readonly_diagnostic_failed'})));
+  }
   const handle=createSchoolCloud({auth,db,projectId:PROJECT,clientIds,verifyLegacy:async(projectId,token)=>{
     const name='legacy-proof-'+projectId;
     const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
