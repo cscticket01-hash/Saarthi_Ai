@@ -63,9 +63,10 @@ for audience validation; optional additional approved IDs can be supplied via
 The central health check performs read-only Firestore/Auth checks and caches its
 result for 30 seconds; it never creates records or returns credentials.
 
-At the 2026-10-03 staging checkpoint the updated OAuth token/refresh routes are
-live. Credential transfer and the default database rule deployment are blocked
-by automatic approval review pending explicit approval of their exact scope.
-The central endpoint deliberately returns 503 while disabled. Do not present
-the Windows review build as ready for real A/B cloud acceptance until central
-health, rules deployment and compiled endpoint configuration are verified.
+At the 2026-10-03 staging checkpoint OAuth and central health return 200. The
+reviewed default database isolation rules and server credential configuration
+were explicitly approved and completed. The one-time encrypted artifact was
+deleted and temporary workflow/transfer scripts removed. The Windows review
+build compiles the staging endpoint and verifies both public OAuth and central
+configuration. Real Google Sign-in + Drive consent/file checks still require
+Windows acceptance with two permitted OAuth test accounts.
