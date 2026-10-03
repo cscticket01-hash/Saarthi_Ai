@@ -199,8 +199,10 @@ jobs:
           mkdir -p build/web/home build/web/privacy
           cp oauth-public/home/index.html build/web/home/index.html
           cp oauth-public/privacy/index.html build/web/privacy/index.html
+          cp googleb7106cab4c8a4975.html build/web/googleb7106cab4c8a4975.html
           test -f build/web/home/index.html
           test -f build/web/privacy/index.html
+          test -f build/web/googleb7106cab4c8a4975.html
 
       # =========================================================
       # VERIFY BUILD
