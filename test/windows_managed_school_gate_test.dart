@@ -32,7 +32,7 @@ void main(){
     await expectLater(ManagedSchoolSession.reauthenticate('other@school.example','transient-password'),throwsStateError);
   });
   test('ordinary logout retains managed enrollment and school-scoped App Lock', () async {
-    final saved = jsonEncode({'managed': true, 'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'email': 'a@school.example'});
+    final saved = jsonEncode({'managed': true, 'projectId': platformProjectId, 'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'uid': 'school-uid', 'email': 'a@school.example', 'folderId': 'managed', 'firebaseRefreshToken': 'refresh', 'endpoint': 'https://school.example/school-cloud'});
     FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key: saved});
     await WindowsLocalSecurity.initialize();
     await WindowsLocalSecurity.create(adminId: 'School app', password: 'app-only-pass');
