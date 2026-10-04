@@ -97,7 +97,10 @@ class SparkTrialClient {
     if(block.statusCode==200) {
       final date=block.headers['date'];
       if(date==null) throw StateError('Licence server time unavailable');
-      final fields=jsonDecode(block.body)['fields'];
+      dynamic blockDecoded;
+      try { blockDecoded=jsonDecode(block.body); }
+      on FormatException { throw LicenseVerificationRejected('Invalid developer block response'); }
+      final fields=blockDecoded is Map ? blockDecoded['fields'] : null;
       if(fields is Map && fields['blocked']?['booleanValue']==true) {
         return {'schoolId':project,if(licensed) 'licenseHash':licenseHash,
           'serverTime':HttpDate.parse(date).millisecondsSinceEpoch,'expiresAt':0,
