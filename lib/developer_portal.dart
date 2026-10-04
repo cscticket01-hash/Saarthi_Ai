@@ -744,13 +744,13 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                 rows: _licenses
                     .map((l) => DataRow(cells: [
                           DataCell(Text(l['schoolId'].toString())),
-                          DataCell(Text('•••• ${l['keySuffix']}')),
+                          DataCell(Text('•••• ${l['keyHint'] ?? l['keySuffix'] ?? '—'}')),
                           DataCell(_chip(
-                              l['status'] == 'active' &&
+                              l['revoked'] != true &&
                                       (l['expiresAt'] as num) > _now
                                   ? 'Active'
                                   : 'Expired / revoked',
-                              l['status'] == 'active' &&
+                              l['revoked'] != true &&
                                       (l['expiresAt'] as num) > _now
                                   ? _mint
                                   : Colors.orangeAccent)),
