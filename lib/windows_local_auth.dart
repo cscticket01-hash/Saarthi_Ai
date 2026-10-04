@@ -145,7 +145,11 @@ class FirebaseAuth {
   Future<void> signOut() async {
     // Session logout only. Local ID/password secure storage me rehte hain.
     _currentUser = null;
-    if((await CentralSchoolCloud.saved())['managed']==true)await ManagedSchoolSession.logout();
+    // Local logout locks this device; managed enrollment is retained.
+    // Credential revocation/password changes use ManagedSchoolSession.logout.
+    if ((await CentralSchoolCloud.saved())['managed'] == true) {
+      await bootstrapLocalUser();
+    }
   }
 
   Stream<User?> authStateChanges() async* {

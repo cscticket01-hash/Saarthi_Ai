@@ -91,7 +91,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
       routes: {
         '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
         '/admin-setup': (_) => const WindowsAdminSetupScreen(),
-        '/local-login': (_) => const WindowsLocalLoginScreen(),
+        '/local-login': (_) => const WindowsStartupGate(child: WindowsLocalDashboardGate()),
         '/dashboard': (_) => const WindowsLocalDashboardGate(),
       },
       home: WindowsStartupFlow(
@@ -223,9 +223,12 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     }
   }
 
-  void _unlock() {
+  Future<void> _unlock() async {
     final password = _password.text;
     if (WindowsLocalSecurity.verifyPassword(password)) {
+      await WindowsLocalSession.markLoggedIn();
+      await FirebaseAuth.instance.bootstrapLocalUser();
+      if (!mounted) return;
       setState(() {
         _locked = false;
         _error = null;
@@ -412,21 +415,20 @@ class _WindowsGlobalUpdateProgress extends StatelessWidget {
 class WindowsLocalDashboardGate extends StatelessWidget {
   const WindowsLocalDashboardGate({super.key});
 
-  void _primeLocalAdminSession() {
-    final storage = windows_html.window.localStorage;
-    storage['saarthi_portal_role_v1'] = 'admin';
-    storage.remove('saarthi_portal_student_id_v1');
-    storage.remove('saarthi_portal_student_class_v1');
-    storage['saarthi_portal_expiry_v1'] = DateTime.now()
-        .add(const Duration(minutes: 30))
-        .millisecondsSinceEpoch
-        .toString();
-  }
-
   @override
   Widget build(BuildContext context) {
-    _primeLocalAdminSession();
-    return const WindowsAdminAccessGate(child:AdminDashboardScreen());
+    // The device is enrolled centrally; only the independent Admin lock
+    // protects entry into school administration.
+    return Scaffold(
+      appBar: AppBar(title: const Text('Vidya Saarthi')),
+      body: Center(child: FilledButton.icon(
+        icon: const Icon(Icons.admin_panel_settings),
+        label: const Text('Open Admin Panel'),
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => const WindowsAdminAccessGate(child: AdminDashboardScreen()),
+        )),
+      )),
+    );
   }
 }
 

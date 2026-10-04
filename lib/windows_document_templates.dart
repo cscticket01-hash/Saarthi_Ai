@@ -120,8 +120,9 @@ class WindowsDocumentTemplates {
                 Expanded(
                   child: PdfPreview(
                     build: (_) => bytes,
-                    allowPrinting: true,
-                    allowSharing: true,
+                    maxPageWidth: onDownload != null ? 250 : 700,
+                    allowPrinting: onPrint == null,
+                    allowSharing: onDownload == null,
                     canChangePageFormat: false,
                     canChangeOrientation: false,
                   ),

@@ -145,7 +145,11 @@ class CentralSchoolCloud {
       const publicMessages = {'School membership is inactive','Another school is not accessible',
         'Legacy school administrator proof is required','Legacy school is already assigned to another tenant',
         'Drive must belong to the same school Google account','School Drive folder is not accessible',
-        'Drive ownership or school marker is invalid','Verify the existing installation trial first'};
+        'Drive ownership or school marker is invalid','Verify the existing installation trial first',
+        'Update and prepare the managed Apps Script for this School ID',
+        'Script is not prepared for this school',
+        'Developer must connect this school Apps Script first',
+        'Existing storage retained. Developer must approve replacing this school Drive connection'};
       if (uri.toString() == endpoint && publicMessages.contains(errorBody['message'])) detail = ' ${errorBody['message']}.';
       final action = uri.toString() == endpoint && body is Map ? body['action'] : null;
       final actionLabel = {'onboard':'onboarding','status':'identity verification','migration/import':'legacy migration',
