@@ -4684,6 +4684,17 @@ void _handleLoginBack(bool didPop) {
   Future<void> _autoLogoutAdmin() async {
     if (_autoLogoutInProgress) return;
     _autoLogoutInProgress = true;
+    // Managed identity persists; inactivity uses only explicitly enabled local locks.
+    try {
+      if((await CentralSchoolCloud.saved())['managed']==true){
+        await WindowsLocalSecurity.initialize();
+        final locked=WindowsLocalSecurity.configured||await WindowsSectionLocks.enabled(_windowsAdminSectionLock);
+        if(!locked){_touchPortalSession();_sessionSecondsRemaining.value=_portalInactivityLimit.inSeconds;_autoLogoutInProgress=false;return;}
+        _sessionTimer?.cancel();await _sessionClickSubscription?.cancel();_clearPortalSession();
+        if(mounted)Navigator.of(context).pushNamedAndRemoveUntil('/',(route)=>false);
+        return;
+      }
+    }catch(e){debugPrint('Local idle lock verification failed: $e');}
     _sessionTimer?.cancel();
     await _sessionClickSubscription?.cancel();
     _clearPortalSession();
