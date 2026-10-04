@@ -30,6 +30,7 @@ _, text = document('reportCard_term2.pdf')
 assert 'english--84--' in text, 'Term 2 marks must be in the Term 2 column, not Final Grade'
 _, text = document('reportCard_quarter2.pdf')
 assert 'english-84--' in text, 'Quarter 2 marks must not be printed as Quarter 1'
+assert 'overall85.5' in text, 'Selected term total must remain present'
 reader, text = document('receipt_0.pdf')
 for field in ['totalpaid:500', 'totaldue:700', 'amountpaid:500', 'subtotal:1200']:
     assert field in text, f'Incorrect installment receipt: {field}'

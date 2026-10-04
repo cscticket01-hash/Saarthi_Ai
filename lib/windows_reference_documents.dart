@@ -819,7 +819,9 @@ Future<Uint8List> renderWindowsReferenceDocument(
           rows.add([s, ...grades]);
         }
         while (rows.length < 9) rows.add(['', '', '', '', '']);
-        rows.add(['Overall', v('percentage'), '', '', '']);
+        final overall = List<String>.filled(4, '');
+        overall[(currentTerm ?? 1) - 1] = v('percentage');
+        rows.add(['Overall', ...overall]);
         layers.addAll([
           at(68, i == 1 ? 216 : 186, 447, 250,
               table(rows, widths: [2, 1, 1, 1, 1], header: ink, font: 10)),
@@ -910,7 +912,7 @@ Future<Uint8List> renderWindowsReferenceDocument(
             'Teacher',
             'Term 1\nGrade',
             'Term 2\nGrade',
-            data['isFinal'] == false && currentTerm == null ? 'Exam\nGrade' : 'Final\nGrade',
+            currentTerm != null && currentTerm > 2 ? 'Term $currentTerm\nGrade' : data['isFinal'] == false && currentTerm == null ? 'Exam\nGrade' : 'Final\nGrade',
             'Comments'
           ]
         ];
