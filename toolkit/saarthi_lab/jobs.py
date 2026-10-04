@@ -84,12 +84,20 @@ class Job:
         if state not in TERMINAL:
             raise ValueError("Invalid final job status")
         with self.lock:
-            self.state, self.phase, self.ended = state, phase, time.perf_counter()
-        self.directory.mkdir(parents=True, exist_ok=True)
-        report = self.snapshot()
-        pending = self.directory / (self.id + ".pending")
-        pending.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        pending.replace(self.directory / (self.id + ".json"))
+            ended = time.perf_counter()
+            report = self.snapshot()
+            report.update(state=state, phase=phase, duration_seconds=round(ended - self.started, 3))
+            pending = self.directory / (self.id + ".pending")
+            try:
+                self.directory.mkdir(parents=True, exist_ok=True)
+                pending.write_text(json.dumps(report, indent=2), encoding="utf-8")
+                pending.replace(self.directory / (self.id + ".json"))
+            except OSError as error:
+                self.errors.append({"message": "Evidence report could not be saved: " + type(error).__name__})
+                self.state, self.phase, self.ended = "FAIL", "Could not save evidence report", ended
+                return
+            # Publish the final state only after its downloadable evidence exists.
+            self.state, self.phase, self.ended = state, phase, ended
 
     def check(self, name, expected, observed, ok):
         with self.lock:

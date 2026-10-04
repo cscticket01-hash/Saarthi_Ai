@@ -24,7 +24,7 @@ def main():
                 page=browser.new_page(viewport={"width":1440,"height":1100})
                 page.on("pageerror",lambda e:errors.append(str(e)))
                 page.goto(server.origin)
-                page.get_by_text("Student attendance",exact=True).wait_for()
+                page.get_by_label("Select Student attendance",exact=True).wait_for()
                 assert page.locator('#test-rows [data-state="PASS"]').count()==0
                 assert page.locator('#test-rows [data-state="NOT RUN"]').count()==len(SCENARIOS)
                 page.screenshot(path=str(output/"interface-not-run.png"),full_page=True)

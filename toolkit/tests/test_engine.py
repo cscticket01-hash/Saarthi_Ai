@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
 import tempfile
 import threading
 import time
@@ -134,7 +135,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 present=[r for r in b["receipts"] if r in self.server.fees]
                 result.update(matched=len(present),duplicates=0,paidAmount=sum(self.server.fees[r] for r in present))
             else: result.update(success=False,message="Unsupported fixture action")
-            key=str(time.time_ns())
+            key=secrets.token_hex(16)
             self.server.results[key]=result
         self.send_response(303);self.send_header("Location", "/result/"+key);self.send_header("Content-Length","0");self.end_headers()
 
