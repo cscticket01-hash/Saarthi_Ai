@@ -763,6 +763,15 @@ class WindowsSyncEngine {
     return hash;
   }
 
+  Future<void> prepareDriveBackup() async {
+    final profile=FirebaseFirestore.instance.activeProfileId;
+    final until=DateTime.now().add(const Duration(seconds:90));
+    while(_syncing||_activating>0){if(DateTime.now().isAfter(until))throw StateError('School sync is busy; retry Drive backup.');await Future<void>.delayed(const Duration(milliseconds:50));}
+    if(_syncBlocked||_resetPaused||FirebaseFirestore.instance.activeProfileId!=profile)throw StateError('Resolve school sync before creating a Drive backup.');
+    await syncNow();
+    if(lastError!=null||FirebaseFirestore.instance.activeProfileId!=profile)throw StateError('School sync did not complete; retry Drive backup.');
+  }
+
   Future<void> syncNow() async {
     if (_syncing || _activating > 0 || _syncBlocked || _resetPaused) return;
 

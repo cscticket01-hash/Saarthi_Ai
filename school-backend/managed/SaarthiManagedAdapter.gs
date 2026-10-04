@@ -74,9 +74,22 @@ function VS_managedFile(id) {
   function own(folder){if(folder.getId()===root)return true;if(seen[folder.getId()])return false;seen[folder.getId()]=true;const parents=folder.getParents();while(parents.hasNext())if(own(parents.next()))return true;return false;}
   const parents=file.getParents();while(parents.hasNext())if(own(parents.next()))return file;throw new Error('Foreign school file');
 }
+function VS_managedConnect(b) {
+  const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
+  if(!school||b.schoolId!==school||!/^[a-f0-9]{64}$/.test(b.ticket||''))throw new Error('School storage connection rejected');
+  VS_managedRoot();
+  // Fixed trusted broker. Never accept a caller-supplied URL or Firebase token.
+  const response=UrlFetchApp.fetch('https://saarthi-oauth-staging.onrender.com/school-cloud',{method:'post',contentType:'application/json',payload:JSON.stringify({action:'managed/storage/authorize',schoolId:school,ticket:b.ticket}),muteHttpExceptions:true});
+  const authorization=JSON.parse(response.getContentText());
+  if(response.getResponseCode()!==200||authorization.success!==true||authorization.schoolId!==school)throw new Error('Connection ticket rejected');
+  const secret=p.getProperty('VS_MANAGED_SECRET');if(!/^[a-f0-9]{64}$/.test(secret||''))throw new Error('Managed storage not prepared');
+  return jsonResponse({success:true,schoolId:school,storageReady:true,connectionSecret:secret});
+}
 function VS_managedHandle(e) {
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
   try {
+    const request=JSON.parse(e.postData.contents);
+    if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);let result;
     if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}

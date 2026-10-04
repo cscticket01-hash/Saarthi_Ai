@@ -113,7 +113,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF172229),
           title: const Text(
-            'Local Settings Lock',
+            'App Lock',
             style: TextStyle(color: Colors.white),
           ),
           content: SizedBox(
@@ -181,7 +181,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF172229),
           title: const Text(
-            'Change Local ID / Password',
+            'Set / Change App Lock',
             style: TextStyle(color: Colors.white),
           ),
           content: SizedBox(
@@ -437,7 +437,11 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
 
     return Column(
       children: [
-        if (widget.showLocalLock) (_managed?SchoolPasswordPanel(change:ManagedSchoolSession.changePassword):_localLockCard()),
+        if (widget.showLocalLock) ...[
+          if(_managed)SchoolPasswordPanel(change:ManagedSchoolSession.changePassword),
+          if(_managed)const SizedBox(height:14),
+          _localLockCard(),
+        ],
         if (widget.showLocalLock && widget.showFirebase)
           const SizedBox(height: 14),
         if (widget.showFirebase) _firebaseCard(),
@@ -455,7 +459,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
               Icon(Icons.lock_rounded, color: Color(0xFF00D9A5)),
               SizedBox(width: 9),
               Text(
-                'Local Settings Lock',
+                'App Lock',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 16,
@@ -471,14 +475,18 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Ye ID/Password isi Windows PC ke protected settings aur Local Logout/Login ke liye hai. Firebase se koi relation nahi.',
+            'App kholne ka local password. School Login aur Admin Section Lock se alag hai.',
             style: TextStyle(color: Colors.white38, fontSize: 10.5, height: 1.4),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: _changeLock,
             icon: const Icon(Icons.manage_accounts_rounded, size: 18),
-            label: const Text('Change Local ID / Password'),
+            label: const Text('Set / Change App Lock'),
+          ),
+          if(WindowsLocalSecurity.configured)TextButton(
+            onPressed:()async{if(!await _unlock())return;await WindowsLocalSecurity.clearAppLock();await FirebaseAuth.instance.refreshLocalUser();if(mounted)setState((){});},
+            child:const Text('Disable App Lock'),
           ),
         ],
       ),

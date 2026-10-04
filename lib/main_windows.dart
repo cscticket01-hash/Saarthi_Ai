@@ -162,7 +162,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
         ),
       );
     }
-    if(_managed) return _setupDone ? const WindowsLocalDashboardGate() : const WindowsAdminSetupScreen();
+    if(_managed) return _setupDone ? const WindowsStartupGate(child:WindowsLocalDashboardGate()) : const WindowsAdminSetupScreen();
     // Fresh install: local-first Admin Setup before the dashboard.
     if (!_setupDone && !WindowsLocalSecurity.configured) {
       return const WindowsAdminSetupScreen();
@@ -426,7 +426,7 @@ class WindowsLocalDashboardGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     _primeLocalAdminSession();
-    return const AdminDashboardScreen();
+    return const WindowsAdminAccessGate(child:AdminDashboardScreen());
   }
 }
 

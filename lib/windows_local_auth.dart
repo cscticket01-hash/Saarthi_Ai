@@ -96,6 +96,8 @@ class FirebaseAuth {
 
   Future<void> bootstrapLocalUser() async {
     await WindowsLocalSecurity.initialize();
+    final managed=await CentralSchoolCloud.saved();
+    if(managed['managed']==true){useManagedIdentity(managed['email']);return;}
 
     if (WindowsLocalSecurity.configured) {
       _currentUser = User(
