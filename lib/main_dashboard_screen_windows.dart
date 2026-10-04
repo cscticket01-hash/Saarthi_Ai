@@ -13,6 +13,7 @@ import 'windows_school_operations.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
+import 'windows_save_pdf.dart';
 import 'windows_platform_client.dart';
 import 'dart:io';
 import 'dart:math';
@@ -1538,7 +1539,7 @@ Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<W
       }));
 Future<void> _windowsConfirmLogout(BuildContext context) async {
   final confirmed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-    title: const Text('Logout Admin?'), content: const Text('Logout karne ke baad School Login screen dikhegi.'),
+    title: const Text('Logout Admin?'), content: const Text('Logout karne ke baad App Lock dikhega.'),
     actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
       FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Logout'))]));
   if (confirmed != true) return;
@@ -5534,38 +5535,19 @@ Future<void> _downloadIdCard() async {
           '_',
         );
 
-    final blob = html.Blob(
-      [pdfBytes],
-      'application/pdf',
-    );
-
-    final url =
-        html.Url.createObjectUrlFromBlob(blob);
-
-    final anchor =
-        html.AnchorElement(href: url)
-          ..setAttribute(
-            'download',
-            'Vidya_Saarthi_ID_Card_${safeName}_Roll_$roll.pdf',
-          )
-          ..style.display = 'none';
-
-    html.document.body?.children.add(anchor);
-
-    anchor.click();
-    anchor.remove();
-
-    html.Url.revokeObjectUrl(url);
+    final savedPath = await WindowsSavePdf.save(
+      pdfBytes, 'Vidya_Saarthi_ID_Card_${safeName}_Roll_$roll.pdf');
+    if (savedPath == null) return;
 
     if (!mounted) return;
 
     ScaffoldMessenger.of(context)
         .showSnackBar(
-      const SnackBar(
+      SnackBar(
         backgroundColor:
             Color(0xFF00A884),
         content: Text(
-          'Student ID Card PDF download ho gaya.',
+          'Student ID Card PDF saved: $savedPath',
         ),
       ),
     );
@@ -5651,7 +5633,7 @@ Future<void> _printIdCard() async {
           ],
         ),
         content: const Text(
-          'Logout karne ke baad School Login screen dikhegi.',
+          'Logout karne ke baad App Lock dikhega.',
           style: TextStyle(color: Colors.white70),
         ),
         actions: [

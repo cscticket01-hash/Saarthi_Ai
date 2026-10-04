@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_managed_school_gate.dart';
 import '../lib/main_dashboard_screen_windows.dart' show WindowsSectionLocks,WindowsAdminAccessGate;
 import '../lib/windows_local_settings.dart';
+import '../lib/windows_local_auth.dart' as local;
 import '../lib/windows_connect/managed_school_session.dart';
 void main(){
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +30,16 @@ void main(){
     expect(hosts,['identitytoolkit.googleapis.com','school.example']);
     expect(await const FlutterSecureStorage().read(key:CentralSchoolCloud.key),encoded);
     await expectLater(ManagedSchoolSession.reauthenticate('other@school.example','transient-password'),throwsStateError);
+  });
+  test('ordinary logout retains managed enrollment and school-scoped App Lock', () async {
+    final saved = jsonEncode({'managed': true, 'projectId': platformProjectId, 'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'uid': 'school-uid', 'email': 'a@school.example', 'folderId': 'managed', 'firebaseRefreshToken': 'refresh', 'endpoint': 'https://school.example/school-cloud'});
+    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key: saved});
+    await WindowsLocalSecurity.initialize();
+    await WindowsLocalSecurity.create(adminId: 'School app', password: 'app-only-pass');
+    await local.FirebaseAuth.instance.signOut();
+    expect(await const FlutterSecureStorage().read(key: CentralSchoolCloud.key), saved);
+    expect(WindowsLocalSecurity.verifyPassword('app-only-pass'), true);
+    expect(local.FirebaseAuth.instance.currentUser?.email, 'a@school.example');
   });
   test('managed App Lock and Admin Section Lock use independent school-scoped credentials',()async{
     const a='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',b='vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';

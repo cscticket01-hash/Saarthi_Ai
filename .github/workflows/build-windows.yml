@@ -1,6 +1,4 @@
-# Approved Windows UX/GS release; review run 37220526657 passed.
-# Approved live release: application checks passed at 2f1237d (run 37194674833).
-# Release approved after all checks passed in Actions run 37178553268.
+# Approved Windows release: source 5f3789c passed all five jobs in run 37228712896.
 name: Build Vidya Saarthi Windows Admin
 
 on:
@@ -186,7 +184,7 @@ jobs:
         run: |
           flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true
           if ($LASTEXITCODE -ne 0) { throw 'Release cloud configuration verification failed.' }
-          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
+          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed.' }
 
       - name: Verify reference PDF contents and continuation pages
@@ -347,11 +345,13 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
-            Windows restores the authenticated school session and keeps App Lock independent from Admin Section Lock. Managed inactivity uses enabled local locks instead of signing out the school account.
-            Removes duplicate School Cloud connection screens and the trial banner Sign out action. Reduces unnecessary rebuilds and disables login input suggestions/autocorrection.
-            Advanced Settings verifies a pasted school-managed Apps Script URL using a server-issued one-use ticket and School ID/HMAC checks, with real Drive backup. Existing school GS deployments require the updated managed adapter/manifest while retaining their School ID, secret and Drive root.
-            Preserves school records, existing local/offline storage, licence isolation and document designs. Real Windows typing/restart/lock and school-owned GS backup acceptance remain pending.
+            Normal Windows logout retains school enrollment and opens the enabled App Lock. The independent Admin lock is checked only at Admin entry. Server school login, licence/block checks and School A/B isolation remain enforced.
+            Student ID preview fits the full card to the resized window without changing designs. PDF download uses native Save As, reports the saved path only after writing and handles cancellation without false success.
+            Includes the combined per-school GS code, manifest and manual deployment guide. Existing School IDs, Drive roots, secrets, records and offline storage are preserved. The school owner must update/authorize the actual GS deployment; this release does not update a school's live script automatically. Real Drive backup/restore and native PC acceptance remain pending.
           generate_release_notes: true
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
             build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
+            school-backend/managed/SaarthiManagedAll.gs
+            school-backend/managed/appsscript.json
+            docs/manual-school-drive-setup.md

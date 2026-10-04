@@ -61,3 +61,8 @@ test('managed GPS attendance keeps school-selected 25–200m range and rejects m
  assert.equal(mobile(attendance).success,false);assert.equal(mobile({...attendance,accuracy:100}).success,false);assert.equal(mobile({...attendance,latitude:1,accuracy:5}).success,false);
  assert.equal(mobile({...attendance,accuracy:5}).success,true);assert.equal(mobile({...attendance,accuracy:5}).success,false);
 });
+test('generated school bundle retains managed mobile, summary and preparation implementations',()=>{
+ const bundle=fs.readFileSync('../school-backend/managed/SaarthiManagedAll.gs','utf8');
+ for(const source of ['SaarthiManagedAdapter.gs','SaarthiManagedMobile.gs'])assert(bundle.includes(fs.readFileSync('../school-backend/managed/'+source,'utf8')));
+ assert.match(bundle,/function VS_prepareSchoolStorage\(/);assert.match(bundle,/function VS_managedMobile\(/);assert.match(bundle,/function VS_managedSummary\(/);
+});

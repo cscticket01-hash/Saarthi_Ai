@@ -2,6 +2,27 @@
  * No Firebase project/key/password required. Run VS_setupManagedSchool once.
  * Existing legacy sheets/files remain untouched; do not rebind existing roots.
  */
+// Operator configuration: set only for a NEW school deployment.
+// Existing deployments keep their stored School ID, root and secret.
+const VS_SETUP_SCHOOL_ID = '';
+const VS_SETUP_CREATE_NEW_STORAGE = false;
+
+/** Select this no-argument function in the Apps Script editor and Run once.
+ * Returns no connection secret. Windows pairs using only the deployed /exec URL.
+ */
+function VS_prepareSchoolStorage() {
+  const p = PropertiesService.getScriptProperties();
+  const existing = p.getProperty('VS_MANAGED_SCHOOL_ID');
+  const configured = VS_SETUP_SCHOOL_ID.trim();
+  const schoolId = configured || existing;
+  if (!schoolId) throw new Error('Set VS_SETUP_SCHOOL_ID to the School ID from the developer website');
+  if (existing && configured && existing !== configured) throw new Error('School rebinding is blocked');
+  if (existing && !p.getProperty('VS_MANAGED_ROOT_ID')) throw new Error('Existing school root is missing; developer recovery required');
+  VS_setupManagedSchool(schoolId, {startEmpty: !existing && VS_SETUP_CREATE_NEW_STORAGE === true});
+  VS_managedRoot();
+  return {success: true, schoolId: schoolId, storageReady: true};
+}
+
 function VS_setupManagedSchool(schoolId, options) {
   options = options || {};
   if (!/^vs-[a-f0-9]{32}$/.test(schoolId)) throw new Error('Use School ID from developer website');
