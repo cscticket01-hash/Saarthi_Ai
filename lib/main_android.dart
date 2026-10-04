@@ -298,7 +298,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
     super.initState();
     _load();
     _presence();
-    _timer = Timer.periodic(const Duration(minutes: 5), (_) => _presence());
+    _timer = Timer.periodic(const Duration(seconds:30), (_) => _presence());
     _noticeOpened=SchoolNotifications.opened.listen((_)=>_load());
     _noticeReceived=FirebaseMessaging.onMessage.listen((m){
       if(SchoolNotifications.belongsToSession(m.data,_s.link?.projectId)) _load();
@@ -317,9 +317,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
     try {
       final d =
           await _s.platformCall('mobile/heartbeat', {'fcmToken': token ?? ''});
-      if (mounted) setState(() => _blocked = d['allowed'] != true);
+      if (mounted) {final recovering=_blocked;setState((){_blocked=d['allowed']!=true;_error=null;});if(recovering&&!_blocked)await _load();}
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState((){_blocked=true;_error='Unable to connect. School Windows app is offline or unavailable.';});
     }
   }
 
@@ -418,7 +418,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
         'linkToken': qr.linkToken,
         'mode': _attendanceMode,
         'latitude': position.latitude,
-        'longitude': position.longitude
+        'longitude': position.longitude,
+        'accuracy': position.accuracy
       });
       if (mounted)
         ScaffoldMessenger.of(context)
@@ -854,7 +855,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
                 child: Padding(
                     padding: EdgeInsets.all(28),
                     child: Text(
-                        'Your school trial or licence has ended. Please contact your school.',
+                        'Unable to connect. Please check with your school; its Windows app, connection or licence is unavailable.',
                         textAlign: TextAlign.center)))
             : RefreshIndicator(
                 onRefresh: _load,

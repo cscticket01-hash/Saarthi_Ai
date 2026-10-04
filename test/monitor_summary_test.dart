@@ -12,6 +12,13 @@ void main() {
     expect(result['studentAppUsers'],30000);expect(result['onlineStudents'],300);
     expect(result['purchasedSchools'],10);expect(result['expiringSchools'],10);
   });
+  test('managed school status uses Windows heartbeat and ignores future or disabled timestamps',(){
+    const now=1800000000000;
+    expect(schoolOnline({'managed':true,'lastSeenAt':now-90000},now),true);
+    expect(schoolOnline({'managed':true,'lastSeenAt':now-90001},now),false);
+    expect(schoolOnline({'managed':true,'lastSeenAt':now+1},now),false);
+    expect(schoolOnline({'managed':true,'lastSeenAt':now,'blocked':true},now),false);
+  });
   test('stale summaries clear online counts and separate inactive and expired schools', () {
     const now=1800000000000;
     final result=monitorSummary([

@@ -1,3 +1,6 @@
+import 'school_password_panel.dart';
+import 'windows_connect/managed_school_session.dart';
+import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 import 'dart:io';
 
@@ -35,6 +38,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
   final _firebaseEmail = TextEditingController();
   final _firebasePassword = TextEditingController();
 
+  bool _managed=false;
   bool _loading = true;
   bool _firebaseBusy = false;
   bool _disconnectBusy = false;
@@ -56,6 +60,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
   }
 
   Future<void> _load() async {
+    _managed=(await CentralSchoolCloud.saved())['managed']==true;
     if (!widget.showFirebase) {
       if (mounted) setState(() => _loading = false);
       return;
@@ -432,7 +437,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
 
     return Column(
       children: [
-        if (widget.showLocalLock) _localLockCard(),
+        if (widget.showLocalLock) (_managed?SchoolPasswordPanel(change:ManagedSchoolSession.changePassword):_localLockCard()),
         if (widget.showLocalLock && widget.showFirebase)
           const SizedBox(height: 14),
         if (widget.showFirebase) _firebaseCard(),

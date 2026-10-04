@@ -4,7 +4,7 @@ const {randomUUID}=require('node:crypto');
 const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic']);
 const PROJECT = 'saarthi-ai-df12b';
 function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.info(JSON.stringify(entry))}) {
-  let windowStart=Date.now(), requests=0;
+  let windowStart=Date.now(), requests=0,anonymousRequests=0;
   let healthCache;
   return async (req,res) => {
     res.setHeader('Cache-Control','no-store');
@@ -22,8 +22,8 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
     if(req.method==='OPTIONS' && req.url==='/school-cloud'){
       res.setHeader('Access-Control-Allow-Methods','POST');res.setHeader('Access-Control-Allow-Headers','Authorization,Content-Type');res.writeHead(204);return res.end();
     }
-    if(Date.now()-windowStart>=60000){windowStart=Date.now();requests=0;}
-    if(++requests>120) return send(429,{success:false,message:'Retry school setup shortly'});
+    if(Date.now()-windowStart>=60000){windowStart=Date.now();requests=0;anonymousRequests=0;}
+    if(++requests>6000 || !req.headers.authorization&&++anonymousRequests>1200) return send(429,{success:false,message:'Retry school setup shortly'});
     if(req.method==='GET' && req.url==='/school-cloud/healthz'){
       try{
         if(!healthCache || Date.now()-healthCache.at>30000){await health();healthCache={at:Date.now()};}

@@ -6,7 +6,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')
+    if: (github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[android-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')))
     name: Build Release APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -823,6 +823,7 @@ jobs:
   push:
     branches:
     - main
+    - windows/easy-connect-draft
     # Deployment-only fixes must not cancel or rebuild a completed app release.
     # Standalone release-workflow edits can be verified with workflow_dispatch.
     paths:
@@ -834,4 +835,5 @@ jobs:
     - '.github/android/**'
     - '.github/scripts/configure_android_*.py'
     - '.github/scripts/configure_school_messaging.py'
+    - '.github/workflows/build-apk.yml'
   workflow_dispatch: null

@@ -345,9 +345,9 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
-            Windows reference document update: four teacher ID front/back designs, four report card designs and the school receipt. Uses actual school data, photo, logo and principal signature, with vector artwork and no reference watermarks. Preserves the existing student ID designs and school-selected 25-200m attendance range.
-            Preserves existing school data, the shared Firebase school isolation and each school's own Google Drive backup/restore.
-            Google access for new external accounts remains subject to Google's pending OAuth verification.
+            Central Firebase school login using developer-created credentials, five-day trial and licence activation. Expired or blocked schools cannot continue normal operations. Includes school password change and school-scoped local storage.
+            Preserves existing document designs and school data. Existing schools need a managed account and reviewed storage connection before using this login flow; legacy records are retained, not automatically migrated.
+            Per-school Drive/Apps Script requires the managed script deployment with the existing school ID, secret and Drive root. Real school backup/restore acceptance remains pending. Google OAuth verification requirements still apply.
           generate_release_notes: true
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe

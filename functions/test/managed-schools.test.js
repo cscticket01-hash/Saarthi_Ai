@@ -22,3 +22,34 @@ test('GS signed request rejects foreign school, tampering, stale request and rep
 test('GS private file ancestry refuses another school root even with a valid file ID',()=>{const own={getId:()=>A,getDescription:()=> 'VIDYA_MANAGED_SCHOOL:'+A},foreign={getId:()=>B,getParents:()=>({hasNext:()=>false})};const files={own:{getParents:()=>({hasNext:()=>true,next:()=>own})},foreign:{getParents:()=>{let n=0;return {hasNext:()=>n++===0,next:()=>foreign}}}};const c=vm.createContext({PropertiesService:{getScriptProperties:()=>({getProperty:k=>k==='VS_MANAGED_SCHOOL_ID'?A:'root'})},DriveApp:{getFolderById:()=>own,getFileById:id=>files[id]},Error});vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),c);assert.equal(c.VS_managedFile('own'),files.own);assert.throws(()=>c.VS_managedFile('foreign'),/Foreign school/);});
 
 test('concurrent block or licence rotation cannot be overwritten by activation',async()=>{for(const change of ['block','rotate']){const f=fixture();const issued=await f.call({action:'developer/managed/licence',schoolId:A,days:30,paid:true},'developer');const transaction=f.db.runTransaction;f.db.runTransaction=async fn=>{const e=f.docs.get('school_entitlements/'+A);if(change==='block')e.blocked=true;else e.licenseHash='replacement';return transaction(fn);};await assert.rejects(f.call({action:'managed/licence/activate',key:issued.key}),e=>e.status===403);const e=f.docs.get('school_entitlements/'+A);assert.equal(e.activated,false);if(change==='block')assert.equal(e.blocked,true);else assert.equal(e.licenseHash,'replacement');}});
+
+test('developer sets initial password only in Firebase Auth; response and Firestore never expose it',async()=>{
+ const f=fixture(),password='Initial-School-Password-2026';
+ const r=await f.call({action:'developer/managed/create',email:'new@school.example',schoolName:'New School',password},'developer');
+ assert.equal(f.users.get('new').password,password);assert.equal(r.password,undefined);assert.equal(r.passwordSetupLink,undefined);
+ assert(!JSON.stringify([...f.docs.values()]).includes(password));
+ await assert.rejects(f.call({action:'developer/managed/create',email:'bad@school.example',schoolName:'Bad',password:'short'},'developer'),e=>e.status===400);
+});
+test('delete archives and disables only the selected account and retains school Drive and data',async()=>{
+ const f=fixture();f.docs.set('schools/'+A,{schoolName:'School A'});const storage=f.docs.get('school_storage_private/'+A);
+ await f.call({action:'developer/managed/delete',schoolId:A},'developer');
+ assert.equal(f.users.get('A').disabled,true);assert.equal(f.docs.get('school_memberships/A').active,false);assert.equal(f.docs.get('platform_schools/'+A).deletedAt,time);
+ assert.equal(f.docs.get('school_storage_private/'+A),storage);assert(f.docs.has('schools/'+A));assert.equal(f.docs.get('school_memberships/B').active,true);
+ await assert.rejects(f.call({action:'managed/session'}),e=>e.status===401||e.status===403);
+});
+test('mobile cannot access Drive when Windows is offline, school is blocked, trial expires, or licence is revoked',async()=>{
+ for(const mode of ['offline','blocked','expiry','revoked']){const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=mode==='offline'?time-90001:time;
+ const e=f.docs.get('school_entitlements/'+A);if(mode==='blocked')e.blocked=true;if(mode==='expiry')e.expiresAt=time;if(mode==='revoked'){e.status='licensed';e.activated=true;e.licenseHash='revoked';}
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:'test'}}));assert.equal(f.sent.length,0);}
+});
+test('student forwarding signs the selected school and never renews Windows presence',async()=>{
+ const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=time-1000;
+ await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_heartbeat',schoolId:B,sessionToken:'test'}});
+ const envelope=JSON.parse(f.sent[0].opt.body),payload=JSON.parse(envelope.payload);assert.equal(envelope.schoolId,A);assert.equal(payload.lease.schoolId,A);assert.equal(f.docs.get('platform_schools/'+A).lastSeenAt,time-1000);
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'managed_records'}}),e=>e.status===400);
+});
+test('disconnect sets only the authenticated school offline and cannot target another school',async()=>{
+ const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=time;f.docs.get('platform_schools/'+B).lastSeenAt=time;
+ await assert.rejects(f.call({action:'managed/disconnect',schoolId:B}),e=>e.status===403);await f.call({action:'managed/disconnect'});
+ assert.equal(f.docs.get('platform_schools/'+A).lastSeenAt,0);assert.equal(f.docs.get('platform_schools/'+B).lastSeenAt,time);
+});

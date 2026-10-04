@@ -38,7 +38,21 @@ class ManagedSchoolSession {
       if(session['uid']!=saved['uid']||session['schoolId']!=saved['schoolId'])throw StateError('School authentication mapping changed.');
     }finally{cloud.close();}
   }
+  static Future<void> changePassword(String current,String next) async {
+    if(next.length<12||next.length>128)throw const FormatException('Use 12–128 characters for the new password.');
+    final saved=await CentralSchoolCloud.saved();
+    final cloud=CentralSchoolCloud(endpoint:saved['endpoint']);
+    try {
+      final auth=await cloud.send('POST',Uri.https('identitytoolkit.googleapis.com','/v1/accounts:signInWithPassword',{'key':platformApiKey}),body:{'email':saved['email'],'password':current,'returnSecureToken':true});
+      if(auth['localId']!=saved['uid'])throw StateError('School identity changed.');
+      await cloud.api({'action':'managed/session','schoolId':saved['schoolId']},token:auth['idToken']);
+      await cloud.send('POST',Uri.https('identitytoolkit.googleapis.com','/v1/accounts:update',{'key':platformApiKey}),body:{'idToken':auth['idToken'],'password':next,'returnSecureToken':true});
+    } finally {cloud.close();}
+    await logout(); // Password change revokes old Firebase tokens; require fresh login.
+  }
   static Future<void> logout() async {
+    try {await call('managed/disconnect').timeout(const Duration(seconds:5));}catch(_){}
+
     await const FlutterSecureStorage().delete(key:CentralSchoolCloud.key);changed.value++;
   }
 }

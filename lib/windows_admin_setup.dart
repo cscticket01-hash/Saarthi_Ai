@@ -1,3 +1,5 @@
+import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -25,10 +27,11 @@ class WindowsAdminSetup {
     }
     return File(
       '$base${Platform.pathSeparator}VidyaSaarthi${Platform.pathSeparator}'
-      '$fileVersion.json',
+      '$fileVersion${_managedSchool.isEmpty?'':'_$_managedSchool'}.json',
     );
   }
 
+  static String _managedSchool='';
   static Map<String, dynamic> _data = const {};
   static bool? _cachedCompleted;
 
@@ -37,6 +40,7 @@ class WindowsAdminSetup {
   static bool? completedOverride;
 
   static Future<Map<String, dynamic>> read() async {
+    final saved=await CentralSchoolCloud.saved();_managedSchool=saved['managed']==true?saved['schoolId']:'';
     try {
       final text = await _file.readAsString();
       _data = Map<String, dynamic>.from(jsonDecode(text));
@@ -52,15 +56,15 @@ class WindowsAdminSetup {
   /// users are therefore never forced through this page again.
   static Future<bool> completed() async {
     if (completedOverride != null) return completedOverride!;
-    if (_cachedCompleted == true && WindowsLocalSecurity.configured) return true;
+    if (_cachedCompleted == true && WindowsLocalSecurity.configured && (await CentralSchoolCloud.saved())['managed']!=true) return true;
     final data = await read();
     final basic = (data['schoolName']?.toString().isNotEmpty ?? false) &&
         (data['principalName']?.toString().isNotEmpty ?? false);
-    if (basic && WindowsLocalSecurity.configured) {
+    if (basic && (WindowsLocalSecurity.configured || (await CentralSchoolCloud.saved())['managed']==true)) {
       _cachedCompleted = true;
       return true;
     }
-    if (WindowsLocalSecurity.configured) {
+    if (WindowsLocalSecurity.configured && (await CentralSchoolCloud.saved())['managed']!=true) {
       _cachedCompleted = true;
       return true;
     }
@@ -86,6 +90,10 @@ class WindowsAdminSetup {
     if (principal.length < 2) {
       throw const FormatException('Principal Name is required.');
     }
+    final saved=await CentralSchoolCloud.saved();final managed=saved['managed']==true;_managedSchool=managed?saved['schoolId']:'';
+    final targetFile=_file;
+    final brandingRef=FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache');
+    if(managed){await ManagedSchoolSession.reauthenticate(saved['email'],adminPassword);if((await CentralSchoolCloud.saved())['schoolId']!=saved['schoolId'])throw StateError('School changed. Sign in and retry.');}
     if (adminPassword.length < 6) {
       throw const FormatException(
           'Admin Password must be at least 6 characters.');
@@ -101,10 +109,11 @@ class WindowsAdminSetup {
     };
     // Persist locally first so the app works fully offline.
     try {
-      await _file.parent.create(recursive: true);
-      final tmp = File('${_file.path}.tmp');
+      await targetFile.parent.create(recursive: true);
+      final tmp = File('${targetFile.path}.tmp');
       await tmp.writeAsString(jsonEncode(map), flush: true);
-      await tmp.rename(_file.path);
+      await tmp.rename(targetFile.path);
+      if(managed&&(await CentralSchoolCloud.saved())['schoolId']!=saved['schoolId'])throw StateError('School changed. Registration remains scoped to its original school.');
       _data = map;
     } catch (e) {
       throw StateError('Could not save the setup on this PC: $e');
@@ -112,10 +121,7 @@ class WindowsAdminSetup {
     // Mirror into the same local cache document the dashboard branding uses,
     // best-effort and strictly offline (local Firestore store).
     try {
-      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => FirebaseFirestore.instance
-          .collection('school_config')
-          .doc('school_profile_cache')
-          .set({
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => brandingRef.set({
         'schoolName': name,
         'principalName': principal,
         'logoUrl': map['logoUrl'],
@@ -124,6 +130,7 @@ class WindowsAdminSetup {
       }, SetOptions(merge: true)));
     } catch (_) {}
     // Reuse the existing local security lock with the entered password.
+    if(managed){await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;return;}
     if (!WindowsLocalSecurity.configured) {
       await WindowsLocalSecurity.create(
         adminId: 'Local Administrator',
@@ -168,6 +175,7 @@ class _WindowsAdminSetupScreenState extends State<WindowsAdminSetupScreen> {
   final _principal = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
+  final _licence = TextEditingController();
   String? _logoPath, _sealPath, _signaturePath;
   bool _busy = false, _obscure = true;
   String? _error;
@@ -178,6 +186,7 @@ class _WindowsAdminSetupScreenState extends State<WindowsAdminSetupScreen> {
     _principal.dispose();
     _password.dispose();
     _confirm.dispose();
+    _licence.dispose();
     super.dispose();
   }
 
@@ -241,6 +250,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
       _error = null;
     });
     try {
+      if(_licence.text.trim().isNotEmpty)await ManagedSchoolSession.call('managed/licence/activate',{'key':_licence.text.trim()});
       await WindowsAdminSetup.save(
         schoolName: _school.text,
         principalName: _principal.text,
@@ -249,6 +259,8 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         sealPath: _sealPath,
         signaturePath: _signaturePath,
       );
+      if (!mounted) return;
+      if((await CentralSchoolCloud.saved())['managed']==true)ManagedSchoolSession.changed.value++;
       if (!mounted) return;
       if (widget.onFinished != null) {
         widget.onFinished!();
@@ -295,18 +307,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.account_balance_rounded,
-                      size: 52, color: Colors.orangeAccent),
-                  const SizedBox(height: 14),
-                  const Text('Admin Setup',
-                      textAlign: TextAlign.center,
-                      style:
-                          TextStyle(fontSize: 25, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  const Text(
-                      'Saved on this PC only. No Firebase, cloud or school connection is needed.',
-                      textAlign: TextAlign.center),
-                  const SizedBox(height: 22),
+
                   TextField(
                     controller: _school,
                     decoration: const InputDecoration(
@@ -325,7 +326,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                     controller: _password,
                     obscureText: _obscure,
                     decoration: InputDecoration(
-                      labelText: 'Admin Password *',
+                      labelText: 'Current School Password *',
                       border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                           onPressed: () =>
@@ -340,9 +341,11 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                     controller: _confirm,
                     obscureText: _obscure,
                     decoration: const InputDecoration(
-                        labelText: 'Confirm Admin Password *',
+                        labelText: 'Confirm Password *',
                         border: OutlineInputBorder()),
                   ),
+                  const SizedBox(height: 12),
+                  TextField(controller:_licence,decoration:const InputDecoration(labelText:'Licence Key (optional during five-day trial)',border:OutlineInputBorder())),
                   const SizedBox(height: 16),
                   _imageTile('School Logo', _logoPath, 0),
                   _imageTile('School Seal', _sealPath, 1),

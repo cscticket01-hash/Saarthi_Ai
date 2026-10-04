@@ -38,8 +38,7 @@ class DeveloperService {
     if(action=='school/block'||action=='school/delete'||action=='license/issue'){
       final id=body['schoolId']?.toString()??'';final school=(await _db.collection('platform_schools').doc(id).get()).data();
       if(school?['managed']==true){
-        if(action=='school/delete')throw StateError('Disable this managed school login instead. School data is preserved.');
-        return ManagedDeveloperService.call(action=='school/block'?'block':'licence',body);
+        return ManagedDeveloperService.call(action=='school/delete'?'delete':action=='school/block'?'block':'licence',body);
       }
     }
     if(action=='license/revoke'||action=='license/delete'){
@@ -108,33 +107,9 @@ class DeveloperService {
     }
     if (action == 'school/delete') {
       final schoolId = body['schoolId'].toString();
-      final schoolRef = _db.collection('platform_schools').doc(schoolId);
-      final school = (await schoolRef.get()).data();
-      if (school == null) throw StateError('School not found');
-      final licences = await _db.collection('platform_licenses').where('schoolId', isEqualTo: schoolId).get();
-      final complaints = await _db.collection('platform_complaints').where('schoolId', isEqualTo: schoolId).get();
-      final refs = <DocumentReference<Map<String, dynamic>>>[
-        schoolRef,
-        _db.collection('platform_school_summaries').doc(schoolId),
-        _db.collection('platform_school_trials').doc(schoolId),
-        _db.collection('platform_support_limits').doc(schoolId),
-        _db.collection('platform_school_blocks').doc(schoolId),
-        if (school['monitorUid'] != null)
-          _db.collection('platform_monitor_access').doc(school['monitorUid'].toString()),
-        ...complaints.docs.map((d) => d.reference),
-      ];
-      for (final l in licences.docs) {
-        refs.add(l.reference);
-        refs.add(_db.collection('platform_license_status').doc(l.id));
-      }
-      for (var i = 0; i < refs.length; i += 400) {
-        final batch = _db.batch();
-        for (final ref in refs.skip(i).take(400)) {
-          batch.delete(ref);
-        }
-        await batch.commit();
-      }
-      return {'success': true};
+      await call('school/block', {'schoolId':schoolId,'blocked':true});
+      await _db.collection('platform_schools').doc(schoolId).set({'deletedAt':FieldValue.serverTimestamp()},SetOptions(merge:true));
+      return {'success':true};
     }
     if (action == 'complaint/update') {
       final status = body['status'].toString();
@@ -166,8 +141,8 @@ class DeveloperService {
     final summaries = await _list('platform_school_summaries');
     final byId = {for(final s in summaries) s['id']:s};
     final licenses={for(final l in _cached!['licenses'] as List) l['id']:l};
-    final schools = (_cached!['schools'] as List).map((s) {
-      final school=<String,dynamic>{...s, ...?byId[s['id']]};
+    final schools = (_cached!['schools'] as List).where((s)=>s['deletedAt']==null).map((s) {
+      final school=<String,dynamic>{...s, if(s['managed']!=true)...?byId[s['id']]};
       final active=licenses[school['activeLicenseHash']];
       if(active!=null && active['schoolId']==school['id']) {
         school['licenseExpiresAt']=active['revoked']==true?0:active['expiresAt'];

@@ -126,6 +126,7 @@ Future<String> _windowsBuildPersonQrPayload({
   final payload = <String, dynamic>{
     'app': 'VIDYA_SAARTHI',
     'v': 2,
+    if((await CentralSchoolCloud.saved())['managed']==true)...{'managed':true,'schoolId':(await CentralSchoolCloud.saved())['schoolId'],'centralEndpoint':CentralSchoolCloud.apiUrl},
     'type': type,
     'schoolProfileId': profileId,
     'firebaseProjectId': connections.firebaseProjectId,
@@ -464,8 +465,8 @@ class WindowsLicenseStore {
 
   static Future<void> save(String key) async {
     final normalized = key.trim();
-    await WindowsPlatformClient.instance.refresh();
-    await WindowsPlatformClient.instance.activate(normalized);
+    if((await CentralSchoolCloud.saved())['managed']==true){await ManagedSchoolSession.call('managed/licence/activate',{'key':normalized});ManagedSchoolSession.changed.value++;}
+    else {await WindowsPlatformClient.instance.refresh();await WindowsPlatformClient.instance.activate(normalized);}
     await _secure.write(key: _windowsLicenseKeyStorageKey, value: normalized);
     await _secure.write(
       key: _windowsLicenseStatusStorageKey,
