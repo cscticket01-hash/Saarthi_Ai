@@ -179,9 +179,9 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw 'Compiled OAuth configuration verification failed.' }
         if ($env:SAARTHI_GOOGLE_REQUIRES_BROKER -eq 'true' -and !$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL) { Write-Host 'Live school connection blocked until the secure OAuth broker is hosted and its URL is configured.' }
     - name: Verify Windows ID cards, licence date and startup
-      run: flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart
+      run: flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_school_map_test.dart
     - name: Analyze Windows ID card changes
-      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart lib/windows_school_map.dart lib/windows_school_map_dialog.dart
     - uses: actions/upload-artifact@v4
       with:
         name: windows-id-card-previews

@@ -1,3 +1,5 @@
+import 'windows_school_map.dart';
+import 'windows_school_map_dialog.dart';
 import 'windows_connect/school_drive_images.dart';
 import 'windows_connect/easy_connect_screen.dart';
 import 'dart:async';
@@ -172,7 +174,7 @@ Map<String, dynamic>? _windowsParsePersonQr(String raw) {
   return null;
 }
 
-Future<({double latitude, double longitude})> _windowsCurrentPosition() async {
+Future<({double latitude, double longitude, double accuracy})> _windowsCurrentPosition() async {
   const script = r'''$ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 [Windows.Devices.Geolocation.Geolocator,Windows.Devices.Geolocation,ContentType=WindowsRuntime] | Out-Null
@@ -192,8 +194,9 @@ if ($null -eq $asTaskMethod) {
   throw 'Windows Runtime AsTask method unavailable.'
 }
 $task = $asTaskMethod.MakeGenericMethod([Windows.Devices.Geolocation.Geoposition]).Invoke($null, [object[]]@($op))
-$pos = $task.GetAwaiter().GetResult().Coordinate.Point.Position
-Write-Output ($pos.Latitude.ToString([System.Globalization.CultureInfo]::InvariantCulture) + "," + $pos.Longitude.ToString([System.Globalization.CultureInfo]::InvariantCulture))''';
+$coordinate = $task.GetAwaiter().GetResult().Coordinate
+$pos = $coordinate.Point.Position
+Write-Output ($pos.Latitude.ToString([System.Globalization.CultureInfo]::InvariantCulture) + "," + $pos.Longitude.ToString([System.Globalization.CultureInfo]::InvariantCulture) + "," + $coordinate.Accuracy.ToString([System.Globalization.CultureInfo]::InvariantCulture))''';
   final result = await Process.run(
     'powershell.exe',
     const ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
@@ -202,54 +205,15 @@ Write-Output ($pos.Latitude.ToString([System.Globalization.CultureInfo]::Invaria
     throw StateError('Windows Location access fail: ${result.stderr}');
   }
   final parts = result.stdout.toString().trim().split(',');
-  if (parts.length != 2) throw StateError('Windows GPS response invalid hai.');
+  if (parts.length != 3) throw StateError('Windows GPS response invalid hai.');
   final lat = double.tryParse(parts[0]);
   final lng = double.tryParse(parts[1]);
-  if (lat == null || lng == null) throw StateError('Windows GPS coordinates invalid hain.');
-  return (latitude: lat, longitude: lng);
-}
-
-({double latitude, double longitude})? _windowsParseCoordinates(String raw) {
-  final values = RegExp(r'[-+]?(?:\d+(?:\.\d+)?|\.\d+)')
-      .allMatches(raw)
-      .map((match) => double.tryParse(match.group(0)!))
-      .whereType<double>()
-      .toList();
-
-  for (var index = 0; index + 1 < values.length; index++) {
-    final latitude = values[index];
-    final longitude = values[index + 1];
-    if (latitude >= -90 && latitude <= 90 &&
-        longitude >= -180 && longitude <= 180) {
-      return (latitude: latitude, longitude: longitude);
-    }
+  final accuracy = double.tryParse(parts[2]);
+  if (lat == null || lng == null || accuracy == null ||
+      !SchoolMapPin(lat, lng).valid || !accuracy.isFinite || accuracy < 0) {
+    throw StateError('Windows GPS coordinates/accuracy invalid hain.');
   }
-
-  return null;
-}
-
-Future<void> _openGoogleMapsForSchoolLocation(String query) async {
-  final cleanQuery = query.trim().isEmpty ? 'school' : query.trim();
-  final uri = Uri.https(
-    'www.google.com',
-    '/maps/search/',
-    <String, String>{
-      'api': '1',
-      'query': cleanQuery,
-    },
-  );
-
-  await Process.start('explorer.exe', <String>[uri.toString()]);
-}
-
-double _windowsDistanceMeters(double lat1, double lng1, double lat2, double lng2) {
-  const earth = 6371000.0;
-  double rad(double value) => value * pi / 180.0;
-  final dLat = rad(lat2 - lat1);
-  final dLng = rad(lng2 - lng1);
-  final a = sin(dLat / 2) * sin(dLat / 2) +
-      cos(rad(lat1)) * cos(rad(lat2)) * sin(dLng / 2) * sin(dLng / 2);
-  return earth * 2 * atan2(sqrt(a), sqrt(1 - a));
+  return (latitude: lat, longitude: lng, accuracy: accuracy);
 }
 
 // ============================================================
@@ -9404,39 +9368,23 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     _schoolLatitudeController.text = profile['latitude']?.toString() ?? '';
     _schoolLongitudeController.text = profile['longitude']?.toString() ?? '';
     _attendanceRadiusController.text =
-        profile['attendanceRadiusMeters']?.toString() ?? '200';
+        '200';
   }
 
-  Future<void> _pasteGoogleMapsCoordinates() async {
-    final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
-    final raw = clipboard?.text?.trim() ?? '';
-    final coordinates = _windowsParseCoordinates(raw);
-
-    if (coordinates == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
-          content: Text(
-            'Google Maps se latitude, longitude copy karke paste karein.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    if (!mounted) return;
+  Future<void> _selectSchoolMapPin() async {
+    final latitude = double.tryParse(_schoolLatitudeController.text);
+    final longitude = double.tryParse(_schoolLongitudeController.text);
+    final current = latitude == null || longitude == null ? null : SchoolMapPin(latitude, longitude);
+    final pin = await selectWindowsSchoolMapPin(context,
+        schoolName: _schoolNameController.text, current: current);
+    if (pin == null || !mounted) return;
     setState(() {
-      _schoolLatitudeController.text = coordinates.latitude.toStringAsFixed(7);
-      _schoolLongitudeController.text = coordinates.longitude.toStringAsFixed(7);
+      _schoolLatitudeController.text = pin.latitude.toStringAsFixed(7);
+      _schoolLongitudeController.text = pin.longitude.toStringAsFixed(7);
+      _attendanceRadiusController.text = '200';
     });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        backgroundColor: Color(0xFF00A884),
-        content: Text('Google Maps coordinates fill ho gaye. Ab Save karein.'),
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('School pin selected. Attendance boundary 200 m. Save School Settings to apply.')));
   }
 
   Future<void> _load() async {
@@ -9705,26 +9653,16 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     final schoolContactNo = _schoolContactController.text.trim();
     final schoolLatitude = double.tryParse(_schoolLatitudeController.text.trim());
     final schoolLongitude = double.tryParse(_schoolLongitudeController.text.trim());
-    final attendanceRadius =
-        double.tryParse(_attendanceRadiusController.text.trim()) ?? 200.0;
+    const attendanceRadius = schoolAttendanceRadiusMeters;
 
     if (schoolLatitude == null || schoolLongitude == null ||
+        !schoolLatitude.isFinite || !schoolLongitude.isFinite ||
         schoolLatitude < -90 || schoolLatitude > 90 ||
         schoolLongitude < -180 || schoolLongitude > 180) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Colors.orangeAccent,
           content: Text('Valid School Latitude aur Longitude required hai.'),
-        ),
-      );
-      return;
-    }
-
-    if (attendanceRadius < 50 || attendanceRadius > 2000) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
-          content: Text('Attendance radius 50 se 2000 meter ke beech rakhein.'),
         ),
       );
       return;
@@ -10171,6 +10109,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   width: 180,
                                   child: TextField(
                                     controller: _attendanceRadiusController,
+                                    readOnly: true,
                                     keyboardType: TextInputType.number,
                                     style: const TextStyle(color: Colors.white),
                                     decoration: _field('Radius (meter)', Icons.radar_rounded),
@@ -10184,60 +10123,16 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                               runSpacing: 8,
                               children: [
                                 OutlinedButton.icon(
-                                  onPressed: _saving
-                                      ? null
-                                      : () async {
-                                          try {
-                                            await _openGoogleMapsForSchoolLocation(
-                                              _schoolNameController.text,
-                                            );
-                                          } catch (e) {
-                                            if (!mounted) return;
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              SnackBar(
-                                                backgroundColor: Colors.redAccent,
-                                                content: Text('Google Maps open nahi hua: $e'),
-                                              ),
-                                            );
-                                          }
-                                        },
+                                  key: const ValueKey('select-school-map-pin'),
+                                  onPressed: _saving ? null : _selectSchoolMapPin,
                                   icon: const Icon(Icons.map_rounded),
-                                  label: const Text('Open Google Maps'),
-                                ),
-                                OutlinedButton.icon(
-                                  onPressed: _saving ? null : _pasteGoogleMapsCoordinates,
-                                  icon: const Icon(Icons.content_paste_rounded),
-                                  label: const Text('Paste Map Coordinates'),
-                                ),
-                                OutlinedButton.icon(
-                                  onPressed: _saving
-                                      ? null
-                                      : () async {
-                                          try {
-                                            final pos = await _windowsCurrentPosition();
-                                            if (!mounted) return;
-                                            setState(() {
-                                              _schoolLatitudeController.text = pos.latitude.toStringAsFixed(7);
-                                              _schoolLongitudeController.text = pos.longitude.toStringAsFixed(7);
-                                            });
-                                          } catch (e) {
-                                            if (!mounted) return;
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              SnackBar(
-                                                backgroundColor: Colors.redAccent,
-                                                content: Text('$e'),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                  icon: const Icon(Icons.gps_fixed_rounded),
-                                  label: const Text('Use This Windows PC Location'),
+                                  label: const Text('Select school pin in Google Maps'),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'Google Maps me school point par right-click karke coordinates copy karein, phir “Paste Map Coordinates” dabayein.',
+                              'School campus ka exact pin select karein. Attendance sirf saved pin ke 200 m ke andar accept hogi. Save karke location apply karein.',
                               style: TextStyle(
                                 color: Colors.white38,
                                 fontSize: 10,
@@ -24426,15 +24321,16 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
       final location = await _windowsSchoolLocationData();
       final schoolLat = double.tryParse(location['latitude']?.toString() ?? '');
       final schoolLng = double.tryParse(location['longitude']?.toString() ?? '');
-      final radius = double.tryParse(location['radiusMeters']?.toString() ?? '') ?? 200.0;
+      const radius = schoolAttendanceRadiusMeters;
       if(schoolLat == null || schoolLng == null){
         throw StateError('School Settings me school location save karein.');
       }
       final current = await _windowsCurrentPosition();
-      final distance = _windowsDistanceMeters(current.latitude,current.longitude,schoolLat,schoolLng);
+      final distance = schoolDistanceMeters(SchoolMapPin(current.latitude, current.longitude), SchoolMapPin(schoolLat, schoolLng));
       _distance = distance;
-      if(distance > radius){
-        throw StateError('Attendance blocked: school se ${distance.toStringAsFixed(0)}m door. Allowed ${radius.toStringAsFixed(0)}m.');
+      if (!schoolAttendancePositionAllowed(SchoolMapPin(schoolLat, schoolLng),
+          SchoolMapPin(current.latitude, current.longitude), accuracyMeters: current.accuracy)) {
+        throw StateError('Attendance blocked: school se ${distance.toStringAsFixed(0)}m, GPS accuracy ±${current.accuracy.toStringAsFixed(0)}m. Allowed ${radius.toStringAsFixed(0)}m. Accurate GPS location lekar retry karein.');
       }
 
       Map<String,dynamic> body;

@@ -1,3 +1,4 @@
+import 'windows_school_map.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/google_authorization.dart';
 import 'dart:async';
@@ -644,8 +645,19 @@ class WindowsBackendBridge {
             profile['${prefix}Url'] = file['fileUrl']; profile['${prefix}FileId'] = file['fileId'];
           }
         }
+        final latitude = double.tryParse(profile['latitude']?.toString() ?? '');
+        final longitude = double.tryParse(profile['longitude']?.toString() ?? '');
+        if (latitude == null || longitude == null || !SchoolMapPin(latitude, longitude).valid) {
+          throw StateError('Valid school map pin required.');
+        }
+        profile['attendanceRadiusMeters'] = schoolAttendanceRadiusMeters;
         final safe = centralSchoolData(profile,school);
         await save('school_config','school_profile_cache',safe);
+        await save('school_settings', 'school_location', {
+          'latitude': latitude,
+          'longitude': longitude,
+          'radiusMeters': schoolAttendanceRadiusMeters,
+        });
         return {'success':true,'profile':safe};
       }
       if (action == 'get_school_profile') return {'success':true,'profile':(await read('school_config'))['school_profile_cache'] ?? {}};
