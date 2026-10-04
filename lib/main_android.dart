@@ -418,7 +418,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
         'linkToken': qr.linkToken,
         'mode': _attendanceMode,
         'latitude': position.latitude,
-        'longitude': position.longitude
+        'longitude': position.longitude,
+        'accuracy': position.accuracy
       });
       if (mounted)
         ScaffoldMessenger.of(context)

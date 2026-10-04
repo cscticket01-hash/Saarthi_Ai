@@ -9,7 +9,7 @@ function storage(){
  const roots={[A]:folder('rootA',A),[B]:folder('rootB',B)};
  const props=new Map([['VS_MANAGED_SCHOOL_ID',A],['VS_MANAGED_ROOT_ID','rootA'],['VS_MANAGED_SECRET',secret]]);
  const p={getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v),getProperties:()=>Object.fromEntries(props),deleteProperty:k=>props.delete(k)};
- const context=vm.createContext({Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,v)=>[...crypto.createHash('sha256').update(v).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
+ const context=vm.createContext({Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,v)=>[...crypto.createHash('sha256').update(v).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),context);
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedMobile.gs','utf8'),context);
  const call=body=>{const b={schoolId:A,timestamp:Date.now(),nonce:crypto.randomBytes(24).toString('hex'),payload:JSON.stringify(body)};b.signature=crypto.createHmac('sha256',secret).update(A+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex');return context.VS_managedHandle({postData:{contents:JSON.stringify(b)}});};
@@ -50,4 +50,14 @@ test('managed mobile reuses existing QR verification and never exposes another p
 test('managed summary measures own root only and includes actual student count',()=>{
  const f=storage();f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'pupil',data:{schoolId:A,name:'A'}});f.roots[B].createFile('foreign','foreign-school-data','text/plain');
  const result=f.call({action:'managed_summary'});assert.equal(result.success,true);assert.equal(result.studentCount,1);assert(result.driveBytes>0);assert.equal(result.partial,false);
+});
+
+test('managed GPS attendance keeps school-selected 25–200m range and rejects missing/inaccurate location',()=>{
+ const f=storage();const write=(col,id,data)=>f.call({action:'managed_records',operation:'write',collection:col,id,data:{...data,schoolId:A}});
+ write('teachers_directory','teacher',{name:'Own teacher',mobileLinkToken:'x'.repeat(48)});write('school_calendar','2026-10-05',{isOpen:true});write('school_settings','school_location',{latitude:0,longitude:0,radiusMeters:25});
+ const mobile=request=>f.call({action:'managed_mobile',lease:{schoolId:A,expiresAt:Date.now()+60000},request});
+ const session=mobile({action:'mobile_login',role:'teacher',personId:'teacher',linkToken:'x'.repeat(48)});
+ const attendance={action:'mobile_mark_attendance',sessionToken:session.sessionToken,role:'teacher',personId:'teacher',linkToken:'x'.repeat(48),latitude:0,longitude:0};
+ assert.equal(mobile(attendance).success,false);assert.equal(mobile({...attendance,accuracy:100}).success,false);assert.equal(mobile({...attendance,latitude:1,accuracy:5}).success,false);
+ assert.equal(mobile({...attendance,accuracy:5}).success,true);assert.equal(mobile({...attendance,accuracy:5}).success,false);
 });
