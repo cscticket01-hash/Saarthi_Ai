@@ -1,4 +1,3 @@
-import 'managed_school_session.dart';
 import '../windows_admin_setup.dart';
 import '../windows_local_firestore.dart';
 import 'package:flutter/material.dart';
@@ -18,28 +17,13 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
   final _name = TextEditingController();
   final _auth = GoogleAuthorization();
   CentralSchoolCloud? _cloud;
-  bool _migrate = false, _managed = false;
+  bool _migrate = false;
   bool _busy = false, _done = false, _google = false, _firebase = false, _drive = false;
   String _message = '', _email = '', _schoolId = '';
   @override
-  void initState() {super.initState();_name.text=WindowsAdminSetup.schoolName;_loadManaged();}
+  void initState() {super.initState();_name.text=WindowsAdminSetup.schoolName;}
   @override
   void dispose() { _cloud?.close(); _auth.close(); _name.dispose(); super.dispose(); }
-  Future<void> _loadManaged() async {
-    final saved=await CentralSchoolCloud.saved();
-    if(saved['managed']!=true||!mounted)return;
-    setState((){_managed=true;_schoolId=saved['schoolId'];_email=saved['email'];_busy=true;});
-    try{await ManagedSchoolSession.call('managed/storage/check');if(mounted)setState((){_firebase=true;_drive=true;_done=true;_message='School-owned GS storage verified.';});}
-    catch(e){if(mounted)setState(()=>_message='$e');}
-    finally{if(mounted)setState(()=>_busy=false);}
-  }
-  Widget _managedView()=>Scaffold(appBar:AppBar(title:const Text('School Cloud / Google Drive')),body:Center(child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:640),child:ListView(shrinkWrap:true,padding:const EdgeInsets.all(24),children:[
-    const Text('Developer-created school account',style:TextStyle(fontSize:23,fontWeight:FontWeight.bold)),Text('Login: $_email'),SelectableText('School ID: $_schoolId'),
-    const Text('This school uses its registered Google Apps Script and its own private Drive storage. Local data remains on this computer.'),
-    _status('School Drive / GS',_drive,ready:true),if(_busy)const LinearProgressIndicator(),if(_message.isNotEmpty)Text(_message),
-    OutlinedButton(onPressed:_busy?null:_loadManaged,child:const Text('Check school storage')),
-    FilledButton.icon(onPressed:_busy||!_done?null:()async{setState(()=>_busy=true);final cloud=CentralSchoolCloud();try{await cloud.backup();if(mounted)setState(()=>_message='School records backup saved to this school’s Google Drive.');}catch(e){if(mounted)setState(()=>_message='$e');}finally{cloud.close();if(mounted)setState(()=>_busy=false);}},icon:const Icon(Icons.backup),label:const Text('Back up school records to Google Drive')),
-  ]))));
   Future<void> _start() async {
     if (_busy) return;
     setState(() { _busy=true; _done=false; _google=false; _firebase=false; _drive=false; });
@@ -103,7 +87,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
     leading:Icon(verified ? Icons.check_circle:Icons.radio_button_unchecked,color:verified ? Colors.greenAccent:Colors.white54),
     title:Text('$label: ${verified ? (ready ? 'Ready':'Connected'):'Not verified'}'));
   @override
-  Widget build(BuildContext context) => _managed ? _managedView() : Scaffold(
+  Widget build(BuildContext context) => Scaffold(
     appBar:AppBar(title:const Text('Connect School Cloud')),
     body:Center(child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:640),
       child:ListView(padding:const EdgeInsets.all(24),shrinkWrap:true,children:[

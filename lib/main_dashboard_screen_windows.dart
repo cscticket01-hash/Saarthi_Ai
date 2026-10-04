@@ -1,10 +1,8 @@
 import 'windows_connect/central_school_cloud.dart';
-import 'windows_managed_school_gate.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_school_map.dart';
 import 'windows_school_map_dialog.dart';
 import 'windows_connect/school_drive_images.dart';
-import 'windows_connect/easy_connect_screen.dart';
 import 'dart:async';
 import 'windows_admin_sidebar.dart';
 import 'windows_monthly_attendance.dart';
@@ -286,28 +284,48 @@ const List<_WindowsSectionLockDefinition> _windowsSectionLockDefinitions = [
   ),
 ];
 
+class WindowsAdminAccessGate extends StatefulWidget {
+  const WindowsAdminAccessGate({super.key,required this.child});
+  final Widget child;
+  @override State<WindowsAdminAccessGate> createState()=>_WindowsAdminAccessGateState();
+}
+class _WindowsAdminAccessGateState extends State<WindowsAdminAccessGate> {
+  bool unlocked=false,busy=false;
+  @override void initState(){super.initState();WidgetsBinding.instance.addPostFrameCallback((_)=>unlock());}
+  Future<void> unlock() async {
+    if(busy)return;busy=true;
+    try {final allowed=await _requireWindowsSectionPassword(context,_windowsAdminSectionLock,'Admin Section');if(mounted)setState(()=>unlocked=allowed);}
+    finally {busy=false;}
+  }
+  @override Widget build(BuildContext context)=>unlocked?widget.child:Scaffold(body:Center(child:FilledButton(onPressed:unlock,child:const Text('Unlock Admin Section'))));
+}
+
 class WindowsSectionLocks {
   WindowsSectionLocks._();
 
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
-  static String _passwordKey(String sectionKey) {
-    return 'vidya_saarthi_windows_section_password_v1_$sectionKey';
+  static Future<String> _passwordKey(String sectionKey) async {
+    final saved=await CentralSchoolCloud.saved();
+    final suffix=saved['managed']==true?'_${saved['schoolId']}':'';
+    return 'vidya_saarthi_windows_section_password_v1_$sectionKey$suffix';
   }
 
-  static String _enabledKey(String sectionKey) {
-    return 'vidya_saarthi_windows_section_password_enabled_v1_$sectionKey';
+  static Future<String> _enabledKey(String sectionKey) async {
+    final saved=await CentralSchoolCloud.saved();
+    final suffix=saved['managed']==true?'_${saved['schoolId']}':'';
+    return 'vidya_saarthi_windows_section_password_enabled_v1_$sectionKey$suffix';
   }
 
   static Future<bool> configured(String sectionKey) async {
-    final value = await _secure.read(key: _passwordKey(sectionKey));
+    final value = await _secure.read(key: await _passwordKey(sectionKey));
     return value?.trim().isNotEmpty ?? false;
   }
 
   static Future<bool> enabled(String sectionKey) async {
     if (!await configured(sectionKey)) return false;
 
-    final value = await _secure.read(key: _enabledKey(sectionKey));
+    final value = await _secure.read(key: await _enabledKey(sectionKey));
     // A configured lock without an old enabled flag remains protected.
     return value == null || value == 'true';
   }
@@ -316,7 +334,7 @@ class WindowsSectionLocks {
     required String sectionKey,
     required String password,
   }) async {
-    final stored = await _secure.read(key: _passwordKey(sectionKey));
+    final stored = await _secure.read(key: await _passwordKey(sectionKey));
     return stored != null && stored.isNotEmpty && stored == password;
   }
 
@@ -327,12 +345,12 @@ class WindowsSectionLocks {
     _validatePassword(password);
 
     await _secure.write(
-      key: _passwordKey(sectionKey),
+      key: await _passwordKey(sectionKey),
       value: password,
     );
     // Adding a password turns that section lock ON by default.
     await _secure.write(
-      key: _enabledKey(sectionKey),
+      key: await _enabledKey(sectionKey),
       value: 'true',
     );
   }
@@ -343,7 +361,7 @@ class WindowsSectionLocks {
     required String newPassword,
   }) async {
     final storedPassword = await _secure.read(
-      key: _passwordKey(sectionKey),
+      key: await _passwordKey(sectionKey),
     );
 
     if (storedPassword == null || storedPassword.isEmpty) {
@@ -356,11 +374,11 @@ class WindowsSectionLocks {
 
     _validatePassword(newPassword);
     await _secure.write(
-      key: _passwordKey(sectionKey),
+      key: await _passwordKey(sectionKey),
       value: newPassword,
     );
     await _secure.write(
-      key: _enabledKey(sectionKey),
+      key: await _enabledKey(sectionKey),
       value: 'true',
     );
   }
@@ -374,7 +392,7 @@ class WindowsSectionLocks {
     }
 
     await _secure.write(
-      key: _enabledKey(sectionKey),
+      key: await _enabledKey(sectionKey),
       value: value ? 'true' : 'false',
     );
   }
@@ -4666,6 +4684,17 @@ void _handleLoginBack(bool didPop) {
   Future<void> _autoLogoutAdmin() async {
     if (_autoLogoutInProgress) return;
     _autoLogoutInProgress = true;
+    // Managed identity persists; inactivity uses only explicitly enabled local locks.
+    try {
+      if((await CentralSchoolCloud.saved())['managed']==true){
+        await WindowsLocalSecurity.initialize();
+        final locked=WindowsLocalSecurity.configured||await WindowsSectionLocks.enabled(_windowsAdminSectionLock);
+        if(!locked){_touchPortalSession();_sessionSecondsRemaining.value=_portalInactivityLimit.inSeconds;_autoLogoutInProgress=false;return;}
+        _sessionTimer?.cancel();await _sessionClickSubscription?.cancel();_clearPortalSession();
+        if(mounted)Navigator.of(context).pushNamedAndRemoveUntil('/',(route)=>false);
+        return;
+      }
+    }catch(e){debugPrint('Local idle lock verification failed: $e');}
     _sessionTimer?.cancel();
     await _sessionClickSubscription?.cancel();
     _clearPortalSession();
@@ -18993,6 +19022,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   String? _linkedScript;
   bool _loading = true;
   bool _saving = false;
+  bool _managedConnection=false;
 
   bool get _linked =>
       (_linkedGmail?.trim().isNotEmpty ?? false) &&
@@ -19018,6 +19048,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       if(managed['managed']==true){data['googleEmail']=managed['email'];data['googleScriptUrl']=managed['scriptUrl'];}
       if (!mounted) return;
       setState(() {
+        _managedConnection=managed['managed']==true;
         _linkedGmail = data['googleEmail']?.toString().trim();
         _linkedScript = data['googleScriptUrl']?.toString().trim();
         _gmail.text = _linkedGmail ?? '';
@@ -19028,7 +19059,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       final loadedUrl = _linkedScript?.trim() ?? '';
       if (loadedUrl.isNotEmpty) {
         unawaited(
-          WindowsBackendBridge.testRemote(Uri.parse(loadedUrl)),
+          _verifyDrive(loadedUrl),
         );
       } else {
         WindowsServiceStatus.instance.unhealthy(
@@ -19043,6 +19074,15 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         SnackBar(content: Text('Advanced Settings load error: $e')),
       );
     }
+  }
+
+  Future<void> _verifyDrive(String url) async {
+    try {
+      if ((await CentralSchoolCloud.saved())['managed']==true) {
+        await ManagedSchoolSession.call('managed/storage/check');
+        WindowsServiceStatus.instance.healthy(WindowsServiceType.googleDrive,'School Drive / GS verified.');
+      } else { await WindowsBackendBridge.testRemote(Uri.parse(url)); }
+    } catch (_) { WindowsServiceStatus.instance.unhealthy(WindowsServiceType.googleDrive,'School Drive / GS verification failed.'); }
   }
 
   Future<void> _save() async {
@@ -19074,9 +19114,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     try {
       final managed=await CentralSchoolCloud.saved();
       if(managed['managed']==true){
-        final session=await ManagedSchoolSession.call('managed/session');
-        if(session['scriptUrl']!=url)throw StateError('Developer must register this school GS URL and connection secret on the website first.');
-        await ManagedSchoolSession.call('managed/storage/check');
+        await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url});
         await CentralSchoolCloud.updateSession(managed['schoolId'],{'scriptUrl':url});
         await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
       }else{await WindowsSyncEngine.instance.changeGoogleConnection(email:email,scriptUrl:url);}
@@ -19087,7 +19125,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         _saving = false;
       });
       unawaited(
-        WindowsBackendBridge.testRemote(Uri.parse(url)),
+        _verifyDrive(url),
       );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -19105,6 +19143,19 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _backupDrive() async {
+    if(_saving)return;setState(()=>_saving=true);
+    final saved=await CentralSchoolCloud.saved();
+    final cloud=CentralSchoolCloud(endpoint:saved['endpoint']??CentralSchoolCloud.apiUrl);
+    try {
+      await WindowsSyncEngine.instance.prepareDriveBackup();
+      if(WindowsSyncEngine.instance.syncBlocked)throw StateError('Resolve school sync before creating a Drive backup.');
+      await cloud.backup();
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Backup saved to this school Google Drive.')));
+    }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Drive backup failed: $e')));}
+    finally{cloud.close();if(mounted)setState(()=>_saving=false);}
   }
 
   Future<void> _unlink() async {
@@ -19240,42 +19291,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                   constraints: const BoxConstraints(maxWidth: 900),
                   child: Column(
                     children: [
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(18),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              OutlinedButton(onPressed:()=>Navigator.of(context).push(MaterialPageRoute(builder:(_)=>const WindowsManagedSchoolLogin())),child:const Text('Developer-created school login')),
-                              const Text('Connect your school account', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              const Text('For a new school cloud setup: sign in with Google and follow the approval steps. Connection links are filled automatically.'),
-                              const SizedBox(height: 12),
-                              Wrap(spacing: 12, runSpacing: 8, children: [
-                                OutlinedButton.icon(
-                                  icon: const Icon(Icons.add_to_drive),
-                                  label: const Text('Connect Google Drive'),
-                                  onPressed: _saving ? null : () async {
-                                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EasySchoolConnectScreen(googleDrive: true)));
-                                    if (mounted) await _load();
-                                  },
-                                ),
-                                OutlinedButton.icon(
-                                  icon: const Icon(Icons.cloud_outlined),
-                                  label: const Text('Connect Firebase'),
-                                  onPressed: _saving ? null : () async {
-                                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EasySchoolConnectScreen()));
-                                    if (mounted) await _load();
-                                  },
-                                ),
-                              ]),
-                              const SizedBox(height: 8),
-                              const Text('Existing school connections and manual setup remain available below.'),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(18),
@@ -19350,13 +19365,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                                     height: 1.4),
                               ),
                               const SizedBox(height: 14),
+                              FilledButton.icon(onPressed:_saving?null:_backupDrive,icon:const Icon(Icons.backup),label:const Text('Back up school records to Google Drive')),
+                              const SizedBox(height: 14),
                               SizedBox(
                                 width: double.infinity,
                                 child: OutlinedButton.icon(
-                                  onPressed: _saving ? null : _unlink,
+                                  onPressed: _saving ? null : (_managedConnection?()=>_verifyDrive(_linkedScript!):_unlink),
                                   icon: const Icon(Icons.sync_alt_rounded),
-                                  label: const Text(
-                                      'Unlink / Change Google Drive Account'),
+                                  label: Text(_managedConnection?'Check school storage':'Unlink / Change Google Drive Account'),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: Colors.orangeAccent,
                                     side: BorderSide(

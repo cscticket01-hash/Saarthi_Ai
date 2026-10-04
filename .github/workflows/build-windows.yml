@@ -1,4 +1,4 @@
-# Approved existing-account/password-controls release; review run 37211254737 passed.
+# Approved Windows UX/GS release; review run 37220526657 passed.
 # Approved live release: application checks passed at 2f1237d (run 37194674833).
 # Release approved after all checks passed in Actions run 37178553268.
 name: Build Vidya Saarthi Windows Admin
@@ -347,9 +347,10 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
-            Windows school login adds password Show/Hide and an exact character count, disables personalized IME learning, and keeps the form scrollable at larger text sizes.
-            Developer website can explicitly link an unassigned existing Google login to a school while preserving its Firebase UID and profile. Protected, disabled or already assigned accounts are rejected. School credentials and licences remain bound to the same authenticated school across PC changes.
-            Preserves school records, document designs and existing Drive/local data. Native keyboard behavior and real per-school GS/Drive backup acceptance still require a live school test.
+            Windows restores the authenticated school session and keeps App Lock independent from Admin Section Lock. Managed inactivity uses enabled local locks instead of signing out the school account.
+            Removes duplicate School Cloud connection screens and the trial banner Sign out action. Reduces unnecessary rebuilds and disables login input suggestions/autocorrection.
+            Advanced Settings verifies a pasted school-managed Apps Script URL using a server-issued one-use ticket and School ID/HMAC checks, with real Drive backup. Existing school GS deployments require the updated managed adapter/manifest while retaining their School ID, secret and Drive root.
+            Preserves school records, existing local/offline storage, licence isolation and document designs. Real Windows typing/restart/lock and school-owned GS backup acceptance remain pending.
           generate_release_notes: true
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe

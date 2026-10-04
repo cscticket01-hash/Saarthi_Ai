@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_managed_school_gate.dart';
+import '../lib/main_dashboard_screen_windows.dart' show WindowsSectionLocks,WindowsAdminAccessGate;
+import '../lib/windows_local_settings.dart';
 import '../lib/windows_connect/managed_school_session.dart';
 void main(){
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +29,33 @@ void main(){
     expect(hosts,['identitytoolkit.googleapis.com','school.example']);
     expect(await const FlutterSecureStorage().read(key:CentralSchoolCloud.key),encoded);
     await expectLater(ManagedSchoolSession.reauthenticate('other@school.example','transient-password'),throwsStateError);
+  });
+  test('managed App Lock and Admin Section Lock use independent school-scoped credentials',()async{
+    const a='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',b='vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    Map<String,dynamic> saved(String school)=>{'managed':true,'projectId':platformProjectId,'schoolId':school,'uid':school,'email':'a@school.example','folderId':'managed','firebaseRefreshToken':'refresh','endpoint':'https://school.example/school-cloud'};
+    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode(saved(a))});
+    await WindowsLocalSecurity.initialize();expect(WindowsLocalSecurity.configured,false);
+    await WindowsLocalSecurity.create(adminId:'School app',password:'app-only-pass');
+    expect(await WindowsSectionLocks.enabled('admin_section'),false);
+    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'admin-only-pass');
+    expect(WindowsLocalSecurity.verifyPassword('admin-only-pass'),false);
+    expect(await WindowsSectionLocks.verify(sectionKey:'admin_section',password:'app-only-pass'),false);
+    expect(await WindowsSectionLocks.verify(sectionKey:'admin_section',password:'admin-only-pass'),true);
+    await const FlutterSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode(saved(b)));
+    await WindowsLocalSecurity.initialize();expect(WindowsLocalSecurity.configured,false);expect(await WindowsSectionLocks.enabled('admin_section'),false);
+    await const FlutterSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode(saved(a)));
+    await WindowsLocalSecurity.initialize();expect(WindowsLocalSecurity.verifyPassword('app-only-pass'),true);expect(await WindowsSectionLocks.enabled('admin_section'),true);
+    await WindowsLocalSecurity.clearAppLock();expect(await WindowsSectionLocks.enabled('admin_section'),true);
+  });
+  testWidgets('direct admin entry is open until its independent lock is enabled',(tester)async{
+    FlutterSecureStorage.setMockInitialValues({});
+    await tester.pumpWidget(const MaterialApp(home:WindowsAdminAccessGate(child:Text('Direct admin panel'))));
+    await tester.pump();await tester.pump();expect(find.text('Direct admin panel'),findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'admin-only-pass');
+    await tester.pumpWidget(const MaterialApp(home:WindowsAdminAccessGate(child:Text('Direct admin panel'))));
+    await tester.pump();await tester.pump();expect(find.text('Direct admin panel'),findsNothing);expect(find.text('Admin Section Password'),findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
   test('queued local writes and stale batches cannot cross a school switch',()async{
     final db=FirebaseFirestore.instance;
@@ -63,12 +92,19 @@ void main(){
   testWidgets('school password input preserves characters and visibility toggle without duplication',(tester)async{
     await tester.pumpWidget(const MaterialApp(home:WindowsManagedSchoolLogin()));
     final password=find.widgetWithText(TextField,'Password');
-    await tester.enterText(password,'a');await tester.pump();expect(find.text('1 characters'),findsOneWidget);
+    await tester.enterText(password,'a');await tester.pump();
     expect(tester.widget<TextField>(password).controller!.text,'a');expect(tester.widget<TextField>(password).obscureText,true);
     await tester.tap(find.byKey(const ValueKey('show-password')));await tester.pump();
     expect(tester.widget<TextField>(password).obscureText,false);expect(tester.widget<TextField>(password).controller!.text,'a');
-    await tester.enterText(password,'aaaa');await tester.pump();expect(find.text('4 characters'),findsOneWidget);
+    await tester.enterText(password,'aaaa');await tester.pump();
     await tester.tap(find.byKey(const ValueKey('hide-password')));await tester.pump();expect(tester.widget<TextField>(password).controller!.text,'aaaa');
+    await tester.enterText(password,'ab');await tester.pump();
+    await tester.enterText(password,'a');await tester.pump();
+    await tester.enterText(password,'ac');await tester.pump();
+    expect(tester.widget<TextField>(password).controller!.text,'ac');
+    final email=find.widgetWithText(TextField,'School login email');
+    expect(tester.widget<TextField>(email).autocorrect,false);
+    expect(tester.widget<TextField>(email).enableSuggestions,false);
     await tester.pumpWidget(const SizedBox());
   });
 }

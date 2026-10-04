@@ -9,14 +9,17 @@ class WindowsLocalSecurity {
 
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
-  static const String _adminIdKey = 'vidya_saarthi_windows_admin_id_v1';
-  static const String _adminPasswordKey =
-      'vidya_saarthi_windows_admin_password_v1';
+  static String _schoolSuffix='';
+  static String get _adminIdKey => 'vidya_saarthi_windows_admin_id_v1$_schoolSuffix';
+  static String get _adminPasswordKey =>
+      'vidya_saarthi_windows_admin_password_v1$_schoolSuffix';
 
   static String? _adminId;
   static String? _adminPassword;
 
   static Future<void> initialize() async {
+    final saved=await CentralSchoolCloud.saved();
+    _schoolSuffix=saved['managed']==true?'_${saved['schoolId']}':'';
     _adminId = (await _secure.read(key: _adminIdKey))?.trim();
     _adminPassword = await _secure.read(key: _adminPasswordKey);
 
