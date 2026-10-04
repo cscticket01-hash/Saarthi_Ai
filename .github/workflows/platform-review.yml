@@ -183,6 +183,10 @@ jobs:
       run: dart format lib/windows_reference_documents.dart test/windows_reference_documents_test.dart
     - name: Verify Windows ID cards, licence date and startup
       run: flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
+    - name: Verify reference PDF contents and continuation pages
+      run: |
+        python -m pip install "pypdf>=6,<7"
+        python .github/scripts/check_reference_document_previews.py
     - name: Analyze Windows ID card changes
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart lib/windows_school_map.dart lib/windows_school_map_dialog.dart lib/windows_reference_documents.dart
     - uses: actions/upload-artifact@v4

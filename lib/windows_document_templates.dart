@@ -35,6 +35,12 @@ class WindowsDocumentTemplates {
     return null;
   }
 
+  static String _documentDate(dynamic timestamp) {
+    final date = timestamp is Timestamp ? timestamp.toDate()
+        : timestamp is num ? DateTime.fromMillisecondsSinceEpoch(timestamp.toInt()) : null;
+    return date == null ? '-' : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+  }
+
   static Future<Uint8List?> _personPhoto(Map<String, dynamic> data) async {
     final url = data['photoUrl']?.toString().trim() ?? '';
     if (url.isNotEmpty) return _image(url);
@@ -79,6 +85,8 @@ class WindowsDocumentTemplates {
         'schoolAddress': profile['address'] ?? '',
         'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
         ...data,
+        if (kind == 'reportCard' && (data['dateText']?.toString().trim().isEmpty ?? true))
+          'dateText': _documentDate(data['timestamp']),
       },
       qr: qr,
       photo: await _personPhoto(data),
