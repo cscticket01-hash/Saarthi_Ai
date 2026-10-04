@@ -2,6 +2,7 @@ import 'windows_connect/school_drive_images.dart';
 import 'windows_ui_localization.dart';
 
 import 'dart:typed_data';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'package:printing/printing.dart';
@@ -118,14 +119,17 @@ class WindowsDocumentTemplates {
                   ),
                 ),
                 Expanded(
-                  child: PdfPreview(
+                  child: LayoutBuilder(builder: (context, constraints) => PdfPreview(
                     build: (_) => bytes,
-                    maxPageWidth: onDownload != null ? 250 : 700,
+                    maxPageWidth: onDownload != null
+                        ? math.max(60.0, math.min(constraints.maxWidth - 48,
+                            (constraints.maxHeight - 48) * 54 / 85.6))
+                        : 700,
                     allowPrinting: onPrint == null,
                     allowSharing: onDownload == null,
                     canChangePageFormat: false,
                     canChangeOrientation: false,
-                  ),
+                  )),
                 ),
                 if (onDownload != null || onPrint != null)
                   Padding(
