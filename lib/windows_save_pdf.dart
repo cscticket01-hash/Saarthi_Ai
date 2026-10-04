@@ -4,7 +4,16 @@ import 'dart:typed_data';
 
 /// Native Save As. Cancellation never reports a successful download.
 class WindowsSavePdf {
-  static Future<String?> save(Uint8List bytes, String filename) async {
+  static Future<String?> save(Uint8List bytes, String filename, {
+    Future<String?> Function(String)? choosePath,
+  }) async {
+    final path = await (choosePath ?? _choosePath)(filename);
+    if (path == null) return null;
+    await File(path).writeAsBytes(bytes, flush: true);
+    return path;
+  }
+
+  static Future<String?> _choosePath(String filename) async {
     if (!Platform.isWindows) throw UnsupportedError('Windows Save As required');
     final safeName = filename.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
     // Pass the filename as base64, never as executable PowerShell text.
@@ -33,7 +42,6 @@ try {
     final output = result.stdout.toString().trim();
     if (output.isEmpty) return null;
     final path = utf8.decode(base64Decode(output));
-    await File(path).writeAsBytes(bytes, flush: true);
     return path;
   }
 }

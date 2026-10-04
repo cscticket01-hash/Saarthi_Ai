@@ -425,11 +425,30 @@ class WindowsLocalDashboardGate extends StatelessWidget {
         icon: const Icon(Icons.admin_panel_settings),
         label: const Text('Open Admin Panel'),
         onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => const WindowsAdminAccessGate(child: AdminDashboardScreen()),
+          builder: (_) => const WindowsAdminAccessGate(child: WindowsAdminSessionDashboard()),
         )),
       )),
     );
   }
+}
+
+/// Start the idle timer only after the independent Admin gate admits entry.
+class WindowsAdminSessionDashboard extends StatefulWidget {
+  const WindowsAdminSessionDashboard({super.key});
+  @override
+  State<WindowsAdminSessionDashboard> createState() => _WindowsAdminSessionDashboardState();
+}
+class _WindowsAdminSessionDashboardState extends State<WindowsAdminSessionDashboard> {
+  @override
+  void initState() {
+    super.initState();
+    final storage = windows_html.window.localStorage;
+    storage['saarthi_portal_role_v1'] = 'admin';
+    storage['saarthi_portal_expiry_v1'] = DateTime.now()
+        .add(const Duration(minutes: 30)).millisecondsSinceEpoch.toString();
+  }
+  @override
+  Widget build(BuildContext context) => const AdminDashboardScreen();
 }
 
 class WindowsLocalLoginScreen extends StatefulWidget {
