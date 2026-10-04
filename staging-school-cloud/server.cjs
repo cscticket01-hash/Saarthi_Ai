@@ -42,7 +42,7 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
       return send(200,await handle({method:'POST',headers:req.headers,body}));
     }catch(e){
       const code=typeof e.code==='string'&&/^[a-zA-Z0-9_/-]{1,100}$/.test(e.code)?e.code:'UNKNOWN';
-      logger({event:'central_failure',action,status:e.status||503,code,requestId});
+      if(code!=='UNKNOWN')logger({event:'central_failure',action,status:e.status||503,code,requestId});
       const authErrors={
         'auth/email-already-exists':'This email already has a Firebase login. No new school was created. Use another email or ask the developer to inspect its existing account mapping.',
         'auth/invalid-email':'Enter a valid school login email.',
