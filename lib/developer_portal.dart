@@ -272,7 +272,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       child: child);
   Future<void> _issue([String? selected]) async {
     if (_schools.isEmpty) {
-      await _addSchool();
+      setState(()=>_page=1);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Create the school account from Schools first.')));
       return;
     }
     String school = selected ?? _schools.first['id'].toString();
@@ -408,43 +409,6 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     final s = Map<String,dynamic>.from(setup);
     final fields = s.entries.map((e) => "${e.key}: '${e.value}'").join(',\n  ');
     await Clipboard.setData(ClipboardData(text: "function setupSchoolMonitoring() {\n  return VS_setupPlatform({\n  $fields\n  });\n}"));
-  }
-
-  Future<void> _addSchool() async {
-    final project = TextEditingController(), name = TextEditingController();
-    bool busy = false;
-    String? error;
-    final result = await showDialog<Map<String,dynamic>>(context: context,
-      barrierDismissible:false, builder:(ctx) => StatefulBuilder(builder:(ctx,setD) => AlertDialog(
-        title:const Text('School monitoring setup'),
-        content:SizedBox(width:420,child:Column(mainAxisSize:MainAxisSize.min,children:[
-          TextField(controller:name,decoration:const InputDecoration(labelText:'School name')),
-          const SizedBox(height:16),
-          TextField(controller:project,decoration:const InputDecoration(labelText:'School Firebase project ID')),
-          const SizedBox(height:16),
-          const Text('Copy the setup into that school’s Google Script. Generating it again replaces the previous monitoring credentials.'),
-          if(error!=null) Text(error!,style:const TextStyle(color:Colors.redAccent)),
-        ])),
-        actions:[
-          TextButton(onPressed:busy?null:()=>Navigator.pop(ctx),child:const Text('Cancel')),
-          FilledButton(onPressed:busy?null:() async {
-            setD(() {busy=true;error=null;});
-            try {
-              final r=await _call('school/create',{'schoolId':project.text.trim(),'schoolName':name.text.trim(),'replaceMonitor':true});
-              if(ctx.mounted) Navigator.pop(ctx,r);
-            }catch(e){setD((){busy=false;error=e.toString();});}
-          },child:Text(busy?'Creating…':'Generate setup')),
-        ],
-      )));
-    project.dispose();name.dispose();
-    if(result==null||!mounted) return;
-    await showDialog(context:context,builder:(ctx)=>AlertDialog(
-      title:const Text('School setup ready'),
-      content:const Text('Copy this now and run it as the owner in the school’s Google Script. These credentials can send only that school’s summary and support reports.'),
-      actions:[TextButton(onPressed:()=>_copySetup(result['setup']),child:const Text('Copy setup')),
-        FilledButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Done'))],
-    ));
-    await _load();
   }
 
   Future<void> _complaint(Map<String, dynamic> c) async {

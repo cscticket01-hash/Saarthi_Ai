@@ -94,7 +94,7 @@ class _QrScannerState extends State<_QrScanner> {
                       Navigator.pop(context, link);
                       return;
                     } catch (e) {
-                      if (mounted) setState((){_blocked=true;_error='Unable to connect. School Windows app is offline or unavailable.';});
+                      if (mounted) setState(() => _error = e.toString());
                     }
                   }
                 },
