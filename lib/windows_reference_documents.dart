@@ -39,8 +39,8 @@ String _reportArt(int i) {
   return _svg(612,792,'<path fill="#743546" d="M0 0H612V73H481Q465 73 451 91H0Z M0 782H612V792H0Z"/><path fill="#e1b4a6" d="M0 73H452Q441 105 406 105H0Z M135 782Q165 745 207 745H612V782Z"/><path fill="#003750" d="M474 101L542 81L594 102L542 120Z M488 111V136L541 148L577 134V111L542 125Z"/><path fill="none" stroke="#d8a33a" stroke-width="3" d="M584 106V143"/>', '#f8e8e3');
 }
 
-// White ink on the dark footer; the saved school signature is untouched.
-Future<Uint8List?> _whiteSignature(Uint8List? bytes) async {
+// Trim blank signature margins for printing only; stored branding is untouched.
+Future<Uint8List?> _signatureInk(Uint8List? bytes, {bool white = false}) async {
   if (bytes == null) return null;
   final codec = await ui.instantiateImageCodec(bytes);
   final frame = await codec.getNextFrame();
@@ -49,19 +49,35 @@ Future<Uint8List?> _whiteSignature(Uint8List? bytes) async {
     final raw = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (raw == null) return bytes;
     final pixels = Uint8List.fromList(raw.buffer.asUint8List());
-    for (var n = 0; n < pixels.length; n += 4) {
-      final darkness = 255 - (pixels[n] + pixels[n + 1] + pixels[n + 2]) ~/ 3;
-      pixels[n + 3] = (pixels[n + 3] * darkness / 255).round();
-      pixels[n] = pixels[n + 1] = pixels[n + 2] = 255;
+    var left = image.width, top = image.height, right = -1, bottom = -1;
+    for (var y = 0; y < image.height; y++) {
+      for (var x = 0; x < image.width; x++) {
+        final n = (y * image.width + x) * 4;
+        final darkness = 255 - (pixels[n] + pixels[n + 1] + pixels[n + 2]) ~/ 3;
+        if (darkness > 20 && pixels[n + 3] > 20) {
+          if (x < left) left = x; if (x > right) right = x;
+          if (y < top) top = y; if (y > bottom) bottom = y;
+        }
+        if (darkness < 20) pixels[n + 3] = 0;
+        if (white) pixels[n] = pixels[n + 1] = pixels[n + 2] = 255;
+      }
+    }
+    if (right < left || bottom < top) return null;
+    final width = right - left + 1, height = bottom - top + 1;
+    final cropped = Uint8List(width * height * 4);
+    for (var y = 0; y < height; y++) {
+      final start = ((top + y) * image.width + left) * 4;
+      cropped.setRange(y * width * 4, (y + 1) * width * 4,
+          pixels, start);
     }
     final ready = Completer<ui.Image>();
-    ui.decodeImageFromPixels(pixels, image.width, image.height,
+    ui.decodeImageFromPixels(cropped, width, height,
         ui.PixelFormat.rgba8888, ready.complete);
-    final white = await ready.future;
+    final printed = await ready.future;
     try {
-      final png = await white.toByteData(format: ui.ImageByteFormat.png);
+      final png = await printed.toByteData(format: ui.ImageByteFormat.png);
       return png?.buffer.asUint8List() ?? bytes;
-    } finally { white.dispose(); }
+    } finally { printed.dispose(); }
   } finally { image.dispose(); codec.dispose(); }
 }
 
@@ -69,7 +85,7 @@ Future<Uint8List> renderWindowsReferenceDocument({required String kind, required
   required Map<String,dynamic> data, String qr = '', Uint8List? photo, Uint8List? logo, Uint8List? signature}) async {
   if (!windowsReferenceDocumentNames.containsKey(kind)) throw ArgumentError.value(kind, 'kind');
   final i = windowsReferenceDocumentIndex(kind, template);
-  final printSignature = kind == 'reportCard' && i == 2 ? await _whiteSignature(signature) : signature;
+  final printSignature = await _signatureInk(signature, white: kind == 'reportCard' && i == 2);
   String v(String key, [String fallback = '-']) {
     final raw = data[key]?.toString().trim() ?? '';
     return raw.isEmpty || raw == 'null' ? fallback : raw;
@@ -106,7 +122,7 @@ Future<Uint8List> renderWindowsReferenceDocument({required String kind, required
       } else {
         front.addAll([at(49,15,172,192,asset(photo,'PHOTO',cover:true)),at(49,15,172,192,pw.SvgImage(svg:'<svg xmlns="http://www.w3.org/2000/svg" width="172" height="192"><path fill="white" d="M0 0H86L0 44Z M86 0H172V44Z M0 146L86 192H0Z M86 192L172 146V192Z"/><path fill="none" stroke="black" stroke-width="4" d="M86 3L166 45Q169 48 169 56V136Q169 144 163 149L93 187Q86 191 79 187L9 149Q3 144 3 136V56Q3 48 9 44Z"/></svg>')),at(42,261,236,58,label('TEACHER',size:48,color:white,heavy:true)),at(31,335,244,88,table(details,firstHeader:false,font:11)),at(35,432,45,40,asset(logo,'LOGO')),at(86,432,203,37,label(school,size:17,color:PdfColor.fromHex('#cc993d'),heavy:true))]);
       }
-      back.addAll([at(25,i==0?22:20,i==0?145:205,45,label(school,size:18,color:i==0?ink:PdfColor.fromHex('#cc993d'),heavy:true)),at(23,i==0?99:158,i==0?165:210,28,label('Terms & Conditions',size:i==0?15:17,color:ink)),at(30,i==0?137:198,i==0?150:202,90,pw.Text(first(['idCardTerms'],'This card identifies a member of the school staff. Carry it while on duty. Return it to the school office if found. This card is not transferable.'),style:pw.TextStyle(fontSize:i==0?8:10,color:ink))),at(i==1?153:28,i==1?277:243,125,43,asset(signature,'Signature not set')),at(i==1?153:40,i==1?321:286,125,17,label('Principal signature',size:9,color:ink))]);
+      back.addAll([at(25,i==0?22:20,i==0?145:205,45,label(school,size:18,color:i==0?ink:PdfColor.fromHex('#cc993d'),heavy:true)),at(23,i==0?99:158,i==0?165:210,28,label('Terms & Conditions',size:i==0?15:17,color:ink)),at(30,i==0?137:198,i==0?150:202,90,pw.Text(first(['idCardTerms'],'This card identifies a member of the school staff. Carry it while on duty. Return it to the school office if found. This card is not transferable.'),style:pw.TextStyle(fontSize:i==0?8:10,color:ink))),at(i==1?153:28,i==1?277:243,125,43,asset(printSignature,'Signature not set')),at(i==1?153:40,i==1?321:286,125,17,label('Principal signature',size:9,color:ink))]);
       if(i==1)back.add(at(30,275,88,88,qrCode(80)));
       if(i==0)back.addAll([at(171,237,66,66,qrCode(58)),at(180,19,43,43,asset(logo,'LOGO'))]);
       if(i==1)back.add(at(236,17,54,76,asset(logo,'LOGO')));
@@ -114,10 +130,10 @@ Future<Uint8List> renderWindowsReferenceDocument({required String kind, required
       if(i==0)back.add(at(27,413,245,48,pw.BarcodeWidget(barcode:pw.Barcode.code128(),data:id=='-'?'TEACHER':id,drawText:true)));
     } else if(i==2) {
       front.addAll([at(45,82,228,35,label(name,size:22,color:ink,heavy:true)),at(45,117,220,19,label(v('designation','Teacher'),size:13,color:PdfColor.fromHex('#44afd3'))),at(49,147,216,72,table([['ID No.',id],['Issue Date',v('issueDate',first(['joiningDate']))],['Expiration',first(['validUntil','expiryDate'])]],firstHeader:false,font:10)),at(305,24,144,144,pw.Container(decoration:pw.BoxDecoration(border:pw.Border.all(color:ink)),child:asset(photo,'PHOTO',cover:true))),at(296,183,168,23,label(school,size:18,color:PdfColor.fromHex('#44afd3'),heavy:true)),at(335,224,114,44,asset(logo,'SCHOOL LOGO')),at(88,221,57,57,qrCode(49))]);
-      back.addAll([at(18,12,143,46,asset(logo,'SCHOOL LOGO')),at(254,14,211,44,label(school,size:20,color:white,heavy:true)),at(35,87,414,37,label('${first(['schoolAddress','address'])}\n${first(['schoolContactNo','contact','phone'])} | ${first(['schoolEmail','email'])}',size:11)),at(181,124,264,51,pw.BarcodeWidget(barcode:pw.Barcode.code128(),data:id=='-'?'TEACHER':id,drawText:true)),at(35,172,397,24,label('Terms & Conditions',size:14)),at(47,202,381,41,pw.Text(first(['idCardTerms'],'Carry this school ID while on duty. If found, return it to the school office. It is not transferable.'),style:const pw.TextStyle(fontSize:10))),at(35,251,143,20,label('Principal signature',size:10)),at(178,248,128,43,asset(signature,'Signature not set'))]);
+      back.addAll([at(18,12,143,46,asset(logo,'SCHOOL LOGO')),at(254,14,211,44,label(school,size:20,color:white,heavy:true)),at(35,87,414,37,label('${first(['schoolAddress','address'])}\n${first(['schoolContactNo','contact','phone'])} | ${first(['schoolEmail','email'])}',size:11)),at(181,124,264,51,pw.BarcodeWidget(barcode:pw.Barcode.code128(),data:id=='-'?'TEACHER':id,drawText:true)),at(35,172,397,24,label('Terms & Conditions',size:14)),at(47,202,381,41,pw.Text(first(['idCardTerms'],'Carry this school ID while on duty. If found, return it to the school office. It is not transferable.'),style:const pw.TextStyle(fontSize:10))),at(35,251,143,20,label('Principal signature',size:10)),at(178,248,128,43,asset(printSignature,'Signature not set'))]);
     } else {
       front.addAll([at(17,19,40,40,asset(logo,'LOGO')),at(63,19,199,47,label(school,size:17,color:white,heavy:true)),at(79,116,150,150,pw.Container(decoration:pw.BoxDecoration(shape:pw.BoxShape.circle,border:pw.Border.all(color:PdfColor.fromHex('#e50e2c'),width:6)),child:pw.ClipOval(child:asset(photo,'PHOTO',cover:true)))),at(24,280,261,30,label(name,size:23,color:ink,heavy:true,align:pw.TextAlign.center)),at(58,314,192,25,pw.Container(decoration:pw.BoxDecoration(color:PdfColor.fromHex('#e50e2c'),borderRadius:pw.BorderRadius.circular(15)),child:label(v('designation','TEACHER'),size:15,color:white,heavy:true,align:pw.TextAlign.center))),at(26,361,252,66,table([['ID NO',id],['DEPARTMENT',first(['department','subject'])],['VALID UNTIL',first(['validUntil','expiryDate'])]],firstHeader:false,font:11)),at(247,440,47,42,qrCode(34))]);
-      back.addAll([at(20,22,40,36,asset(logo,'LOGO')),at(70,20,220,40,label('OFFICIAL TEACHER ID',size:16,color:white,heavy:true)),at(28,99,251,110,table([['PHONE',first(['contact','phone'])],['EMAIL',v('email')],['SCHOOL',school],['ADDRESS',v('address')],['BLOOD GROUP',v('bloodGroup')]],firstHeader:false,font:10)),at(28,219,251,22,table([['EMERGENCY',first(['emergencyContact','contact','phone'])]],firstHeader:false,font:10)),at(28,252,250,25,label('TERMS OF USE',size:13,color:PdfColor.fromHex('#b83548'),heavy:true)),at(28,281,251,66,pw.Text(first(['idCardTerms'],'This card is the property of the school and identifies its staff member. Wear it while on duty. It is not transferable. If found, return it to the school office.'),style:const pw.TextStyle(fontSize:11))),at(28,353,110,31,label('Holder signature: __________',size:9)),at(169,348,109,31,asset(signature,'Signature not set')),at(169,380,109,13,label('Principal signature',size:9)),at(78,406,174,44,pw.BarcodeWidget(barcode:pw.Barcode.code128(),data:id=='-'?'TEACHER':id,drawText:true)),at(30,467,250,15,label('SCHOOL • TEACHER • STAFF',size:10,color:white,align:pw.TextAlign.center))]);
+      back.addAll([at(20,22,40,36,asset(logo,'LOGO')),at(70,20,220,40,label('OFFICIAL TEACHER ID',size:16,color:white,heavy:true)),at(28,99,251,110,table([['PHONE',first(['contact','phone'])],['EMAIL',v('email')],['SCHOOL',school],['ADDRESS',v('address')],['BLOOD GROUP',v('bloodGroup')]],firstHeader:false,font:10)),at(28,219,251,22,table([['EMERGENCY',first(['emergencyContact','contact','phone'])]],firstHeader:false,font:10)),at(28,252,250,25,label('TERMS OF USE',size:13,color:PdfColor.fromHex('#b83548'),heavy:true)),at(28,281,251,66,pw.Text(first(['idCardTerms'],'This card is the property of the school and identifies its staff member. Wear it while on duty. It is not transferable. If found, return it to the school office.'),style:const pw.TextStyle(fontSize:11))),at(28,353,110,31,label('Holder signature: __________',size:9)),at(169,348,109,31,asset(printSignature,'Signature not set')),at(169,380,109,13,label('Principal signature',size:9)),at(78,406,174,44,pw.BarcodeWidget(barcode:pw.Barcode.code128(),data:id=='-'?'TEACHER':id,drawText:true)),at(30,467,250,15,label('SCHOOL • TEACHER • STAFF',size:10,color:white,align:pw.TextAlign.center))]);
     }
     page(w,h,front,card:true);page(w,h,back,card:true);
   } else if(kind=='reportCard') {
@@ -160,7 +176,7 @@ Future<Uint8List> renderWindowsReferenceDocument({required String kind, required
       final rows=<List<String>>[['Subject','Teacher','Term 1\nGrade','Term 2\nGrade','Final\nGrade','Comments']];
       for(final s in subjects){final raw=marks[s];rows.add([s,raw is Map?(raw['teacher']??'-').toString():'-',mark(term1[s]),mark(term2[s]),mark(raw),raw is Map?(raw['comments']??'-').toString():'-']);}
       while(rows.length<10)rows.add(['','','','','','']);
-      layers.addAll([at(72,237,470,267,table(rows,widths:[1,1,1,1,1,1.5],header:ink,font:10)),at(469,531,68,71,pw.SvgImage(svg:'<svg xmlns="http://www.w3.org/2000/svg" width="68" height="71"><path fill="none" stroke="#743546" stroke-width="2" d="M8 8H42Q56 8 56 17Q56 24 48 24H8V20H48Q51 20 51 17Q51 13 44 13H8Z M3 29H41Q56 29 56 38Q56 45 48 45H3V41H48Q51 41 51 38Q51 34 43 34H3Z M8 51H44Q56 51 56 60Q56 67 48 67H8V63H48Q51 63 51 60Q51 56 44 56H8Z M60 4L67 58 M55 4L62 58"/></svg>')),at(72,501,480,24,label('Behavioral and Personal Development Evaluation:',size:12,color:ink,heavy:true)),at(90,538,365,87,pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start,children:[for(final pair in [['Punctuality',v('punctuality')],['Class Participation',v('classParticipation')],['Homework Completion',v('homeworkCompletion')],['Behavior',v('behavior')]])pw.Padding(padding:const pw.EdgeInsets.only(bottom:5),child:label('${pair[0]}: ${pair[1]}',size:11,color:ink))])),at(90,640,451,45,pw.Text('Remarks: ${first(['remarks','teacherComment'],'No remarks recorded.')}',style:pw.TextStyle(fontSize:11,color:ink))),at(72,700,214,17,label("Principal's Signature:",size:11,color:ink)),at(302,700,239,17,label('Parent/Guardian Signature: __________',size:11,color:ink)),at(170,700,115,30,asset(signature,'Not set')),at(72,729,209,16,label('Date: ${first(['dateText','date'])}',size:10,color:ink)),at(302,729,239,16,label('Date: __________________',size:10,color:ink))]);
+      layers.addAll([at(72,237,470,267,table(rows,widths:[1,1,1,1,1,1.5],header:ink,font:10)),at(469,531,68,71,pw.SvgImage(svg:'<svg xmlns="http://www.w3.org/2000/svg" width="68" height="71"><path fill="none" stroke="#743546" stroke-width="2" d="M8 8H42Q56 8 56 17Q56 24 48 24H8V20H48Q51 20 51 17Q51 13 44 13H8Z M3 29H41Q56 29 56 38Q56 45 48 45H3V41H48Q51 41 51 38Q51 34 43 34H3Z M8 51H44Q56 51 56 60Q56 67 48 67H8V63H48Q51 63 51 60Q51 56 44 56H8Z M60 4L67 58 M55 4L62 58"/></svg>')),at(72,501,480,24,label('Behavioral and Personal Development Evaluation:',size:12,color:ink,heavy:true)),at(90,538,365,87,pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start,children:[for(final pair in [['Punctuality',v('punctuality')],['Class Participation',v('classParticipation')],['Homework Completion',v('homeworkCompletion')],['Behavior',v('behavior')]])pw.Padding(padding:const pw.EdgeInsets.only(bottom:5),child:label('${pair[0]}: ${pair[1]}',size:11,color:ink))])),at(90,640,451,45,pw.Text('Remarks: ${first(['remarks','teacherComment'],'No remarks recorded.')}',style:pw.TextStyle(fontSize:11,color:ink))),at(72,700,214,17,label("Principal's Signature:",size:11,color:ink)),at(302,700,239,17,label('Parent/Guardian Signature: __________',size:11,color:ink)),at(188,700,90,30,asset(printSignature,'Not set')),at(72,729,209,16,label('Date: ${first(['dateText','date'])}',size:10,color:ink)),at(302,729,239,16,label('Date: __________________',size:10,color:ink))]);
     }
     if (chunks.length > 1) layers.add(at(250,772,210,12,label('Page ${chunks.indexOf(subjects)+1} of ${chunks.length}',size:8)));
     page(612,792,layers);
@@ -174,7 +190,7 @@ Future<Uint8List> renderWindowsReferenceDocument({required String kind, required
     for(final e in chunk)rows.add(['1',e.key,'INR ${e.value}','INR ${e.value}']);
     if(items.isEmpty)rows.add(['1','School fee','INR ${first(['installmentAmount','amount','totalAmount'])}','INR ${first(['installmentAmount','amount','totalAmount'])}']);
     while(rows.length<9)rows.add(['','','','']);
-    final layers=<pw.Widget>[at(18,18,576,756,pw.Container(decoration:pw.BoxDecoration(border:pw.Border.all(color:PdfColors.grey400,width:.5)))),at(86,78,75,39,asset(logo,'SCHOOL LOGO')),at(86,126,245,24,label(school,size:16,heavy:true)),at(86,156,245,28,label(first(['schoolAddress','address']),size:10)),at(86,189,245,15,label(first(['schoolContactNo','schoolEmail']),size:10)),at(349,82,205,32,label('SCHOOL RECEIPT',size:22,heavy:true)),at(349,127,198,17,label('Date: ${first(['dateText','date'])}',size:10)),at(349,151,198,17,label('Receipt #: ${v('receiptNo')}',size:10)),at(86,208,249,23,label('Student Information',size:12,heavy:true)),at(343,208,203,23,label('Payment Information',size:12,heavy:true)),at(86,236,251,88,table([['Name:',name],['Class / Roll:', '${first(['studentClass','class'])} / ${first(['rollNo','roll'])}'],['Phone:',first(['parentContact','contact'])],['Guardian:',first(['parentName','fatherName'])]],firstHeader:false,font:10)),at(343,236,203,88,table([['Mode:',v('paymentMode')],['Month:',v('month')],['Collected by:',v('collectedBy')],['Status:',v('status')]],firstHeader:false,font:10)),at(86,340,460,22,label("Item's Detail",size:12,heavy:true)),at(86,360,460,168,table(rows,widths:[.4,3,1.2,1.2],header:PdfColors.black,font:9,rowHeight:18.6)),at(385,528,161,75,table([['Sub Total:',first(['expectedAmount','totalAmount','amount'])],['Total Paid:',first(['totalPaid','totalAmount','amount'])],['Total Due:',v('balance','0')],['Amount Paid:',first(['installmentAmount','amount','totalAmount'])]],firstHeader:false,font:9,rowHeight:18.6)),at(86,625,330,22,label('Authorized Title and Signature',size:12,heavy:true)),at(86,659,200,17,label('Title: ${v('collectedBy','Admin')}',size:10)),at(361,638,152,39,asset(signature,'Signature: __________'))];
+    final layers=<pw.Widget>[at(18,18,576,756,pw.Container(decoration:pw.BoxDecoration(border:pw.Border.all(color:PdfColors.grey400,width:.5)))),at(86,78,75,39,asset(logo,'SCHOOL LOGO')),at(86,126,245,24,label(school,size:16,heavy:true)),at(86,156,245,28,label(first(['schoolAddress','address']),size:10)),at(86,189,245,15,label(first(['schoolContactNo','schoolEmail']),size:10)),at(349,82,205,32,label('SCHOOL RECEIPT',size:22,heavy:true)),at(349,127,198,17,label('Date: ${first(['dateText','date'])}',size:10)),at(349,151,198,17,label('Receipt #: ${v('receiptNo')}',size:10)),at(86,208,249,23,label('Student Information',size:12,heavy:true)),at(343,208,203,23,label('Payment Information',size:12,heavy:true)),at(86,236,251,88,table([['Name:',name],['Class / Roll:', '${first(['studentClass','class'])} / ${first(['rollNo','roll'])}'],['Phone:',first(['parentContact','contact'])],['Guardian:',first(['parentName','fatherName'])]],firstHeader:false,font:10)),at(343,236,203,88,table([['Mode:',v('paymentMode')],['Month:',v('month')],['Collected by:',v('collectedBy')],['Status:',v('status')]],firstHeader:false,font:10)),at(86,340,460,22,label("Item's Detail",size:12,heavy:true)),at(86,360,460,168,table(rows,widths:[.4,3,1.2,1.2],header:PdfColors.black,font:9,rowHeight:18.6)),at(385,528,161,75,table([['Sub Total:',first(['expectedAmount','totalAmount','amount'])],['Total Paid:',first(['totalPaid','totalAmount','amount'])],['Total Due:',v('balance','0')],['Amount Paid:',first(['installmentAmount','amount','totalAmount'])]],firstHeader:false,font:9,rowHeight:18.6)),at(86,625,330,22,label('Authorized Title and Signature',size:12,heavy:true)),at(86,659,200,17,label('Title: ${v('collectedBy','Admin')}',size:10)),at(361,638,152,39,asset(printSignature,'Signature: __________'))];
     if (chunks.length > 1) layers.add(at(250,748,210,12,label('Page ${chunks.indexOf(chunk)+1} of ${chunks.length}',size:8)));
     page(612,792,layers);
     }
