@@ -28,8 +28,9 @@
     $('#generate-base').disabled=Boolean(active)||base.ready;
     $('#run-tests').disabled=Boolean(active)||runningQueue;
     $('#stop-test').disabled=!active&&!runningQueue;
-    $('#environment').textContent=state.school.connected?state.school.project_id:'Test school not connected';
-    $('#school-state').textContent=state.school.connected?`Verified test backend · Licence ${state.school.license_allowed?'active':'required'} · School ${state.school.school_open?'open':'closed'}`:'Credentials stay in this app process and are excluded from reports.';
+    $('#environment').textContent=state.school.connected?state.school.project_id:state.firebase.connected?`${state.firebase.project_id} · Firebase only`:'Test school not connected';
+    $('#firebase-state').textContent=state.firebase.connected?`Firebase verified · ${state.firebase.project_id} · Email/Password + admin claim + Firestore read · ${number(state.firebase.connection_ms)} ms`:'Firebase: not checked.';
+    $('#school-state').textContent=state.school.connected?`Verified test backend · Licence ${state.school.license_allowed?'active':'required'} · School ${state.school.school_open?'open':'closed'}`:'School backend: not connected. Attendance, student add and fees require the test Apps Script backend.';
     $('#run-progress').hidden=!active;
     if(active){$('#run-phase').textContent=active.phase;$('#run-completed').textContent=`${number(active.completed)} completed · ${number(active.duration_seconds)} s`;$('#progress').max=active.requested||100000;$('#progress').value=Math.min(active.completed,$('#progress').max);}
     $('#test-rows').innerHTML=Object.entries(state.scenarios).map(([key,spec])=>{
@@ -90,7 +91,20 @@
     if(b.dataset.download)download('/api/report/'+b.dataset.download,b.dataset.download+'.json');
     if(b.dataset.export)download('/api/export/'+b.dataset.export,'students.'+b.dataset.export);
   });
-  $('#school-form').addEventListener('submit',async e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.target));notice('Connecting to test Firebase and verifying the test backend…');try{await api('/api/connect/school',values);notice('Test school verified.');e.target.elements.password.value='';await refresh();}catch(error){notice(error.message,true);}});
+  let connecting=false;
+  async function connectSchool(firebaseOnly) {
+    if(connecting)return;
+    const form=$('#school-form'),values=Object.fromEntries(new FormData(form));
+    if(!values.project_id||!values.api_key||!values.email||!values.password){notice('Enter the test Firebase project ID, API key, administrator email and password.',true);return;}
+    if(!firebaseOnly&&!values.script_url){notice('Enter the separate test Apps Script /exec URL, or use Check Firebase only first.',true);return;}
+    connecting=true;$('#check-firebase').disabled=true;form.querySelector('[type="submit"]').disabled=true;
+    notice(firebaseOnly?'Checking real Firebase sign-in and Firestore access…':'Checking Firebase and the test Apps Script backend…');
+    try{await api(firebaseOnly?'/api/connect/firebase':'/api/connect/school',values);notice(firebaseOnly?'Firebase connection verified. School tests still need the test Apps Script backend.':'Test school backend verified.');}
+    catch(error){notice(error.message,true);}
+    finally{form.elements.password.value='';connecting=false;$('#check-firebase').disabled=false;form.querySelector('[type="submit"]').disabled=false;await refresh();}
+  }
+  $('#school-form').addEventListener('submit',e=>{e.preventDefault();connectSchool(false);});
+  $('#check-firebase').addEventListener('click',()=>connectSchool(true));
   $('#native-form').addEventListener('submit',async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));try{await api('/api/connect/native',{web:{url:f.web_url,expected_text:f.web_expected_text,expected_selector:f.web_expected_selector,email:f.web_email,password:f.web_password,login_button:f.web_login_button,steps:JSON.parse(f.web_steps),headless:false},windows:{exe:f.windows_exe,window_title:f.windows_window_title,steps:JSON.parse(f.windows_steps)},android:{adb:f.android_adb,serial:f.android_serial,apk:f.android_apk,component:f.android_component,steps:JSON.parse(f.android_steps)}});e.target.elements.web_password.value='';notice('Runners saved in process memory.');await refresh();}catch(error){notice(error.message,true);}});
   $('#download-backend').addEventListener('click',()=>download('/api/backend','Saarthi-Test-Backend.zip'));
   $('#install-browser').addEventListener('click',async()=>{try{await api('/api/install-browser',{});notice('Browser installation started. It downloads a real browser; see browser-install.log for errors.');await refresh();}catch(e){notice(e.message,true);}});

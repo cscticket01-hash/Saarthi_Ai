@@ -26,6 +26,9 @@ class Fixture(ThreadingHTTPServer):
         self.profiles, self.attendance, self.sheets, self.sessions, self.fees, self.results = {}, {}, {}, {}, {}, {}
         self.ignore_attendance = self.ignore_profile = self.wrong_dashboard = False
         self.closed = self.unlicensed = self.duplicate_attendance = self.wrong_refresh = False
+        self.admin_claim = True
+        self.auth_error = ""
+        self.deny_firestore = self.bad_probe = self.backend_unavailable = False
         self.delay = .002
         self.result_lock = threading.RLock()
         super().__init__(("127.0.0.1", 0), FixtureHandler)
@@ -87,10 +90,16 @@ class FixtureHandler(BaseHTTPRequestHandler):
             return
         b = self.body()
         if self.path.startswith("/auth/"):
-            claims = base64.urlsafe_b64encode(json.dumps({"aud":"saarthi-lab-test","admin":True}).encode()).decode().rstrip("=")
+            if self.server.auth_error:
+                self.reply({"error":{"message":self.server.auth_error}},400);return
+            claims = base64.urlsafe_b64encode(json.dumps({"aud":"saarthi-lab-test","admin":self.server.admin_claim}).encode()).decode().rstrip("=")
             self.reply({"idToken":"fixture."+claims+".fixture", "refreshToken":"fixture-refresh", "expiresIn":"3600"})
             return
         if self.path.endswith(":batchGet"):
+            if self.server.deny_firestore:
+                self.reply({"error":{"status":"PERMISSION_DENIED"}},403);return
+            if self.server.bad_probe:
+                self.reply([{ "missing":"projects/wrong-project/databases/(default)/documents/wrong/probe" }]);return
             output=[]
             with self.server.result_lock:
                 for name in b["documents"]:
@@ -101,6 +110,8 @@ class FixtureHandler(BaseHTTPRequestHandler):
             self.reply(output);return
         time.sleep(self.server.delay)
         action=b["action"]
+        if action=="toolkit_info" and self.server.backend_unavailable:
+            self.reply({"success":False,"message":"The test backend is not deployed"},503);return
         result={"success":True,"projectId":"saarthi-lab-test"}
         with self.server.result_lock:
             if action=="toolkit_info":

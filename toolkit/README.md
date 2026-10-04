@@ -61,6 +61,12 @@ because it returned 200. They do not claim browser rendering was measured.
 ## Connect the targets
 
 **School backend:** Download Test Lab → Connections → Test-backend setup bundle.
+When the website's public Google OAuth verification is pending, use **Check Firebase
+only** first. It uses Email/Password Auth and verifies an actual Firestore read without
+Google sign-in or an Apps Script URL. The bundle includes `grant_test_admin.py` for
+setting and verifying the test administrator's claim in your own Google Cloud Shell,
+using your owner login without a service-account private key. Firebase-only connection
+does not enable attendance/student/fees tests: those still need the verified test backend.
 Follow its `SETUP.md` to provision a separate school Firebase/Apps Script/Drive.
 Only test/lab project IDs with the enabled toolkit bridge are accepted. A normal
 test-school administrator account and real trial/licence are still required.

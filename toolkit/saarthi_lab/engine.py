@@ -61,6 +61,7 @@ class Engine:
         self.jobs = {}
         self.lock = threading.RLock()
         self.school = None
+        self.firebase = None
         self.allow_loopback = allow_loopback
         self.native_config = {"web": {}, "windows": {}, "android": {}}
 

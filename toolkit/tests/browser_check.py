@@ -28,6 +28,16 @@ def main():
                 assert page.locator('#test-rows [data-state="PASS"]').count()==0
                 assert page.locator('#test-rows [data-state="NOT RUN"]').count()==len(SCENARIOS)
                 page.screenshot(path=str(output/"interface-not-run.png"),full_page=True)
+                page.get_by_role('button',name='Connections',exact=True).click()
+                page.get_by_role('button',name='Check Firebase only',exact=True).click()
+                assert 'Enter the test Firebase' in page.locator('#notice').inner_text()
+                assert page.locator('#firebase-state').inner_text()=='Firebase: not checked.'
+                page.get_by_text('Set up while Google verification is pending',exact=True).click()
+                page.screenshot(path=str(output/"interface-firebase-setup.png"),full_page=True)
+                page.set_viewport_size({"width":390,"height":1100})
+                assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                page.set_viewport_size({"width":1440,"height":1100})
+                page.get_by_role('button',name='Test console',exact=True).click()
                 page.get_by_role('button',name='Run selected tests',exact=True).click()
                 page.locator('#test-rows [data-state="BLOCKED"]').wait_for()
                 assert page.locator('#test-rows [data-state="PASS"]').count()==0

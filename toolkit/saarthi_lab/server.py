@@ -86,6 +86,7 @@ class Handler(BaseHTTPRequestHandler):
                 native = engine.native_config
                 self.send(200, {"dataset": engine.dataset.stats(), "jobs": engine.snapshots(), "scenarios": SCENARIOS,
                     "school": engine.school.public() if engine.school else {"connected": False},
+                    "firebase": engine.firebase.firebase_public() if engine.firebase else {"connected": False},
                     "connections": {"web": {k: v for k, v in native["web"].items() if k not in ("password", "email")},
                                     "windows": native["windows"], "android": native["android"]},
                     "browser_setup_running": self.server.browser_install is not None and self.server.browser_install.poll() is None})
@@ -146,12 +147,24 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/stop":
                 engine.cancel(body.get("id"))
                 self.send(200, {"stopping": True})
-            elif path == "/api/connect/school":
+            elif path in ("/api/connect/firebase", "/api/connect/school"):
                 if any(j.state == "RUNNING" for j in engine.jobs.values()):
                     raise ValueError("Wait for the active task before changing connections")
-                candidate = School(body, engine.allow_loopback)
-                result = candidate.connect(body.get("email"), body.get("password"))
-                engine.school = candidate
+                firebase_only = path == "/api/connect/firebase"
+                candidate = School(body, engine.allow_loopback, require_script=not firebase_only)
+                try:
+                    result = candidate.connect_firebase(body.get("email"), body.get("password"))
+                    engine.firebase = candidate
+                    if not firebase_only or (engine.school and engine.school.project_id != candidate.project_id):
+                        engine.school = None
+                    if not firebase_only:
+                        result = candidate.connect_backend()
+                        engine.school = candidate
+                except Exception as error:
+                    detail = engine.clean_error(error, candidate)
+                    if candidate.firebase_info:
+                        raise Blocked("Firebase verified; Apps Script backend still needs setup. " + detail) from error
+                    raise Blocked(detail) from error
                 self.send(200, result)
             elif path == "/api/connect/native":
                 if any(j.state == "RUNNING" for j in engine.jobs.values()):

@@ -157,13 +157,13 @@ def decode_value(value):
 
 class School:
     """Credentials and session tokens stay in this process, not in reports/config."""
-    def __init__(self, config, allow_loopback=False):
+    def __init__(self, config, allow_loopback=False, require_script=True):
         self.project_id = str(config.get("project_id", "")).strip()
         if not re.fullmatch(r"[a-z][a-z0-9-]{4,61}[a-z0-9]", self.project_id):
             raise ValueError("Enter the test school's Firebase project ID")
         if self.project_id == "saarthi-ai-df12b" or not re.search(r"(^|[-_])(test|lab)([-_]|$)", self.project_id):
             raise Blocked("School load tests require a separate Firebase project with 'test' or 'lab' in its ID")
-        self.script_url = validate_url(config.get("script_url", ""), school=True, allow_loopback=allow_loopback)
+        self.script_url = validate_url(config.get("script_url", ""), school=True, allow_loopback=allow_loopback) if require_script else ""
         self.api_key = str(config.get("api_key", "")).strip()
         self.http = Transport(int(config.get("timeout", 30)), allow_loopback)
         self.id_token = ""
@@ -173,27 +173,76 @@ class School:
         self.sessions = {}
         self.session_lock = threading.Lock()
         self.info = {}
+        self.firebase_info = {}
         self.auth_base = "https://identitytoolkit.googleapis.com/v1/"
         self.refresh_base = "https://securetoken.googleapis.com/v1/"
         self.firestore_base = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents"
 
-    def connect(self, email, password):
+    def connect_firebase(self, email, password):
+        """Verify real Firebase Auth and a rules-protected read, without Google OAuth or Apps Script."""
+        self.firebase_info = {}
+        self.info = {}
+        self.id_token = self.refresh_token = ""
+        self.sessions.clear()
         if not email or not password or not self.api_key:
             raise Blocked("Test-school API key and administrator email/password are required")
+        started = time.perf_counter()
         r = self.http.request(self.auth_base + "accounts:signInWithPassword?key=" + urllib.parse.quote(self.api_key),
                               "POST", {"email": email, "password": password, "returnSecureToken": True})
         d = r.json()
-        if r.status != 200 or "idToken" not in d:
-            raise RemoteError("Firebase administrator sign-in failed")
-        claims = json.loads(base64.urlsafe_b64decode(d["idToken"].split(".")[1] + "===").decode())
+        if r.status != 200 or not isinstance(d, dict) or "idToken" not in d:
+            raw = d.get("error", {}).get("message", "UNKNOWN") if isinstance(d, dict) and isinstance(d.get("error"), dict) else "UNKNOWN"
+            code = raw.split(" : ", 1)[0]
+            if not re.fullmatch(r"[A-Z_0-9]+", code):
+                code = "UNKNOWN"
+            hints = {"OPERATION_NOT_ALLOWED": "Enable Email/Password in this test project's Authentication settings",
+                     "INVALID_LOGIN_CREDENTIALS": "Check the test administrator email and password",
+                     "EMAIL_NOT_FOUND": "Create this administrator in the test project's Authentication users",
+                     "INVALID_PASSWORD": "Check the test administrator password",
+                     "API_KEY_INVALID": "Use this test project's Firebase Web API key",
+                     "API_KEY_HTTP_REFERRER_BLOCKED": "Use a separate test-project key that permits desktop REST requests"}
+            raise RemoteError(f"Firebase sign-in failed ({code}, HTTP {r.status}). " + hints.get(code, "Check this test project's Auth setup and API key permissions"))
+        try:
+            claims = json.loads(base64.urlsafe_b64decode(d["idToken"].split(".")[1] + "===").decode())
+        except (ValueError, IndexError, UnicodeError) as error:
+            raise RemoteError("Firebase returned invalid administrator proof") from error
         if claims.get("aud") != self.project_id or not (claims.get("admin") is True or claims.get("role") == "admin"):
-            raise Blocked("Use the administrator account with an admin claim in this test-school project")
+            raise Blocked("This test-school account needs admin:true. The owner can run grant_test_admin.py from the setup bundle in Google Cloud Shell; then sign in again")
         self.id_token, self.refresh_token = d["idToken"], d["refreshToken"]
         self.expires = time.monotonic() + int(d.get("expiresIn", 3600)) - 90
+        name = f"projects/{self.project_id}/databases/(default)/documents/school_config/windows_connection_check"
+        probe = self.http.request(self.firestore_base + ":batchGet", "POST", {"documents": [name]},
+                                  {"Authorization": "Bearer " + self.token()})
+        if probe.status != 200:
+            raise RemoteError(f"Firebase login succeeded, but Firestore read failed (HTTP {probe.status}). Create the default Firestore database and install the supplied admin-only school rules")
+        result = probe.json()
+        if not isinstance(result, list) or len(result) != 1 or not isinstance(result[0], dict) or not (
+            result[0].get("missing") == name or (isinstance(result[0].get("found"), dict) and result[0]["found"].get("name") == name)
+        ):
+            raise RemoteError("Firestore did not verify the requested test-school connection document")
+        self.firebase_info = {"connected": True, "project_id": self.project_id, "authentication": "Email/Password",
+                              "admin_claim": True, "firestore_read": True, "google_oauth_required": False,
+                              "connection_ms": round((time.perf_counter() - started) * 1000, 2),
+                              "scope": "Firebase connection check only; school backend not measured"}
+        return self.firebase_public()
+
+    def connect_backend(self):
+        if not self.firebase_info:
+            raise Blocked("Verify the test-school Firebase connection first")
+        if not self.script_url:
+            raise Blocked("Enter the separate test backend's Apps Script /exec URL")
+        self.info = {}
         self.info = self.call("toolkit_info", {}, admin=True)
         if self.info.get("projectId") != self.project_id or self.info.get("testOnly") is not True:
             raise Blocked("The Apps Script is not the isolated, enabled toolkit test backend")
         return self.public()
+
+    def connect(self, email, password):
+        self.connect_firebase(email, password)
+        return self.connect_backend()
+
+    def firebase_public(self):
+        return dict(self.firebase_info) if self.firebase_info else {"connected": False}
 
     def public(self):
         return {"connected": bool(self.id_token and self.info), "project_id": self.project_id,

@@ -27,6 +27,7 @@ def bundle(destination, root=None):
     for source, target in (("appsscript.json", "appsscript.json"), ("firestore.school.rules", "firestore.school.rules")):
         shutil.copyfile(root / "school-backend" / source, destination / target)
     shutil.copyfile(root / "toolkit" / "backend" / "SETUP.md", destination / "SETUP.md")
+    shutil.copyfile(root / "toolkit" / "backend" / "grant_test_admin.py", destination / "grant_test_admin.py")
     return destination
 
 
