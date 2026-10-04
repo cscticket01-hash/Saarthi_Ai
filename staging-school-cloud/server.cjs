@@ -41,8 +41,16 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
       action=ACTIONS.has(body?.action)?body.action:/^(managed\/|developer\/managed\/)/.test(body?.action||'')?'MANAGED':'UNKNOWN';
       return send(200,await handle({method:'POST',headers:req.headers,body}));
     }catch(e){
-      const status=[400,401,403,405,409].includes(e.status)?e.status:503;
-      return send(status,{success:false,message:e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.'});
+      const code=typeof e.code==='string'&&/^[a-zA-Z0-9_/-]{1,100}$/.test(e.code)?e.code:'UNKNOWN';
+      if(code!=='UNKNOWN')logger({event:'central_failure',action,status:e.status||503,code,requestId});
+      const authErrors={
+        'auth/email-already-exists':'This email already has a Firebase login. No new school was created. Use another email or ask the developer to inspect its existing account mapping.',
+        'auth/invalid-email':'Enter a valid school login email.',
+        'auth/invalid-password':'Use a valid initial password of 12–128 characters.',
+        'auth/insufficient-permission':'School creation is blocked by backend Firebase Auth permissions. The developer must grant the existing backend account permission to manage Firebase users.'
+      };
+      const status=code==='auth/email-already-exists'?409:[400,401,403,405,409].includes(e.status)?e.status:503;
+      return send(status,{success:false,message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
     }
   };
 }
