@@ -32,6 +32,15 @@ int windowsReferenceDocumentIndex(String kind, dynamic value) {
       : 0;
 }
 
+int? windowsReferenceTermNumber(Map<String, dynamic> data) {
+  if (data['isFinal'] == true) return null;
+  final explicit = int.tryParse(data['quarter']?.toString() ?? '');
+  if (explicit != null && explicit >= 1 && explicit <= 4) return explicit;
+  final name = (data['term'] ?? data['examName'] ?? '').toString().toLowerCase();
+  final match = RegExp(r'\b(?:term|quarter|semester|q)\s*[-:]?\s*([1-4])\b').firstMatch(name);
+  return match == null ? null : int.parse(match.group(1)!);
+}
+
 String _svg(double w, double h, String art, [String background = '#ffffff']) =>
     '<svg xmlns="http://www.w3.org/2000/svg" width="$w" height="$h" viewBox="0 0 $w $h"><rect width="$w" height="$h" fill="$background"/>$art</svg>';
 String _teacherArt(int i, bool back) {
@@ -601,6 +610,7 @@ Future<Uint8List> renderWindowsReferenceDocument(
     final marks = data['marks'] is Map
         ? Map<String, dynamic>.from(data['marks'])
         : <String, dynamic>{};
+    final currentTerm = windowsReferenceTermNumber(data);
     final term1 = data['term1Marks'] is Map
         ? Map<String, dynamic>.from(data['term1Marks'])
         : <String, dynamic>{};
@@ -793,7 +803,7 @@ Future<Uint8List> renderWindowsReferenceDocument(
         final rows = <List<String>>[
           [
             'Subject',
-            term1.isEmpty && quarterly.isEmpty ? 'Marks / Q1' : 'Grade Q1',
+            currentTerm == null && term1.isEmpty && quarterly.isEmpty ? 'Exam Marks' : 'Grade Q1',
             'Grade Q2',
             'Grade Q3',
             'Grade Q4'
@@ -801,13 +811,12 @@ Future<Uint8List> renderWindowsReferenceDocument(
         ];
         for (final s in subjects) {
           final q = quarterly[s];
-          rows.add([
-            s,
-            mark(q is Map ? q['q1'] : term1[s] ?? marks[s]),
-            mark(q is Map ? q['q2'] : term2[s]),
-            mark(q is Map ? q['q3'] : null),
-            mark(q is Map ? q['q4'] : null)
-          ]);
+          final grades = <String>[];
+          for (var quarter = 1; quarter <= 4; quarter++) {
+            final saved = q is Map ? q['q$quarter'] : quarter == 1 ? term1[s] : quarter == 2 ? term2[s] : null;
+            grades.add(mark(saved ?? (quarter == (currentTerm ?? 1) ? marks[s] : null)));
+          }
+          rows.add([s, ...grades]);
         }
         while (rows.length < 9) rows.add(['', '', '', '', '']);
         rows.add(['Overall', v('percentage'), '', '', '']);
@@ -901,7 +910,7 @@ Future<Uint8List> renderWindowsReferenceDocument(
             'Teacher',
             'Term 1\nGrade',
             'Term 2\nGrade',
-            'Final\nGrade',
+            data['isFinal'] == false && currentTerm == null ? 'Exam\nGrade' : 'Final\nGrade',
             'Comments'
           ]
         ];
@@ -910,9 +919,9 @@ Future<Uint8List> renderWindowsReferenceDocument(
           rows.add([
             s,
             raw is Map ? (raw['teacher'] ?? '-').toString() : '-',
-            mark(term1[s]),
-            mark(term2[s]),
-            mark(raw),
+            mark(term1[s] ?? (currentTerm == 1 ? raw : null)),
+            mark(term2[s] ?? (currentTerm == 2 ? raw : null)),
+            mark(currentTerm == null || currentTerm > 2 ? raw : null),
             raw is Map ? (raw['comments'] ?? '-').toString() : '-'
           ]);
         }

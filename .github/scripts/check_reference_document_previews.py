@@ -26,6 +26,10 @@ for index in range(4):
     assert 'arupdas' in text
     if index == 3:
         assert 'behavior:-' in text, 'Burgundy report must include all four behavior fields'
+_, text = document('reportCard_term2.pdf')
+assert 'english--84--' in text, 'Term 2 marks must be in the Term 2 column, not Final Grade'
+_, text = document('reportCard_quarter2.pdf')
+assert 'english-84--' in text, 'Quarter 2 marks must not be printed as Quarter 1'
 reader, text = document('receipt_0.pdf')
 for field in ['totalpaid:500', 'totaldue:700', 'amountpaid:500', 'subtotal:1200']:
     assert field in text, f'Incorrect installment receipt: {field}'
