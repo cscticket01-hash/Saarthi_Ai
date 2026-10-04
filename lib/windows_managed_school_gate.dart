@@ -7,8 +7,8 @@ import 'windows_platform_client.dart';
 import 'windows_local_auth.dart' as local;
 import 'windows_sync_engine.dart';
 class WindowsManagedSchoolGate extends StatefulWidget {
-  const WindowsManagedSchoolGate({super.key,required this.child,required this.legacy});
-  final Widget child,legacy;
+  const WindowsManagedSchoolGate({super.key,required this.child,required this.legacy,this.onAuthenticated});
+  final Widget child,legacy;final VoidCallback? onAuthenticated;
   @override State<WindowsManagedSchoolGate> createState()=>_WindowsManagedSchoolGateState();
 }
 class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
@@ -27,7 +27,9 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
       if(!mounted||version!=checkVersion)return;local.FirebaseAuth.instance.useManagedIdentity(saved['email']);
       if(session?['schoolId']!=result['schoolId'])await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
       if(!mounted||version!=checkVersion)return;WindowsPlatformClient.instance.state.value=WindowsLicenseState(allowed:result['allowed']==true,status:result['status']??'expired',expiresAt:DateTime.fromMillisecondsSinceEpoch((result['expiresAt'] as num).toInt()));
+      final first=session==null;
       setState((){session=result;verifiedAt=DateTime.now();checking=false;error=null;});
+      if(first&&widget.onAuthenticated!=null)WidgetsBinding.instance.addPostFrameCallback((_){if(mounted&&session?['schoolId']==result['schoolId'])widget.onAuthenticated!();});
       unawaited(ManagedSchoolSession.call('managed/summary').catchError((_)=> <String,dynamic>{}));
     }catch(e){if(mounted&&version==checkVersion)setState((){checking=false;error='$e';session=null;});}
   }
@@ -47,5 +49,5 @@ class WindowsManagedSchoolLogin extends StatefulWidget {
 class _WindowsManagedSchoolLoginState extends State<WindowsManagedSchoolLogin>{
   final email=TextEditingController(),password=TextEditingController();bool busy=false;String? error;
   @override void dispose(){email.dispose();password.dispose();super.dispose();}
-  @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:const Text('Vidya Saarthi • School Login')),body:Center(child:SizedBox(width:430,child:Padding(padding:const EdgeInsets.all(20),child:Column(mainAxisSize:MainAxisSize.min,children:[const Text('Use the school account created by your developer.'),TextField(controller:email,decoration:const InputDecoration(labelText:'School login email')),TextField(controller:password,obscureText:true,enableSuggestions:false,autocorrect:false,decoration:const InputDecoration(labelText:'Password')),if((error??widget.error)!=null)Text(error??widget.error??''),FilledButton(onPressed:busy?null:()async{setState(()=>busy=true);try{await ManagedSchoolSession.login(email.text,password.text);password.clear();await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);if(mounted&&Navigator.of(context).canPop())Navigator.pop(context);}catch(e){if(mounted)setState(()=>error='$e');}finally{if(mounted)setState(()=>busy=false);}},child:Text(busy?'Signing in…':'School Login'))])))));
+  @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:const Text('Vidya Saarthi • School Login')),body:Center(child:SizedBox(width:430,child:Padding(padding:const EdgeInsets.all(20),child:Column(mainAxisSize:MainAxisSize.min,children:[const Text('Use the school account created by your developer.'),TextField(controller:email,decoration:const InputDecoration(labelText:'School login email')),TextField(controller:password,obscureText:true,enableSuggestions:false,autocorrect:false,decoration:const InputDecoration(labelText:'Password')),if((error??widget.error)!=null)Text(error??widget.error??''),FilledButton(onPressed:busy?null:()async{setState(()=>busy=true);try{await ManagedSchoolSession.login(email.text,password.text);password.clear();await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);}catch(e){if(mounted)setState(()=>error='$e');}finally{if(mounted)setState(()=>busy=false);}},child:Text(busy?'Signing in…':'School Login'))])))));
 }

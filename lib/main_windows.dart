@@ -19,6 +19,8 @@ import 'windows_admin_setup.dart';
 import 'windows_update_service.dart' as update_service;
 import 'windows_update_manager.dart';
 
+final _schoolNavigatorKey=GlobalKey<NavigatorState>();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -52,6 +54,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(valueListenable: WindowsUiLanguage.changed,
       builder: (context, language, _) => MaterialApp(
+      navigatorKey:_schoolNavigatorKey,
       locale: Locale(language),
       supportedLocales: const [Locale('en'), Locale('hi'), Locale('bn'), Locale('as')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
@@ -83,7 +86,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
               ],
             ),
           );
-        return WindowsManagedSchoolGate(child:content,legacy:WindowsLicenseGate(child:content));
+        return WindowsManagedSchoolGate(child:content,legacy:WindowsLicenseGate(child:content),onAuthenticated:()=>_schoolNavigatorKey.currentState?.pushNamedAndRemoveUntil('/',(route)=>false));
       },
       routes: {
         '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
