@@ -23,8 +23,21 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
    const email=String(b.email||'').trim().toLowerCase(),name=String(b.schoolName||'').trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||name.length<2||name.length>160)fail(400,'School name and valid login email required');
    const password=b.password;
    if(password!==undefined&&(typeof password!=='string'||password.length<12||password.length>128))fail(400,'Use an initial password of 12–128 characters');
-   const schoolId='vs-'+randomUUID().replaceAll('-','');const account=await auth.createUser({email,password:password??randomBytes(32).toString('base64url'),disabled:false});
-   try{const t=now(),batch=db.batch();batch.create(db.doc('school_memberships/'+account.uid),{schoolId,managed:true,role:'school_admin',active:true});batch.create(db.doc('schools/'+schoolId),{schoolId,ownerUid:account.uid,schoolName:name,architecture:'managed-v1'});batch.create(db.doc('platform_schools/'+schoolId),{schoolId,name,loginEmail:email,authUid:account.uid,managed:true,createdAt:t,trialStartedAt:t,blocked:false});batch.create(db.doc('school_entitlements/'+schoolId),{active:true,blocked:false,status:'trial',startsAt:t,expiresAt:t+5*86400000});await batch.commit();}catch(e){await auth.deleteUser(account.uid);throw e;}
+   const schoolId='vs-'+randomUUID().replaceAll('-','');let account,reused=false;
+   try{account=await auth.createUser({email,password:password??randomBytes(32).toString('base64url'),disabled:false});}
+   catch(e){
+    if(e.code!=='auth/email-already-exists'||b.linkExistingGoogle!==true)throw e;
+    if(password===undefined)fail(400,'Enter the new school password before linking this Google login');
+    account=await auth.getUserByEmail(email);const claims=account.customClaims||{};
+    if(account.disabled||account.uid===admin.uid||Object.keys(claims).length>0)fail(409,'Existing account has protected access or is disabled; it cannot be converted');
+    if(!account.providerData?.some(p=>p.providerId==='google.com'))fail(409,'Only an unassigned Google login can be linked; other existing accounts require account recovery');
+    const membership=await db.doc('school_memberships/'+account.uid).get(),profile=await db.doc('users/'+account.uid).get();
+    if(membership.exists||profile.exists&&(profile.data().role||profile.data().schoolId||profile.data().admin||profile.data().developer))fail(409,'Existing account is already assigned; account and school data are retained');
+    const owned=await db.collection('schools').where('ownerUid','==',account.uid).limit(1).get();
+    if(!owned.empty)fail(409,'Existing account owns school data; migration must be reviewed before linking');
+    await auth.updateUser(account.uid,{password});await auth.revokeRefreshTokens(account.uid);reused=true;
+   }
+   try{const t=now(),batch=db.batch();batch.create(db.doc('school_memberships/'+account.uid),{schoolId,managed:true,role:'school_admin',active:true});batch.create(db.doc('schools/'+schoolId),{schoolId,ownerUid:account.uid,schoolName:name,architecture:'managed-v1'});batch.create(db.doc('platform_schools/'+schoolId),{schoolId,name,loginEmail:email,authUid:account.uid,managed:true,createdAt:t,trialStartedAt:t,blocked:false});batch.create(db.doc('school_entitlements/'+schoolId),{active:true,blocked:false,status:'trial',startsAt:t,expiresAt:t+5*86400000});await batch.commit();}catch(e){if(!reused)await auth.deleteUser(account.uid);throw e;}
    await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,...(password===undefined?{passwordSetupLink:await auth.generatePasswordResetLink(email)}:{})};
   }
   if(action==='developer/managed/monitor'){const started=now();const metrics=await monitor();return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics};}
