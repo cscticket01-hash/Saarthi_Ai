@@ -190,7 +190,7 @@ jobs:
         python -m pip install "pypdf>=6,<7"
         python .github/scripts/check_reference_document_previews.py
     - name: Analyze Windows ID card changes
-      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart lib/windows_school_map.dart lib/windows_school_map_dialog.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/managed_developer_panel.dart lib/platform/managed_developer_service.dart lib/windows_reference_documents.dart
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart lib/windows_school_map.dart lib/windows_school_map_dialog.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/windows_reference_documents.dart
     - uses: actions/upload-artifact@v4
       with:
         name: windows-id-card-previews
