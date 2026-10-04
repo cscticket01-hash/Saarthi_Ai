@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -24,7 +25,7 @@ class Fixture(ThreadingHTTPServer):
     def __init__(self):
         self.profiles, self.attendance, self.sheets, self.sessions, self.fees, self.results = {}, {}, {}, {}, {}, {}
         self.ignore_attendance = self.ignore_profile = self.wrong_dashboard = False
-        self.closed = self.unlicensed = self.duplicate_attendance = False
+        self.closed = self.unlicensed = self.duplicate_attendance = self.wrong_refresh = False
         self.delay = .002
         self.result_lock = threading.RLock()
         super().__init__(("127.0.0.1", 0), FixtureHandler)
@@ -38,6 +39,7 @@ class Fixture(ThreadingHTTPServer):
     def connect(self):
         school = School({"project_id": "saarthi-lab-test", "script_url": self.url + "/exec", "api_key": "fixture-key"}, True)
         school.auth_base = self.url + "/auth/"
+        school.refresh_base = self.url + "/refresh/"
         school.firestore_base = self.url + "/firestore/documents"
         school.connect("test@example.invalid", "fixture-only-password")
         return school
@@ -75,6 +77,14 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self.reply({"name": identity, "fields": body["fields"]})
 
     def do_POST(self):
+        if self.path.startswith("/refresh/"):
+            form=urllib.parse.parse_qs(self.rfile.read(int(self.headers["Content-Length"])).decode())
+            if form.get("refresh_token")!=["fixture-refresh"]:
+                self.reply({"error":"Invalid refresh"},400);return
+            project="another-lab-school" if self.server.wrong_refresh else "saarthi-lab-test"
+            claims=base64.urlsafe_b64encode(json.dumps({"aud":project,"admin":True}).encode()).decode().rstrip("=")
+            self.reply({"id_token":"fixture."+claims+".fixture","refresh_token":"fixture-refresh","expires_in":"3600","project_id":"1234567890"})
+            return
         b = self.body()
         if self.path.startswith("/auth/"):
             claims = base64.urlsafe_b64encode(json.dumps({"aud":"saarthi-lab-test","admin":True}).encode()).decode().rstrip("=")
@@ -287,6 +297,17 @@ class ToolkitTests(unittest.TestCase):
         for secret in (self.engine.school.id_token,self.engine.school.refresh_token,"fixture-only-password"):
             self.assertNotIn(secret,saved)
         self.assertEqual(self.engine.clean_error(Exception("token="+"a"*64)),"token=[redacted]")
+
+    def test_long_runs_refresh_admin_proof_with_numeric_project_number(self):
+        school=self.engine.school
+        school.expires=0
+        before=school.http.counters()["requests"]
+        self.assertTrue(school.token())
+        self.assertEqual(school.http.counters()["requests"],before+1)
+        self.assertGreater(school.expires,time.monotonic())
+        school.expires=0;self.fixture.wrong_refresh=True
+        with self.assertRaisesRegex(Exception,"does not belong"):
+            school.token()
 
     def test_invalid_concurrency_or_selection_is_rejected(self):
         with self.assertRaises(ValueError): self.engine.start("attendance",{"count":100001})

@@ -65,7 +65,7 @@ class Transport:
 
     def request(self, url, method="GET", data=None, headers=None, school=False, max_bytes=16_000_000):
         current = validate_url(url, school=school, allow_loopback=self.allow_loopback)
-        payload = json.dumps(data, separators=(",", ":")).encode() if data is not None else None
+        payload = data if isinstance(data, bytes) else json.dumps(data, separators=(",", ":")).encode() if data is not None else None
         request_headers = {"Accept": "application/json", "User-Agent": "Saarthi-Test-Lab/0.1"}
         request_headers.update(headers or {})
         if payload is not None:
@@ -165,6 +165,7 @@ class School:
         self.session_lock = threading.Lock()
         self.info = {}
         self.auth_base = "https://identitytoolkit.googleapis.com/v1/"
+        self.refresh_base = "https://securetoken.googleapis.com/v1/"
         self.firestore_base = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents"
 
     def connect(self, email, password):
@@ -196,15 +197,19 @@ class School:
         with self.token_lock:
             if time.monotonic() >= self.expires:
                 data = urllib.parse.urlencode({"grant_type": "refresh_token", "refresh_token": self.refresh_token}).encode()
-                req = urllib.request.Request("https://securetoken.googleapis.com/v1/token?key=" + urllib.parse.quote(self.api_key),
-                                             data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
                 try:
-                    with urllib.request.urlopen(req, timeout=self.http.timeout) as response:
-                        refreshed = json.load(response)
+                    reply = self.http.request(self.refresh_base + "token?key=" + urllib.parse.quote(self.api_key),
+                                              "POST", data, {"Content-Type": "application/x-www-form-urlencoded"})
+                    refreshed = reply.json()
+                    if reply.status != 200:
+                        raise RemoteError("Firebase rejected the refresh token")
+                    claims = json.loads(base64.urlsafe_b64decode(refreshed["id_token"].split(".")[1] + "===").decode())
                 except Exception as error:
                     raise RemoteError("Firebase administrator token refresh failed") from error
-                if refreshed.get("project_id") != self.project_id:
-                    raise RemoteError("Refreshed token belongs to another Firebase project")
+                # The refresh response's project_id can be a numeric project number.
+                # The Google-issued ID token's audience identifies the school.
+                if claims.get("aud") != self.project_id or not (claims.get("admin") is True or claims.get("role") == "admin"):
+                    raise RemoteError("Refreshed administrator proof does not belong to this test school")
                 self.id_token, self.refresh_token = refreshed["id_token"], refreshed["refresh_token"]
                 self.expires = time.monotonic() + int(refreshed["expires_in"]) - 90
             return self.id_token
