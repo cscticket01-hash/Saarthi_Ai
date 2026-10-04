@@ -10,7 +10,27 @@ class ManagedSchoolSession {
   static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) async {
     final saved=await CentralSchoolCloud.saved();if(saved['managed']!=true)throw StateError('Managed school login required');
     final cloud=CentralSchoolCloud(endpoint:saved['endpoint']);
-    try{return await cloud.api({'action':action,...body,'schoolId':saved['schoolId']},token:await CentralSchoolCloud.firebaseToken());}finally{cloud.close();}
+    try {
+      final result = await cloud.api({'action':action,...body,'schoolId':saved['schoolId']},token:await CentralSchoolCloud.firebaseToken());
+      if (action == 'managed/storage/check' || action == 'managed/storage/connect') {
+        final current = await CentralSchoolCloud.saved();
+        if (current['schoolId'] != saved['schoolId'] || current['uid'] != saved['uid']) {
+          throw StateError('School changed during storage verification. Retry the current school.');
+        }
+        verifyStorageResponse(result, saved['schoolId'].toString(),
+            scriptUrl: action == 'managed/storage/connect' ? body['scriptUrl']?.toString() : null);
+      }
+      return result;
+    } finally {cloud.close();}
+  }
+  /// A successful HTTP response alone does not mean this school's storage is ready.
+  static void verifyStorageResponse(Map<String,dynamic> result, String schoolId, {String? scriptUrl}) {
+    if (result['success'] != true || result['storageReady'] != true || result['schoolId'] != schoolId) {
+      throw StateError('The selected school storage is not ready or belongs to another school.');
+    }
+    if (scriptUrl != null && result['scriptUrl'] != scriptUrl.trim()) {
+      throw StateError('Storage verification returned a different deployment URL.');
+    }
   }
   static Future<Map<String,dynamic>> login(String email,String password) async {
     if(!CentralSchoolCloud.configured)throw StateError('Central school server is not configured');
