@@ -82,6 +82,19 @@ test('public exact licence status reads cannot enumerate keys or expose purchase
  await assertFails(getDocs(collection(publicDb(),'platform_license_status')));
  await assertFails(getDoc(doc(publicDb(),'platform_licenses/'+hash)));
 });
+test('school block status allows exact reads but only developers can manage it',async()=>{
+ const path='platform_school_blocks/school-one';
+ await assertSucceeds(setDoc(doc(dev(),path),{blocked:true,updatedAt:serverTimestamp()}));
+ for(const db of [publicDb(),anon(),school()]){
+  await assertSucceeds(getDoc(doc(db,path)));
+  await assertFails(getDocs(collection(db,'platform_school_blocks')));
+  await assertFails(setDoc(doc(db,path),{blocked:false}));
+  await assertFails(deleteDoc(doc(db,path)));
+  await assertFails(getDoc(doc(db,'platform_school_blocks/x')));
+ }
+ await assertSucceeds(updateDoc(doc(dev(),path),{blocked:false}));
+ await assertSucceeds(deleteDoc(doc(dev(),path)));
+});
 test('complaints must use the school scope and atomic server-time rate limit',async()=>{
  await access();await assertFails(setDoc(doc(school(),'platform_complaints/school-one_'+'a'.repeat(32)),{
   schoolId:'school-one',source:'android',role:'student',message:'Problem',version:'1',status:'open',createdAt:serverTimestamp()}));
