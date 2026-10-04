@@ -1,3 +1,4 @@
+import 'managed_developer_service.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -34,6 +35,19 @@ class DeveloperService {
     }
     if (action == 'developer/dashboard') return _dashboard(body['refresh'] == true);
     _cached = null;
+    if(action=='school/block'||action=='school/delete'||action=='license/issue'){
+      final id=body['schoolId']?.toString()??'';final school=(await _db.collection('platform_schools').doc(id).get()).data();
+      if(school?['managed']==true){
+        if(action=='school/delete')throw StateError('Disable this managed school login instead. School data is preserved.');
+        return ManagedDeveloperService.call(action=='school/block'?'block':'licence',body);
+      }
+    }
+    if(action=='license/revoke'||action=='license/delete'){
+      final licence=(await _db.collection('platform_licenses').doc(body['licenseId'].toString()).get()).data();
+      if(licence!=null){final school=(await _db.collection('platform_schools').doc(licence['schoolId']).get()).data();
+        if(school?['managed']==true){if(school?['licenseId']!=body['licenseId'])throw StateError('This is an old licence. Manage the current school licence from central controls.');return ManagedDeveloperService.call(action=='license/delete'?'delete-licence':'revoke',{'schoolId':licence['schoolId']});}}
+    }
+
     if (action == 'school/create') return _createSchool(body);
     if (action == 'license/issue') return _issue(body, user.uid);
     if (action == 'license/revoke') {

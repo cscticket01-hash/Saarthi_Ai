@@ -1,3 +1,5 @@
+import 'windows_managed_school_gate.dart';
+import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 import 'dart:async';
 import 'windows_platform_client.dart';
@@ -68,8 +70,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
         ),
       ),
       builder: (context, child) {
-        return WindowsLicenseGate(
-          child: Listener(
+        final content = Listener(
             behavior: HitTestBehavior.translucent,
             onPointerDown: (_) => windows_html.document.dispatchClick(),
             child: Stack(
@@ -81,8 +82,8 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
                 const _WindowsGlobalUpdateProgress(),
               ],
             ),
-          ),
-        );
+          );
+        return WindowsManagedSchoolGate(child:content,legacy:WindowsLicenseGate(child:content));
       },
       routes: {
         '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
@@ -155,6 +156,8 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
         ),
       );
     }
+    return FutureBuilder<Map<String,dynamic>>(future:CentralSchoolCloud.saved(),builder:(context,snapshot){
+    if(snapshot.data?['managed']==true) return const WindowsLocalDashboardGate();
     // Fresh install: local-first Admin Setup before the dashboard.
     if (!_setupDone && !WindowsLocalSecurity.configured) {
       return const WindowsAdminSetupScreen();
@@ -164,6 +167,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     return WindowsLocalSession.loggedOut
         ? const WindowsLocalLoginScreen()
         : const WindowsStartupGate(child: WindowsLocalDashboardGate());
+    });
   }
 }
 

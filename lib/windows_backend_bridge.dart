@@ -1,3 +1,4 @@
+import 'windows_connect/managed_school_session.dart';
 import 'windows_school_map.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/google_authorization.dart';
@@ -467,6 +468,7 @@ class WindowsBackendBridge {
       if (url.toString() != await WindowsExternalConnections.googleScriptUrl()) return false;
       final cloud = CentralSchoolCloud(endpoint:central['endpoint']);
       try {
+        if(central['managed']==true){final result=await ManagedSchoolSession.call('managed/storage/check');return result['storageReady']==true;}
         final token = await cloud.googleToken(central);
         final folder = await cloud.send('GET',url.replace(queryParameters:{'fields':'id,trashed,appProperties'}),token:token);
         return folder['trashed'] != true && folder['appProperties']?['schoolId'] == central['schoolId'];

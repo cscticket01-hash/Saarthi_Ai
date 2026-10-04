@@ -1,3 +1,4 @@
+import 'windows_connect/managed_school_session.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -415,6 +416,7 @@ class WindowsFirebaseRemote {
     required String idToken,
     required String collection,
   }) async {
+    if((await CentralSchoolCloud.saved())['managed']==true){final result=await ManagedSchoolSession.call('managed/records',{'operation':'read','collection':collection});return (result['records'] as Map).map((k,v)=>MapEntry(k.toString(),Map<String,dynamic>.from(_restoreManagedValue(v) as Map)));}
     final remoteCollection = await _remoteCollection(projectId, collection);
     final output =
         <String, Map<String, dynamic>>{};
@@ -520,6 +522,7 @@ class WindowsFirebaseRemote {
     required String documentId,
     required Map<String, dynamic> data,
   }) async {
+    if((await CentralSchoolCloud.saved())['managed']==true){await ManagedSchoolSession.call('managed/records',{'operation':'write','collection':collection,'id':documentId,'data':migrationJsonValue(centralSchoolData(data,(await CentralSchoolCloud.saved())['schoolId']))});return;}
     final remoteCollection = await _remoteCollection(projectId, collection);
     if (documentId.isEmpty || documentId.contains('/') || documentId == '.' || documentId == '..') throw StateError('Invalid school document ID.');
     final documentName =
@@ -568,6 +571,7 @@ class WindowsFirebaseRemote {
     required String collection,
     required String documentId,
   }) async {
+    if((await CentralSchoolCloud.saved())['managed']==true){await ManagedSchoolSession.call('managed/records',{'operation':'delete','collection':collection,'id':documentId});return;}
     final remoteCollection = await _remoteCollection(projectId, collection);
     if (documentId.isEmpty || documentId.contains('/') || documentId == '.' || documentId == '..') throw StateError('Invalid school document ID.');
     final documentName =
@@ -606,6 +610,11 @@ class WindowsFirebaseRemote {
     }
   }
 
+  static dynamic _restoreManagedValue(dynamic value){
+    if(value is List)return value.map(_restoreManagedValue).toList();
+    if(value is Map){if(value.length==1&&value['__vsTimestamp'] is String)return Timestamp.fromDate(DateTime.parse(value['__vsTimestamp']));return value.map((k,v)=>MapEntry(k.toString(),_restoreManagedValue(v)));}
+    return value;
+  }
   static Future<String> _remoteCollection(String projectId, String collection) async {
     if (projectId == platformProjectId) {
       final central = await CentralSchoolCloud.saved();

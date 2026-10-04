@@ -252,7 +252,7 @@ class CentralSchoolCloud {
       final response = await cloud.send('POST', Uri.https('securetoken.googleapis.com','/v1/token',{'key':platformApiKey}),
         body:'grant_type=refresh_token&refresh_token=${Uri.encodeQueryComponent(data['firebaseRefreshToken'])}', contentType:'application/x-www-form-urlencoded');
       if (response['user_id'] != data['uid'] || response['id_token'] is! String) throw StateError('Firebase school identity changed.');
-      await cloud.api({'action':'status', 'schoolId':data['schoolId']}, token:response['id_token']);
+      await cloud.api({'action':data['managed']==true?'managed/session':'status', 'schoolId':data['schoolId']}, token:response['id_token']);
       await updateSession(data['schoolId'],{'firebaseRefreshToken':response['refresh_token'] ?? data['firebaseRefreshToken']});
       return response['id_token'];
     } finally { cloud.close(); }
@@ -273,6 +273,7 @@ class CentralSchoolCloud {
   Future<Map<String,dynamic>> upload(String name, String mime, String raw) async {
     final data = await saved();
     if (data.isEmpty) throw StateError('School Drive is not connected.');
+    if(data['managed']==true) return api({'action':'managed/file/upload','schoolId':data['schoolId'],'name':name,'mime':mime,'base64':raw.contains(',')?raw.split(',').last:raw},token:await firebaseToken());
     final token = await googleToken(data);
     final bytes = base64Decode(raw.contains(',') ? raw.split(',').last : raw);
     if (bytes.isEmpty || bytes.length > 20*1024*1024) throw StateError('School file must be between 1 byte and 20 MB.');
@@ -291,6 +292,7 @@ class CentralSchoolCloud {
   Future<void> backup() async {
     final connection = await saved();
     if (connection.isEmpty) throw StateError('Connect school cloud first.');
+    if(connection['managed']==true){await api({'action':'managed/backup','schoolId':connection['schoolId']},token:await firebaseToken());return;}
     final token = await firebaseToken();
     final records = <String,dynamic>{};
     for (final collection in ['students_directory','teachers_directory','attendance_records',

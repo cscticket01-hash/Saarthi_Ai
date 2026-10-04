@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'managed_school_session.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -18,6 +20,7 @@ Future<Uint8List?> schoolImageBytes(String source) async {
   if (connection.isNotEmpty && id != null) {
     final cloud = CentralSchoolCloud(endpoint:connection['endpoint']);
     try {
+      if(connection['managed']==true){final result=await ManagedSchoolSession.call('managed/file/read',{'fileId':id});if((result['mime']?.toString()??'').startsWith('image/'))return Uint8List.fromList(base64Decode(result['base64']));return null;}
       final token = await cloud.googleToken(connection);
       final metadata = await cloud.send('GET',Uri.https('www.googleapis.com','/drive/v3/files/$id',
         {'fields':'id,appProperties,parents,trashed'}),token:token);

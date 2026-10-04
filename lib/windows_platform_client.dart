@@ -1,3 +1,4 @@
+import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -63,6 +64,7 @@ class WindowsPlatformClient {
       throw StateError('Connect this school administrator Firebase account first.');
     }
     final centralConnection = await CentralSchoolCloud.saved();
+    if(centralConnection['managed']==true){return ManagedSchoolSession.call(action=='license/activate'?'managed/licence/activate':'managed/session',action=='license/activate'?{'key':body['key']}:{});}
     if (centralConnection.isNotEmpty) {
       final cloud = CentralSchoolCloud(endpoint:centralConnection['endpoint']);
       try { return await cloud.api({'action':action,'schoolId':centralConnection['schoolId'],
@@ -242,6 +244,11 @@ class WindowsPlatformClient {
     if (_running || _paused || _activating) return;
     _running = true;
     try {
+      if((await CentralSchoolCloud.saved())['managed']==true){
+        try{final result=await ManagedSchoolSession.call('managed/session');state.value=WindowsLicenseState(allowed:result['allowed']==true&&(result['status']=='trial'||result['activated']==true),status:result['status'],expiresAt:DateTime.fromMillisecondsSinceEpoch((result['expiresAt'] as num).toInt()));}
+        catch(e){state.value=WindowsLicenseState(allowed:false,status:'blocked',expiresAt:DateTime.now(),error:'Online school verification required');}
+        return;
+      }
       if (!_registered) {
         if (_secret.isEmpty) {
           _secret = _random();

@@ -34,10 +34,11 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
     if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) return send(400,{success:false,message:'JSON request required'});
     try{
       let bytes=0;const chunks=[];
-      for await(const chunk of req){bytes+=chunk.length;if(bytes>256*1024)return send(413,{success:false,message:'Request is too large'});chunks.push(chunk);}
+      for await(const chunk of req){bytes+=chunk.length;if(bytes>28*1024*1024 || bytes>256*1024&&!req.headers.authorization)return send(413,{success:false,message:'Request is too large'});chunks.push(chunk);}
       let body;
-      try{body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return send(400,{success:false,message:'Invalid JSON'});}
-      action=ACTIONS.has(body?.action)?body.action:'UNKNOWN';
+      try{body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return send(bytes>256*1024?413:400,{success:false,message:bytes>256*1024?'Request is too large':'Invalid JSON'});}
+      if(bytes>256*1024&&body?.action!=='managed/file/upload')return send(413,{success:false,message:'Request is too large'});
+      action=ACTIONS.has(body?.action)?body.action:/^(managed\/|developer\/managed\/)/.test(body?.action||'')?'MANAGED':'UNKNOWN';
       return send(200,await handle({method:'POST',headers:req.headers,body}));
     }catch(e){
       const status=[400,401,403,405,409].includes(e.status)?e.status:503;
@@ -57,11 +58,13 @@ function fromEnvironment(env) {
   db.settings({ignoreUndefinedProperties:true});
   const clientIds=(env.SAARTHI_GOOGLE_OAUTH_CLIENT_IDS || env.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID || '').split(',').filter(Boolean);
   if(!clientIds.length) throw new Error('Missing central OAuth audience configuration');
-  const handle=createSchoolCloud({auth,db,projectId:PROJECT,clientIds,diagnostics:entry=>console.info(JSON.stringify(entry)),verifyLegacy:async(projectId,token)=>{
+  const legacyHandle=createSchoolCloud({auth,db,projectId:PROJECT,clientIds,diagnostics:entry=>console.info(JSON.stringify(entry)),verifyLegacy:async(projectId,token)=>{
     const name='legacy-proof-'+projectId;
     const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
     return getAuth(legacy).verifyIdToken(String(token || '')); 
   }});
+  const managed=require('../functions/managed-schools').createManagedSchools({auth,db,projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
+  const handle=req => /^(managed\/|developer\/managed\/)/.test(req.body?.action || '') ? managed(req) : legacyHandle(req);
   return createHandler({handle,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await db.doc('_central_staging_health/runtime').get();
     try{await auth.getUser('__saarthi_staging_health__');}catch(e){if(e.code!=='auth/user-not-found')throw e;}

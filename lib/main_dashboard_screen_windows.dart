@@ -1,3 +1,5 @@
+import 'windows_managed_school_gate.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'windows_school_map.dart';
 import 'windows_school_map_dialog.dart';
 import 'windows_connect/school_drive_images.dart';
@@ -18995,6 +18997,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   Future<void> _load() async {
     try {
       final data = await WindowsExternalConnections.load();
+      final managed=await CentralSchoolCloud.saved();
+      if(managed['managed']==true){data['googleEmail']=managed['email'];data['googleScriptUrl']=managed['scriptUrl'];}
       if (!mounted) return;
       setState(() {
         _linkedGmail = data['googleEmail']?.toString().trim();
@@ -19029,7 +19033,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     final email = _gmail.text.trim();
     final url = _script.text.trim();
 
-    if (email.isEmpty || !email.toLowerCase().endsWith('@gmail.com')) {
+    final managedSession=await CentralSchoolCloud.saved();
+    if (managedSession['managed']!=true && (email.isEmpty || !email.toLowerCase().endsWith('@gmail.com'))) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Colors.redAccent,
@@ -19050,10 +19055,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 
     setState(() => _saving = true);
     try {
-      await WindowsSyncEngine.instance.changeGoogleConnection(
-        email: email,
-        scriptUrl: url,
-      );
+      final managed=await CentralSchoolCloud.saved();
+      if(managed['managed']==true){
+        final session=await ManagedSchoolSession.call('managed/session');
+        if(session['scriptUrl']!=url)throw StateError('Developer must register this school GS URL and connection secret on the website first.');
+        await ManagedSchoolSession.call('managed/storage/check');
+        await CentralSchoolCloud.updateSession(managed['schoolId'],{'scriptUrl':url});
+        await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
+      }else{await WindowsSyncEngine.instance.changeGoogleConnection(email:email,scriptUrl:url);}
       if (!mounted) return;
       setState(() {
         _linkedGmail = email;
@@ -19220,6 +19229,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              OutlinedButton(onPressed:()=>Navigator.of(context).push(MaterialPageRoute(builder:(_)=>const WindowsManagedSchoolLogin())),child:const Text('Developer-created school login')),
                               const Text('Connect your school account', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 8),
                               const Text('For a new school cloud setup: sign in with Google and follow the approval steps. Connection links are filled automatically.'),

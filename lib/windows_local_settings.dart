@@ -228,6 +228,7 @@ class WindowsExternalConnections {
 
   static Future<String> googleScriptUrl() async {
     final central = await CentralSchoolCloud.saved();
+    if (central['managed']==true) return central['scriptUrl']?.toString()??'';
     if (central.isNotEmpty) return 'https://www.googleapis.com/drive/v3/files/${central['folderId']}';
     final data = await load();
     return data['googleScriptUrl']?.toString().trim() ?? '';

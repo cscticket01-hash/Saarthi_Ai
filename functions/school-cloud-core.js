@@ -10,6 +10,7 @@ async function authorizeSchool(auth, db, token, expected) {
   try {user = await auth.verifyIdToken(token, true);} catch {deny(401,'School login expired or was revoked');}
   const member = await db.doc('school_memberships/' + user.uid).get();
   if (!member.exists || member.data().active !== true || member.data().role !== 'school_admin') deny(403, 'School membership is inactive');
+  if(member.data().managed===true) deny(403,'Use the managed school API');
   const schoolId = requireSchool(member.data().schoolId);
   if (expected && expected !== schoolId) deny(403, 'Another school is not accessible');
   return {uid: user.uid, schoolId};

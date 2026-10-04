@@ -67,3 +67,16 @@ test('Tenant audit logs are append-only and private Drive references stay tenant
  await assertSucceeds(setDoc(doc(a(),'schools/'+A+'/documents/photo'),{schoolId:A,fileId:'own-drive-file',fileUrl:'https://drive.google.com/file/d/own-drive-file/view'}));
  await assertFails(getDoc(doc(b(),'schools/'+A+'/documents/photo')));
 });
+
+test('managed schools cannot use legacy direct Firestore operational paths or secret registry',async()=>{
+ await env.withSecurityRulesDisabled(async c=>{
+  await setDoc(doc(c.firestore(),'school_memberships/managed-owner'),{schoolId:A,role:'school_admin',active:true,managed:true});
+  await setDoc(doc(c.firestore(),'school_storage_private/'+A),{secret:{body:'encrypted'},url:'private'});
+ });
+ const db=env.authenticatedContext('managed-owner',{schoolId:A,schoolRole:'school_admin'}).firestore();
+ await assertFails(getDoc(doc(db,'schools/'+A+'/students_directory/same')));
+ await assertFails(setDoc(doc(db,'schools/'+A+'/school_config/drive'),{schoolId:A,folderId:'foreign'}));
+ await assertFails(getDoc(doc(db,'school_storage_private/'+A)));
+ await assertFails(setDoc(doc(db,'school_entitlements/'+A),{active:true,expiresAt:9999999999999}));
+ await assertFails(getDoc(doc(db,'schools/'+B+'/students_directory/same')));
+});

@@ -89,6 +89,7 @@ class FirebaseAuth {
   User? _currentUser;
 
   User? get currentUser => _currentUser;
+  void useManagedIdentity(String email) { _currentUser=User(email:email,displayName:email); }
 
   Future<void> bootstrapLocalUser() async {
     await WindowsLocalSecurity.initialize();

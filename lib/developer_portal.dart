@@ -1,3 +1,4 @@
+import 'managed_developer_panel.dart';
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -650,9 +651,11 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     }).toList();
     return _panel(
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      ManagedDeveloperPanel(schools:_schools,refresh:()=>_load(silent:true)),
+      const SizedBox(height:16),
       Wrap(spacing: 12, runSpacing: 12, children: [
         OutlinedButton.icon(onPressed: _addSchool, icon: const Icon(Icons.add),
-          label: const Text('School setup')),
+          label: const Text('Legacy monitoring setup')),
         SizedBox(
             width: 300,
             child: TextField(

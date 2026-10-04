@@ -23,7 +23,8 @@ service cloud.firestore {
     function schoolAdmin(school) {
       let membership = get(/databases/$(database)/documents/school_memberships/$(request.auth.uid));
       return request.auth != null && membership.data.active == true &&
-        membership.data.schoolId == school && membership.data.role == 'school_admin';
+        membership.data.schoolId == school && membership.data.role == 'school_admin' &&
+        membership.data.get('managed', false) == false;
     }
     function operational(collection) {
       return collection in ['students_directory','teachers_directory','attendance_logs',
