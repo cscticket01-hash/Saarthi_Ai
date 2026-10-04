@@ -1,9 +1,9 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
-import 'windows_local_settings.dart';
+import 'main_dashboard_screen_windows.dart' show WindowsLicenseSettingsPanel;
+import 'windows_platform_client.dart';
 import 'windows_local_auth.dart' as local;
 import 'windows_sync_engine.dart';
 class WindowsManagedSchoolGate extends StatefulWidget {
@@ -12,30 +12,32 @@ class WindowsManagedSchoolGate extends StatefulWidget {
   @override State<WindowsManagedSchoolGate> createState()=>_WindowsManagedSchoolGateState();
 }
 class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
-  Map<String,dynamic>? session;bool checking=true,legacy=false;String? error;Timer? timer;
+  Map<String,dynamic>? session;bool checking=true;String? error;Timer? timer,expiryTimer;DateTime? verifiedAt;
   int checkVersion=0;
   final licence=TextEditingController();
-  @override void initState(){super.initState();ManagedSchoolSession.changed.addListener(sessionChanged);check();timer=Timer.periodic(const Duration(seconds:30),(_)=>check());}
-  @override void dispose(){timer?.cancel();ManagedSchoolSession.changed.removeListener(sessionChanged);licence.dispose();super.dispose();}
-  void sessionChanged(){checkVersion++;if(mounted)setState((){session=null;checking=true;legacy=false;error=null;});check();}
+  @override void initState(){super.initState();ManagedSchoolSession.changed.addListener(sessionChanged);check();timer=Timer.periodic(const Duration(seconds:30),(_)=>check());expiryTimer=Timer.periodic(const Duration(seconds:1),(_){if(mounted&&session!=null)setState((){});});}
+  @override void dispose(){unawaited(ManagedSchoolSession.call('managed/disconnect').catchError((_)=> <String,dynamic>{}));timer?.cancel();expiryTimer?.cancel();ManagedSchoolSession.changed.removeListener(sessionChanged);licence.dispose();super.dispose();}
+  void sessionChanged(){checkVersion++;if(mounted)setState((){session=null;checking=true;error=null;});check();}
   Future<void> check() async {
     final version=++checkVersion;
     try {
       final saved=await CentralSchoolCloud.saved();
-      if(saved['managed']!=true){final required=await const FlutterSecureStorage().read(key:'vidya_saarthi_managed_required')=='true';if(!mounted||version!=checkVersion)return;setState((){legacy=!required&&(!ManagedSchoolSession.enabled||saved.isNotEmpty||WindowsLocalSecurity.configured);checking=false;session=null;});return;}
+      if(saved['managed']!=true){if(!mounted||version!=checkVersion)return;setState((){checking=false;session=null;});return;}
       final result=await ManagedSchoolSession.call('managed/session');
       if(!mounted||version!=checkVersion)return;local.FirebaseAuth.instance.useManagedIdentity(saved['email']);
       if(session?['schoolId']!=result['schoolId'])await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
-      if(!mounted||version!=checkVersion)return;setState((){session=result;legacy=false;checking=false;error=null;});
-    }catch(e){if(mounted&&version==checkVersion)setState((){legacy=false;checking=false;error='$e';session=null;});}
+      if(!mounted||version!=checkVersion)return;WindowsPlatformClient.instance.state.value=WindowsLicenseState(allowed:result['allowed']==true,status:result['status']??'expired',expiresAt:DateTime.fromMillisecondsSinceEpoch((result['expiresAt'] as num).toInt()));
+      setState((){session=result;verifiedAt=DateTime.now();checking=false;error=null;});
+      unawaited(ManagedSchoolSession.call('managed/summary').catchError((_)=> <String,dynamic>{}));
+    }catch(e){if(mounted&&version==checkVersion)setState((){checking=false;error='$e';session=null;});}
   }
   @override Widget build(BuildContext context){
     if(checking)return const Scaffold(body:Center(child:CircularProgressIndicator()));
-    if(legacy)return widget.legacy;
     if(session==null)return WindowsManagedSchoolLogin(error:error);
+    if(verifiedAt==null||DateTime.now().difference(verifiedAt!)>const Duration(seconds:90))return const Scaffold(body:Center(child:Text('Unable to verify school connection. Reconnecting…')));
     final s=session!,trial=s['status']=='trial';
-    if(s['allowed']!=true||!trial&&s['activated']!=true)return Scaffold(body:Center(child:SizedBox(width:430,child:Column(mainAxisSize:MainAxisSize.min,children:[Text('School ${s['schoolId']} • ${s['status']}'),const Text('A valid school licence is required after the five-day trial.'),TextField(controller:licence,decoration:const InputDecoration(labelText:'School licence key')),FilledButton(onPressed:()async{try{await ManagedSchoolSession.call('managed/licence/activate',{'key':licence.text});await check();}catch(e){if(mounted)setState(()=>error='$e');}},child:const Text('Verify licence')),if(error!=null)Text(error!),TextButton(onPressed:ManagedSchoolSession.logout,child:const Text('Sign out'))]))));
-    return Column(children:[if(trial)Material(color:Colors.red.shade900,child:ListTile(title:Text('Five-day trial • Ends ${DateTime.fromMillisecondsSinceEpoch((s['expiresAt'] as num).toInt()).toLocal()}'),trailing:TextButton(onPressed:ManagedSchoolSession.logout,child:const Text('Sign out')))),Expanded(child:KeyedSubtree(key:ValueKey(s['schoolId']),child:widget.child))]);
+    if(s['allowed']!=true||DateTime.now().millisecondsSinceEpoch>=(s['expiresAt'] as num)||!trial&&s['activated']!=true)return Scaffold(body:Center(child:SizedBox(width:430,child:Column(mainAxisSize:MainAxisSize.min,children:[Text('School ${s['schoolId']} • ${s['status']}'),const Text('A valid school licence is required after the five-day trial.'),TextField(controller:licence,decoration:const InputDecoration(labelText:'School licence key')),FilledButton(onPressed:()async{try{await ManagedSchoolSession.call('managed/licence/activate',{'key':licence.text});await check();}catch(e){if(mounted)setState(()=>error='$e');}},child:const Text('Verify licence')),if(error!=null)Text(error!),TextButton(onPressed:ManagedSchoolSession.logout,child:const Text('Sign out'))]))));
+    return Column(children:[if(trial)Material(color:Colors.red.shade900,child:ListTile(title:Text('Five-day trial • Ends ${DateTime.fromMillisecondsSinceEpoch((s['expiresAt'] as num).toInt()).toLocal()}'),onTap:()=>showDialog<void>(context:context,builder:(ctx)=>Dialog(child:SizedBox(width:650,child:SingleChildScrollView(child:WindowsLicenseSettingsPanel())))),trailing:TextButton(onPressed:ManagedSchoolSession.logout,child:const Text('Sign out')))),Expanded(child:KeyedSubtree(key:ValueKey(s['schoolId']),child:widget.child))]);
   }
 }
 class WindowsManagedSchoolLogin extends StatefulWidget {

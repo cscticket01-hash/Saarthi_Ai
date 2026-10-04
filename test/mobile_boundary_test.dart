@@ -28,6 +28,12 @@ void main() {
       expect(() => SchoolLink.parse(jsonEncode({...qr(), ...change})), throwsFormatException);
     }
   });
+  test('managed QR binds exact central endpoint and school; arbitrary endpoints are rejected',(){
+    final managed={...qr(),'managed':true,'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','firebaseProjectId':'saarthi-ai-df12b','centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud'};
+    final link=SchoolLink.parse(jsonEncode(managed));expect(link.managed,true);expect(link.projectId,managed['schoolId']);
+    expect(()=>SchoolLink.parse(jsonEncode({...managed,'centralEndpoint':'https://evil.example/school-cloud'})),throwsFormatException);
+    expect(()=>SchoolLink.parse(jsonEncode({...managed,'schoolId':'invalid'})),throwsFormatException);
+  });
   test('queued notices cannot display after logout or a school switch', () {
     final data = <String, dynamic>{'schoolId': 'school-one', 'type': 'school_notice'};
     expect(SchoolNotifications.belongsToSession(data, 'school-one'), isTrue);

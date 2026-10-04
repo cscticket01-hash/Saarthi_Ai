@@ -13,13 +13,21 @@ class SchoolLink {
       required this.role,
       required this.personId,
       required this.linkToken,
-      required this.rawQr});
+      required this.rawQr,this.managed=false,this.schoolId='',this.endpoint=''});
   final String projectId, scriptUrl, role, personId, linkToken, rawQr;
+  final bool managed;final String schoolId,endpoint;
   static SchoolLink parse(String raw) {
     final d = jsonDecode(raw);
     if (d is! Map || d['app'] != 'VIDYA_SAARTHI' || (d['v'] as num? ?? 0) < 2)
       throw const FormatException(
           'Scan a current Vidya Saarthi student or teacher ID card.');
+    if(d['managed']==true){
+      final id=d['schoolId']?.toString()??'',endpoint=d['centralEndpoint']?.toString()??'';
+      const allowed='https://saarthi-oauth-staging.onrender.com/school-cloud';
+      final role=d['type']?.toString()??'',person=d['personId']?.toString()??'',token=d['linkToken']?.toString()??'';
+      if(!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(id)||endpoint!=allowed||!{'student','teacher'}.contains(role)||person.isEmpty||person.length>200||person.contains('/')||token.length<20)throw const FormatException('Invalid managed school ID card');
+      return SchoolLink(projectId:id,scriptUrl:'',role:role,personId:person,linkToken:token,rawQr:raw,managed:true,schoolId:id,endpoint:endpoint);
+    }
     Map config = {};
     try {
       final rawConfig = d['firebaseLink']?.toString() ?? '{}';
@@ -102,6 +110,13 @@ class SchoolSession {
   Future<Map<String, dynamic>> schoolCall(
       String action, Map<String, dynamic> body) async {
     if (link == null) throw StateError('Scan your school ID first.');
+    if(link!.managed){
+      final r=await http.post(Uri.parse(link!.endpoint),headers:{'Content-Type':'application/json'},body:jsonEncode({'action':'managed/mobile','schoolId':link!.schoolId,'request':{...body,'action':action,'sessionToken':schoolToken}})).timeout(const Duration(seconds:90));
+      final d=jsonDecode(r.body);
+      if(r.statusCode!=200||d is! Map||d['success']!=true)throw StateError(d is Map?d['message']?.toString()??'Unable to connect':'Unable to connect');
+      if(d['schoolId']!=link!.schoolId||d['projectId']!=link!.schoolId)throw StateError('School identity mismatch');
+      return Map<String,dynamic>.from(d);
+    }
     final r = await http
         .post(Uri.parse(link!.scriptUrl),
             headers: {'Content-Type': 'text/plain;charset=utf-8'},

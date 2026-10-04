@@ -159,7 +159,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
         ),
       );
     }
-    if(_managed) return const WindowsLocalDashboardGate();
+    if(_managed) return _setupDone ? const WindowsLocalDashboardGate() : const WindowsAdminSetupScreen();
     // Fresh install: local-first Admin Setup before the dashboard.
     if (!_setupDone && !WindowsLocalSecurity.configured) {
       return const WindowsAdminSetupScreen();

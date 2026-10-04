@@ -1,4 +1,8 @@
 import 'managed_developer_panel.dart';
+import 'developer_account_widgets.dart';
+import 'firebase_monitor_panel.dart';
+import 'platform/monitor_summary.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -76,6 +80,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
       _error = null;
     });
     try {
+      await FirebaseAuth.instance.setPersistence(Persistence.SESSION);
       await FirebaseAuth.instance.signInWithEmailAndPassword(
           email: _email.text.trim(), password: _password.text);
     } on FirebaseAuthException catch (e) {
@@ -91,7 +96,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
   @override
   Widget build(BuildContext context) => Scaffold(
       backgroundColor: _ink,
-      body: Center(
+      body: SingleChildScrollView(child: Center(
           child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 460),
               child: Padding(
@@ -100,6 +105,8 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        const AppDownloadButtons(),
+                        const SizedBox(height:24),
                         const Align(
                             alignment: Alignment.centerLeft,
                             child: Icon(Icons.hub_rounded,
@@ -154,7 +161,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
                             'Licensing, school activity and app support in one place.',
                             style:
                                 TextStyle(color: Colors.white38, fontSize: 12))
-                      ])))));
+                      ]))))));
 }
 
 class _DeveloperDashboard extends StatefulWidget {
@@ -171,6 +178,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   String? _error;
   Map<String, dynamic> _data = {};
   Timer? _timer;
+  StreamSubscription? _schoolsWatch,_licencesWatch;
+  bool _refreshing=false;
   List<Map<String, dynamic>> get _schools => _maps(_data['schools']);
   List<Map<String, dynamic>> get _licenses => _maps(_data['licenses']);
   List<Map<String, dynamic>> get _complaints => _maps(_data['complaints']);
@@ -178,7 +187,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
       : [];
   Map<String, dynamic> get _stats =>
-      Map<String, dynamic>.from(_data['summary'] ?? {});
+      Map<String, dynamic>.from(monitorSummary(_schools,DateTime.now().millisecondsSinceEpoch));
   int get _now =>
       (_data['serverTime'] as num?)?.toInt() ??
       DateTime.now().millisecondsSinceEpoch;
@@ -187,12 +196,14 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     super.initState();
     _load();
     _timer =
-        Timer.periodic(const Duration(minutes: 5), (_) => _load(silent: true));
+        Timer.periodic(const Duration(seconds:15), (_){if(mounted)setState((){});});
+    _schoolsWatch=FirebaseFirestore.instance.collection('platform_schools').snapshots().listen((snapshot){if(mounted)setState((){_data['schools']=snapshot.docs.where((d)=>d.data()['deletedAt']==null).map((d)=><String,dynamic>{...d.data().map((k,v)=>MapEntry(k,v is Timestamp?v.millisecondsSinceEpoch:v)),'id':d.id}).toList();_data['summary']=monitorSummary(_schools,DateTime.now().millisecondsSinceEpoch);});},onError:(Object e){if(mounted)setState(()=>_error='Live school updates unavailable: $e');});
+    _licencesWatch=FirebaseFirestore.instance.collection('platform_licenses').snapshots().listen((_)=>_load(silent:true),onError:(Object e){if(mounted)setState(()=>_error='Live licence updates unavailable: $e');});
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _timer?.cancel();_schoolsWatch?.cancel();_licencesWatch?.cancel();
     super.dispose();
   }
 
@@ -202,9 +213,10 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   }
 
   Future<void> _load({bool silent = false}) async {
+    if(_refreshing)return;_refreshing=true;
     if (!silent) setState(() => _loading = true);
     try {
-      final d = await _call('developer/dashboard', {'refresh': !silent});
+      final d = await _call('developer/dashboard', {'refresh':true});
       if (mounted)
         setState(() {
           _data = d;
@@ -214,7 +226,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       if (mounted)
         setState(() => _error = e.toString().replaceFirst('Bad state: ', ''));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      _refreshing=false;if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -238,7 +250,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     ][d.month - 1]} ${d.year}';
   }
 
-  bool _active(Map s) => (s['lastSeenAt'] as num? ?? 0) >= _now - 86400000;
+  bool _active(Map s) => schoolOnline(s,DateTime.now().millisecondsSinceEpoch);
   bool _expiring(Map s) =>
       (s['licenseExpiresAt'] as num? ?? 0) > _now &&
       (s['licenseExpiresAt'] as num? ?? 0) <= _now + 14 * 86400000;
@@ -575,7 +587,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         ])),
         const SizedBox(height: 16),
         const Text(
-            'Active schools: a school summary in the past 24 hours. Online students: estimated recent activity, refreshed every 5 minutes. Student app users are counted by each school; individual sessions stay at the school.',
+            'Managed school online status uses a 90-second Windows heartbeat timeout. Student totals and data usage show the last school Drive summary; unavailable totals are not estimated.',
             style: TextStyle(color: Colors.white38, fontSize: 11))
       ]);
   Future<bool> _confirm(String title, String message, String action) async =>
@@ -627,7 +639,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   Future<void> _deleteSchool(Map<String, dynamic> school) async {
     final yes = await _confirm(
       'Delete school from platform?',
-      'This removes this school, its developer-platform licences, monitoring summary and support records. It does NOT delete the school\'s operational/student data.',
+      'This archives the school from this list and blocks its access. Existing school records and Drive files are preserved.',
       'Delete school',
     );
     if (!yes) return;
@@ -639,86 +651,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     }
   }
 
-  Widget _schoolTable() {
-    final list = _schools.where((s) {
-      final text = '${s['name']} ${s['id']}'.toLowerCase();
-      return text.contains(_search.toLowerCase()) &&
-          (_filter == 'all' ||
-              _filter == 'active' && _active(s) ||
-              _filter == 'inactive' && !_active(s) ||
-              _filter == 'expiring' && _expiring(s) ||
-              _filter == 'purchased' && s['purchased'] == true);
-    }).toList();
-    return _panel(
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      ManagedDeveloperPanel(schools:_schools,refresh:()=>_load(silent:true)),
-      const SizedBox(height:16),
-      Wrap(spacing: 12, runSpacing: 12, children: [
-        OutlinedButton.icon(onPressed: _addSchool, icon: const Icon(Icons.add),
-          label: const Text('Legacy monitoring setup')),
-        SizedBox(
-            width: 300,
-            child: TextField(
-                onChanged: (v) => setState(() => _search = v),
-                decoration: const InputDecoration(
-                    hintText: 'Search school / project',
-                    prefixIcon: Icon(Icons.search)))),
-        DropdownButton<String>(
-            value: _filter,
-            items: const ['all', 'active', 'inactive', 'expiring', 'purchased']
-                .map((v) =>
-                    DropdownMenuItem(value: v, child: Text(v.toUpperCase())))
-                .toList(),
-            onChanged: (v) => setState(() => _filter = v!))
-      ]),
-      const SizedBox(height: 20),
-      if (list.isEmpty)
-        const Padding(
-            padding: EdgeInsets.all(24),
-            child: Text('No schools match this view.')),
-      SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-              columns: const [
-                DataColumn(label: Text('SCHOOL')),
-                DataColumn(label: Text('ACTIVITY')),
-                DataColumn(label: Text('STUDENTS')),
-                DataColumn(label: Text('WINDOWS')),
-                DataColumn(label: Text('LICENCE EXPIRY')),
-                DataColumn(label: Text('ACTION'))
-              ],
-              rows: list
-                  .map((s) => DataRow(cells: [
-                        DataCell(Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(s['name']?.toString() ?? s['id'].toString()),
-                              Text(s['id'].toString(),
-                                  style: const TextStyle(
-                                      fontSize: 10, color: Colors.white38))
-                            ])),
-                        DataCell(_chip(_active(s) ? 'Active' : 'Inactive',
-                            _active(s) ? _mint : Colors.orangeAccent)),
-                        DataCell(Text('${s['studentCount'] ?? 0}')),
-                        DataCell(Text(s['windowsVersion']?.toString() ?? '—')),
-                        DataCell(Text(_date(s['licenseExpiresAt']))),
-                        DataCell(Wrap(spacing: 4, children: [
-                          TextButton(
-                              onPressed: () => _issue(s['id'].toString()),
-                              child: const Text('Create licence')),
-                          TextButton(
-                              onPressed: () => _setSchoolBlocked(s),
-                              child: Text(s['blocked'] == true ? 'Unblock' : 'Block')),
-                          TextButton(
-                              onPressed: () => _deleteSchool(s),
-                              child: const Text('Delete',
-                                  style: TextStyle(color: Colors.redAccent))),
-                        ]))
-                      ]))
-                  .toList()))
-    ]));
-  }
+  Widget _schoolTable()=>_panel(ManagedDeveloperPanel(schools:_schools,refresh:()=>_load(silent:true),legacyDelete:_deleteSchool));
 
   Widget _licenceTable() =>
       _panel(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -815,8 +748,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       ]));
   @override
   Widget build(BuildContext context) {
-    final titles = ['Overview', 'Schools', 'Licences', 'Support'];
-    return Scaffold(
+    final titles = ['Overview', 'Schools', 'Licences', 'Support','Firebase','Admin Profile'];
+    return DeveloperIdleSession(child:Scaffold(
         backgroundColor: _ink,
         body: LayoutBuilder(builder: (ctx, c) {
           final narrow = c.maxWidth < 850;
@@ -856,7 +789,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                                   Icons.grid_view_rounded,
                                   Icons.school_outlined,
                                   Icons.vpn_key_outlined,
-                                  Icons.support_agent_rounded
+                                  Icons.support_agent_rounded,Icons.cloud_outlined,Icons.manage_accounts_outlined
                                 ][i]),
                                 title: Text(titles[i]),
                                 onTap: () => setState(() => _page = i)))),
@@ -877,7 +810,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   Wrap(
                       spacing: 8,
                       children: List.generate(
-                          4,
+                          titles.length,
                           (i) => ChoiceChip(
                               label: Text(titles[i]),
                               selected: _page == i,
@@ -918,7 +851,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                           ? _schoolTable()
                           : _page == 2
                               ? _licenceTable()
-                              : _support()
+                              : _page==3 ? _support() : _page==4 ? const FirebaseMonitorPanel() : const DeveloperAccountProfile()
                 ],
                 if (narrow)
                   TextButton(
@@ -926,6 +859,6 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                       child: const Text('Sign out'))
               ]));
           return Row(children: [if (!narrow) nav, main]);
-        }));
+        })));
   }
 }

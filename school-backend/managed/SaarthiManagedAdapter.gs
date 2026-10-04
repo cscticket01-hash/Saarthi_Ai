@@ -49,7 +49,7 @@ function VS_managedVerify(e) {
   return JSON.parse(b.payload);
 }
 function VS_managedCollection(name) {
-  if (!['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results'].includes(name)) throw new Error('Unknown collection');
+  if (!['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results','mobile_sessions','mobile_users','mobile_complaints'].includes(name)) throw new Error('Unknown collection');
   const root=VS_managedRoot(), folders=root.getFoldersByName('records_'+name);
   if(folders.hasNext()) {const folder=folders.next();if(folders.hasNext())throw new Error('Duplicate collection folders; operator review required');return folder;}
   return root.createFolder('records_'+name);
@@ -79,6 +79,8 @@ function VS_managedHandle(e) {
   try {
     const b=VS_managedVerify(e);let result;
     if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true};}
+    else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
+    else if(b.action==='managed_summary'){result=VS_managedSummary();}
     else if(b.action==='managed_records'){const lock=LockService.getScriptLock();lock.waitLock(30000);try{result=VS_managedRecord(b);}finally{lock.releaseLock();}}
     else if(b.action==='managed_upload'){
       if(!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)throw new Error('Invalid file');const bytes=Utilities.base64Decode(b.base64);if(!bytes.length||bytes.length>20*1024*1024)throw new Error('File limit exceeded');

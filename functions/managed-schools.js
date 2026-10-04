@@ -21,15 +21,22 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  if(action?.startsWith('developer/managed/')){
   const admin=await developer(req),id=b.schoolId;if(action==='developer/managed/create'){
    const email=String(b.email||'').trim().toLowerCase(),name=String(b.schoolName||'').trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||name.length<2||name.length>160)fail(400,'School name and valid login email required');
-   if(typeof b.password!=='undefined')fail(400,'Passwords must be set through Firebase reset links');
-   const schoolId='vs-'+randomUUID().replaceAll('-','');const account=await auth.createUser({email,password:randomBytes(32).toString('base64url'),disabled:false});
+   const password=b.password;
+   if(password!==undefined&&(typeof password!=='string'||password.length<12||password.length>128))fail(400,'Use an initial password of 12–128 characters');
+   const schoolId='vs-'+randomUUID().replaceAll('-','');const account=await auth.createUser({email,password:password??randomBytes(32).toString('base64url'),disabled:false});
    try{const t=now(),batch=db.batch();batch.create(db.doc('school_memberships/'+account.uid),{schoolId,managed:true,role:'school_admin',active:true});batch.create(db.doc('schools/'+schoolId),{schoolId,ownerUid:account.uid,schoolName:name,architecture:'managed-v1'});batch.create(db.doc('platform_schools/'+schoolId),{schoolId,name,loginEmail:email,authUid:account.uid,managed:true,createdAt:t,trialStartedAt:t,blocked:false});batch.create(db.doc('school_entitlements/'+schoolId),{active:true,blocked:false,status:'trial',startsAt:t,expiresAt:t+5*86400000});await batch.commit();}catch(e){await auth.deleteUser(account.uid);throw e;}
-   await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,passwordSetupLink:await auth.generatePasswordResetLink(email)};
+   await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,...(password===undefined?{passwordSetupLink:await auth.generatePasswordResetLink(email)}:{})};
   }
   if(action==='developer/managed/monitor'){const started=now();const metrics=await monitor();return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics};}
   if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');const school=await db.doc('platform_schools/'+id).get();if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
   if(action==='developer/managed/reset')return {success:true,passwordSetupLink:await auth.generatePasswordResetLink(data.loginEmail)};
-  if(action==='developer/managed/block'||action==='developer/managed/disable'){
+  if(action==='developer/managed/delete'){
+   // Archive the account, never delete its Drive, local or operational data.
+   await ref.set({active:false,blocked:true,sessionValidAfter:Math.floor(now()/1000)},{merge:true});
+   await auth.updateUser(data.authUid,{disabled:true});await auth.revokeRefreshTokens(data.authUid);
+   await db.doc('school_memberships/'+data.authUid).set({active:false},{merge:true});
+   await db.doc('platform_schools/'+id).set({deletedAt:now(),blocked:true,loginDisabled:true},{merge:true});
+  }else if(action==='developer/managed/block'||action==='developer/managed/disable'){
    const blocked=b.blocked===true;await ref.set({...(action.endsWith('/block')?{blocked}:{active:!blocked}),sessionValidAfter:Math.floor(now()/1000)},{merge:true});
    if(action.endsWith('/disable'))await auth.updateUser(data.authUid,{disabled:blocked});await auth.revokeRefreshTokens(data.authUid);await db.doc('platform_schools/'+id).set(action.endsWith('/disable')?{loginDisabled:blocked}:{blocked},{merge:true});
   }else if(action==='developer/managed/licence'){
@@ -46,8 +53,30 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   }else fail(400,'Unknown developer operation');
   await db.collection('platform_audit').add({action,schoolId:id,actor:admin.uid,at:now()});return {success:true};
  }
+ if(action==='managed/mobile'){
+  if(!SCHOOL.test(b.schoolId||''))fail(400,'Invalid school ID');
+  const school=await db.doc('platform_schools/'+b.schoolId).get(),entitlement=await db.doc('school_entitlements/'+b.schoolId).get();
+  if(!school.exists||school.data().managed!==true||school.data().deletedAt||!entitlement.exists||!entitlement.data().active||entitlement.data().blocked)fail(403,'Unable to connect: school is unavailable');
+  const e={...entitlement.data()};
+  if(e.status!=='trial'){const licence=await db.doc('platform_license_status/'+e.licenseHash).get();if(!licence.exists||licence.data().revoked!==false||licence.data().schoolId!==b.schoolId)fail(403,'Unable to connect: school licence is inactive');const end=licence.data().expiresAt;e.expiresAt=typeof end?.toMillis==='function'?end.toMillis():Number(end||0);}
+  const m={schoolId:b.schoolId,entitlement:e};
+  if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
+  const seen=Number(school.data().lastSeenAt||0);
+  if(seen>now()||now()-seen>90000)fail(409,'Unable to connect: school Windows app is offline');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_attendance_list','mobile_mark_attendance','mobile_asset','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  return signed(m,{action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
+ }
  const m=await identity(req,b.schoolId);
- if(action==='managed/session'){await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:now()},{merge:true});const storage=await db.doc('school_storage_private/'+m.schoolId).get();return {...lease(m),storageReady:storage.exists&&storage.data().ready===true,scriptUrl:storage.exists?storage.data().url:''};}
+ if(action==='managed/session'){const access=lease(m);await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:access.allowed?now():0},{merge:true});const storage=await db.doc('school_storage_private/'+m.schoolId).get();return {...access,storageReady:storage.exists&&storage.data().ready===true,scriptUrl:storage.exists?storage.data().url:''};}
+ if(action==='managed/disconnect'){await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:0},{merge:true});return {success:true};}
+ if(action==='managed/summary'){
+  if(!lease(m).allowed||m.entitlement.status!=='trial'&&m.entitlement.activated!==true)fail(403,'School licence is inactive');
+  const school=await db.doc('platform_schools/'+m.schoolId).get();
+  if(now()-Number(school.data()?.summaryAt||0)<300000)return {success:true,cached:true};
+  const result=await signed(m,{action:'managed_summary'});
+  if(!Number.isSafeInteger(result.studentCount)||result.studentCount<0||!Number.isSafeInteger(result.driveBytes)||result.driveBytes<0)fail(502,'Invalid school storage summary');
+  await db.doc('platform_schools/'+m.schoolId).set({studentCount:result.studentCount,driveBytes:result.driveBytes,driveBytesPartial:result.partial===true,summaryAt:now()},{merge:true});return {success:true};
+ }
  if(action==='managed/licence/activate'){if(hash(String(b.key||'').trim().toUpperCase())!==m.entitlement.licenseHash||!lease(m).allowed)fail(403,'Licence does not belong to this school or has expired');const ref=db.doc('school_entitlements/'+m.schoolId);
  await db.runTransaction(async tx=>{const current=await tx.get(ref);const e=current.data();if(!e||e.active!==true||e.blocked===true||e.licenseHash!==m.entitlement.licenseHash||Number(e.expiresAt)<=now()||Number(e.startsAt)>now())fail(403,'School licence changed or access was blocked');tx.set(ref,{activated:true},{merge:true});});return {...lease(m),activated:true,status:'licensed'};}
  if(!lease(m).allowed||(m.entitlement.status!=='trial'&&m.entitlement.activated!==true))fail(403,'Activate the school licence before normal operations');
