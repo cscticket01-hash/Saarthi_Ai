@@ -58,7 +58,7 @@ function fromEnvironment(env) {
   db.settings({ignoreUndefinedProperties:true});
   const clientIds=(env.SAARTHI_GOOGLE_OAUTH_CLIENT_IDS || env.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID || '').split(',').filter(Boolean);
   if(!clientIds.length) throw new Error('Missing central OAuth audience configuration');
-  const legacyHandle=createSchoolCloud({auth,db,projectId:PROJECT,clientIds,diagnostics:entry=>console.info(JSON.stringify(entry)),verifyLegacy:async(projectId,token)=>{
+  const legacyHandle=createSchoolCloud({auth,db,projectId:PROJECT,clientIds,allowNewSchools:env.SAARTHI_MANAGED_ONLY!=='true',diagnostics:entry=>console.info(JSON.stringify(entry)),verifyLegacy:async(projectId,token)=>{
     const name='legacy-proof-'+projectId;
     const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
     return getAuth(legacy).verifyIdToken(String(token || '')); 

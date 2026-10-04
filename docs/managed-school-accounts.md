@@ -63,7 +63,7 @@ restore is resumable but not transactional. No physical/live restore test done y
 New account UI requires SAARTHI_SCHOOL_CLOUD_URL in the website build. Managed
 Windows review sets SAARTHI_MANAGED_ACCOUNTS=true; legacy production build is not
 released. Live server deployment has NOT occurred. Before any deployment approval,
-review server routes, exact CORS origin, Firebase email/password provider and
+review server routes, set SAARTHI_MANAGED_ONLY=true to require developer creation for new schools (existing legacy memberships remain usable), exact CORS origin, Firebase email/password provider and
 account-creation access, server admin IAM, and a server-only 64-hex
 SAARTHI_MANAGED_STORAGE_KEY. Do not paste that key in the website/Windows/GS.
 Use an existing secure server; no Firebase billing/Functions activation needed.

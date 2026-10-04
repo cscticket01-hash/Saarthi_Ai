@@ -30,7 +30,7 @@ async function verifyGoogle(token, clientIds, fetchImpl = fetch) {
   if (info.sub && info.sub !== user.sub) deny(401, 'Google identity mismatch');
   return {uid:uidFor(user.sub), email:user.email};
 }
-function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, verifyLegacy, diagnostics = () => {}}) {
+function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, verifyLegacy, allowNewSchools = true, diagnostics = () => {}}) {
   return async function handle(req) {
     if (req.method !== 'POST') deny(405, 'Use POST');
     const b = req.body;
@@ -46,11 +46,12 @@ function createSchoolCloud({auth, db, projectId, clientIds, fetchImpl = fetch, v
         const existing = await tx.get(ref);
         if (existing.exists) {
           const m = existing.data();
-          if (m.active !== true || m.role !== 'school_admin') deny(403, 'School membership is inactive');
+          if (m.active !== true || m.role !== 'school_admin' || m.managed === true) deny(403, 'School membership is inactive or requires managed login');
           const id = requireSchool(m.schoolId);
           if (b.expectedSchoolId && b.expectedSchoolId !== id) deny(409, 'Use the original school Google account');
           return id;
         }
+        if (!allowNewSchools) deny(403, 'Ask the developer to create your school account');
         if (b.expectedSchoolId) deny(409, 'Existing school membership is missing; automatic replacement is blocked');
         const id = 'vs-' + randomUUID().replaceAll('-', '');
         tx.create(ref, {schoolId:id, role:'school_admin', active:true, createdAt:Date.now()});

@@ -107,3 +107,5 @@ test('Setup diagnostics require active own-school authorization, reject secrets 
  await assert.rejects(f.req({...b,googleAccessToken:'secret'}),e=>e.status===400);
  assert.equal(f.diagnostics.length,1);
 });
+
+test('managed-only onboarding preserves existing schools but cannot self-create a tenant',async()=>{const f=fixture();const handle=createSchoolCloud({auth:f.auth,db:f.db,projectId:'central-project',clientIds:[clientId],fetchImpl:f.fetchImpl,allowNewSchools:false});const req=()=>handle({method:'POST',headers:{},body:{action:'onboard',schoolName:'School',googleAccessToken:'google-access-token'}});await assert.rejects(req(),e=>e.status===403);assert.equal(f.documents.size,0);f.seed();assert.equal((await req()).schoolId,A);f.documents.get('school_memberships/'+uidFor('123')).managed=true;await assert.rejects(req(),e=>e.status===403);});

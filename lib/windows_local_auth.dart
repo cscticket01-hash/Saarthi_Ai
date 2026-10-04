@@ -1,3 +1,5 @@
+import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'dart:async';
 
 import 'windows_local_settings.dart';
@@ -140,6 +142,7 @@ class FirebaseAuth {
   Future<void> signOut() async {
     // Session logout only. Local ID/password secure storage me rehte hain.
     _currentUser = null;
+    if((await CentralSchoolCloud.saved())['managed']==true)await ManagedSchoolSession.logout();
   }
 
   Stream<User?> authStateChanges() async* {
