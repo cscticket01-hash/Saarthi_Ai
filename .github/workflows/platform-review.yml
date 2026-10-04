@@ -179,6 +179,8 @@ jobs:
         flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
         if ($LASTEXITCODE -ne 0) { throw 'Compiled OAuth configuration verification failed.' }
         if ($env:SAARTHI_GOOGLE_REQUIRES_BROKER -eq 'true' -and !$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL) { Write-Host 'Live school connection blocked until the secure OAuth broker is hosted and its URL is configured.' }
+    - name: Format Windows reference document source
+      run: dart format lib/windows_reference_documents.dart test/windows_reference_documents_test.dart
     - name: Verify Windows ID cards, licence date and startup
       run: flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
     - name: Analyze Windows ID card changes
@@ -189,6 +191,8 @@ jobs:
         path: |
           build/windows-id-previews
           build/reference-document-previews
+          lib/windows_reference_documents.dart
+          test/windows_reference_documents_test.dart
     - name: Compile Windows school app
       env:
         SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}

@@ -35,6 +35,14 @@ class WindowsDocumentTemplates {
     return null;
   }
 
+  static Future<Uint8List?> _personPhoto(Map<String, dynamic> data) async {
+    final url = data['photoUrl']?.toString().trim() ?? '';
+    if (url.isNotEmpty) return _image(url);
+    final raw = data['photoBase64']?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    return _image(raw.startsWith('data:image/') ? raw : 'data:image/jpeg;base64,$raw');
+  }
+
   static Future<Uint8List?> selected(
     String kind,
     Map<String, dynamic> data, {
@@ -73,7 +81,7 @@ class WindowsDocumentTemplates {
         ...data,
       },
       qr: qr,
-      photo: await _image(data['photoUrl']),
+      photo: await _personPhoto(data),
       logo: await _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
       signature: await _image(data['principalSignatureUrl'] ?? profile['principalSignatureUrl']),
     );
