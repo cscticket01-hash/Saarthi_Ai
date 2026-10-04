@@ -91,7 +91,9 @@ class WindowsAdminSetup {
       throw const FormatException('Principal Name is required.');
     }
     final saved=await CentralSchoolCloud.saved();final managed=saved['managed']==true;_managedSchool=managed?saved['schoolId']:'';
-    if(managed)await ManagedSchoolSession.reauthenticate((await CentralSchoolCloud.saved())['email'],adminPassword);
+    final targetFile=_file;
+    final brandingRef=FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache');
+    if(managed){await ManagedSchoolSession.reauthenticate(saved['email'],adminPassword);if((await CentralSchoolCloud.saved())['schoolId']!=saved['schoolId'])throw StateError('School changed. Sign in and retry.');}
     if (adminPassword.length < 6) {
       throw const FormatException(
           'Admin Password must be at least 6 characters.');
@@ -107,10 +109,11 @@ class WindowsAdminSetup {
     };
     // Persist locally first so the app works fully offline.
     try {
-      await _file.parent.create(recursive: true);
-      final tmp = File('${_file.path}.tmp');
+      await targetFile.parent.create(recursive: true);
+      final tmp = File('${targetFile.path}.tmp');
       await tmp.writeAsString(jsonEncode(map), flush: true);
-      await tmp.rename(_file.path);
+      await tmp.rename(targetFile.path);
+      if(managed&&(await CentralSchoolCloud.saved())['schoolId']!=saved['schoolId'])throw StateError('School changed. Registration remains scoped to its original school.');
       _data = map;
     } catch (e) {
       throw StateError('Could not save the setup on this PC: $e');
@@ -118,10 +121,7 @@ class WindowsAdminSetup {
     // Mirror into the same local cache document the dashboard branding uses,
     // best-effort and strictly offline (local Firestore store).
     try {
-      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => FirebaseFirestore.instance
-          .collection('school_config')
-          .doc('school_profile_cache')
-          .set({
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => brandingRef.set({
         'schoolName': name,
         'principalName': principal,
         'logoUrl': map['logoUrl'],
@@ -250,7 +250,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
       _error = null;
     });
     try {
-      if(_licence.text.trim().isNotEmpty){await ManagedSchoolSession.call('managed/licence/activate',{'key':_licence.text.trim()});ManagedSchoolSession.changed.value++;}
+      if(_licence.text.trim().isNotEmpty)await ManagedSchoolSession.call('managed/licence/activate',{'key':_licence.text.trim()});
       await WindowsAdminSetup.save(
         schoolName: _school.text,
         principalName: _principal.text,
@@ -259,6 +259,8 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         sealPath: _sealPath,
         signaturePath: _signaturePath,
       );
+      if (!mounted) return;
+      if((await CentralSchoolCloud.saved())['managed']==true)ManagedSchoolSession.changed.value++;
       if (!mounted) return;
       if (widget.onFinished != null) {
         widget.onFinished!();

@@ -12,7 +12,7 @@ class _SchoolPasswordPanelState extends State<SchoolPasswordPanel>{
     if(busy)return;
     if(next.text.length<12||next.text.length>128||next.text!=confirm.text){setState(()=>message='Use 12–128 characters and matching passwords.');return;}
     setState(()=>busy=true);
-    try{await widget.change(current.text,next.text);current.clear();next.clear();confirm.clear();if(mounted)setState(()=>message='Password changed. Sign in with your new password.');}
+    try{await widget.change(current.text,next.text);if(!mounted)return;current.clear();next.clear();confirm.clear();if(mounted)setState(()=>message='Password changed. Sign in with your new password.');}
     catch(_){if(mounted)setState(()=>message='Password change failed. Check your current password and connection.');}
     finally{if(mounted)setState(()=>busy=false);}
   }
