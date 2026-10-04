@@ -341,7 +341,7 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
-            Windows school location update: open Google Maps in the browser, confirm the exact school pin and save a fixed 200 metre attendance boundary. Reject map camera-centre links and inaccurate Windows attendance locations. Includes the existing student ID card designs and licence fixes.
+            Windows school location update: open Google Maps in the browser, pinpoint the exact school location and save a school-selected attendance range from 25 to 200 metres. Reject map camera-centre links and inaccurate Windows attendance locations. Includes the existing student ID card designs and licence fixes.
             Preserves existing school data, the shared Firebase school isolation and each school's own Google Drive backup/restore.
             Google access for new external accounts remains subject to Google's pending OAuth verification.
           generate_release_notes: true

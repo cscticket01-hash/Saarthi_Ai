@@ -648,15 +648,17 @@ class WindowsBackendBridge {
         final latitude = double.tryParse(profile['latitude']?.toString() ?? '');
         final longitude = double.tryParse(profile['longitude']?.toString() ?? '');
         if (latitude == null || longitude == null || !SchoolMapPin(latitude, longitude).valid) {
-          throw StateError('Valid school map pin required.');
+          throw StateError('Valid school exact location required.');
         }
-        profile['attendanceRadiusMeters'] = schoolAttendanceRadiusMeters;
+        final radius = parseSchoolAttendanceRadius(profile['attendanceRadiusMeters'] ?? schoolAttendanceRadiusMeters);
+        if (radius == null) throw StateError('School attendance range must be 25–200 metres.');
+        profile['attendanceRadiusMeters'] = radius;
         final safe = centralSchoolData(profile,school);
         await save('school_config','school_profile_cache',safe);
         await save('school_settings', 'school_location', {
           'latitude': latitude,
           'longitude': longitude,
-          'radiusMeters': schoolAttendanceRadiusMeters,
+          'radiusMeters': radius,
         });
         return {'success':true,'profile':safe};
       }

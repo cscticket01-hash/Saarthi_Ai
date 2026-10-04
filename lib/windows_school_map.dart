@@ -3,6 +3,14 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 const schoolAttendanceRadiusMeters = 200.0;
+const minimumSchoolAttendanceRadiusMeters = 25.0;
+
+double? parseSchoolAttendanceRadius(Object? value) {
+  final radius = double.tryParse(value?.toString() ?? '');
+  return radius != null && radius.isFinite &&
+      radius >= minimumSchoolAttendanceRadiusMeters &&
+      radius <= schoolAttendanceRadiusMeters ? radius : null;
+}
 
 class SchoolMapPin {
   const SchoolMapPin(this.latitude, this.longitude, {this.name = ''});
@@ -106,7 +114,8 @@ double schoolDistanceMeters(SchoolMapPin a, SchoolMapPin b) {
 }
 
 bool schoolAttendancePositionAllowed(SchoolMapPin school, SchoolMapPin device,
-    {required double accuracyMeters}) {
-  return accuracyMeters.isFinite && accuracyMeters >= 0 && accuracyMeters <= 100 &&
-      schoolDistanceMeters(school, device) + accuracyMeters <= schoolAttendanceRadiusMeters;
+    {required double accuracyMeters, double radiusMeters = schoolAttendanceRadiusMeters}) {
+  return parseSchoolAttendanceRadius(radiusMeters) != null &&
+      accuracyMeters.isFinite && accuracyMeters >= 0 && accuracyMeters <= 100 &&
+      schoolDistanceMeters(school, device) + accuracyMeters <= radiusMeters;
 }

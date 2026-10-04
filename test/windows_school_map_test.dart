@@ -56,21 +56,37 @@ void main() {
     expect(schoolAttendancePositionAllowed(school, school, accuracyMeters:double.nan), isFalse);
     expect(schoolAttendancePositionAllowed(school, const SchoolMapPin(91,0), accuracyMeters:1), isFalse);
   });
+  test('school-selected radii enforce 25–200 metres without widening the boundary', () {
+    const school = SchoolMapPin(0, 0);
+    SchoolMapPin at(double metres) => SchoolMapPin(metres / 6371000 * 180 / pi, 0);
+    for (final radius in [25.0, 75.0, 100.0, 200.0]) {
+      expect(parseSchoolAttendanceRadius(radius), radius);
+      expect(schoolAttendancePositionAllowed(school, at(radius - 11), accuracyMeters:10, radiusMeters:radius), isTrue);
+      expect(schoolAttendancePositionAllowed(school, at(radius - 5), accuracyMeters:10, radiusMeters:radius), isFalse);
+      expect(schoolAttendancePositionAllowed(school, at(radius + 1), accuracyMeters:0, radiusMeters:radius), isFalse);
+    }
+    for (final invalid in [24.0, 201.0, double.nan, double.infinity]) {
+      expect(parseSchoolAttendanceRadius(invalid), isNull);
+      expect(schoolAttendancePositionAllowed(school, school, accuracyMeters:0, radiusMeters:invalid), isFalse);
+    }
+    expect(parseSchoolAttendanceRadius('75'), 75);
+    expect(parseSchoolAttendanceRadius(''), isNull);
+  });
   testWidgets('pin picker returns the confirmed point and cannot confirm a camera-only link', (tester) async {
     SchoolMapPin? result;
     await tester.binding.setSurfaceSize(const Size(1000,1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(MaterialApp(home:Builder(builder:(context)=>Scaffold(body:TextButton(
-      onPressed:() async { result=await selectWindowsSchoolMapPin(context, schoolName:'Test School'); }, child:const Text('Select'))))));
+      onPressed:() async { result=await selectWindowsSchoolMapPin(context, schoolName:'Test School', radiusMeters:75); }, child:const Text('Select'))))));
     await tester.tap(find.text('Select')); await tester.pumpAndSettle();
-    final confirm=find.text('Use this school pin • 200 m');
+    final confirm=find.text('Use this school location • 75 m');
     expect(tester.widget<FilledButton>(find.ancestor(of:confirm, matching:find.byType(FilledButton))).onPressed, isNull);
     await tester.enterText(find.byType(TextField), 'https://www.google.com/maps/@24.8,92.8,17z');
-    await tester.tap(find.text('Read pin')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Read location')); await tester.pumpAndSettle();
     expect(tester.widget<FilledButton>(find.ancestor(of:confirm, matching:find.byType(FilledButton))).onPressed, isNull);
     await tester.enterText(find.byType(TextField), '24.8123456, 92.8123456');
-    await tester.tap(find.text('Read pin')); await tester.pumpAndSettle();
-    expect(find.text('Attendance boundary: 200 metres from this pin'), findsOneWidget);
+    await tester.tap(find.text('Read location')); await tester.pumpAndSettle();
+    expect(find.text('Attendance boundary: 75 metres from this location'), findsOneWidget);
     await tester.tap(confirm); await tester.pumpAndSettle();
     expect(result!.latitude, 24.8123456); expect(result!.longitude, 92.8123456);
   });

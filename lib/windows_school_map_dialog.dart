@@ -3,14 +3,15 @@ import 'package:flutter/services.dart';
 import 'windows_school_map.dart';
 
 Future<SchoolMapPin?> selectWindowsSchoolMapPin(BuildContext context,
-    {required String schoolName, SchoolMapPin? current}) {
+    {required String schoolName, SchoolMapPin? current, double radiusMeters = schoolAttendanceRadiusMeters}) {
   return showDialog<SchoolMapPin>(context: context,
-      builder: (_) => _SchoolMapPinDialog(schoolName: schoolName, current: current));
+      builder: (_) => _SchoolMapPinDialog(schoolName: schoolName, current: current, radiusMeters: radiusMeters));
 }
 
 class _SchoolMapPinDialog extends StatefulWidget {
-  const _SchoolMapPinDialog({required this.schoolName, this.current});
+  const _SchoolMapPinDialog({required this.schoolName, this.current, required this.radiusMeters});
   final String schoolName;
+  final double radiusMeters;
   final SchoolMapPin? current;
   @override
   State<_SchoolMapPinDialog> createState() => _SchoolMapPinDialogState();
@@ -76,11 +77,11 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> with WidgetsBi
       setState(() {
         _pin = pin;
         if (pin == null) {
-          _error = 'Selected school pin nahi mila. Google Maps mein school ke exact point par right-click karke pehli coordinate line copy karein. Sirf map ka camera-centre link accept nahi hota.';
+          _error = 'Selected school location nahi mila. Google Maps mein school ke exact point par right-click karke pehli coordinate line copy karein. Sirf map ka camera-centre link accept nahi hota.';
         }
       });
     } catch (_) {
-      if (mounted) setState(() => _error = 'Map link read nahi hua. School pin ke latitude, longitude copy karke paste karein.');
+      if (mounted) setState(() => _error = 'Map link read nahi hua. School location ke latitude, longitude copy karke paste karein.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -89,7 +90,7 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> with WidgetsBi
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Select school pin on Google Maps'),
+      title: const Text('Select school location on Google Maps'),
       content: SizedBox(width: 590, child: SingleChildScrollView(child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -97,7 +98,7 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> with WidgetsBi
           Text(widget.schoolName.isEmpty ? 'School location' : widget.schoolName,
               style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
-          const Text('1. Open Google Maps and zoom to the school campus.\n2. Right-click the exact attendance point; copy the first latitude, longitude line.\n3. Return here, paste the pin and confirm it.'),
+          const Text('1. Open Google Maps and zoom to the school campus.\n2. Right-click the exact attendance point; copy the first latitude, longitude line.\n3. Return here, paste the location and confirm it.'),
           const SizedBox(height: 12),
           FilledButton.icon(onPressed: _busy ? null : () => _open(),
               icon: const Icon(Icons.map), label: const Text('Open Google Maps in browser')),
@@ -105,13 +106,13 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> with WidgetsBi
           TextField(controller: _input, maxLines: 2,
               onChanged: (_) => setState(() { _pin = null; _error = null; }),
               decoration: const InputDecoration(border: OutlineInputBorder(),
-                  labelText: 'School pin coordinates or Google Maps place link',
+                  labelText: 'School location coordinates or Google Maps place link',
                   hintText: '24.8000000, 92.8000000')),
           const SizedBox(height: 8),
           Wrap(spacing: 8, runSpacing: 8, children: [
             OutlinedButton.icon(onPressed: _busy ? null : () => _importClipboard(),
-                icon: const Icon(Icons.content_paste), label: const Text('Paste selected pin')),
-            OutlinedButton(onPressed: _busy ? null : _resolve, child: const Text('Read pin')),
+                icon: const Icon(Icons.content_paste), label: const Text('Paste selected location')),
+            OutlinedButton(onPressed: _busy ? null : _resolve, child: const Text('Read location')),
           ]),
           if (_busy) const Padding(padding: EdgeInsets.only(top: 12), child: LinearProgressIndicator()),
           if (_error != null) Padding(padding: const EdgeInsets.only(top: 12),
@@ -121,10 +122,10 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> with WidgetsBi
             Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, children: [
                 if (_pin!.name.isNotEmpty) Text(_pin!.name),
-                SelectableText('School pin: ${_pin!.coordinates}'),
-                const Text('Attendance boundary: 200 metres from this pin'),
+                SelectableText('School location: ${_pin!.coordinates}'),
+                Text('Attendance boundary: ${widget.radiusMeters.toStringAsFixed(0)} metres from this location'),
                 TextButton.icon(onPressed: () => _open(preview: true),
-                    icon: const Icon(Icons.location_on), label: const Text('Verify this exact pin in Google Maps')),
+                    icon: const Icon(Icons.location_on), label: const Text('Verify this exact location in Google Maps')),
               ]))),
           ],
           const SizedBox(height: 8),
@@ -134,7 +135,7 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> with WidgetsBi
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(onPressed: _busy || _pin == null ? null : () => Navigator.pop(context, _pin),
-            child: const Text('Use this school pin • 200 m')),
+            child: Text('Use this school location • ${widget.radiusMeters.toStringAsFixed(0)} m')),
       ],
     );
   }

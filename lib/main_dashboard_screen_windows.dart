@@ -9368,7 +9368,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     _schoolLatitudeController.text = profile['latitude']?.toString() ?? '';
     _schoolLongitudeController.text = profile['longitude']?.toString() ?? '';
     _attendanceRadiusController.text =
-        '200';
+        (profile['attendanceRadiusMeters'] ?? schoolAttendanceRadiusMeters).toString();
   }
 
   Future<void> _selectSchoolMapPin() async {
@@ -9376,15 +9376,15 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     final longitude = double.tryParse(_schoolLongitudeController.text);
     final current = latitude == null || longitude == null ? null : SchoolMapPin(latitude, longitude);
     final pin = await selectWindowsSchoolMapPin(context,
-        schoolName: _schoolNameController.text, current: current);
+        schoolName: _schoolNameController.text, current: current,
+        radiusMeters: parseSchoolAttendanceRadius(_attendanceRadiusController.text) ?? schoolAttendanceRadiusMeters);
     if (pin == null || !mounted) return;
     setState(() {
       _schoolLatitudeController.text = pin.latitude.toStringAsFixed(7);
       _schoolLongitudeController.text = pin.longitude.toStringAsFixed(7);
-      _attendanceRadiusController.text = '200';
     });
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('School pin selected. Attendance boundary 200 m. Save School Settings to apply.')));
+      content: Text('School exact location selected. Save School Settings to apply your chosen attendance range.')));
   }
 
   Future<void> _load() async {
@@ -9653,7 +9653,13 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     final schoolContactNo = _schoolContactController.text.trim();
     final schoolLatitude = double.tryParse(_schoolLatitudeController.text.trim());
     final schoolLongitude = double.tryParse(_schoolLongitudeController.text.trim());
-    const attendanceRadius = schoolAttendanceRadiusMeters;
+    final attendanceRadius = parseSchoolAttendanceRadius(_attendanceRadiusController.text.trim());
+    if (attendanceRadius == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        backgroundColor: Colors.orangeAccent,
+        content: Text('Attendance range 25 se 200 metre ke beech select karein.')));
+      return;
+    }
 
     if (schoolLatitude == null || schoolLongitude == null ||
         !schoolLatitude.isFinite || !schoolLongitude.isFinite ||
@@ -10109,10 +10115,10 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   width: 180,
                                   child: TextField(
                                     controller: _attendanceRadiusController,
-                                    readOnly: true,
+                                    enabled: !_saving,
                                     keyboardType: TextInputType.number,
                                     style: const TextStyle(color: Colors.white),
-                                    decoration: _field('Radius (meter)', Icons.radar_rounded),
+                                    decoration: _field('Range (25–200 m)', Icons.radar_rounded),
                                   ),
                                 ),
                               ],
@@ -10126,13 +10132,13 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   key: const ValueKey('select-school-map-pin'),
                                   onPressed: _saving ? null : _selectSchoolMapPin,
                                   icon: const Icon(Icons.map_rounded),
-                                  label: const Text('Select school pin in Google Maps'),
+                                  label: const Text('Pinpoint school location in Google Maps'),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'School campus ka exact pin select karein. Attendance sirf saved pin ke 200 m ke andar accept hogi. Save karke location apply karein.',
+                              'Google Maps par school ki exact location select karein. School apni attendance range 25–200 metre choose kar sakta hai. Save karne par selected range apply hogi.',
                               style: TextStyle(
                                 color: Colors.white38,
                                 fontSize: 10,
@@ -24321,7 +24327,10 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
       final location = await _windowsSchoolLocationData();
       final schoolLat = double.tryParse(location['latitude']?.toString() ?? '');
       final schoolLng = double.tryParse(location['longitude']?.toString() ?? '');
-      const radius = schoolAttendanceRadiusMeters;
+      final radius = parseSchoolAttendanceRadius(location['radiusMeters'] ?? schoolAttendanceRadiusMeters);
+      if (radius == null) {
+        throw StateError('School Settings me attendance range 25–200 metre save karein.');
+      }
       if(schoolLat == null || schoolLng == null){
         throw StateError('School Settings me school location save karein.');
       }
@@ -24329,7 +24338,7 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
       final distance = schoolDistanceMeters(SchoolMapPin(current.latitude, current.longitude), SchoolMapPin(schoolLat, schoolLng));
       _distance = distance;
       if (!schoolAttendancePositionAllowed(SchoolMapPin(schoolLat, schoolLng),
-          SchoolMapPin(current.latitude, current.longitude), accuracyMeters: current.accuracy)) {
+          SchoolMapPin(current.latitude, current.longitude), accuracyMeters: current.accuracy, radiusMeters: radius)) {
         throw StateError('Attendance blocked: school se ${distance.toStringAsFixed(0)}m, GPS accuracy ±${current.accuracy.toStringAsFixed(0)}m. Allowed ${radius.toStringAsFixed(0)}m. Accurate GPS location lekar retry karein.');
       }
 
@@ -24392,7 +24401,7 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
                 child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
                   const Text('Student / Teacher QR Attendance',style:TextStyle(color:Colors.white,fontSize:20,fontWeight:FontWeight.w900)),
                   const SizedBox(height:6),
-                  const Text('USB QR scanner se scan karein ya QR text paste karein. Active school identity + Windows GPS 200m geofence verify hoga.',style:TextStyle(color:Colors.white54,height:1.4)),
+                  const Text('USB QR scanner se scan karein ya QR text paste karein. Active school identity + Windows GPS school ki saved attendance range verify karega.',style:TextStyle(color:Colors.white54,height:1.4)),
                   const SizedBox(height:16),
                   SegmentedButton<String>(
                     segments: const [
