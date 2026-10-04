@@ -20,7 +20,136 @@ service cloud.firestore {
     function count(value) { return value is int && value >= 0 && value <= 1000000; }
     // Exact capability reads: status only, no keys, amounts or school records.
     match /platform_license_status/{hash} {
-      allow get: if hash.matches('^[a-f0-9]{64}$');
+      allow get: if hash.matches('^[a-f0-9]{64}
+    match /platform_school_trials/{school} {
+      allow get: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$');
+      allow create: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$') &&
+        request.resource.data.keys().hasOnly(['createdAt','deviceTrialId']) &&
+        request.resource.data.deviceTrialId.matches('^[a-f0-9]{64}$') &&
+        request.resource.data.createdAt == get(/databases/$(database)/documents/platform_device_trials/$(request.resource.data.deviceTrialId)).data.createdAt &&
+        trial('platform_school_trials/' + school);
+    }
+    match /platform_device_trials/{device} {
+      allow get: if device.matches('^[a-f0-9]{64}$');
+      allow create: if device.matches('^[a-f0-9]{64}$') && request.resource.data.keys().hasOnly(['createdAt']) &&
+        request.resource.data.createdAt == request.time && trial('platform_device_trials/' + device);
+    }
+    match /platform_trial_claims/{uid} {
+      allow create: if anonymous() && request.auth.uid == uid &&
+        request.resource.data.keys().hasOnly(['target','createdAt']) &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.target is string && request.resource.data.target.size() <= 100;
+    }
+    match /platform_school_summaries/{school} {
+      allow create, update: if monitor(school) &&
+        request.resource.data.keys().hasOnly(['schoolId','lastSeenAt','reportedAt','studentCount','teacherCount',
+          'studentAppUsers','onlineStudents','onlineTeachers','windowsVersion','mobileVersion','activeLicenseHash']) &&
+        request.resource.data.schoolId == school && request.resource.data.reportedAt == request.time &&
+        request.resource.data.lastSeenAt is timestamp && request.resource.data.lastSeenAt <= request.time + duration.value(60,'s') &&
+        count(request.resource.data.studentCount) && count(request.resource.data.teacherCount) &&
+        count(request.resource.data.studentAppUsers) && count(request.resource.data.onlineStudents) &&
+        count(request.resource.data.onlineTeachers) &&
+        request.resource.data.activeLicenseHash is string &&
+        (request.resource.data.activeLicenseHash == '' ||
+          (request.resource.data.activeLicenseHash.matches('^[a-f0-9]{64}$') &&
+            get(/databases/$(database)/documents/platform_license_status/$(request.resource.data.activeLicenseHash)).data.schoolId == school)) &&
+        request.resource.data.windowsVersion is string && request.resource.data.windowsVersion.size() <= 32 &&
+        request.resource.data.mobileVersion is string && request.resource.data.mobileVersion.size() <= 32 &&
+        (!exists(/databases/$(database)/documents/platform_school_summaries/$(school)) ||
+          request.time >= resource.data.reportedAt + duration.value(5, 'm'));
+    }
+    match /platform_complaints/{complaint} {
+      allow create: if monitor(request.resource.data.schoolId) &&
+        complaint.matches('^' + request.resource.data.schoolId + '_[a-f0-9]{32}$') &&
+        request.resource.data.keys().hasOnly(['schoolId','source','role','message','version','status','createdAt']) &&
+        request.resource.data.source in ['windows','android'] && request.resource.data.role in ['admin','student','teacher'] &&
+        request.resource.data.status == 'open' && request.resource.data.createdAt == request.time &&
+        request.resource.data.message is string && request.resource.data.message.size() >= 3 &&
+        request.resource.data.message.size() <= 3000 && request.resource.data.version is string &&
+        request.resource.data.version.size() <= 32 &&
+        getAfter(/databases/$(database)/documents/platform_support_limits/$(request.resource.data.schoolId)).data.lastSentAt == request.time &&
+        getAfter(/databases/$(database)/documents/platform_support_limits/$(request.resource.data.schoolId)).data.complaintId == complaint;
+    }
+    match /platform_support_limits/{school} {
+      allow create, update: if monitor(school) && request.resource.data.keys().hasOnly(['lastSentAt','complaintId']) &&
+        request.resource.data.complaintId.matches('^' + school + '_[a-f0-9]{32}$') &&
+        request.resource.data.lastSentAt == request.time &&
+        (!exists(/databases/$(database)/documents/platform_support_limits/$(school)) ||
+          request.time >= resource.data.lastSentAt + duration.value(30, 's'));
+    }
+    match /app_config/{config} { allow get: if config in ['android_update','windows_update']; }
+    // Developer-only enumeration, keys, renewal, support and legacy collections.
+    match /{document=**} { allow read, write: if developer(); }
+  }
+}
+);
+    }
+    // Public exact lookup contains only the developer-controlled block flag.
+    // Listing is still denied, so this cannot enumerate schools.
+    match /platform_school_blocks/{school} {
+      allow get: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]
+    match /platform_school_trials/{school} {
+      allow get: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$');
+      allow create: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$') &&
+        request.resource.data.keys().hasOnly(['createdAt','deviceTrialId']) &&
+        request.resource.data.deviceTrialId.matches('^[a-f0-9]{64}$') &&
+        request.resource.data.createdAt == get(/databases/$(database)/documents/platform_device_trials/$(request.resource.data.deviceTrialId)).data.createdAt &&
+        trial('platform_school_trials/' + school);
+    }
+    match /platform_device_trials/{device} {
+      allow get: if device.matches('^[a-f0-9]{64}$');
+      allow create: if device.matches('^[a-f0-9]{64}$') && request.resource.data.keys().hasOnly(['createdAt']) &&
+        request.resource.data.createdAt == request.time && trial('platform_device_trials/' + device);
+    }
+    match /platform_trial_claims/{uid} {
+      allow create: if anonymous() && request.auth.uid == uid &&
+        request.resource.data.keys().hasOnly(['target','createdAt']) &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.target is string && request.resource.data.target.size() <= 100;
+    }
+    match /platform_school_summaries/{school} {
+      allow create, update: if monitor(school) &&
+        request.resource.data.keys().hasOnly(['schoolId','lastSeenAt','reportedAt','studentCount','teacherCount',
+          'studentAppUsers','onlineStudents','onlineTeachers','windowsVersion','mobileVersion','activeLicenseHash']) &&
+        request.resource.data.schoolId == school && request.resource.data.reportedAt == request.time &&
+        request.resource.data.lastSeenAt is timestamp && request.resource.data.lastSeenAt <= request.time + duration.value(60,'s') &&
+        count(request.resource.data.studentCount) && count(request.resource.data.teacherCount) &&
+        count(request.resource.data.studentAppUsers) && count(request.resource.data.onlineStudents) &&
+        count(request.resource.data.onlineTeachers) &&
+        request.resource.data.activeLicenseHash is string &&
+        (request.resource.data.activeLicenseHash == '' ||
+          (request.resource.data.activeLicenseHash.matches('^[a-f0-9]{64}$') &&
+            get(/databases/$(database)/documents/platform_license_status/$(request.resource.data.activeLicenseHash)).data.schoolId == school)) &&
+        request.resource.data.windowsVersion is string && request.resource.data.windowsVersion.size() <= 32 &&
+        request.resource.data.mobileVersion is string && request.resource.data.mobileVersion.size() <= 32 &&
+        (!exists(/databases/$(database)/documents/platform_school_summaries/$(school)) ||
+          request.time >= resource.data.reportedAt + duration.value(5, 'm'));
+    }
+    match /platform_complaints/{complaint} {
+      allow create: if monitor(request.resource.data.schoolId) &&
+        complaint.matches('^' + request.resource.data.schoolId + '_[a-f0-9]{32}$') &&
+        request.resource.data.keys().hasOnly(['schoolId','source','role','message','version','status','createdAt']) &&
+        request.resource.data.source in ['windows','android'] && request.resource.data.role in ['admin','student','teacher'] &&
+        request.resource.data.status == 'open' && request.resource.data.createdAt == request.time &&
+        request.resource.data.message is string && request.resource.data.message.size() >= 3 &&
+        request.resource.data.message.size() <= 3000 && request.resource.data.version is string &&
+        request.resource.data.version.size() <= 32 &&
+        getAfter(/databases/$(database)/documents/platform_support_limits/$(request.resource.data.schoolId)).data.lastSentAt == request.time &&
+        getAfter(/databases/$(database)/documents/platform_support_limits/$(request.resource.data.schoolId)).data.complaintId == complaint;
+    }
+    match /platform_support_limits/{school} {
+      allow create, update: if monitor(school) && request.resource.data.keys().hasOnly(['lastSentAt','complaintId']) &&
+        request.resource.data.complaintId.matches('^' + school + '_[a-f0-9]{32}$') &&
+        request.resource.data.lastSentAt == request.time &&
+        (!exists(/databases/$(database)/documents/platform_support_limits/$(school)) ||
+          request.time >= resource.data.lastSentAt + duration.value(30, 's'));
+    }
+    match /app_config/{config} { allow get: if config in ['android_update','windows_update']; }
+    // Developer-only enumeration, keys, renewal, support and legacy collections.
+    match /{document=**} { allow read, write: if developer(); }
+  }
+}
+);
     }
     match /platform_school_trials/{school} {
       allow get: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$');
