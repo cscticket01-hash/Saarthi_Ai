@@ -1,3 +1,5 @@
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'dart:convert';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_firebase_sync.dart';
@@ -10,6 +12,22 @@ import '../lib/windows_managed_school_gate.dart';
 import '../lib/windows_connect/managed_school_session.dart';
 void main(){
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('managed protected settings reauthenticate against Firebase without storing a password',()async{
+    const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final saved={'managed':true,'projectId':platformProjectId,'schoolId':school,'uid':'school-uid','email':'a@school.example','folderId':'managed','firebaseRefreshToken':'old-refresh','endpoint':'https://school.example/school-cloud'};
+    final encoded=jsonEncode(saved);FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:encoded});
+    final hosts=<String>[];
+    final client=MockClient((request)async{
+      hosts.add(request.url.host);final body=jsonDecode(request.body);
+      if(request.url.host=='identitytoolkit.googleapis.com'){expect(body['password'],'transient-password');return http.Response(jsonEncode({'localId':'school-uid','idToken':'reauth-token'}),200);}
+      expect(body.containsKey('password'),false);expect(body['schoolId'],school);expect(request.headers['Authorization'],'Bearer reauth-token');
+      return http.Response(jsonEncode({'success':true,'schoolId':school,'uid':'school-uid'}),200);
+    });
+    await ManagedSchoolSession.reauthenticate('a@school.example','transient-password',client:client);
+    expect(hosts,['identitytoolkit.googleapis.com','school.example']);
+    expect(await const FlutterSecureStorage().read(key:CentralSchoolCloud.key),encoded);
+    await expectLater(ManagedSchoolSession.reauthenticate('other@school.example','transient-password'),throwsStateError);
+  });
   test('queued local writes and stale batches cannot cross a school switch',()async{
     final db=FirebaseFirestore.instance;
     final suffix=DateTime.now().microsecondsSinceEpoch;

@@ -54,6 +54,7 @@ class User {
   Future<UserCredential> reauthenticateWithCredential(
     AuthCredential credential,
   ) async {
+    if((await CentralSchoolCloud.saved())['managed']==true){await ManagedSchoolSession.reauthenticate(credential.email,credential.password);return UserCredential(user:this);}
     if (!WindowsLocalSecurity.configured) {
       throw FirebaseAuthException(
         code: 'local-settings-lock-not-configured',

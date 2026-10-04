@@ -1,3 +1,4 @@
+import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -24,6 +25,17 @@ class ManagedSchoolSession {
       await const FlutterSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':CentralSchoolCloud.apiUrl,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed','scriptUrl':session['scriptUrl']??''}));
       await const FlutterSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
       changed.value++;return session;
+    }finally{cloud.close();}
+  }
+  static Future<void> reauthenticate(String email,String password,{http.Client? client}) async {
+    final saved=await CentralSchoolCloud.saved();
+    if(saved['managed']!=true||saved['email']?.toString().toLowerCase()!=email.trim().toLowerCase())throw StateError('Use the currently logged-in school account.');
+    final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId'],client:client);
+    try{
+      final auth=await cloud.send('POST',Uri.https('identitytoolkit.googleapis.com','/v1/accounts:signInWithPassword',{'key':platformApiKey}),body:{'email':email.trim(),'password':password,'returnSecureToken':true});
+      if(auth['localId']!=saved['uid']||auth['idToken'] is! String)throw StateError('School identity changed.');
+      final session=await cloud.api({'action':'managed/session','schoolId':saved['schoolId']},token:auth['idToken']);
+      if(session['uid']!=saved['uid']||session['schoolId']!=saved['schoolId'])throw StateError('School authentication mapping changed.');
     }finally{cloud.close();}
   }
   static Future<void> logout() async {
