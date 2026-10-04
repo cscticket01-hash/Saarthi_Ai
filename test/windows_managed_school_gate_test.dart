@@ -65,10 +65,10 @@ void main(){
     final password=find.widgetWithText(TextField,'Password');
     await tester.enterText(password,'a');await tester.pump();expect(find.text('1 characters'),findsOneWidget);
     expect(tester.widget<TextField>(password).controller!.text,'a');expect(tester.widget<TextField>(password).obscureText,true);
-    await tester.tap(find.byTooltip('Show password'));await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('show-password')));await tester.pump();
     expect(tester.widget<TextField>(password).obscureText,false);expect(tester.widget<TextField>(password).controller!.text,'a');
     await tester.enterText(password,'aaaa');await tester.pump();expect(find.text('4 characters'),findsOneWidget);
-    await tester.tap(find.byTooltip('Hide password'));await tester.pump();expect(tester.widget<TextField>(password).controller!.text,'aaaa');
+    await tester.tap(find.byKey(const ValueKey('hide-password')));await tester.pump();expect(tester.widget<TextField>(password).controller!.text,'aaaa');
     await tester.pumpWidget(const SizedBox());
   });
 }
