@@ -142,6 +142,9 @@ void main() {
     await tester.pump();
     await tester.pump();
 
+    // The managed-session check now runs before legacy startup. Allow the
+    // secure-storage futures and nested startup gates to finish, with a bound.
+    for(var i=0;i<6;i++){await tester.pump();}
     expect(find.text('Vidya Saarthi Locked'), findsOneWidget);
     expect(find.text('Unlock App'), findsOneWidget);
     expect(find.text('Admin Setup'), findsNothing);
@@ -184,6 +187,7 @@ void main() {
     await tester.pumpWidget(VidyaSaarthiWindowsApp(initializeConnections: () async {}));
     await tester.pump();
     await tester.pump();
+    for(var i=0;i<6;i++){await tester.pump();}
     expect(find.text('Admin Setup'), findsOneWidget);
     expect(find.text('License not activated — Activate now'), findsOneWidget);
     expect(find.text('Activate Vidya Saarthi'), findsNothing);
