@@ -184,7 +184,7 @@ jobs:
         run: |
           flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true
           if ($LASTEXITCODE -ne 0) { throw 'Release cloud configuration verification failed.' }
-          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart
+          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed.' }
 
       - name: Set Windows App Version
@@ -341,7 +341,7 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
-            Windows school location update: open Google Maps in the browser, pinpoint the exact school location and save a school-selected attendance range from 25 to 200 metres. Reject map camera-centre links and inaccurate Windows attendance locations. Includes the existing student ID card designs and licence fixes.
+            Windows reference document update: four teacher ID front/back designs, four report card designs and the school receipt. Uses actual school data, photo, logo and principal signature, with vector artwork and no reference watermarks. Preserves the existing student ID designs and school-selected 25-200m attendance range.
             Preserves existing school data, the shared Firebase school isolation and each school's own Google Drive backup/restore.
             Google access for new external accounts remains subject to Google's pending OAuth verification.
           generate_release_notes: true

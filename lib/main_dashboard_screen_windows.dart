@@ -12420,110 +12420,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
   }
 
   Future<Uint8List> _buildReceiptPdf(Map<String, dynamic> data) async {
-    final custom=await WindowsDocumentTemplates.selected('receipt',data);
-    if(custom!=null)return custom;
-    final pdf = pw.Document();
-    final items = Map<String, dynamic>.from(data['feeItems'] ?? {});
-    final itemEntries = items.entries.where((e) => _toDouble(e.value) > 0).toList();
-
-    pw.TableRow row(String left, String right, {bool bold = false}) {
-      final style = pw.TextStyle(fontSize: 9, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal);
-      return pw.TableRow(
-        children: [
-          pw.Padding(
-            padding: const pw.EdgeInsets.all(5),
-            child: pw.Text(left, style: style),
-          ),
-          pw.Padding(
-            padding: const pw.EdgeInsets.all(5),
-            child: pw.Text(right, style: style, textAlign: pw.TextAlign.right),
-          ),
-        ],
-      );
-    }
-
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(34),
-        build: (context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-            children: [
-              pw.Text(
-                data['schoolName']?.toString().trim().isNotEmpty == true
-                    ? data['schoolName'].toString().trim()
-                    : '',
-                textAlign: pw.TextAlign.center,
-                style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
-              ),
-              pw.SizedBox(height: 3),
-              pw.Text(
-                'VIDYA SAARTHI • FEES RECEIPT',
-                textAlign: pw.TextAlign.center,
-                style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
-              ),
-              pw.SizedBox(height: 14),
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Text('Receipt No: ${data['receiptNo'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
-                  pw.Text('Date: ${data['dateText'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
-                ],
-              ),
-              pw.SizedBox(height: 6),
-              pw.Text('Name: ${data['studentName'] ?? ''}', style: const pw.TextStyle(fontSize: 10)),
-              if (data['studentUid']?.toString().trim().isNotEmpty == true) ...[
-                pw.SizedBox(height: 3),
-                pw.Text(
-                  'Student UID: ${data['studentUid']}',
-                  style: pw.TextStyle(
-                    fontSize: 9,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
-              ],
-              pw.SizedBox(height: 4),
-              pw.Text(
-                'Class: ${data['class'] ?? ''}    Roll No: ${data['rollNo'] ?? ''}    Month: ${_monthName(data['month']?.toString() ?? _selectedMonth)}',
-                style: const pw.TextStyle(fontSize: 10),
-              ),
-              pw.SizedBox(height: 12),
-              pw.Table(
-                border: pw.TableBorder.all(width: 0.5),
-                columnWidths: const {
-                  0: pw.FlexColumnWidth(3),
-                  1: pw.FlexColumnWidth(1),
-                },
-                children: [
-                  row('Description', 'Rs.', bold: true),
-                  ...itemEntries.map((e) => row(e.key, _toDouble(e.value).toStringAsFixed(0))),
-                  row('Amount Received', _toDouble(data['installmentAmount']).toStringAsFixed(0), bold: true),
-                  row('Total Paid', _toDouble(data['totalPaid']).toStringAsFixed(0), bold: true),
-                  row('Balance Due', _toDouble(data['balance']).toStringAsFixed(0), bold: true),
-                ],
-              ),
-              pw.SizedBox(height: 10),
-              pw.Text('Payment Mode: ${data['paymentMode'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
-              pw.Spacer(),
-              pw.Align(
-                alignment: pw.Alignment.centerRight,
-                child: pw.Column(
-                  children: [
-                    pw.SizedBox(height: 25),
-                    pw.Container(width: 110, height: 0.5, color: PdfColors.black),
-                    pw.SizedBox(height: 4),
-                    pw.Text('Signature', style: const pw.TextStyle(fontSize: 9)),
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-
-    return pdf.save();
+    final bytes = await WindowsDocumentTemplates.selected('receipt', data);
+    if (bytes == null) throw StateError('School receipt could not be generated.');
+    return bytes;
   }
 
   Future<Map<String, dynamic>?> _loadLastPayment(Map<String, dynamic>? ledger) async {
@@ -15841,90 +15740,12 @@ errorBuilder: (_, __, ___) => _teacherFallback(
       documentId: docId,
       person: data,
     );
-    final custom=await WindowsDocumentTemplates.selected('teacherId',{...data,'teacherId':data['teacherId'] ?? docId},qr:qrData);
-    if(custom!=null){if(mounted)await WindowsDocumentTemplates.preview(context,custom,title:'Teacher ID card');return;}
-    if (!mounted) return;
-    final name = data['name']?.toString().trim() ?? 'Teacher';
-    final teacherId = data['teacherId']?.toString().trim().isNotEmpty == true
-        ? data['teacherId'].toString().trim()
-        : docId;
-    final designation = data['designation']?.toString().trim() ?? 'Teacher';
-    final subject = data['subject']?.toString().trim() ?? '';
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Container(
-          width: 560,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF4F7FA),
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF4A148C), Color(0xFF7B1FA2)],
-                  ),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.school_rounded, color: Colors.white),
-                    SizedBox(width: 10),
-                    Text('VIDYA SAARTHI • TEACHER ID',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 120,
-                    height: 145,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFECEFF1),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: _teacherPhoto(data, name),
-                  ),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(name, style: const TextStyle(color: Color(0xFF4A148C), fontSize: 22, fontWeight: FontWeight.w900)),
-                        const SizedBox(height: 8),
-                        Text('$designation${subject.isEmpty ? '' : ' • $subject'}', style: const TextStyle(color: Colors.black87)),
-                        const SizedBox(height: 6),
-                        Text('Teacher ID: $teacherId', style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 12),
-                        const Text('QR: Attendance + School Mobile Linking', style: TextStyle(color: Colors.black45, fontSize: 11)),
-                      ],
-                    ),
-                  ),
-                  QrImageView(data: qrData, size: 135),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'This QR is school-isolated and contains the active school connection identity + attendance geofence metadata.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.black45, fontSize: 10),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    final bytes = await WindowsDocumentTemplates.selected('teacherId',
+        {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData);
+    if (bytes != null && mounted) {
+      await WindowsDocumentTemplates.preview(context, bytes,
+          title: 'Teacher ID card • Front & back');
+    }
   }
 
   @override
@@ -23757,8 +23578,11 @@ class _ExamMarksEntryScreenState
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
                         final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
+                        final reportBytes = await WindowsDocumentTemplates.selected('reportCard', resultData);
+                        if (reportBytes == null) throw StateError('Report card could not be generated.');
                         final savedResult = await _post({
                           'action': 'save_exam_result',
+                          'pdfBase64': base64Encode(reportBytes),
                           ...resultData,
                           'examId': _examId,
                           'studentId': doc.id,
@@ -23771,6 +23595,7 @@ class _ExamMarksEntryScreenState
                               FirebaseAuth.instance.currentUser?.email ??
                                   'Admin',
                         });
+                        if (savedResult['reportCardUrl'] != null) resultData['reportCardUrl'] = savedResult['reportCardUrl'];
                         await FirebaseFirestore.instance.collection('exam_results').doc('${_examId}_${doc.id}').set(resultData);
                         savedOffline = savedResult['windowsLocalFallback'] == true;
                         if(isFinal){

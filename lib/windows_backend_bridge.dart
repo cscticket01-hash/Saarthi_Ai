@@ -705,8 +705,15 @@ class WindowsBackendBridge {
       if (action == 'save_exam' || action == 'save_exam_result') {
         final id = action == 'save_exam' ? data['examId']?.toString() ?? 'EXAM-${secureSetupToken(12)}'
           : '${data['examId']}_${data['studentId']}';
-        await save(action == 'save_exam' ? 'exams':'exam_center_results',id,data);
-        return {'success':true,'examId':id};
+        final record = Map<String, dynamic>.from(data)..remove('pdfBase64');
+        if (action == 'save_exam_result' && (data['pdfBase64']?.toString().isNotEmpty ?? false)) {
+          final file = await cloud.upload('Report-$id.pdf', 'application/pdf', data['pdfBase64'].toString());
+          record['reportCardUrl'] = file['fileUrl'];
+          record['reportCardFileId'] = file['fileId'];
+        }
+        await save(action == 'save_exam' ? 'exams':'exam_center_results',id,record);
+        return {'success':true,'examId':id,
+          if (record['reportCardUrl'] != null) 'reportCardUrl':record['reportCardUrl']};
       }
       if (action == 'list_exam_center') return {'success':true,
         'exams':(await read('exams')).entries.map((e)=>{'examId':e.key,...e.value}).toList(),
@@ -807,7 +814,7 @@ class WindowsBackendBridge {
         final data = <String, dynamic>{
           ...body,
           'timestamp': body['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
-        }..remove('action');
+        }..remove('action')..remove('pdfBase64');
         await FirebaseFirestore.instance
             .collection('_local_exam_center_results')
             .doc('${examId}_$studentId')

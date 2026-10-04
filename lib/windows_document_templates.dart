@@ -7,7 +7,7 @@ import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'package:printing/printing.dart';
 
 import 'windows_local_firestore.dart';
-import 'school_document_renderer.dart';
+import 'windows_reference_documents.dart';
 import 'windows_student_id_cards.dart';
 
 class WindowsDocumentTemplates {
@@ -62,16 +62,20 @@ class WindowsDocumentTemplates {
         ),
       );
     }
-    return renderSchoolDocument(
+    return renderWindowsReferenceDocument(
       kind: kind,
-      template: v is num ? v.toInt() : -1,
+      template: windowsReferenceDocumentIndex(kind, v),
       data: {
+        ...profile,
         'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
+        'schoolAddress': profile['address'] ?? '',
+        'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
         ...data,
       },
       qr: qr,
       photo: await _image(data['photoUrl']),
       logo: await _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
+      signature: await _image(data['principalSignatureUrl'] ?? profile['principalSignatureUrl']),
     );
   }
 
@@ -147,23 +151,25 @@ class SchoolDocumentTemplatesScreen extends StatefulWidget {
 class _SchoolDocumentTemplatesScreenState
     extends State<SchoolDocumentTemplatesScreen> {
   static final _names = <String, List<String>>{
-    ...schoolTemplateNames,
+    ...windowsReferenceDocumentNames,
     'studentId': windowsStudentIdNames,
   };
   String _kind = 'studentId';
   Map<String, dynamic> _selected = {};
   bool _loading = true;
-  final Map<int, Future<Uint8List>> _thumbnails = {};
+  final Map<String, Future<Uint8List>> _thumbnails = {};
 
-  Future<Uint8List> _thumbnail(int index) =>
-      _thumbnails.putIfAbsent(index, () async {
-        final bytes = await renderWindowsStudentId(
-          template: index,
-          data: _sample,
-        );
-        final page = await Printing.raster(bytes, pages: [0], dpi: 100).first;
-        return page.toPng();
-      });
+  Future<Uint8List> _thumbnail(int index) {
+    final kind = _kind;
+    final sample = _sample;
+    return _thumbnails.putIfAbsent('$kind:$index', () async {
+      final bytes = kind == 'studentId'
+          ? await renderWindowsStudentId(template: index, data: sample)
+          : await renderWindowsReferenceDocument(kind: kind, template: index, data: sample);
+      final page = await Printing.raster(bytes, pages: [0], dpi: 100).first;
+      return page.toPng();
+    });
+  }
   @override
   void initState() {
     super.initState();
@@ -211,7 +217,7 @@ class _SchoolDocumentTemplatesScreenState
             data: _sample,
             qr: 'VIDYA_SAARTHI_PREVIEW_ONLY',
           )
-        : await renderSchoolDocument(
+        : await renderWindowsReferenceDocument(
             kind: _kind,
             template: index,
             data: _sample,
@@ -279,16 +285,16 @@ class _SchoolDocumentTemplatesScreenState
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 16,
                   ),
-                  itemCount: _kind == 'studentId' ? 4 : 5,
+                  itemCount: _names[_kind]!.length,
                   itemBuilder: (ctx, n) {
-                    final i = _kind == 'studentId' ? n : n - 1;
+                    final i = n;
                     final chosen = _kind == 'studentId'
                         ? windowsStudentIdIndex(_selected[_kind])
-                        : (_selected[_kind] as num?)?.toInt() ?? -1;
+                        : windowsReferenceDocumentIndex(_kind, _selected[_kind]);
                     final active = i == chosen;
                     final portrait =
                         (_kind == 'studentId' || _kind == 'teacherId') &&
-                            (_kind == 'studentId' ? i < 2 : i >= 2);
+                            (_kind == 'studentId' ? i < 2 : i != 2);
                     return Card(
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
@@ -322,7 +328,7 @@ class _SchoolDocumentTemplatesScreenState
                               ],
                             ),
                             const SizedBox(height: 16),
-                            if (_kind == 'studentId') ...[
+                            ...[
                               Expanded(
                                 child: Center(
                                   child: FutureBuilder<Uint8List>(
@@ -362,7 +368,7 @@ class _SchoolDocumentTemplatesScreenState
                                 fontSize: 12,
                               ),
                             ),
-                            if (_kind != 'studentId') const Spacer(),
+
                             Row(
                               children: [
                                 OutlinedButton(
