@@ -12,12 +12,12 @@ class WindowsManagedSchoolGate extends StatefulWidget {
   @override State<WindowsManagedSchoolGate> createState()=>_WindowsManagedSchoolGateState();
 }
 class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
-  Map<String,dynamic>? session;bool checking=true;String? error;Timer? timer,expiryTimer;DateTime? verifiedAt;
+  Map<String,dynamic>? session;bool checking=true,routed=false;String? error;Timer? timer,expiryTimer;DateTime? verifiedAt;
   int checkVersion=0;
   final licence=TextEditingController();
   @override void initState(){super.initState();ManagedSchoolSession.changed.addListener(sessionChanged);check();timer=Timer.periodic(const Duration(seconds:30),(_)=>check());expiryTimer=Timer.periodic(const Duration(seconds:1),(_){if(mounted&&session!=null)setState((){});});}
   @override void dispose(){unawaited(ManagedSchoolSession.call('managed/disconnect').catchError((_)=> <String,dynamic>{}));timer?.cancel();expiryTimer?.cancel();ManagedSchoolSession.changed.removeListener(sessionChanged);licence.dispose();super.dispose();}
-  void sessionChanged(){checkVersion++;if(mounted)setState((){session=null;checking=true;error=null;});check();}
+  void sessionChanged(){checkVersion++;if(mounted)setState((){session=null;checking=true;routed=false;error=null;});check();}
   Future<void> check() async {
     final version=++checkVersion;
     try {
@@ -27,9 +27,9 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
       if(!mounted||version!=checkVersion)return;local.FirebaseAuth.instance.useManagedIdentity(saved['email']);
       if(session?['schoolId']!=result['schoolId'])await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
       if(!mounted||version!=checkVersion)return;WindowsPlatformClient.instance.state.value=WindowsLicenseState(allowed:result['allowed']==true,status:result['status']??'expired',expiresAt:DateTime.fromMillisecondsSinceEpoch((result['expiresAt'] as num).toInt()));
-      final first=session==null;
+      final first=!routed&&result['allowed']==true&&(result['status']=='trial'||result['activated']==true);
       setState((){session=result;verifiedAt=DateTime.now();checking=false;error=null;});
-      if(first&&widget.onAuthenticated!=null)WidgetsBinding.instance.addPostFrameCallback((_){if(mounted&&session?['schoolId']==result['schoolId'])widget.onAuthenticated!();});
+      if(first&&widget.onAuthenticated!=null){routed=true;WidgetsBinding.instance.addPostFrameCallback((_){if(mounted&&session?['schoolId']==result['schoolId'])widget.onAuthenticated!();});}
       unawaited(ManagedSchoolSession.call('managed/summary').catchError((_)=> <String,dynamic>{}));
     }catch(e){if(mounted&&version==checkVersion)setState((){checking=false;error='$e';session=null;});}
   }
