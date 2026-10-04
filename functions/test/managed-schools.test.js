@@ -142,3 +142,26 @@ test('GS connection exposes no secret before fixed-school and central ticket ver
  assert.throws(()=>c.VS_managedConnect({schoolId:B,ticket:'a'.repeat(64)}));assert.equal(called,0);
  assert.throws(()=>c.VS_managedConnect({schoolId:A,ticket:'a'.repeat(64)}),/ticket rejected/);assert.equal(called,1);
 });
+test('no-argument GS preparation preserves existing root and secret and refuses rebinding',()=>{
+ const props=new Map([['VS_MANAGED_SCHOOL_ID',A],['VS_MANAGED_ROOT_ID','existing-root'],['VS_MANAGED_SECRET',secret]]);
+ let created=0;
+ const c=vm.createContext({JSON,String,Error,PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v)})},DriveApp:{createFolder:()=>{created++;throw Error('Unexpected new root');},getFolderById:id=>{assert.equal(id,'existing-root');return {getDescription:()=> 'VIDYA_MANAGED_SCHOOL:'+A};}}});
+ const source=fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8');
+ vm.runInContext(source,c);
+ const out=c.VS_prepareSchoolStorage();assert.equal(out.schoolId,A);assert.equal(out.storageReady,true);assert.equal(out.connectionSecret,undefined);assert.equal(created,0);assert.equal(props.get('VS_MANAGED_SECRET'),secret);
+ const foreign=vm.createContext({JSON,String,Error,PropertiesService:c.PropertiesService,DriveApp:c.DriveApp});vm.runInContext(source.replace("const VS_SETUP_SCHOOL_ID = '';",`const VS_SETUP_SCHOOL_ID = '${B}';`),foreign);
+ assert.throws(()=>foreign.VS_prepareSchoolStorage(),/rebinding/);assert.equal(created,0);
+});
+test('fresh GS preparation requires explicit school ID and new-storage consent',()=>{
+ const c=vm.createContext({JSON,String,Error,PropertiesService:{getScriptProperties:()=>({getProperty:()=>null})}});
+ vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),c);
+ assert.throws(()=>c.VS_prepareSchoolStorage(),/Set VS_SETUP_SCHOOL_ID/);
+});
+test('new GS storage creates one marked root only after explicit operator consent',()=>{
+ const source=fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8').replace("const VS_SETUP_SCHOOL_ID = '';",`const VS_SETUP_SCHOOL_ID = '${A}';`);
+ const props=new Map();let created=0,description='';const root={getId:()=> 'new-root',setDescription:d=>description=d,getDescription:()=>description};
+ const environment=()=>({JSON,String,Error,Utilities:{getUuid:()=> '01234567-89ab-cdef-0123-456789abcdef'},PropertiesService:{getScriptProperties:()=>({getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v)})},DriveApp:{createFolder:()=>{created++;return root;},getFolderById:()=>root}});
+ const noConsent=vm.createContext(environment());vm.runInContext(source,noConsent);assert.throws(()=>noConsent.VS_prepareSchoolStorage(),/NEW storage connection/);assert.equal(created,0);
+ const consent=vm.createContext(environment());vm.runInContext(source.replace('const VS_SETUP_CREATE_NEW_STORAGE = false;','const VS_SETUP_CREATE_NEW_STORAGE = true;'),consent);const result=consent.VS_prepareSchoolStorage();assert.equal(result.schoolId,A);assert.equal(result.connectionSecret,undefined);assert.equal(description,'VIDYA_MANAGED_SCHOOL:'+A);assert.equal(created,1);
+ consent.VS_prepareSchoolStorage();assert.equal(created,1);assert.equal(props.get('VS_MANAGED_ROOT_ID'),'new-root');
+});
