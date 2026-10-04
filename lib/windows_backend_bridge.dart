@@ -616,8 +616,11 @@ class WindowsBackendBridge {
     final connection = await CentralSchoolCloud.saved();
     final school = connection['schoolId'];
     if (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) throw StateError('Inactive school profile blocked.');
-    final cloud = CentralSchoolCloud(endpoint:connection['endpoint']);
+    final cloud = CentralSchoolCloud(endpoint:connection['endpoint'],expectedSchoolId:school);
     final token = await WindowsFirebaseRemote.freshIdToken();
+    Future<void> ensureSchool() async {
+      if((await CentralSchoolCloud.saved())['schoolId']!=school||FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=school)throw StateError('School changed during operation.');
+    }
     final action = body['action']?.toString() ?? '';
     Future<Map<String,dynamic>> read(String collection) => WindowsFirebaseRemote.readCollection(
       projectId:connection['projectId'],idToken:token,collection:collection);
@@ -626,6 +629,7 @@ class WindowsBackendBridge {
           FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) throw StateError('School changed during operation.');
       await WindowsFirebaseRemote.writeDocument(projectId:connection['projectId'],idToken:token,
         collection:collection,documentId:id,data:data);
+      await ensureSchool();
       await FirebaseFirestore.instance.collection(collection).doc(id).set(centralSchoolData(data,school));
     }
     try {
@@ -677,6 +681,7 @@ class WindowsBackendBridge {
         // Remove the index only. Drive file retention avoids accidental data loss.
         await WindowsFirebaseRemote.deleteDocument(projectId:connection['projectId'],idToken:token,
           collection:'documents',documentId:data['documentId']?.toString() ?? '');
+        await ensureSchool();
         await FirebaseFirestore.instance.collection('documents').doc(data['documentId']).delete();
         return {'success':true};
       }
@@ -690,6 +695,7 @@ class WindowsBackendBridge {
       if (action == 'delete_school_expense') {
         final id=data['expenseId']?.toString() ?? '';
         await WindowsFirebaseRemote.deleteDocument(projectId:connection['projectId'],idToken:token,collection:'school_expenses',documentId:id);
+        await ensureSchool();
         await FirebaseFirestore.instance.collection('school_expenses').doc(id).delete();
         return {'success':true};
       }

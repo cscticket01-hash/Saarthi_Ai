@@ -301,11 +301,13 @@ class DocumentReference<T> {
     required this.firestore,
     required this.collectionPath,
     required this.documentId,
-  });
+  }) : originProfile=firestore.activeProfileId;
 
   final FirebaseFirestore firestore;
   final String collectionPath;
   final String documentId;
+  final String originProfile;
+  void requireOriginProfile(){if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed; reopen this record.');}
 
   String get id => documentId;
 
@@ -349,6 +351,7 @@ class DocumentReference<T> {
       );
     }
 
+    requireOriginProfile();
     await firestore._database.setDocument(
       collectionPath,
       documentId,
@@ -360,6 +363,7 @@ class DocumentReference<T> {
   Future<void> update(
     Map<String, dynamic> data,
   ) async {
+    requireOriginProfile();
     await firestore._database.updateDocument(
       collectionPath,
       documentId,
@@ -368,6 +372,7 @@ class DocumentReference<T> {
   }
 
   Future<void> delete() async {
+    requireOriginProfile();
     await firestore._database.deleteDocument(
       collectionPath,
       documentId,
@@ -416,7 +421,8 @@ class QuerySnapshot<T> {
 }
 
 class WriteBatch {
-  WriteBatch._(this.firestore);
+  WriteBatch._(this.firestore):originProfile=firestore.activeProfileId;
+  final String originProfile;
 
   final FirebaseFirestore firestore;
   final List<_WriteOperation> _operations =
@@ -431,6 +437,7 @@ class WriteBatch {
       throw ArgumentError('Batch set Map require karta hai.');
     }
 
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.set(
         reference.collectionPath,
@@ -445,6 +452,7 @@ class WriteBatch {
     DocumentReference<T> reference,
     Map<String, dynamic> data,
   ) {
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.update(
         reference.collectionPath,
@@ -457,6 +465,7 @@ class WriteBatch {
   void delete<T>(
     DocumentReference<T> reference,
   ) {
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.delete(
         reference.collectionPath,
@@ -466,6 +475,7 @@ class WriteBatch {
   }
 
   Future<void> commit() async {
+    if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed during batch.');
     await firestore._database.applyOperations(
       _operations,
     );
@@ -473,7 +483,8 @@ class WriteBatch {
 }
 
 class Transaction {
-  Transaction._(this.firestore);
+  Transaction._(this.firestore):originProfile=firestore.activeProfileId;
+  final String originProfile;
 
   final FirebaseFirestore firestore;
   final List<_WriteOperation> _operations =
@@ -482,6 +493,7 @@ class Transaction {
   Future<DocumentSnapshot<T>> get<T>(
     DocumentReference<T> reference,
   ) {
+    reference.requireOriginProfile();
     return reference.get();
   }
 
@@ -496,6 +508,7 @@ class Transaction {
       );
     }
 
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.set(
         reference.collectionPath,
@@ -510,6 +523,7 @@ class Transaction {
     DocumentReference<T> reference,
     Map<String, dynamic> data,
   ) {
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.update(
         reference.collectionPath,
@@ -522,6 +536,7 @@ class Transaction {
   void delete<T>(
     DocumentReference<T> reference,
   ) {
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.delete(
         reference.collectionPath,
@@ -530,8 +545,9 @@ class Transaction {
     );
   }
 
-  Future<void> _commit() {
-    return firestore._database.applyOperations(
+  Future<void> _commit() async {
+    if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed during transaction.');
+    await firestore._database.applyOperations(
       _operations,
     );
   }
@@ -633,7 +649,12 @@ class _LocalJsonDatabase {
   Map<String, dynamic> get activeProfileIdentity =>
       Map<String, dynamic>.from(_activeIdentity);
 
-  Future<void> switchProfile(
+  Future<void> switchProfile(String profileId,{Map<String,dynamic>? identity}) {
+    final next=_writeTail.then((_)=>_switchProfileNow(profileId,identity:identity));
+    _writeTail=next.catchError((_){});
+    return next;
+  }
+  Future<void> _switchProfileNow(
     String profileId, {
     Map<String, dynamic>? identity,
   }) async {
@@ -794,11 +815,14 @@ class _LocalJsonDatabase {
       return Future<void>.value();
     }
 
+    final profileAtEnqueue=_activeProfileId;
     final completer = Completer<void>();
 
     _writeTail = _writeTail.then((_) async {
       try {
+        if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed before queued write.');
         final root = await _readRoot();
+        if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
         final touched = <String>{};
         var trackedMutation = false;

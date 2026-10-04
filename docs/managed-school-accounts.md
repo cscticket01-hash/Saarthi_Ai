@@ -27,7 +27,10 @@ Drive files. Firestore holds only accounts/licences/mapping/status/protected
 connection references. Existing Sheets and existing Firestore/Drive records are
 not automatically imported, moved, deleted, reset or rebound. Existing legacy
 installations retain their working mode. Switching account selects a separate
-local tenant profile. Existing Google session is preserved separately when first
+local tenant profile. Pending sync uses its original Firebase token and expected
+schoolId; switching credentials cancels the old work. Local writes/profile changes
+are serialized, and stale document references, batches and transactions reject
+mutation after a school switch. Existing Google session is preserved separately when first
 entering managed login. Once used, managed login remains required after logout;
 logging out cannot fall back to legacy local licence Skip.
 

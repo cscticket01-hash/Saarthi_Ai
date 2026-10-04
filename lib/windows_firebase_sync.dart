@@ -1,4 +1,3 @@
-import 'windows_connect/managed_school_session.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -410,13 +409,22 @@ class WindowsFirebaseRemote {
     await _notifyConnectionChanged();
   }
 
+  static Future<Map<String,dynamic>> _managedRecords(String token,Map<String,dynamic> body) async {
+    final school=FirebaseFirestore.instance.activeProfileIdentity['schoolId']?.toString()??'';
+    final saved=await CentralSchoolCloud.saved();
+    if(!validSchoolId(school)||saved['schoolId']!=school)throw StateError('School changed during sync.');
+    final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:school);
+    try{return await cloud.api({'action':'managed/records',...body,'schoolId':school},token:token);}
+    finally{cloud.close();}
+  }
+
   static Future<Map<String, Map<String, dynamic>>>
       readCollection({
     required String projectId,
     required String idToken,
     required String collection,
   }) async {
-    if((await CentralSchoolCloud.saved())['managed']==true){final result=await ManagedSchoolSession.call('managed/records',{'operation':'read','collection':collection});return (result['records'] as Map).map((k,v)=>MapEntry(k.toString(),Map<String,dynamic>.from(_restoreManagedValue(v) as Map)));}
+    if((await CentralSchoolCloud.saved())['managed']==true){final result=await _managedRecords(idToken,{'operation':'read','collection':collection});return (result['records'] as Map).map((k,v)=>MapEntry(k.toString(),Map<String,dynamic>.from(_restoreManagedValue(v) as Map)));}
     final remoteCollection = await _remoteCollection(projectId, collection);
     final output =
         <String, Map<String, dynamic>>{};
@@ -522,7 +530,7 @@ class WindowsFirebaseRemote {
     required String documentId,
     required Map<String, dynamic> data,
   }) async {
-    if((await CentralSchoolCloud.saved())['managed']==true){await ManagedSchoolSession.call('managed/records',{'operation':'write','collection':collection,'id':documentId,'data':migrationJsonValue(centralSchoolData(data,(await CentralSchoolCloud.saved())['schoolId']))});return;}
+    if((await CentralSchoolCloud.saved())['managed']==true){await _managedRecords(idToken,{'operation':'write','collection':collection,'id':documentId,'data':migrationJsonValue(centralSchoolData(data,FirebaseFirestore.instance.activeProfileIdentity['schoolId']))});return;}
     final remoteCollection = await _remoteCollection(projectId, collection);
     if (documentId.isEmpty || documentId.contains('/') || documentId == '.' || documentId == '..') throw StateError('Invalid school document ID.');
     final documentName =
@@ -571,7 +579,7 @@ class WindowsFirebaseRemote {
     required String collection,
     required String documentId,
   }) async {
-    if((await CentralSchoolCloud.saved())['managed']==true){await ManagedSchoolSession.call('managed/records',{'operation':'delete','collection':collection,'id':documentId});return;}
+    if((await CentralSchoolCloud.saved())['managed']==true){await _managedRecords(idToken,{'operation':'delete','collection':collection,'id':documentId});return;}
     final remoteCollection = await _remoteCollection(projectId, collection);
     if (documentId.isEmpty || documentId.contains('/') || documentId == '.' || documentId == '..') throw StateError('Invalid school document ID.');
     final documentName =

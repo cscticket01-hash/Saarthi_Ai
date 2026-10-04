@@ -47,7 +47,7 @@ Map<String, dynamic> centralSchoolData(Map<String, dynamic> data, String schoolI
 /// Disconnecting it restores the existing installation without deleting data.
 class CentralSchoolCloud {
   CentralSchoolCloud({http.Client? client, this.endpoint = apiUrl,
-    this.storage = const FlutterSecureStorage()}) : client = client ?? http.Client();
+    this.expectedSchoolId, this.storage = const FlutterSecureStorage()}) : client = client ?? http.Client();
   static const apiUrl = String.fromEnvironment('SAARTHI_SCHOOL_CLOUD_URL');
   static const key = 'vidya_saarthi_central_school_v2';
   static Future<void> _pendingSessionWrite = Future<void>.value();
@@ -62,6 +62,7 @@ class CentralSchoolCloud {
     return next;
   }
   final String endpoint;
+  final String? expectedSchoolId;
   final FlutterSecureStorage storage;
   final http.Client client;
   bool cancelled = false;
@@ -165,6 +166,7 @@ class CentralSchoolCloud {
     return Map<String, dynamic>.from(value);
   }
   Future<Map<String, dynamic>> api(Map<String, dynamic> body, {String? token}) async {
+    if(expectedSchoolId!=null&&(await saved())['schoolId']!=expectedSchoolId)throw StateError('School changed during operation.');
     if (!validEndpoint(endpoint)) throw StateError('Developer must configure the central school cloud service. Schools do not need Firebase configuration.');
     return send('POST', Uri.parse(endpoint), token:token, body:body);
   }
@@ -273,6 +275,7 @@ class CentralSchoolCloud {
   Future<Map<String,dynamic>> upload(String name, String mime, String raw) async {
     final data = await saved();
     if (data.isEmpty) throw StateError('School Drive is not connected.');
+    if(expectedSchoolId!=null&&data['schoolId']!=expectedSchoolId)throw StateError('School changed before upload.');
     if(data['managed']==true) return api({'action':'managed/file/upload','schoolId':data['schoolId'],'name':name,'mime':mime,'base64':raw.contains(',')?raw.split(',').last:raw},token:await firebaseToken());
     final token = await googleToken(data);
     final bytes = base64Decode(raw.contains(',') ? raw.split(',').last : raw);

@@ -117,6 +117,7 @@ class WindowsStartupFlow extends StatefulWidget {
 class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
   bool _loading = true;
   bool _setupDone = false;
+  bool _managed = false;
 
   @override
   void initState() {
@@ -132,9 +133,11 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     try {
       await WindowsLocalSecurity.initialize();
       final done = await WindowsAdminSetup.completed();
+      final managed=(await CentralSchoolCloud.saved())['managed']==true;
       if (!mounted) return;
       setState(() {
         _setupDone = done;
+        _managed = managed;
         _loading = false;
       });
     } catch (e) {
@@ -156,8 +159,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
         ),
       );
     }
-    return FutureBuilder<Map<String,dynamic>>(future:CentralSchoolCloud.saved(),builder:(context,snapshot){
-    if(snapshot.data?['managed']==true) return const WindowsLocalDashboardGate();
+    if(_managed) return const WindowsLocalDashboardGate();
     // Fresh install: local-first Admin Setup before the dashboard.
     if (!_setupDone && !WindowsLocalSecurity.configured) {
       return const WindowsAdminSetupScreen();
@@ -167,7 +169,6 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     return WindowsLocalSession.loggedOut
         ? const WindowsLocalLoginScreen()
         : const WindowsStartupGate(child: WindowsLocalDashboardGate());
-    });
   }
 }
 
