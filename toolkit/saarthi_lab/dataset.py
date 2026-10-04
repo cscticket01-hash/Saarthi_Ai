@@ -68,11 +68,16 @@ class StudentBase:
                     raise Cancelled("Student-base generation stopped; existing records are retained")
                 if seq in existing:
                     continue
+                if not batch:
+                    # One cryptographic RNG call per batch avoids 100,000 Windows
+                    # provider calls; each identity still receives 32 random bytes.
+                    random_tokens = secrets.token_bytes(32 * 1000)
+                offset = len(batch) * 32
                 batch.append((seq, f"tk_{dataset_id}_{seq:06d}",
                               f"TEST {first[(seq - 1) % len(first)]} {last[(seq // 10) % len(last)]} {seq:06d}",
                               str((seq - 1) % 10 + 1), str((seq - 1) // 10 + 1),
                               f"{2010 + seq % 8:04d}-{seq % 12 + 1:02d}-{seq % 27 + 1:02d}",
-                              secrets.token_hex(32)))
+                              random_tokens[offset:offset + 32].hex()))
                 if len(batch) >= 1000:
                     db.executemany("INSERT INTO students VALUES(?,?,?,?,?,?,?)", batch)
                     db.commit()

@@ -57,6 +57,7 @@ class Transport:
         self.timeout = timeout
         self.allow_loopback = allow_loopback
         self.stats_lock = threading.Lock()
+        self.thread_openers = threading.local()
         self.stats = {"requests": 0, "responses": 0, "bytes": 0, "statuses": {}}
 
     def counters(self):
@@ -71,12 +72,20 @@ class Transport:
         if payload is not None:
             request_headers.setdefault("Content-Type", "text/plain;charset=utf-8" if school else "application/json")
         started = time.perf_counter()
-        opener = urllib.request.build_opener(NoRedirect())
         for _ in range(9):
             remaining = self.timeout - (time.perf_counter() - started)
             if remaining <= 0:
                 raise TimeoutError("HTTP deadline exceeded")
             req = urllib.request.Request(current, data=payload, headers=request_headers, method=method)
+            loopback = urllib.parse.urlsplit(current).hostname in ("127.0.0.1", "localhost", "::1")
+            key = "loopback" if loopback else "external"
+            opener = getattr(self.thread_openers, key, None)
+            if opener is None:
+                # Local fixtures must not use a corporate proxy or Windows proxy
+                # discovery on every request. External targets honor system proxies.
+                proxy = urllib.request.ProxyHandler({}) if loopback else urllib.request.ProxyHandler()
+                opener = urllib.request.build_opener(proxy, NoRedirect())
+                setattr(self.thread_openers, key, opener)
             with self.stats_lock:
                 self.stats["requests"] += 1
             try:
