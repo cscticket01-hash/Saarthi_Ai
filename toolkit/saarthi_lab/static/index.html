@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="lab-session" content="__LAB_TOKEN__">
+  <title>Saarthi Test Lab</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside>
+    <div class="brand"><span class="brand-mark">S</span>Saarthi Test Lab</div>
+    <nav aria-label="Main navigation">
+      <button data-page="console" class="active">Test console</button>
+      <button data-page="base">Student base</button>
+      <button data-page="connections">Connections</button>
+      <button data-page="reports">Reports</button>
+    </nav>
+    <div class="aside-bottom"><span class="status-dot"></span>Local Windows toolkit<br><button id="exit-app">Exit toolkit</button></div>
+  </aside>
+  <main>
+    <header><div><h1 id="page-title">Test console</h1><p>Real runs. Verified results.</p></div><div class="environment" id="environment">Test school not connected</div></header>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <section id="console-page">
+      <div class="top-cards">
+        <article><span class="eyebrow">Student base</span><strong id="base-count">—</strong><span class="badge" id="base-status">NOT GENERATED</span><p id="base-progress">Target: 100,000 reusable test students</p><button id="generate-base">Generate / resume base</button></article>
+        <article><label for="student-count" class="eyebrow">Students / requests for this test</label><input id="student-count" type="number" min="1" max="100000" value="15000"><input id="student-range" type="range" min="1" max="100000" value="15000" aria-label="Student quantity"><div class="range-labels"><span>1</span><span>100,000</span></div><label class="small-label">Start at student <input id="start-student" type="number" min="1" max="100000" value="1"></label></article>
+        <article><span class="eyebrow">QR identities &amp; login sessions</span><strong class="automatic">Automatic</strong><p>Generated identities connect through the same school login protocol.</p><label><input type="checkbox" id="auto-seed" checked> Prepare selected test-school students</label></article>
+      </div>
+      <div class="toolbar">
+        <label>Concurrency<input id="concurrency" type="number" min="1" max="512" value="10"></label>
+        <label>Journeys / second<input id="rate" type="number" min="0" max="10000" value="5"><small>0 = no pacing</small></label>
+        <label>P95 limit (ms)<input id="p95" type="number" min="1" value="5000"></label>
+        <label>Timeout (s)<input id="timeout" type="number" min="1" max="180" value="30"></label>
+        <label>Data volume (GB)<input id="volume" type="number" min="0.000001" max="10" step="0.01" value="0.01"></label>
+        <button class="primary" id="run-tests">Run selected tests</button><button id="stop-test" disabled>Stop</button>
+      </div>
+      <div id="run-progress" class="run-progress" hidden><div class="progress-caption"><strong id="run-phase"></strong><span id="run-completed"></span></div><progress id="progress" value="0" max="100"></progress></div>
+      <div class="table-wrap"><table><thead><tr><th><span class="sr-only">Select</span></th><th>Test</th><th>Quantity</th><th>Status</th><th>Actual time</th><th>Avg / P95</th><th>Saved / Failed</th><th>Details</th></tr></thead><tbody id="test-rows"></tbody></table></div>
+      <div class="bottom-panels"><article><h2>Measured throughput over time</h2><div id="chart" class="empty-chart">Run a test to view measured performance</div></article><article><h2>Saved-data verification</h2><div id="verification-empty">Select a measured result to see its evidence.</div><dl id="quick-verification"></dl></article></div>
+      <p class="footnote">Firebase: text records · Large files: local / test Drive · Backend traffic and actual device UI are reported separately.</p>
+      <section id="details" class="detail-panel" hidden></section>
+    </section>
+    <section id="base-page" hidden>
+      <article><h2>Your reusable student base</h2><p>100,000 generated test identities, with unique student IDs, class/roll pairs and secure QR link tokens. Interrupted generation resumes using the same identities.</p><dl id="base-info"></dl><div class="actions"><button data-export="csv">Export student CSV</button><button data-export="jsonl">Export school QR identities</button></div><p class="footnote">CSV contains identity fields. QR export requires a connected test school. Test students are synthetic; test results are measured.</p></article>
+    </section>
+    <section id="connections-page" hidden>
+      <div class="connection-grid">
+        <form id="school-form"><article><h2>Test school · Firebase + Apps Script</h2><p>Use a separate project with <code>test</code> or <code>lab</code> in its ID.</p>
+          <label>Firebase project ID<input name="project_id" required placeholder="saarthi-lab-school"></label><label>Firebase Web API key<input name="api_key" required autocomplete="off"></label>
+          <label>School administrator email<input name="email" type="email" required autocomplete="off"></label><label>Administrator password<input name="password" type="password" required autocomplete="off"></label>
+          <label>Test Apps Script /exec URL<input name="script_url" type="url" required placeholder="https://script.google.com/macros/s/…/exec"></label>
+          <div class="actions"><button class="primary" type="submit">Connect &amp; verify</button><button id="download-backend" type="button">Test-backend setup bundle</button></div><p id="school-state" class="footnote">Credentials stay in this app process and are excluded from reports.</p>
+        </article></form>
+        <form id="native-form"><article><h2>Website</h2><label>Website / preview URL<input name="web_url" type="url"></label><label>Expected HTTP page text<input name="web_expected_text" placeholder="Text present in a successful page"></label><label>Browser success selector<input name="web_expected_selector" placeholder="text=School Analytics"></label><label>Developer email (browser login)<input name="web_email" type="email" autocomplete="off"></label><label>Developer password<input name="web_password" type="password" autocomplete="off"></label><label>Sign-in button label<input name="web_login_button" value="Sign in"></label><label>Browser steps (JSON)<textarea name="web_steps" rows="3">[]</textarea></label><div class="actions"><button type="button" id="install-browser">Install browser runner</button></div></article>
+          <article><h2>Windows test copy</h2><label>EXE full path<input name="windows_exe" placeholder="D:\TestApps\VidyaSaarthi\VidyaSaarthi.exe"></label><label>Window title pattern<input name="windows_window_title" value=".*Vidya.*"></label><label>UI steps (JSON)<textarea name="windows_steps" rows="4">[]</textarea></label><p class="footnote">The runner launches only this EXE, using separate APPDATA folders. Use a test build/VM for central licensing and native credential-store isolation.</p></article>
+          <article><h2>Android test device</h2><label>ADB full path (optional if on PATH)<input name="android_adb"></label><label>Exact device / emulator serial<input name="android_serial" placeholder="emulator-5554"></label><label>Test APK path (optional)<input name="android_apk"></label><label>Package / activity<input name="android_component" value="com.example.saarthi_ai/.MainActivity"></label><label>Device UI steps (JSON)<textarea name="android_steps" rows="4">[]</textarea></label><p class="footnote">Bulk attendance uses automatic QR identities and sessions. Camera/GPS hardware behaviour requires a configured device scenario; backend success does not prove it.</p></article>
+          <button class="primary" type="submit">Save runners</button>
+        </form>
+      </div>
+    </section>
+    <section id="reports-page" hidden><div class="table-wrap"><table><thead><tr><th>Run</th><th>Target</th><th>Result</th><th>Actual time</th><th>Evidence</th></tr></thead><tbody id="report-rows"></tbody></table></div><section id="report-details" class="detail-panel" hidden></section></section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,74 @@
+name: Saarthi Test Lab checks and Windows app
+
+on:
+  push:
+    branches: [test-toolkit]
+    paths: ['toolkit/**', '.github/workflows/toolkit-checks.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saarthi-test-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify measured engine and protocol failures
+        working-directory: toolkit
+        run: |
+          python -m unittest discover -s tests -v
+          node --check saarthi_lab/static/app.js
+          node tests/backend.test.js
+      - name: Build separate test-backend copy
+        run: python toolkit/prepare_backend.py --out toolkit/saarthi_lab/backend
+      - name: Verify dashboard in Chromium
+        working-directory: toolkit
+        run: |
+          python -m pip install -r requirements-web.txt
+          python -m playwright install --with-deps chromium
+          python tests/browser_check.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Saarthi-Test-Lab-UI-review
+          path: toolkit/test-results/
+          if-no-files-found: error
+  windows-app:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify toolkit on Windows
+        working-directory: toolkit
+        run: python -m unittest discover -s tests -v
+      - name: Build Windows toolkit executable
+        working-directory: toolkit
+        shell: cmd
+        run: build_windows.bat
+      - name: Smoke-test packaged app and real 100,000 base
+        working-directory: toolkit
+        run: python tests/packaged_check.py dist/Saarthi-Test-Lab.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Saarthi-Test-Lab-Windows
+          path: |
+            toolkit/dist/Saarthi-Test-Lab.exe
+            toolkit/README.md
+            toolkit/scenarios.example.json
+            toolkit/saarthi_lab/backend/
+          if-no-files-found: error
+          retention-days: 30

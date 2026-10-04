@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+*.spec
+saarthi_lab/backend/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+local-data/
+test-results/
+browser-install.log

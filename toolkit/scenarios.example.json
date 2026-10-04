@@ -1,0 +1,25 @@
+{
+  "web": {
+    "url": "https://YOUR-TEST-PREVIEW.example",
+    "expected_text": "Vidya Saarthi",
+    "expected_selector": "text=School Analytics",
+    "email_label": "Developer ID / Email",
+    "password_label": "Password",
+    "login_button": "Sign in",
+    "steps": []
+  },
+  "windows": {
+    "exe": "D:\\TestApps\\VidyaSaarthi\\VidyaSaarthi.exe",
+    "window_title": ".*Vidya.*",
+    "steps": [
+      {"action": "wait", "title": "Student Records", "control_type": "Button"},
+      {"action": "click", "title": "Student Records", "control_type": "Button"},
+      {"action": "assert_text", "title_re": ".*Total Students.*", "control_type": "Text", "value": "1000"}
+    ]
+  },
+  "android": {
+    "serial": "emulator-5554",
+    "component": "com.example.saarthi_ai/.MainActivity",
+    "steps": [{"action": "assert_text", "value": "Scan"}]
+  }
+}
