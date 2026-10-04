@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - windows/easy-connect-draft
   workflow_dispatch:
 
 permissions:
@@ -11,7 +12,7 @@ permissions:
 
 jobs:
   verify-rules:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')
+    if: (github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[developer-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +28,7 @@ jobs:
       - run: npm test
         working-directory: security-tests
   build-and-deploy:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')
+    if: (github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[developer-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')))
     needs: verify-rules
     runs-on: ubuntu-latest
 
@@ -189,6 +190,20 @@ jobs:
           else:
               print("Inspect protection already exists.")
           PY
+
+      # =========================================================
+      # ADD PUBLIC OAUTH BRANDING PAGES
+      # These remain plain HTML so Google can access them without login.
+      # =========================================================
+      - name: Add Public OAuth Pages
+        run: |
+          mkdir -p build/web/home build/web/privacy
+          cp oauth-public/home/index.html build/web/home/index.html
+          cp oauth-public/privacy/index.html build/web/privacy/index.html
+          cp googleb7106cab4c8a4975.html build/web/googleb7106cab4c8a4975.html
+          test -f build/web/home/index.html
+          test -f build/web/privacy/index.html
+          test -f build/web/googleb7106cab4c8a4975.html
 
       # =========================================================
       # VERIFY BUILD

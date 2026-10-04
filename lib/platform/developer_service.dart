@@ -50,6 +50,78 @@ class DeveloperService {
       await batch.commit();
       return {'success': true};
     }
+    if (action == 'license/delete') {
+      final id = body['licenseId'].toString();
+      final doc = _db.collection('platform_licenses').doc(id);
+      final license = (await doc.get()).data();
+      if (license == null) throw StateError('Licence not found');
+      final schoolId = license['schoolId']?.toString() ?? '';
+      final school = _db.collection('platform_schools').doc(schoolId);
+      final current = (await school.get()).data();
+      final batch = _db.batch();
+      batch.delete(doc);
+      batch.delete(_db.collection('platform_license_status').doc(id));
+      if (current?['licenseId'] == id) {
+        batch.set(school, {
+          'licenseId': FieldValue.delete(),
+          'licenseExpiresAt': FieldValue.delete(),
+        }, SetOptions(merge: true));
+      }
+      await batch.commit();
+      return {'success': true};
+    }
+    if (action == 'school/block') {
+      final schoolId = body['schoolId'].toString();
+      final blocked = body['blocked'] == true;
+      final school = _db.collection('platform_schools').doc(schoolId);
+      if (!(await school.get()).exists) throw StateError('School not found');
+      final licences = await _db.collection('platform_licenses').where('schoolId', isEqualTo: schoolId).get();
+      final batch = _db.batch();
+      batch.set(_db.collection('platform_school_blocks').doc(schoolId), {
+        'blocked': blocked,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      batch.set(school, {'blocked': blocked}, SetOptions(merge: true));
+      if (blocked) {
+        for (final l in licences.docs) {
+          batch.set(l.reference, {'revoked': true, 'revokedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+          batch.set(_db.collection('platform_license_status').doc(l.id), {'revoked': true}, SetOptions(merge: true));
+        }
+        batch.set(school, {'licenseExpiresAt': 0}, SetOptions(merge: true));
+      }
+      await batch.commit();
+      return {'success': true, 'blocked': blocked};
+    }
+    if (action == 'school/delete') {
+      final schoolId = body['schoolId'].toString();
+      final schoolRef = _db.collection('platform_schools').doc(schoolId);
+      final school = (await schoolRef.get()).data();
+      if (school == null) throw StateError('School not found');
+      final licences = await _db.collection('platform_licenses').where('schoolId', isEqualTo: schoolId).get();
+      final complaints = await _db.collection('platform_complaints').where('schoolId', isEqualTo: schoolId).get();
+      final refs = <DocumentReference<Map<String, dynamic>>>[
+        schoolRef,
+        _db.collection('platform_school_summaries').doc(schoolId),
+        _db.collection('platform_school_trials').doc(schoolId),
+        _db.collection('platform_support_limits').doc(schoolId),
+        _db.collection('platform_school_blocks').doc(schoolId),
+        if (school['monitorUid'] != null)
+          _db.collection('platform_monitor_access').doc(school['monitorUid'].toString()),
+        ...complaints.docs.map((d) => d.reference),
+      ];
+      for (final l in licences.docs) {
+        refs.add(l.reference);
+        refs.add(_db.collection('platform_license_status').doc(l.id));
+      }
+      for (var i = 0; i < refs.length; i += 400) {
+        final batch = _db.batch();
+        for (final ref in refs.skip(i).take(400)) {
+          batch.delete(ref);
+        }
+        await batch.commit();
+      }
+      return {'success': true};
+    }
     if (action == 'complaint/update') {
       final status = body['status'].toString();
       if (!{'open','in_progress','resolved'}.contains(status)) throw ArgumentError('Invalid status');

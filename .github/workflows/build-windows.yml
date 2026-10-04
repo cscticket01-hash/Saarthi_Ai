@@ -183,7 +183,7 @@ jobs:
         run: |
           flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true
           if ($LASTEXITCODE -ne 0) { throw 'Release cloud configuration verification failed.' }
-          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/central_school_cloud_test.dart
+          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed.' }
 
       - name: Set Windows App Version
@@ -340,7 +340,7 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
-            Windows update: four student ID card designs with automatic student data, school branding and principal signature, plus the saved expiry date in the red licence alert.
+            Windows licence verification update: enforce developer school blocks and reject deleted or malformed licence records. Includes the four student ID card designs and saved expiry date in the red licence alert.
             Preserves existing school data, the shared Firebase school isolation and each school's own Google Drive backup/restore.
             Google access for new external accounts remains subject to Google's pending OAuth verification.
           generate_release_notes: true

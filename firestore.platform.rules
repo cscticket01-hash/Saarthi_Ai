@@ -57,6 +57,11 @@ service cloud.firestore {
     match /platform_license_status/{hash} {
       allow get: if hash.matches('^[a-f0-9]{64}$');
     }
+    // Public exact lookup contains only the developer-controlled block flag.
+    // Listing and non-developer writes remain denied.
+    match /platform_school_blocks/{school} {
+      allow get: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$');
+    }
     match /platform_school_trials/{school} {
       allow get: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$');
       allow create: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$') &&

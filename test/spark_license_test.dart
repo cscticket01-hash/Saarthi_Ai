@@ -6,13 +6,53 @@ import 'package:saarthi_ai/platform/spark_client.dart';
 
 void main(){
   SparkLicenseClient client({String school='school-one',bool revoked=false,
-    String expiry='2026-10-10T00:00:00Z',bool trial=false})=>SparkLicenseClient(client:MockClient((request)async=>http.Response(jsonEncode({'fields':{
+    String expiry='2026-10-10T00:00:00Z',bool trial=false})=>SparkLicenseClient(client:MockClient((request)async=>request.url.path.contains('/platform_school_blocks/') ? http.Response('{}',404) : http.Response(jsonEncode({'fields':{
       if(!trial) 'schoolId':{'stringValue':school},
       if(!trial) 'revoked':{'booleanValue':revoked},
       if(!trial) 'expiresAt':{'timestampValue':expiry},
       if(trial) 'createdAt':{'timestampValue':'2026-09-26T00:00:00Z'},
     }}),200,headers:{'date':'Fri, 02 Oct 2026 04:00:00 GMT'})));
   final hash=List.filled(64,'a').join();
+  test('a developer school block denies both trial and licensed access before licence lookup',()async{
+    for(final licence in [null,hash]) {
+      var calls=0;
+      final c=SparkLicenseClient(client:MockClient((request)async{
+        calls++;
+        expect(request.url.path,endsWith('/platform_school_blocks/school-one'));
+        return http.Response(jsonEncode({'fields':{'blocked':{'booleanValue':true}}}),200,
+          headers:{'date':'Fri, 02 Oct 2026 04:00:00 GMT'});
+      }));
+      final status=await c.schoolStatus('school-one',licenseHash:licence);
+      expect(status['allowed'],false);expect(status['status'],'blocked');expect(calls,1);
+      c.close();
+    }
+  });
+  test('an explicit unblock still requires a valid licence',()async{
+    final c=SparkLicenseClient(client:MockClient((request)async{
+      if(request.url.path.contains('/platform_school_blocks/')) {
+        return http.Response(jsonEncode({'fields':{'blocked':{'booleanValue':false}}}),200,
+          headers:{'date':'Fri, 02 Oct 2026 04:00:00 GMT'});
+      }
+      return http.Response('{}',404);
+    }));
+    expect((await c.schoolStatus('school-one',licenseHash:hash))['allowed'],false);
+    c.close();
+  });
+  test('malformed block flags fail closed and never proceed to licence lookup',()async{
+    for(final body in ['invalid','[]','{}',jsonEncode({'fields':{'blocked':{'booleanValue':'false'}}}),jsonEncode({'fields':{'blocked':[]}})]) {
+      var calls=0;
+      final c=SparkLicenseClient(client:MockClient((_)async{
+        calls++;return http.Response(body,200,headers:{'date':'Fri, 02 Oct 2026 04:00:00 GMT'});
+      }));
+      await expectLater(c.schoolStatus('school-one',licenseHash:hash),throwsA(isA<LicenseVerificationRejected>()));
+      expect(calls,1);c.close();
+    }
+  });
+  test('block service failures do not skip the developer check',()async{
+    final c=SparkLicenseClient(client:MockClient((_)async=>http.Response('{}',503)));
+    await expectLater(c.schoolStatus('school-one',licenseHash:hash),throwsStateError);
+    c.close();
+  });
   test('deleted central licences fail closed rather than becoming an offline network error',()async{
     final c=SparkLicenseClient(client:MockClient((_)async=>http.Response('{}',404)));
     final status=await c.schoolStatus('school-one',licenseHash:hash);
