@@ -6,7 +6,7 @@ function fixture(){const docs=new Map(),users=new Map(),sent=[];
  const snap=p=>({exists:docs.has(p),data:()=>docs.get(p)});
  const db={doc:p=>({path:p,get:async()=>snap(p),set:async(v,o)=>docs.set(p,o?.merge?{...docs.get(p),...v}:v)}),collection:()=>({add:async()=>{}}),batch:()=>{const queue=[];return {create:(r,v)=>queue.push(()=>{assert(!docs.has(r.path));docs.set(r.path,v)}),set:(r,v,o)=>queue.push(()=>docs.set(r.path,o?.merge?{...docs.get(r.path),...v}:v)),commit:async()=>queue.forEach(f=>f())}}};
  db.runTransaction=async fn=>fn({get:async ref=>snap(ref.path),set:(ref,value,options)=>docs.set(ref.path,options?.merge?{...docs.get(ref.path),...value}:value)});
- const auth={verifyIdToken:async t=>{if(t==='developer')return {uid:'dev',developer:true};if(users.get(t)?.disabled)throw Error();if(!['A','B','forged'].includes(t))throw Error();return {uid:t==='forged'?'A':t,auth_time:time/1000-10,...(t==='forged'?{admin:true,schoolId:B}:{})}},createUser:async v=>{users.set('new',v);return {uid:'new'}},deleteUser:async u=>users.delete(u),generatePasswordResetLink:async e=>'https://reset.example/'+e,updateUser:async(u,v)=>users.set(u,{...users.get(u),...v}),revokeRefreshTokens:async()=>{}};
+ const auth={verifyIdToken:async t=>{if(t==='developer')return {uid:'dev',developer:true};if(users.get(t)?.disabled)throw Error();if(!['A','B','forged','A-new-pc'].includes(t))throw Error();return {uid:['forged','A-new-pc'].includes(t)?'A':t,auth_time:time/1000-10,...(t==='forged'?{admin:true,schoolId:B}:{})}},createUser:async v=>{users.set('new',v);return {uid:'new'}},deleteUser:async u=>users.delete(u),generatePasswordResetLink:async e=>'https://reset.example/'+e,updateUser:async(u,v)=>users.set(u,{...users.get(u),...v}),revokeRefreshTokens:async()=>{}};
  for(const [uid,id]of [['A',A],['B',B]]){docs.set('school_memberships/'+uid,{schoolId:id,role:'school_admin',managed:true,active:true});docs.set('school_entitlements/'+id,{active:true,blocked:false,status:'trial',startsAt:time-1000,expiresAt:time+86400000});docs.set('platform_schools/'+id,{managed:true,authUid:uid,loginEmail:uid+'@school.example'});docs.set('school_storage_private/'+id,{url:'https://script.google.com/macros/s/'+id+'/exec',secret:protect(secret,key),ready:true});}
  const fetchImpl=async(url,opt)=>{sent.push({url,opt});const b=JSON.parse(opt.body);assert.equal(b.signature,crypto.createHmac('sha256',secret).update(b.schoolId+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex'));return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:b.schoolId,records:{},storageReady:true}),json:async()=>({success:true,schoolId:b.schoolId,storageReady:true})}};
  const handle=createManagedSchools({auth,db,projectId:'central',encryptionKey:key,fetchImpl,now:()=>time});const call=(body,token='A')=>handle({method:'POST',headers:{authorization:'Bearer '+token},body});return {docs,users,sent,call,db};}
@@ -52,4 +52,21 @@ test('disconnect sets only the authenticated school offline and cannot target an
  const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=time;f.docs.get('platform_schools/'+B).lastSeenAt=time;
  await assert.rejects(f.call({action:'managed/disconnect',schoolId:B}),e=>e.status===403);await f.call({action:'managed/disconnect'});
  assert.equal(f.docs.get('platform_schools/'+A).lastSeenAt,0);assert.equal(f.docs.get('platform_schools/'+B).lastSeenAt,time);
+});
+
+test('same Firebase account on a new PC retains activated licence, expiry and Drive binding; other school is denied',async()=>{
+ const f=fixture(),issued=await f.call({action:'developer/managed/licence',schoolId:A,days:30,paid:true},'developer');
+ await f.call({action:'managed/licence/activate',key:issued.key});const original=await f.call({action:'managed/session'});
+ await f.call({action:'managed/disconnect'});const fresh=await f.call({action:'managed/session'},'A-new-pc');
+ for(const field of ['schoolId','uid','activated','expiresAt','status','allowed','scriptUrl'])assert.equal(fresh[field],original[field]);
+ assert.equal(fresh.activated,true);assert.equal(fresh.status,'licensed');
+ await f.call({action:'managed/records',collection:'students_directory',operation:'read'},'A-new-pc');assert(f.sent[0].url.includes(A));
+ await assert.rejects(f.call({action:'managed/licence/activate',key:issued.key},'B'),e=>e.status===403);
+ await assert.rejects(f.call({action:'managed/session',schoolId:B},'A-new-pc'),e=>e.status===403);
+});
+test('new PC never restarts the school account trial',async()=>{
+ const f=fixture(),before={...f.docs.get('school_entitlements/'+A)};
+ const fresh=await f.call({action:'managed/session'},'A-new-pc');assert.equal(fresh.expiresAt,before.expiresAt);
+ assert.deepEqual(f.docs.get('school_entitlements/'+A),before);
+ f.docs.get('school_entitlements/'+A).expiresAt=time;assert.equal((await f.call({action:'managed/session'},'A-new-pc')).allowed,false);
 });
