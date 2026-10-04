@@ -577,6 +577,67 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
             'Active schools: a school summary in the past 24 hours. Online students: estimated recent activity, refreshed every 5 minutes. Student app users are counted by each school; individual sessions stay at the school.',
             style: TextStyle(color: Colors.white38, fontSize: 11))
       ]);
+  Future<bool> _confirm(String title, String message, String action) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(action)),
+          ],
+        ),
+      ) ?? false;
+
+  Future<void> _deleteLicence(Map<String, dynamic> licence) async {
+    final yes = await _confirm(
+      'Delete this licence?',
+      'This permanently removes the selected licence from the developer dashboard. The key will stop working. School records are not deleted.',
+      'Delete licence',
+    );
+    if (!yes) return;
+    try {
+      await _call('license/delete', {'licenseId': licence['id']});
+      await _load(silent: true);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _setSchoolBlocked(Map<String, dynamic> school) async {
+    final blocked = school['blocked'] == true;
+    final yes = await _confirm(
+      blocked ? 'Unblock this school?' : 'Block this school?',
+      blocked
+          ? 'The school can use a valid new licence or remaining trial after it is unblocked.'
+          : 'Windows access will be blocked and existing licences for this school will be revoked. School records are not deleted.',
+      blocked ? 'Unblock' : 'Block school',
+    );
+    if (!yes) return;
+    try {
+      await _call('school/block', {'schoolId': school['id'], 'blocked': !blocked});
+      await _load(silent: true);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _deleteSchool(Map<String, dynamic> school) async {
+    final yes = await _confirm(
+      'Delete school from platform?',
+      'This removes this school, its developer-platform licences, monitoring summary and support records. It does NOT delete the school\'s operational/student data.',
+      'Delete school',
+    );
+    if (!yes) return;
+    try {
+      await _call('school/delete', {'schoolId': school['id']});
+      await _load(silent: true);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
   Widget _schoolTable() {
     final list = _schools.where((s) {
       final text = '${s['name']} ${s['id']}'.toLowerCase();
@@ -639,9 +700,18 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         DataCell(Text('${s['studentCount'] ?? 0}')),
                         DataCell(Text(s['windowsVersion']?.toString() ?? '—')),
                         DataCell(Text(_date(s['licenseExpiresAt']))),
-                        DataCell(TextButton(
-                            onPressed: () => _issue(s['id'].toString()),
-                            child: const Text('Create licence')))
+                        DataCell(Wrap(spacing: 4, children: [
+                          TextButton(
+                              onPressed: () => _issue(s['id'].toString()),
+                              child: const Text('Create licence')),
+                          TextButton(
+                              onPressed: () => _setSchoolBlocked(s),
+                              child: Text(s['blocked'] == true ? 'Unblock' : 'Block')),
+                          TextButton(
+                              onPressed: () => _deleteSchool(s),
+                              child: const Text('Delete',
+                                  style: TextStyle(color: Colors.redAccent))),
+                        ]))
                       ]))
                   .toList()))
     ]));
@@ -674,13 +744,13 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                 rows: _licenses
                     .map((l) => DataRow(cells: [
                           DataCell(Text(l['schoolId'].toString())),
-                          DataCell(Text('•••• ${l['keySuffix']}')),
+                          DataCell(Text('•••• ${l['keyHint'] ?? l['keySuffix'] ?? '—'}')),
                           DataCell(_chip(
-                              l['status'] == 'active' &&
+                              l['revoked'] != true &&
                                       (l['expiresAt'] as num) > _now
                                   ? 'Active'
                                   : 'Expired / revoked',
-                              l['status'] == 'active' &&
+                              l['revoked'] != true &&
                                       (l['expiresAt'] as num) > _now
                                   ? _mint
                                   : Colors.orangeAccent)),
@@ -688,45 +758,32 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                           DataCell(Text(l['paid'] == true
                               ? 'INR ${l['amount']}'
                               : 'Unpaid')),
-                          DataCell(TextButton(
-                              onPressed: l['status'] == 'revoked'
-                                  ? null
-                                  : () async {
-                                      final yes = await showDialog<bool>(
-                                          context: context,
-                                          builder: (ctx) => AlertDialog(
-                                                  title: const Text(
-                                                      'Revoke this licence?'),
-                                                  content: const Text(
-                                                      'This school will lose paid access. Its records will remain intact.'),
-                                                  actions: [
-                                                    TextButton(
-                                                        onPressed: () =>
-                                                            Navigator.pop(
-                                                                ctx, false),
-                                                        child: const Text(
-                                                            'Cancel')),
-                                                    FilledButton(
-                                                        onPressed: () =>
-                                                            Navigator.pop(
-                                                                ctx, true),
-                                                        child: const Text(
-                                                            'Revoke'))
-                                                  ]));
-                                      if (yes == true) {
-                                        try {
-                                          await _call('license/revoke',
-                                              {'licenseId': l['id']});
-                                          _load(silent: true);
-                                        } catch (e) {
-                                          if (mounted)
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(SnackBar(
-                                                    content: Text('$e')));
+                          DataCell(Wrap(spacing: 4, children: [
+                            TextButton(
+                                onPressed: l['revoked'] == true
+                                    ? null
+                                    : () async {
+                                        final yes = await _confirm(
+                                          'Revoke this licence?',
+                                          'This school will lose paid access. Its records will remain intact.',
+                                          'Revoke',
+                                        );
+                                        if (yes) {
+                                          try {
+                                            await _call('license/revoke', {'licenseId': l['id']});
+                                            await _load(silent: true);
+                                          } catch (e) {
+                                            if (mounted) ScaffoldMessenger.of(context)
+                                                .showSnackBar(SnackBar(content: Text('$e')));
+                                          }
                                         }
-                                      }
-                                    },
-                              child: const Text('Revoke')))
+                                      },
+                                child: const Text('Revoke')),
+                            TextButton(
+                                onPressed: () => _deleteLicence(l),
+                                child: const Text('Delete',
+                                    style: TextStyle(color: Colors.redAccent))),
+                          ]))
                         ]))
                     .toList()))
       ]));

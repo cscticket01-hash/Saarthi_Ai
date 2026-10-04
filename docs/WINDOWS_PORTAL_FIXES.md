@@ -27,8 +27,10 @@ width, rather than testing only a standalone scaffold.
 The optional online startup check displays `Skip / Open app` immediately. It
 opens automatically when the check succeeds, or offers retry after an error
 or an eight-second timeout. Skip continues to the existing local setup/login
-or password screen. It never overrides an expired licence, resets a trial,
-changes a school's connections or bypasses saved passwords. Update checks
+or password screen. The licence screen independently offers Activate or Skip,
+even after expiry. Its saved Skip permits local use and keeps the red activation
+warning until valid activation. This does not reset a trial, change a school's
+connections, change backend licence validation or bypass saved passwords. Update checks
 run after a successful login opens the dashboard.
 
 The platform review workflow runs Windows regression tests, Flutter analysis and a native Windows release build. The tests cover header layout, both sidebar modes, all four languages and preserved form state, offline exam records, school boundaries, notice recipient requirements, monthly controls and data-preserving reset.

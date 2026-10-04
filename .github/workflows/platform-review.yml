@@ -7,6 +7,8 @@ concurrency:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    outputs:
+      requires_secret: ${{ steps.google-oauth.outputs.requires_secret }}
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-node@v4
@@ -19,6 +21,24 @@ jobs:
         node --check platform.js
         node --check domain.js
         npm test
+    - name: Verify OAuth exchange service security
+      run: |
+        npm --prefix oauth-broker install --ignore-scripts
+        node --test oauth-broker/test/*.test.cjs
+    - name: Build unpublished OAuth service container
+      run: docker build -t saarthi-oauth-broker-review oauth-broker
+    - name: Diagnose configured Google Desktop token exchange safely
+      id: google-oauth
+      if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+      env:
+        SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+        SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
+        SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET }}
+      run: node oauth-broker/probe.cjs
+    - uses: actions/upload-artifact@v4
+      with:
+        name: oauth-broker-review-source
+        path: oauth-broker
   web:
     runs-on: ubuntu-latest
     steps:
@@ -43,7 +63,7 @@ jobs:
         lib/windows_school_operations.dart lib/windows_school_identity.dart lib/windows_platform_client.dart lib/windows_document_templates.dart
         lib/windows_backend_bridge.dart lib/windows_admin_sidebar.dart lib/windows_ui_localization.dart lib/windows_ui_translations.dart lib/windows_preferences_reset.dart lib/windows_exam_service.dart lib/windows_notice_delivery.dart lib/windows_monthly_attendance.dart
         lib/windows_sync_engine.dart lib/windows_firebase_sync.dart lib/school_text_data.dart lib/school_backend_transport.dart
-        lib/windows_staff_payroll.dart lib/windows_app_reset.dart lib/windows_license_gate.dart lib/windows_admin_setup.dart
+        lib/windows_staff_payroll.dart lib/windows_app_reset.dart lib/windows_license_gate.dart lib/windows_admin_setup.dart lib/windows_connect
     - name: Verify documents and mobile school boundaries
       run: flutter test test/document_renderer_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/spark_license_test.dart test/github_update_test.dart
     - name: Verify Windows portal regressions
@@ -58,6 +78,12 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/windows-startup-tests
       run: flutter test test/windows_startup_test.dart
+    - name: Verify central school cloud and paths
+      run: flutter test test/central_school_cloud_test.dart
+    - name: Verify school connection automation
+      run: |
+        python tool/build_school_setup_bundle.py --check
+        flutter test test/windows_easy_connect_test.dart --dart-define=SAARTHI_LEGACY_PROVISIONING_TEST_ONLY=true
     - name: Build developer website
       run: flutter build web --release
     - uses: actions/upload-artifact@v4
@@ -117,6 +143,7 @@ jobs:
       working-directory: security-tests
       run: npm test
   windows:
+    needs: backend
     runs-on: windows-2022
     steps:
     - uses: actions/checkout@v4
@@ -137,8 +164,35 @@ jobs:
         open(p,'w').write(s)
         PY
     - run: flutter pub get
+    - name: Verify configured public OAuth client in compiled Dart
+      env:
+        SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+        SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
+        SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
+        OAUTH_SECRET_PRESENT: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET != '' }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+      run: |
+        if ($env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID -notmatch '^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$') { throw 'Valid repository Desktop OAuth Client ID is required for this preview.' }
+        Write-Host 'Public OAuth Client ID configured; compiling verification test with the build definition.'
+        Write-Host "OAuth secret present in GitHub: $env:OAUTH_SECRET_PRESENT. Secret is never supplied to the client build."
+        flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
+        if ($LASTEXITCODE -ne 0) { throw 'Compiled OAuth configuration verification failed.' }
+        if ($env:SAARTHI_GOOGLE_REQUIRES_BROKER -eq 'true' -and !$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL) { Write-Host 'Live school connection blocked until the secure OAuth broker is hosted and its URL is configured.' }
+    - name: Verify Windows ID cards, licence date and startup
+      run: flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart
+    - name: Analyze Windows ID card changes
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart
+    - uses: actions/upload-artifact@v4
+      with:
+        name: windows-id-card-previews
+        path: build/windows-id-previews
     - name: Compile Windows school app
-      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.79 --build-number=79 --dart-define=APP_VERSION=2.1.79
+      env:
+        SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
+        SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
+        SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.86 --build-number=86 --dart-define=APP_VERSION=2.1.86 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
     - uses: actions/upload-artifact@v4
       with:
         name: windows-review-build
@@ -213,4 +267,9 @@ jobs:
   pull_request:
     branches:
     - main
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      google_oauth_client_id:
+        description: 'Optional public Desktop OAuth client ID for a school test preview'
+        required: false
+        type: string

@@ -13,7 +13,7 @@ async function developer(req) {
   const bearer = String(req.headers.authorization || '').match(/^Bearer (.+)$/)?.[1];
   if (!bearer) fail(401, 'Developer login required');
   const user = await admin.auth().verifyIdToken(bearer, true);
-  if (user.admin !== true && user.developer !== true) fail(403, 'Only the website developer can perform this action');
+  if (user.developer !== true && (user.admin !== true || user.schoolId)) fail(403, 'Only the website developer can perform this action');
   return user;
 }
 async function installation(body) {

@@ -9,6 +9,7 @@ import 'windows_local_firestore.dart';
 import 'school_text_data.dart';
 import 'school_backend_transport.dart';
 import 'platform/platform_config.dart';
+import 'windows_connect/central_school_cloud.dart';
 
 class WindowsFirebaseRemoteStatus {
   const WindowsFirebaseRemoteStatus({
@@ -16,12 +17,15 @@ class WindowsFirebaseRemoteStatus {
     required this.authenticated,
     required this.projectId,
     required this.email,
+    this.schoolId = '',
   });
 
   final bool configSaved;
   final bool authenticated;
   final String projectId;
   final String email;
+  final String schoolId;
+  String get schoolIdentity => schoolId.isNotEmpty ? schoolId : projectId;
 }
 
 class WindowsFirebaseConnectResult {
@@ -59,6 +63,9 @@ class WindowsFirebaseRemote {
       'vidya_saarthi_firebase_project_id_v1';
 
   static Future<WindowsFirebaseRemoteStatus> status() async {
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty) return WindowsFirebaseRemoteStatus(configSaved:true,
+      authenticated:true,projectId:platformProjectId,email:central['email'],schoolId:central['schoolId']);
     final local =
         await WindowsExternalConnections.load();
 
@@ -199,6 +206,11 @@ class WindowsFirebaseRemote {
 
   static Future<WindowsFirebaseConnectResult>
       testSavedConnection() async {
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty) {
+      await CentralSchoolCloud.firebaseToken();
+      return WindowsFirebaseConnectResult(projectId:platformProjectId,email:central['email']);
+    }
     final local =
         await WindowsExternalConnections.load();
 
@@ -309,6 +321,7 @@ class WindowsFirebaseRemote {
   }
 
   static Future<String> freshIdToken() async {
+    if ((await CentralSchoolCloud.saved()).isNotEmpty) return CentralSchoolCloud.firebaseToken();
     final local =
         await WindowsExternalConnections.load();
 
@@ -378,6 +391,11 @@ class WindowsFirebaseRemote {
   }
 
   static Future<void> disconnect() async {
+    if ((await CentralSchoolCloud.saved()).isNotEmpty) {
+      await _secure.delete(key:CentralSchoolCloud.key);
+      await _notifyConnectionChanged();
+      return;
+    }
     await _secure.delete(key: _emailKey);
     await _secure.delete(
       key: _refreshTokenKey,
@@ -397,7 +415,7 @@ class WindowsFirebaseRemote {
     required String idToken,
     required String collection,
   }) async {
-    requireSchoolProjectId(projectId);
+    final remoteCollection = await _remoteCollection(projectId, collection);
     final output =
         <String, Map<String, dynamic>>{};
 
@@ -416,7 +434,7 @@ class WindowsFirebaseRemote {
         '/v1/projects/'
         '${Uri.encodeComponent(projectId)}/'
         'databases/(default)/documents/'
-        '${Uri.encodeComponent(collection)}',
+        '$remoteCollection',
         query,
       );
 
@@ -502,11 +520,12 @@ class WindowsFirebaseRemote {
     required String documentId,
     required Map<String, dynamic> data,
   }) async {
-    requireSchoolProjectId(projectId);
+    final remoteCollection = await _remoteCollection(projectId, collection);
+    if (documentId.isEmpty || documentId.contains('/') || documentId == '.' || documentId == '..') throw StateError('Invalid school document ID.');
     final documentName =
         'projects/$projectId/'
         'databases/(default)/documents/'
-        '$collection/$documentId';
+        '$remoteCollection/$documentId';
 
     final uri = Uri.parse(
       'https://firestore.googleapis.com/v1/'
@@ -521,7 +540,8 @@ class WindowsFirebaseRemote {
           <String, dynamic>{
             'update': <String, dynamic>{
               'name': documentName,
-              'fields': _encodeFirestoreFields(schoolTextData(data)),
+              'fields': _encodeFirestoreFields(projectId == platformProjectId
+                ? centralSchoolData(data, (await CentralSchoolCloud.saved())['schoolId']) : schoolTextData(data)),
             },
           },
         ],
@@ -548,11 +568,12 @@ class WindowsFirebaseRemote {
     required String collection,
     required String documentId,
   }) async {
-    requireSchoolProjectId(projectId);
+    final remoteCollection = await _remoteCollection(projectId, collection);
+    if (documentId.isEmpty || documentId.contains('/') || documentId == '.' || documentId == '..') throw StateError('Invalid school document ID.');
     final documentName =
         'projects/$projectId/'
         'databases/(default)/documents/'
-        '$collection/$documentId';
+        '$remoteCollection/$documentId';
 
     final uri = Uri.parse(
       'https://firestore.googleapis.com/v1/'
@@ -583,6 +604,17 @@ class WindowsFirebaseRemote {
         ),
       );
     }
+  }
+
+  static Future<String> _remoteCollection(String projectId, String collection) async {
+    if (projectId == platformProjectId) {
+      final central = await CentralSchoolCloud.saved();
+      if (central.isEmpty) throw StateError('Verified school cloud connection is required.');
+      return tenantCollectionPath(central['schoolId'], collection);
+    }
+    requireSchoolProjectId(projectId);
+    if (!RegExp(r'^[a-z][a-z0-9_]{0,79}$').hasMatch(collection)) throw StateError('Invalid school collection.');
+    return collection;
   }
 
   static Map<String, dynamic>

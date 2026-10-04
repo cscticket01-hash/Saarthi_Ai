@@ -1,3 +1,5 @@
+import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/google_authorization.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -78,6 +80,11 @@ class WindowsBackendBridge {
       );
     }
 
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty) {
+      try { return http.Response(jsonEncode(await _handleCentral(_decodeBody(body))),200,headers:{'content-type':'application/json'}); }
+      catch (_) { return http.Response(jsonEncode({'success':false,'message':'School cloud operation failed. Reconnect or retry the same school. Existing files are retained.'}),503,headers:{'content-type':'application/json'}); }
+    }
     Object? requestBody = body;
     try {
       final decoded = _decodeBody(body);
@@ -454,6 +461,16 @@ class WindowsBackendBridge {
   }
 
   static Future<bool> testRemote(Uri url) async {
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty) {
+      if (url.toString() != await WindowsExternalConnections.googleScriptUrl()) return false;
+      final cloud = CentralSchoolCloud(endpoint:central['endpoint']);
+      try {
+        final token = await cloud.googleToken(central);
+        final folder = await cloud.send('GET',url.replace(queryParameters:{'fields':'id,trashed,appProperties'}),token:token);
+        return folder['trashed'] != true && folder['appProperties']?['schoolId'] == central['schoolId'];
+      } catch (_) {return false;} finally {cloud.close();}
+    }
     final status = WindowsServiceStatus.instance;
 
     status.checking(
@@ -590,6 +607,114 @@ class WindowsBackendBridge {
     final decoded = jsonDecode(text);
     if (decoded is Map) return Map<String, dynamic>.from(decoded);
     throw const FormatException('Request body JSON map nahi hai.');
+  }
+
+  static Future<Map<String, dynamic>> _handleCentral(Map<String,dynamic> body) async {
+    final connection = await CentralSchoolCloud.saved();
+    final school = connection['schoolId'];
+    if (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) throw StateError('Inactive school profile blocked.');
+    final cloud = CentralSchoolCloud(endpoint:connection['endpoint']);
+    final token = await WindowsFirebaseRemote.freshIdToken();
+    final action = body['action']?.toString() ?? '';
+    Future<Map<String,dynamic>> read(String collection) => WindowsFirebaseRemote.readCollection(
+      projectId:connection['projectId'],idToken:token,collection:collection);
+    Future<void> save(String collection,String id,Map<String,dynamic> data) async {
+      if ((await CentralSchoolCloud.saved())['schoolId'] != school ||
+          FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) throw StateError('School changed during operation.');
+      await WindowsFirebaseRemote.writeDocument(projectId:connection['projectId'],idToken:token,
+        collection:collection,documentId:id,data:data);
+      await FirebaseFirestore.instance.collection(collection).doc(id).set(centralSchoolData(data,school));
+    }
+    try {
+      final data = Map<String,dynamic>.from(body)..remove('action');
+      if (action == 'add_teacher' && (data['teacherId']?.toString() ?? '').isEmpty) data['teacherId']='T-${secureSetupToken(12)}';
+      if ((data['photoBase64']?.toString() ?? '').isNotEmpty) {
+        final file = await cloud.upload(data['photoFileName']?.toString() ?? 'School_Photo.jpg',
+          data['photoMimeType']?.toString() ?? 'image/jpeg',data['photoBase64']);
+        data.addAll({'photoUrl':file['fileUrl'],'photoFileId':file['fileId']});
+      }
+      if (action == 'save_school_profile') {
+        final existing = (await read('school_config'))['school_profile_cache'] ?? {};
+        final profile = <String,dynamic>{...existing,...data};
+        for (final prefix in ['logo','seal','principalSignature']) {
+          final raw = data['${prefix}Base64']?.toString() ?? '';
+          if (raw.isNotEmpty) {
+            final file = await cloud.upload(data['${prefix}FileName']?.toString() ?? '$prefix.png',
+              data['${prefix}MimeType']?.toString() ?? 'image/png',raw);
+            profile['${prefix}Url'] = file['fileUrl']; profile['${prefix}FileId'] = file['fileId'];
+          }
+        }
+        final safe = centralSchoolData(profile,school);
+        await save('school_config','school_profile_cache',safe);
+        return {'success':true,'profile':safe};
+      }
+      if (action == 'get_school_profile') return {'success':true,'profile':(await read('school_config'))['school_profile_cache'] ?? {}};
+      if (action == 'upload_student_document') {
+        final id = 'DOC-${secureSetupToken(18)}';
+        final file = await cloud.upload(data['fileName']?.toString() ?? '$id.bin',
+          data['mimeType']?.toString() ?? 'application/octet-stream',data['fileBase64']?.toString() ?? '');
+        final document = centralSchoolData({...data,...file,'documentId':id,'uploadedAt':DateTime.now().millisecondsSinceEpoch},school);
+        await save('documents',id,document);
+        return {'success':true,'documentId':id,'fileUrl':file['fileUrl'],'document':document};
+      }
+      if (action == 'delete_student_document') {
+        // Remove the index only. Drive file retention avoids accidental data loss.
+        await WindowsFirebaseRemote.deleteDocument(projectId:connection['projectId'],idToken:token,
+          collection:'documents',documentId:data['documentId']?.toString() ?? '');
+        await FirebaseFirestore.instance.collection('documents').doc(data['documentId']).delete();
+        return {'success':true};
+      }
+      final lists = {'list_student_documents':('documents','documents'),
+        'list_fee_payments':('fee_payments','payments'), 'list_school_expenses':('school_expenses','expenses')};
+      if (lists.containsKey(action)) {
+        final pair = lists[action]!;
+        final rows = (await read(pair.$1)).entries.map((e)=>{'documentId':e.key,...e.value});
+        return {'success':true,pair.$2:rows.where((e)=>action != 'list_student_documents' || e['studentId'] == data['studentId']).toList()};
+      }
+      if (action == 'delete_school_expense') {
+        final id=data['expenseId']?.toString() ?? '';
+        await WindowsFirebaseRemote.deleteDocument(projectId:connection['projectId'],idToken:token,collection:'school_expenses',documentId:id);
+        await FirebaseFirestore.instance.collection('school_expenses').doc(id).delete();
+        return {'success':true};
+      }
+      if (action == 'save_school_expense') {
+        final id = data['expenseId']?.toString() ?? 'EXP-${secureSetupToken(12)}';
+        await save('school_expenses',id,data); return {'success':true,'expenseId':id};
+      }
+      if (action == 'save_fee_payment') {
+        final file = await cloud.upload('${data['receiptNo'] ?? secureSetupToken(12)}.pdf',
+          'application/pdf',data['pdfBase64']?.toString() ?? '');
+        final id = data['paymentId']?.toString() ?? data['receiptNo']?.toString() ?? 'FEE-${secureSetupToken(12)}';
+        await save('fee_payments',id,{...data,...file,'paymentId':id});
+        return {'success':true,...file,'sheetUrl':''};
+      }
+      if (action == 'save_exam' || action == 'save_exam_result') {
+        final id = action == 'save_exam' ? data['examId']?.toString() ?? 'EXAM-${secureSetupToken(12)}'
+          : '${data['examId']}_${data['studentId']}';
+        await save(action == 'save_exam' ? 'exams':'exam_center_results',id,data);
+        return {'success':true,'examId':id};
+      }
+      if (action == 'list_exam_center') return {'success':true,
+        'exams':(await read('exams')).entries.map((e)=>{'examId':e.key,...e.value}).toList(),
+        'results':(await read('exam_center_results')).values.toList()};
+      if (action == 'mark_teacher_attendance' || action == 'mark_student_attendance' || action == 'mark_attendance') {
+        final person = data['teacherId'] ?? data['studentId'];
+        final day = DateTime.now().toIso8601String().split('T').first;
+        final id = '${person}_${day}_${data['mode'] ?? 'IN'}';
+        await save(action == 'mark_teacher_attendance' ? 'teacher_attendance':'attendance_records',id,
+          {...data,'attendanceId':id,'date':day,'timestamp':DateTime.now().millisecondsSinceEpoch});
+        return {'success':true,'attendanceId':id,'message':'Attendance saved'};
+      }
+      // Directory screens already persist text through their tracked Firestore
+      // writes. The adapter supplies uploaded Drive photo references.
+      if ({'add_student','edit_student','delete_student','change_student_class',
+        'add_teacher','edit_teacher','delete_teacher','update_teacher_schedule'}.contains(action)) {
+        return {'success':true,if(data['teacherId'] != null) 'teacherId':data['teacherId'],
+          if(data['studentId'] != null) 'studentId':data['studentId'],
+          'photoUrl':data['photoUrl'] ?? ''};
+      }
+      throw StateError('Unsupported central school operation: $action');
+    } finally {cloud.close();}
   }
 
   static Future<Map<String, dynamic>> _handleLocal(

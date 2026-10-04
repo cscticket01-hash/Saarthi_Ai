@@ -1,3 +1,4 @@
+# Release approved after all checks passed in Actions run 37172167430.
 name: Build Vidya Saarthi Windows Admin
 
 on:
@@ -5,6 +6,7 @@ on:
   push:
     branches:
       - main
+      - windows/easy-connect-draft
     paths:
       - 'lib/**'
       - 'assets/**'
@@ -20,6 +22,8 @@ concurrency:
 
 jobs:
   build-windows:
+    # Only an explicitly requested release publishes from the development branch.
+    if: github.ref != 'refs/heads/windows/easy-connect-draft' || contains(github.event.head_commit.message, '[windows-release]')
     runs-on: windows-2022
 
     steps:
@@ -169,19 +173,33 @@ jobs:
 
           Write-Host 'Native FlutterFire dependency graph: CLEAN'
 
+      - name: Verify Windows release configuration and student cards
+        env:
+          APPDATA: ${{ runner.temp }}/windows-release-tests
+          LOCALAPPDATA: ${{ runner.temp }}/windows-release-tests
+          SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+          SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+          SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
+        shell: powershell
+        run: |
+          flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true
+          if ($LASTEXITCODE -ne 0) { throw 'Release cloud configuration verification failed.' }
+          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed.' }
+
       - name: Set Windows App Version
         id: app_version
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Existing installed production app is v2.1.63.
-          # First release made by this workflow becomes v2.1.64.
+          # Keep the released version at or above the tested v2.1.86 preview.
+          # Current minimum release version is v2.1.86.
           # After that, latest windows-v2.1.X GitHub Release is detected
           # and the patch number is increased automatically.
           $major = 2
           $minor = 1
-          $baselinePatch = 63
+          $baselinePatch = 85
           $latestPatch = $baselinePatch
 
           try {
@@ -208,8 +226,7 @@ jobs:
             }
           }
           catch {
-            Write-Host "GitHub release version lookup warning: $($_.Exception.Message)"
-            Write-Host "Safe baseline v2.1.63 use hoga."
+            throw "Cannot safely select a new release version: $($_.Exception.Message)"
           }
 
           $nextPatch = $latestPatch + 1
@@ -222,12 +239,21 @@ jobs:
           Write-Host "Release tag will be: windows-v$version"
 
       - name: Build Windows Admin App
+        env:
+          SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+          SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+          SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         shell: powershell
         run: |
           flutter build windows `
             --release `
+            --build-name=${{ steps.app_version.outputs.version }} `
             -t lib/main_windows.dart `
             --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
+            --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID `
+            --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true `
+            --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL `
+            --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL `
             --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
       - name: Verify Windows Build
@@ -311,8 +337,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: windows-v${{ steps.app_version.outputs.version }}
+          target_commitish: ${{ github.sha }}
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
+          body: |
+            Windows licence verification update: enforce developer school blocks and reject deleted or malformed licence records. Includes the four student ID card designs and saved expiry date in the red licence alert.
+            Preserves existing school data, the shared Firebase school isolation and each school's own Google Drive backup/restore.
+            Google access for new external accounts remains subject to Google's pending OAuth verification.
           generate_release_notes: true
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe

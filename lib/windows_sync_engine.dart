@@ -1,3 +1,5 @@
+import 'platform/platform_config.dart';
+import 'windows_connect/central_school_cloud.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'school_backend_transport.dart';
@@ -33,6 +35,16 @@ class WindowsSyncEngine {
     'attendance_records',
     'exam_results',
     'teacher_salary',
+    'school_expenses',
+    'attendance_logs',
+    'teacher_attendance',
+    'teacher_schedules',
+    'student_scan_index',
+    'scanner_devices',
+    'documents',
+    'backups',
+    'exams',
+    'exam_center_results',
   ];
 
   Timer? _periodicTimer;
@@ -266,6 +278,7 @@ class WindowsSyncEngine {
     if (_resetPaused) return;
     _activating++;
     try {
+    while (_syncing) { await Future<void>.delayed(const Duration(milliseconds:50)); }
     final profile = await _resolveProfile(
       allowPairing: allowPairing,
     );
@@ -310,6 +323,14 @@ class WindowsSyncEngine {
     String? googleUrlOverride,
     bool allowPairing = false,
   }) async {
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty) {
+      await CentralSchoolCloud.firebaseToken();
+      return _ResolvedSyncProfile(profileId:'central_${central['schoolId']}',
+        schoolSyncId:central['schoolId'], firebaseProjectId:central['projectId'],
+        googleUrl:await WindowsExternalConnections.googleScriptUrl(), googleEmail:central['email'],
+        googleBackendId:central['folderId'], blocked:false, message:'');
+    }
     final firebaseStatus = await WindowsFirebaseRemote.status();
     final projectId = firebaseStatus.authenticated
         ? firebaseStatus.projectId.trim()
@@ -498,6 +519,7 @@ class WindowsSyncEngine {
       identity: <String, dynamic>{
         'schoolSyncId': profile.schoolSyncId,
         'firebaseProjectId': profile.firebaseProjectId,
+        if (profile.profileId.startsWith('central_')) 'schoolId':profile.schoolSyncId,
         'googleScriptUrl': profile.googleUrl,
         'googleBackendId': profile.googleBackendId,
         'blocked': profile.blocked,
@@ -742,12 +764,16 @@ class WindowsSyncEngine {
   }
 
   Future<void> syncNow() async {
-    if (_syncing || _syncBlocked || _resetPaused) return;
+    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused) return;
 
     _syncing = true;
     lastError = null;
 
     try {
+      final central = await CentralSchoolCloud.saved();
+      if (central.isNotEmpty && central['schoolId'] != _activeSchoolSyncId) {
+        unawaited(activateCurrentConnections(allowPairing:false)); return;
+      }
       final firebaseStatus = await WindowsFirebaseRemote.status();
 
       String? projectId;
@@ -762,7 +788,7 @@ class WindowsSyncEngine {
         // connection. This protects against a connection switch racing a timer.
         if (_activeFirebaseProject.isNotEmpty &&
             projectId != _activeFirebaseProject) {
-          await activateCurrentConnections(allowPairing: false);
+          unawaited(activateCurrentConnections(allowPairing: false));
           return;
         }
 
@@ -775,11 +801,11 @@ class WindowsSyncEngine {
       final scriptUrl = await _googleScriptUrl();
       if (_activeGoogleUrl.isNotEmpty &&
           scriptUrl != _activeGoogleUrl) {
-        await activateCurrentConnections(allowPairing: false);
+        unawaited(activateCurrentConnections(allowPairing: false));
         return;
       }
 
-      if (scriptUrl.isNotEmpty) {
+      if (scriptUrl.isNotEmpty && central.isEmpty) {
         await _pullGoogleSnapshot(scriptUrl);
       }
 
@@ -790,7 +816,7 @@ class WindowsSyncEngine {
         );
       }
 
-      if (scriptUrl.isNotEmpty) {
+      if (scriptUrl.isNotEmpty && central.isEmpty) {
         await WindowsBackendBridge.flushPending();
       }
 
@@ -806,11 +832,14 @@ class WindowsSyncEngine {
     required String projectId,
     required String idToken,
   }) async {
+    final pullProfile = FirebaseFirestore.instance.activeProfileId;
     final pending =
         await _firebasePendingKeys();
 
     for (final collection
         in _firebaseCollections) {
+      if (projectId != platformProjectId && _firebaseCollections.indexOf(collection) >= 12) continue;
+      if (FirebaseFirestore.instance.activeProfileId != pullProfile) throw StateError('School profile changed during sync.');
       final remote =
           await WindowsFirebaseRemote
               .readCollection(
@@ -819,6 +848,7 @@ class WindowsSyncEngine {
         collection: collection,
       );
 
+      if (FirebaseFirestore.instance.activeProfileId != pullProfile) throw StateError('School profile changed during sync.');
       final localSnapshot =
           await FirebaseFirestore.instance
               .collection(collection)
@@ -856,6 +886,7 @@ class WindowsSyncEngine {
 
       for (final entry
           in remote.entries) {
+        if (FirebaseFirestore.instance.activeProfileId != pullProfile) throw StateError('School profile changed during sync.');
         // Windows connection selector is authoritative for its own Drive URL.
         // A stale Firestore copy must never switch the active backend behind
         // the user's back or revive another school's Drive link.

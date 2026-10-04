@@ -1,0 +1,70 @@
+'use strict';
+const {createSchoolCloud} = require('../functions/school-cloud-core');
+const {randomUUID}=require('node:crypto');
+const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic']);
+const PROJECT = 'saarthi-ai-df12b';
+function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.info(JSON.stringify(entry))}) {
+  let windowStart=Date.now(), requests=0;
+  let healthCache;
+  return async (req,res) => {
+    res.setHeader('Cache-Control','no-store');
+    res.setHeader('X-Content-Type-Options','nosniff');
+    const requestId=randomUUID();
+    let action='UNKNOWN';
+    const send=(status,body)=>{
+      if(req.url==='/school-cloud' && req.method==='POST') logger({event:'central_request',endpoint:'/school-cloud',action,status,requestId});
+      res.setHeader('X-Saarthi-Request-Id',requestId);
+      body={...body,requestId};
+      res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(body));};
+    const origin=req.headers.origin;
+    if(origin && !allowedOrigins.includes(origin)) return send(403,{success:false,message:'Origin is not allowed'});
+    if(origin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
+    if(req.method==='OPTIONS' && req.url==='/school-cloud'){
+      res.setHeader('Access-Control-Allow-Methods','POST');res.setHeader('Access-Control-Allow-Headers','Authorization,Content-Type');res.writeHead(204);return res.end();
+    }
+    if(Date.now()-windowStart>=60000){windowStart=Date.now();requests=0;}
+    if(++requests>120) return send(429,{success:false,message:'Retry school setup shortly'});
+    if(req.method==='GET' && req.url==='/school-cloud/healthz'){
+      try{
+        if(!healthCache || Date.now()-healthCache.at>30000){await health();healthCache={at:Date.now()};}
+        return send(200,{service:'vidya-saarthi-central-staging',projectId:PROJECT,architecture:'central-v2',ready:true});
+      }catch{return send(503,{service:'vidya-saarthi-central-staging',ready:false});}
+    }
+    if(req.method!=='POST' || req.url!=='/school-cloud') return send(405,{success:false,message:'POST required'});
+    if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) return send(400,{success:false,message:'JSON request required'});
+    try{
+      let bytes=0;const chunks=[];
+      for await(const chunk of req){bytes+=chunk.length;if(bytes>256*1024)return send(413,{success:false,message:'Request is too large'});chunks.push(chunk);}
+      let body;
+      try{body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return send(400,{success:false,message:'Invalid JSON'});}
+      action=ACTIONS.has(body?.action)?body.action:'UNKNOWN';
+      return send(200,await handle({method:'POST',headers:req.headers,body}));
+    }catch(e){
+      const status=[400,401,403,405,409].includes(e.status)?e.status:503;
+      return send(status,{success:false,message:e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.'});
+    }
+  };
+}
+function fromEnvironment(env) {
+  const runtimeRequire=require('node:module').createRequire(require.resolve('../oauth-broker/package.json'));
+  const {initializeApp,getApps,cert}=runtimeRequire('firebase-admin/app');
+  const {getAuth}=runtimeRequire('firebase-admin/auth');
+  const {getFirestore}=runtimeRequire('firebase-admin/firestore');
+  const key=JSON.parse(env.SAARTHI_FIREBASE_ADMIN_JSON || '{}');
+  if(key.project_id!==PROJECT || !key.client_email?.endsWith('@'+PROJECT+'.iam.gserviceaccount.com') || !key.private_key) throw new Error('Invalid central staging credential configuration');
+  const app=initializeApp({credential:cert(key),projectId:PROJECT},'central-render-staging');
+  const auth=getAuth(app),db=getFirestore(app);
+  db.settings({ignoreUndefinedProperties:true});
+  const clientIds=(env.SAARTHI_GOOGLE_OAUTH_CLIENT_IDS || env.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID || '').split(',').filter(Boolean);
+  if(!clientIds.length) throw new Error('Missing central OAuth audience configuration');
+  const handle=createSchoolCloud({auth,db,projectId:PROJECT,clientIds,diagnostics:entry=>console.info(JSON.stringify(entry)),verifyLegacy:async(projectId,token)=>{
+    const name='legacy-proof-'+projectId;
+    const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
+    return getAuth(legacy).verifyIdToken(String(token || '')); 
+  }});
+  return createHandler({handle,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
+    await db.doc('_central_staging_health/runtime').get();
+    try{await auth.getUser('__saarthi_staging_health__');}catch(e){if(e.code!=='auth/user-not-found')throw e;}
+  }});
+}
+module.exports={createHandler,fromEnvironment};

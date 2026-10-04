@@ -1,3 +1,4 @@
+import 'windows_connect/central_school_cloud.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -57,9 +58,17 @@ class WindowsPlatformClient {
       return {'success':true, 'trialStartedAt':at.millisecondsSinceEpoch, 'installationSecret':_secret};
     }
     final remote = await WindowsFirebaseRemote.status();
-    if (!remote.authenticated || remote.projectId.isEmpty ||
-        body['projectId'] != null && body['projectId'] != remote.projectId) {
+    if (!remote.authenticated || remote.schoolIdentity.isEmpty ||
+        body['projectId'] != null && body['projectId'] != remote.schoolIdentity) {
       throw StateError('Connect this school administrator Firebase account first.');
+    }
+    final centralConnection = await CentralSchoolCloud.saved();
+    if (centralConnection.isNotEmpty) {
+      final cloud = CentralSchoolCloud(endpoint:centralConnection['endpoint']);
+      try { return await cloud.api({'action':action,'schoolId':centralConnection['schoolId'],
+        for (final k in ['key','version','noticeId','message','deviceFingerprint','studentCount','teacherCount','studentAppUsers','onlineStudents','onlineTeachers']) if (body.containsKey(k)) k:body[k]},
+        token:await WindowsFirebaseRemote.freshIdToken()); }
+      finally {cloud.close();}
     }
     final url = Uri.parse(await WindowsExternalConnections.googleScriptUrl());
     requireSchoolBackendUri(url);
@@ -83,7 +92,7 @@ class WindowsPlatformClient {
       response = await http.get(redirect).timeout(const Duration(seconds:20));
     }
     final d = jsonDecode(response.body);
-    if (d is! Map || response.statusCode >= 400 || d['success'] != true || d['projectId'] != remote.projectId)
+    if (d is! Map || response.statusCode >= 400 || d['success'] != true || d['projectId'] != remote.schoolIdentity)
       throw StateError(d is Map
           ? d['message']?.toString() ?? 'Platform unavailable'
           : 'Platform unavailable');
@@ -92,7 +101,7 @@ class WindowsPlatformClient {
           ? sha256.convert(utf8.encode(body['key'].toString().trim().toUpperCase())).toString()
           : d['licenseHash']?.toString();
       final central=SparkLicenseClient();
-      try {return {...Map<String,dynamic>.from(d), ...await central.schoolStatus(remote.projectId,licenseHash:hash)};}
+      try {return {...Map<String,dynamic>.from(d), ...await central.schoolStatus(remote.schoolIdentity,licenseHash:hash)};}
       finally {central.close();}
     }
     return Map<String, dynamic>.from(d);
@@ -136,7 +145,7 @@ class WindowsPlatformClient {
       }
     }
     final active = await WindowsFirebaseRemote.status();
-    if (_cacheProject.isNotEmpty && active.projectId != _cacheProject) {
+    if (_cacheProject.isNotEmpty && active.schoolIdentity != _cacheProject) {
       _verifiedAt = null;
       state.value = WindowsLicenseState(
           allowed: false, status: 'unbound', expiresAt: DateTime.now());
@@ -267,7 +276,7 @@ class WindowsPlatformClient {
       // Verify the saved capability directly with the developer platform BEFORE
       // contacting school-owned scripts. A broken/modified school script must
       // not stop revocation or expiry checks of an activated Windows licence.
-      if (_activeLicenseHash.isNotEmpty && _licenseProject.isNotEmpty && remote.projectId == _licenseProject) {
+      if (_activeLicenseHash.isNotEmpty && _licenseProject.isNotEmpty && remote.schoolIdentity == _licenseProject) {
         final central = SparkLicenseClient();
         try {
           final checked = await central.schoolStatus(_licenseProject, licenseHash: _activeLicenseHash);
@@ -280,30 +289,30 @@ class WindowsPlatformClient {
           return;
         } finally { central.close(); }
       }
-      if (_cacheProject.isNotEmpty && remote.projectId != _cacheProject) {
+      if (_cacheProject.isNotEmpty && remote.schoolIdentity != _cacheProject) {
         _verifiedAt = null;
         state.value = WindowsLicenseState(
             allowed: false, status: 'unbound', expiresAt: DateTime.now());
       }
       final links = await WindowsExternalConnections.load();
-      final script = links['googleScriptUrl']?.toString().trim() ?? '';
+      final script = await WindowsExternalConnections.googleScriptUrl();
       if (remote.authenticated &&
           script.isNotEmpty &&
-          (_boundProject != remote.projectId || _boundScript != script)) {
+          (_boundProject != remote.schoolIdentity || _boundScript != script)) {
         final nameDoc = await FirebaseFirestore.instance
             .collection('school_config')
             .doc('school_profile_cache')
             .get();
         final bound = await call('school/bind', {
           'deviceFingerprint':_fingerprint,
-          'projectId': remote.projectId,
+          'projectId': remote.schoolIdentity,
           'googleScriptUrl': script,
           'schoolIdToken': await WindowsFirebaseRemote.freshIdToken(),
-          'schoolName': nameDoc.data()?['schoolName'] ?? remote.projectId,
+          'schoolName': nameDoc.data()?['schoolName'] ?? remote.schoolIdentity,
           'version': version
         });
-        if (_boundProject != remote.projectId) _sentNotices.clear();
-        _boundProject = remote.projectId;
+        if (_boundProject != remote.schoolIdentity) _sentNotices.clear();
+        _boundProject = remote.schoolIdentity;
         _boundScript = script;
         if (_activeLicenseHash.isEmpty || bound['licenseHash'] == _activeLicenseHash) await _apply(bound);
       }
@@ -319,7 +328,7 @@ class WindowsPlatformClient {
         'teacherCount': teachers.docs.length
       });
       if (heartbeat['schoolId'] != null &&
-          remote.projectId != heartbeat['schoolId'])
+          remote.schoolIdentity != heartbeat['schoolId'])
         throw StateError(
             'Connect and verify the active school before using its license.');
       // A school-owned response that omits a known licence cannot replace a
@@ -380,7 +389,7 @@ class WindowsPlatformClient {
   Future<WindowsNoticeDelivery> publishNotice(String id, Map<String, dynamic> data) async {
     final profile = FirebaseFirestore.instance.activeProfileId;
     final remote = await WindowsFirebaseRemote.status();
-    if (!remote.authenticated || remote.projectId.isEmpty) {
+    if (!remote.authenticated || remote.schoolIdentity.isEmpty) {
       throw StateError('Notice not sent. Connect and verify this school Firebase and Google Script first.');
     }
     final token = await WindowsFirebaseRemote.freshIdToken();
@@ -394,7 +403,7 @@ class WindowsPlatformClient {
       throw StateError('Notice not sent. No students with an issued ID-card QR have registered in this school student app.');
     }
     // The school Script must respond online before a notice is published.
-    await call('installation/status', {'projectId': remote.projectId});
+    await call('installation/status', {'projectId': remote.schoolIdentity});
     final payload = {...data, 'recipientCount': recipients,
       'deliveryStatus': 'notification_pending'};
     await WindowsFirebaseRemote.writeDocument(projectId: remote.projectId,
@@ -402,7 +411,7 @@ class WindowsPlatformClient {
     if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Retry notice publication.');
     await FirebaseFirestore.instance.collection('school_notices').doc(id).set(payload);
     try {
-      final sent = await call('school/notice', {'projectId': remote.projectId, 'noticeId': id});
+      final sent = await call('school/notice', {'projectId': remote.schoolIdentity, 'noticeId': id});
       if (sent['sent'] != true) throw StateError('School notification was not acknowledged.');
       if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Check notice status in the original school.');
       _sentNotices.add(id);
@@ -441,13 +450,13 @@ class WindowsPlatformClient {
     try {
     while (_running) { await Future<void>.delayed(const Duration(milliseconds: 100)); }
     final remote = await WindowsFirebaseRemote.status();
-    final boundProject = remote.projectId;
+    final boundProject = remote.schoolIdentity;
     final data =
         await call('license/activate', {'key': normalized});
     final current = await WindowsFirebaseRemote.status();
     if (current.authenticated &&
-        current.projectId.isNotEmpty &&
-        current.projectId != boundProject) {
+        current.schoolIdentity.isNotEmpty &&
+        current.schoolIdentity != boundProject) {
       throw StateError('School changed during activation. Retry for the active school.');
     }
     await _apply(data);

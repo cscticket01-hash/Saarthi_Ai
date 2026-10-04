@@ -154,21 +154,55 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('expired licences cannot reach the startup skip button', (tester) async {
+  for (final status in ['expired', 'blocked', 'unbound', 'clock_error', 'licensed']) {
+    testWidgets('$status denied licence can skip into offline setup', (tester) async {
+      WindowsAdminSetup.completedOverride = false;
+      WindowsPlatformClient.instance.state.value = WindowsLicenseState(
+        allowed: false, status: status,
+        expiresAt: DateTime.now().subtract(const Duration(days: 1)),
+      );
+      await tester.pumpWidget(VidyaSaarthiWindowsApp(initializeConnections: () async {}));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Activate Vidya Saarthi'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('license-skip-button')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Admin Setup'), findsOneWidget);
+      expect(find.text('License not activated — Activate now'), findsOneWidget);
+      expect(await WindowsPlatformClient.instance.licenseSkipped(), isTrue);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('persisted skip survives trial expiry and restart', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({WindowsPlatformClient.licenseSkippedKey: 'true'});
+    WindowsAdminSetup.completedOverride = false;
     WindowsPlatformClient.instance.state.value = WindowsLicenseState(
-      allowed: false,
-      status: 'expired',
-      expiresAt: DateTime.now().subtract(const Duration(days: 1)),
+      allowed: false, status: 'expired', expiresAt: DateTime.now(),
     );
-    var checks = 0;
-    await tester.pumpWidget(VidyaSaarthiWindowsApp(
-      initializeConnections: () async { checks++; },
-    ));
+    await tester.pumpWidget(VidyaSaarthiWindowsApp(initializeConnections: () async {}));
     await tester.pump();
-    expect(find.byKey(const ValueKey('license-skip-button')), findsNothing);
-    expect(find.text('Activate Vidya Saarthi'), findsOneWidget);
-    expect(checks, 0);
-    expect(tester.getSize(find.byType(WindowsLicenseGate)).width, 800);
+    await tester.pump();
+    expect(find.text('Admin Setup'), findsOneWidget);
+    expect(find.text('License not activated — Activate now'), findsOneWidget);
+    expect(find.text('Activate Vidya Saarthi'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('licence expiry preserves an open form and shows the warning', (tester) async {
+    WindowsPlatformClient.instance.state.value = WindowsLicenseState(
+      allowed: true, status: 'licensed', expiresAt: DateTime.now().add(const Duration(days: 1)),
+    );
+    await tester.pumpWidget(const MaterialApp(home: WindowsLicenseGate(child: Scaffold(body: TextField()))));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'Unsaved school work');
+    WindowsPlatformClient.instance.state.value = WindowsLicenseState(
+      allowed: false, status: 'expired', expiresAt: DateTime.now(),
+    );
+    await tester.pump();
+    expect(find.text('Unsaved school work'), findsOneWidget);
+    expect(find.text('License not activated — Activate now'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
