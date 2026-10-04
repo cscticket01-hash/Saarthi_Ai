@@ -1305,8 +1305,15 @@ String _feeIdentityForStudent(
 const String _schoolProfileCacheDocId = 'school_profile_cache';
 
 // Memory cache keeps School Settings / branding instant inside the current session.
-Map<String, dynamic>? _schoolProfileMemoryCache;
+Map<String, dynamic>? _schoolProfileMemoryValue;
+String? _schoolProfileMemoryTenant;
 String? _schoolProfileScriptUrlMemoryCache;
+void _ensureSchoolProfileMemoryTenant(){
+  final tenant=FirebaseFirestore.instance.activeProfileId;
+  if(_schoolProfileMemoryTenant!=tenant){_schoolProfileMemoryValue=null;_schoolProfileScriptUrlMemoryCache=null;_schoolProfileMemoryTenant=tenant;}
+}
+Map<String,dynamic>? get _schoolProfileMemoryCache{_ensureSchoolProfileMemoryTenant();return _schoolProfileMemoryValue;}
+set _schoolProfileMemoryCache(Map<String,dynamic>? value){_ensureSchoolProfileMemoryTenant();_schoolProfileMemoryValue=value;}
 
 Map<String, dynamic> _defaultSchoolProfile() => <String, dynamic>{
       // Fresh installations must start unbound. The school identity is filled
@@ -1336,11 +1343,14 @@ Map<String, dynamic> _mergeSchoolProfile(Map<String, dynamic>? raw) {
 }
 
 Future<String> _schoolProfileScriptUrl() async {
+  _ensureSchoolProfileMemoryTenant();
+  final tenant=FirebaseFirestore.instance.activeProfileId;
   final cachedUrl = _schoolProfileScriptUrlMemoryCache?.trim() ?? '';
   if (cachedUrl.isNotEmpty) return cachedUrl;
 
   final url = await _windowsGoogleScriptUrl();
 
+  if(FirebaseFirestore.instance.activeProfileId!=tenant)throw StateError('School changed while loading its storage connection.');
   _schoolProfileScriptUrlMemoryCache = url;
   return url;
 }
@@ -1372,16 +1382,19 @@ Future<Map<String, dynamic>> _schoolProfileBackendPost(
 }
 
 Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
+  final tenant=FirebaseFirestore.instance.activeProfileId;
   if (_schoolProfileMemoryCache != null) {
     return _mergeSchoolProfile(_schoolProfileMemoryCache);
   }
 
   try {
     final doc = await _schoolProfileCacheRef().get();
+    if(FirebaseFirestore.instance.activeProfileId!=tenant)throw StateError('School changed while loading its profile.');
     final profile = _mergeSchoolProfile(doc.data());
     _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
     return profile;
   } catch (_) {
+    if(FirebaseFirestore.instance.activeProfileId!=tenant)rethrow;
     final profile = _defaultSchoolProfile();
     _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
     return profile;
@@ -1389,10 +1402,12 @@ Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
 }
 
 Future<Map<String, dynamic>> _refreshSchoolProfileFromDrive() async {
+  final reference=_schoolProfileCacheRef();
   final result = await _schoolProfileBackendPost(
     const {'action': 'get_school_profile'},
   );
 
+  reference.requireOriginProfile();
   final raw = result['profile'];
   final profile = raw is Map
       ? _mergeSchoolProfile(Map<String, dynamic>.from(raw))
@@ -1400,7 +1415,7 @@ Future<Map<String, dynamic>> _refreshSchoolProfileFromDrive() async {
 
   _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
 
-  await _schoolProfileCacheRef().set(
+  await reference.set(
     {
       ...profile,
       'cachedAt': FieldValue.serverTimestamp(),

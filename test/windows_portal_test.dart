@@ -153,6 +153,25 @@ void main() {
     expect((listed['results'] as List).length, 1);
     expect((listed['results'] as List).single['timestamp'], 1234567);
   });
+  testWidgets('school branding memory cannot carry School A into School B',(tester)async{
+    await tester.binding.setSurfaceSize(const Size(1500,1600));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    final db=local.FirebaseFirestore.instance;
+    await tester.runAsync(()async{
+      await db.collection('school_config').doc('school_profile_cache').set({'schoolName':'Private School A','principalName':'Principal A'});
+      await tester.pumpWidget(const MaterialApp(home:SchoolSettingsScreen()));
+      await Future<void>.delayed(const Duration(milliseconds:200));
+    });
+    await tester.pump();
+    bool hasName(String name)=>find.byWidgetPredicate((w)=>w is TextField&&w.controller?.text==name).evaluate().isNotEmpty;
+    expect(hasName('Private School A'),true);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(()=>db.switchProfile('branding-school-b'));
+    await tester.pumpWidget(const MaterialApp(home:SchoolSettingsScreen()));
+    expect(hasName('Private School A'),false);
+    expect(hasName('Principal A'),false);
+    await tester.pumpWidget(const SizedBox());
+  });
   test('offline exams and queued edits stay inside their original school', () async {
     final db = local.FirebaseFirestore.instance;
     final original = db.activeProfileId;
