@@ -72,9 +72,13 @@ void main() {
     }
     expect(windowsReferenceTermNumber({'examName': 'Term 2'}), 2);
     expect(windowsReferenceTermNumber({'examName': 'Quarter 4'}), 4);
-    expect(windowsReferenceTermNumber({'examName': 'Final 2026', 'isFinal': true}), isNull);
+    expect(
+        windowsReferenceTermNumber({'examName': 'Final 2026', 'isFinal': true}),
+        isNull);
     for (final pair in [('reportCard_term2', 3), ('reportCard_quarter2', 1)]) {
-      final bytes = await renderWindowsReferenceDocument(kind: 'reportCard', template: pair.$2,
+      final bytes = await renderWindowsReferenceDocument(
+          kind: 'reportCard',
+          template: pair.$2,
           data: {...sample, 'examName': 'Term 2', 'isFinal': false});
       await File('${folder.path}/${pair.$1}.pdf').writeAsBytes(bytes);
     }

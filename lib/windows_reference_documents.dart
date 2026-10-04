@@ -36,8 +36,10 @@ int? windowsReferenceTermNumber(Map<String, dynamic> data) {
   if (data['isFinal'] == true) return null;
   final explicit = int.tryParse(data['quarter']?.toString() ?? '');
   if (explicit != null && explicit >= 1 && explicit <= 4) return explicit;
-  final name = (data['term'] ?? data['examName'] ?? '').toString().toLowerCase();
-  final match = RegExp(r'\b(?:term|quarter|semester|q)\s*[-:]?\s*([1-4])\b').firstMatch(name);
+  final name =
+      (data['term'] ?? data['examName'] ?? '').toString().toLowerCase();
+  final match = RegExp(r'\b(?:term|quarter|semester|q)\s*[-:]?\s*([1-4])\b')
+      .firstMatch(name);
   return match == null ? null : int.parse(match.group(1)!);
 }
 
@@ -336,17 +338,31 @@ Future<Uint8List> renderWindowsReferenceDocument(
                   size: 17, color: PdfColor.fromHex('#cc993d'), heavy: true))
         ]);
       }
-      if (i == 0) back.add(at(262,30,20,190,pw.Transform.rotateBox(angle:-1.5707963267948966,unconstrained:true,child:pw.SizedBox(width:190,height:20,child:label(school,size:17,color:white,heavy:true)))));
+      if (i == 0)
+        back.add(at(
+            262,
+            30,
+            20,
+            190,
+            pw.Transform.rotateBox(
+                angle: -1.5707963267948966,
+                unconstrained: true,
+                child: pw.SizedBox(
+                    width: 190,
+                    height: 20,
+                    child:
+                        label(school, size: 17, color: white, heavy: true)))));
       back.addAll([
-        if (i == 1) at(
-            25,
-            i == 0 ? 22 : 20,
-            i == 0 ? 145 : 205,
-            45,
-            label(school,
-                size: 18,
-                color: i == 0 ? ink : PdfColor.fromHex('#cc993d'),
-                heavy: true)),
+        if (i == 1)
+          at(
+              25,
+              i == 0 ? 22 : 20,
+              i == 0 ? 145 : 205,
+              45,
+              label(school,
+                  size: 18,
+                  color: i == 0 ? ink : PdfColor.fromHex('#cc993d'),
+                  heavy: true)),
         at(23, i == 0 ? 99 : 158, i == 0 ? 165 : 210, 28,
             label('Terms & Conditions', size: i == 0 ? 15 : 17, color: ink)),
         at(
@@ -480,9 +496,22 @@ Future<Uint8List> renderWindowsReferenceDocument(
     } else {
       front.addAll([
         at(17, 19, 40, 40, asset(logo, 'LOGO')),
-        at(63,26,155,24,label(school,size:15,color:white,heavy:true)),
-        at(63,48,155,14,label('SCHOOL • TEACHER ID',size:8,color:white)),
-        at(231,26,66,23,pw.Container(decoration:pw.BoxDecoration(color:white,borderRadius:pw.BorderRadius.circular(15)),child:label('STAFF',size:12,color:PdfColor.fromHex('#e50e2c'),heavy:true,align:pw.TextAlign.center))),
+        at(63, 26, 155, 24, label(school, size: 15, color: white, heavy: true)),
+        at(63, 48, 155, 14,
+            label('SCHOOL • TEACHER ID', size: 8, color: white)),
+        at(
+            231,
+            26,
+            66,
+            23,
+            pw.Container(
+                decoration: pw.BoxDecoration(
+                    color: white, borderRadius: pw.BorderRadius.circular(15)),
+                child: label('STAFF',
+                    size: 12,
+                    color: PdfColor.fromHex('#e50e2c'),
+                    heavy: true,
+                    align: pw.TextAlign.center))),
         at(
             79,
             116,
@@ -531,13 +560,22 @@ Future<Uint8List> renderWindowsReferenceDocument(
                 first(['validUntil', 'expiryDate'])
               ]
             ], firstHeader: false, font: 11)),
-        at(26,341,252,14,label(v('subject'),size:10,color:PdfColors.grey600,align:pw.TextAlign.center)),
+        at(
+            26,
+            341,
+            252,
+            14,
+            label(v('subject'),
+                size: 10,
+                color: PdfColors.grey600,
+                align: pw.TextAlign.center)),
         at(247, 440, 47, 42, qrCode(34))
       ]);
       back.addAll([
         at(20, 22, 40, 36, asset(logo, 'LOGO')),
-        at(70,22,220,23,label('OFFICIAL TEACHER ID',size:15,color:white,heavy:true)),
-        at(80,51,210,17,label(school,size:11,color:white)),
+        at(70, 22, 220, 23,
+            label('OFFICIAL TEACHER ID', size: 15, color: white, heavy: true)),
+        at(80, 51, 210, 17, label(school, size: 11, color: white)),
         at(
             28,
             99,
@@ -549,7 +587,10 @@ Future<Uint8List> renderWindowsReferenceDocument(
                 first(['contact', 'phone'])
               ],
               ['EMAIL', v('email')],
-              ['WEBSITE', first(['schoolWebsite','website'])],
+              [
+                'WEBSITE',
+                first(['schoolWebsite', 'website'])
+              ],
               ['ADDRESS', v('address')]
             ], firstHeader: false, font: 10)),
         at(
@@ -807,7 +848,9 @@ Future<Uint8List> renderWindowsReferenceDocument(
         final rows = <List<String>>[
           [
             'Subject',
-            currentTerm == null && term1.isEmpty && quarterly.isEmpty ? 'Exam Marks' : 'Grade Q1',
+            currentTerm == null && term1.isEmpty && quarterly.isEmpty
+                ? 'Exam Marks'
+                : 'Grade Q1',
             'Grade Q2',
             'Grade Q3',
             'Grade Q4'
@@ -817,8 +860,15 @@ Future<Uint8List> renderWindowsReferenceDocument(
           final q = quarterly[s];
           final grades = <String>[];
           for (var quarter = 1; quarter <= 4; quarter++) {
-            final saved = q is Map ? q['q$quarter'] : quarter == 1 ? term1[s] : quarter == 2 ? term2[s] : null;
-            grades.add(mark(saved ?? (quarter == (currentTerm ?? 1) ? marks[s] : null)));
+            final saved = q is Map
+                ? q['q$quarter']
+                : quarter == 1
+                    ? term1[s]
+                    : quarter == 2
+                        ? term2[s]
+                        : null;
+            grades.add(mark(
+                saved ?? (quarter == (currentTerm ?? 1) ? marks[s] : null)));
           }
           rows.add([s, ...grades]);
         }
@@ -916,7 +966,11 @@ Future<Uint8List> renderWindowsReferenceDocument(
             'Teacher',
             'Term 1\nGrade',
             'Term 2\nGrade',
-            currentTerm != null && currentTerm > 2 ? 'Term $currentTerm\nGrade' : data['isFinal'] == false && currentTerm == null ? 'Exam\nGrade' : 'Final\nGrade',
+            currentTerm != null && currentTerm > 2
+                ? 'Term $currentTerm\nGrade'
+                : data['isFinal'] == false && currentTerm == null
+                    ? 'Exam\nGrade'
+                    : 'Final\nGrade',
             'Comments'
           ]
         ];
