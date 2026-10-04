@@ -91,10 +91,13 @@ jobs:
       # IMPORTANT: Firebase site runs from /
       # =========================================================
       - name: Build Web
+        env:
+          SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
         run: |
           flutter build web \
             --release \
-            --base-href "/"
+            --base-href "/" \
+            --dart-define=SAARTHI_SCHOOL_CLOUD_URL="$SAARTHI_SCHOOL_CLOUD_URL"
 
       # =========================================================
       # BLOCK COMMON INSPECT / VIEW SOURCE SHORTCUTS
