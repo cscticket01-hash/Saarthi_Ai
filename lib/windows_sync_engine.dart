@@ -1416,31 +1416,13 @@ class WindowsSyncEngine {
     }
   }
 
-  Future<void> _remoteSetLocal(
-    String collection,
-    String documentId,
-    Map<String, dynamic> data,
-  ) {
-    return WindowsLocalFirestoreSyncControl
-        .runWithoutSyncTracking(
-      () => FirebaseFirestore.instance
-          .collection(collection)
-          .doc(documentId)
-          .set(data),
-    );
+  Future<void> _remoteSetLocal(String collection,String documentId,Map<String,dynamic> data) {
+    final db=FirebaseFirestore.instance;
+    return db.applySyncedDocument(db.collection(collection).doc(documentId),data);
   }
-
-  Future<void> _remoteDeleteLocal(
-    String collection,
-    String documentId,
-  ) {
-    return WindowsLocalFirestoreSyncControl
-        .runWithoutSyncTracking(
-      () => FirebaseFirestore.instance
-          .collection(collection)
-          .doc(documentId)
-          .delete(),
-    );
+  Future<void> _remoteDeleteLocal(String collection,String documentId) {
+    final db=FirebaseFirestore.instance;
+    return db.applySyncedDocument(db.collection(collection).doc(documentId),null);
   }
 
   String _pendingKey(

@@ -144,4 +144,37 @@ void main() {
     expect(raw,startsWith('data:image/png;base64,'));expect(UriData.parse(raw).contentAsBytes(),[137,80,78,71,1,2]);
   });
 
+  test('stale cloud pull and delete cannot overwrite a newer queued photo edit',() async {
+    final ref=db.collection('students_directory').doc('same');
+    final newer=ref.set({'name':'Newer edit','photoUrl':'data:image/png;base64,YWJj'});
+    final stalePull=db.applySyncedDocument(ref,{'name':'Old cloud edit','photoUrl':'https://drive.google.com/file/d/old/view'});
+    await newer;await stalePull;
+    await db.applySyncedDocument(ref,null);
+    expect((await ref.get()).data()?['name'],'Newer edit');
+    expect((await ref.get()).data()?['photoUrl'],'data:image/png;base64,YWJj');
+    final pending=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    expect((pending.data()['data'] as Map)['name'],'Newer edit');
+  });
+  test('offline photo and pending sync reopen from disk; successful sync retains an offline image after reopen',() async {
+    final origin=db.activeProfileId;
+    final ref=db.collection('students_directory').doc('photo-pupil');
+    const local='data:image/png;base64,YWJj';
+    await ref.set({'name':'Own pupil','schoolId':school,'photoUrl':local});
+    await db.resetVolatileSession();
+    await db.switchProfile('temporary-reopen',identity:{});
+    await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+    expect((await db.collection('students_directory').doc('photo-pupil').get()).data()?['photoUrl'],local);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+    late Map<String,dynamic> published;
+    await WindowsPendingSchoolSync.flush(profileId:origin,send:(c,id,op,data) async {
+      published=await prepareManagedRecord(data!,school,(action,body) async=>{'success':true,'schoolId':school,'fileId':'own-photo','fileUrl':'https://drive.google.com/file/d/own-photo/view'});
+    });
+    await db.applySyncedDocument(db.collection('students_directory').doc('photo-pupil'),published);
+    await db.resetVolatileSession();
+    await db.switchProfile('temporary-second-reopen',identity:{});
+    await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    expect(await schoolImageBytes((await db.collection('students_directory').doc('photo-pupil').get()).data()!['photoUrl'] as String),[97,98,99]);
+  });
+
 }
