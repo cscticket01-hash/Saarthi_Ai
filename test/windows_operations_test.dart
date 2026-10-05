@@ -149,6 +149,8 @@ void main() {
     await tester.runAsync(() async {
       final fonts=FontLoader('Roboto')..addFont(rootBundle.load('assets/id_card_regular.ttf'));
       await fonts.load();
+      final icons=FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+      await icons.load();
       await WindowsRuntimeFlags.setLocalStorageEnabled(true);
       final person = await teacher();
       await StaffPayroll.save(db.activeProfileId,person,'${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2,'0')}',basic:1000000);
@@ -162,7 +164,13 @@ void main() {
     }
     await tester.pumpAndSettle();
     expect(find.text('School Teacher'),findsOneWidget);
+    expect(find.text('View Payslip'),findsOneWidget);
+    await tester.tap(find.byTooltip('Salary actions'));
+    await tester.pumpAndSettle();
     expect(find.text('Record payment'),findsOneWidget);
+    expect(find.text('Payment history'),findsOneWidget);
+    await tester.tapAt(const Offset(20,20));
+    await tester.pumpAndSettle();
     expect(find.text('Net payroll'),findsOneWidget);
     expect(find.text('Generate Payslips'),findsOneWidget);
     expect(find.text('Export CSV'),findsOneWidget);

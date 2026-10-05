@@ -101,6 +101,7 @@ class WindowsDocumentTemplates {
     BuildContext context,
     Uint8List bytes, {
     String title = 'Document preview',
+    String? notice,
     VoidCallback? onDownload,
     VoidCallback? onPrint,
   }) =>
@@ -119,6 +120,7 @@ class WindowsDocumentTemplates {
                     icon: const Icon(Icons.close),
                   ),
                 ),
+                if(notice!=null) Padding(padding:const EdgeInsets.symmetric(horizontal:16,vertical:8),child:Text(notice,textAlign:TextAlign.center)),
                 Expanded(
                   child: LayoutBuilder(builder: (context, constraints) => PdfPreview(
                     build: (_) => bytes,

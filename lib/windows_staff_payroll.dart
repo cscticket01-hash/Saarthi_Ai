@@ -293,7 +293,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final paidCount=rows.where((r)=>StaffPayroll.paid(r)>=StaffPayroll.total(r)).length;
     final people=_staff.where((s)=>(_role=='All staff'||s['role']==_role)&&'${s['name']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
     final dark=ThemeData.dark(useMaterial3:true).copyWith(scaffoldBackgroundColor:const Color(0xff061826),
-      colorScheme:const ColorScheme.dark(primary:Color(0xff7260ff),surface:Color(0xff102338)),
+      colorScheme:const ColorScheme.dark(primary:Color(0xff7260ff),onPrimary:Colors.white,surface:Color(0xff102338)),
       dividerColor:const Color(0xff284157),cardColor:const Color(0xff102338));
     return Theme(data:dark,child:Scaffold(appBar:AppBar(backgroundColor:const Color(0xff0c233e),
       title:const Row(children:[Icon(Icons.account_balance_wallet,color:Colors.lightBlueAccent),SizedBox(width:16),
@@ -329,12 +329,12 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           const SizedBox(height:16),
           Wrap(spacing:10,runSpacing:10,children:[
             for(final role in ['All staff','Teacher','Office staff','Driver','Guard','Support staff','Other'])
-              ChoiceChip(label:Text('$role (${role=='All staff'?_staff.length:_staff.where((s)=>s['role']==role).length})'),selected:_role==role,onSelected:(_)=>setState(()=>_role=role)),
+              ChoiceChip(selectedColor:const Color(0xff6252ee),labelStyle:const TextStyle(color:Colors.white),label:Text('$role (${role=='All staff'?_staff.length:_staff.where((s)=>s['role']==role).length})'),selected:_role==role,onSelected:(_)=>setState(()=>_role=role)),
             SizedBox(width:320,child:TextField(onChanged:(v)=>setState(()=>_search=v),decoration:const InputDecoration(hintText:'Search by name, ID or department...',prefixIcon:Icon(Icons.search)))),
           ]),const SizedBox(height:16),
           if(people.isEmpty) const Padding(padding:EdgeInsets.all(30),child:Text('No staff found. Add a teacher in Teachers, or add a staff member here.')),
           Row(crossAxisAlignment:CrossAxisAlignment.start,children:[Expanded(child:Card(child:SingleChildScrollView(scrollDirection:Axis.horizontal,child:DataTable(
-            headingRowColor:WidgetStateProperty.all(const Color(0xff172c42)),columnSpacing:22,dataRowMinHeight:64,dataRowMaxHeight:76,
+            headingRowColor:WidgetStateProperty.all(const Color(0xff172c42)),columnSpacing:14,dataRowMinHeight:64,dataRowMaxHeight:76,
             columns:[for(final label in ['Name / Employee ID','Role / Department','Attendance','Basic Pay','Allowances','Deductions','Net Salary','Status','Action'])DataColumn(label:Text(label))],
             rows:[for(final person in people)_tableRow(person,rows)],
           )))),if(constraints.maxWidth>=1350)...[const SizedBox(width:14),SizedBox(width:270,child:_monthSummary(net,paid,deductions,paidCount,rows.length))]]),
@@ -367,10 +367,19 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       DataCell(Tooltip(message:'Attendance does not change salary automatically. Configure deductions in the salary editor.',child:Text(row?['attendanceSummary']?.toString()??'—'))),
       DataCell(Text(amount('basicPaise'))),DataCell(Text(amount('allowancePaise'))),DataCell(Text(amount('deductionPaise'))),DataCell(Text(row==null?'—':'₹${StaffPayroll.format(StaffPayroll.total(row))}')),
       DataCell(Chip(label:Text(status),backgroundColor:color.withValues(alpha:.2))),
-      DataCell(Row(children:[TextButton(onPressed:()=>_salary(person,row),child:Text(row==null?'Set salary':'Edit salary')),
-        if(row!=null&&StaffPayroll.paid(row)<StaffPayroll.total(row))TextButton(onPressed:()=>_payment(row),child:const Text('Record payment')),
-        if(row!=null)TextButton(onPressed:_working?null:()=>_output(row:row),child:const Text('View Payslip')),
-        if(row!=null)IconButton(tooltip:'Payment history',onPressed:()=>_history(row),icon:const Icon(Icons.history)),])),
+      DataCell(Row(children:[
+        if(row==null)TextButton(onPressed:()=>_salary(person,null),child:const Text('Set salary'))
+        else FilledButton.tonal(onPressed:_working?null:()=>_output(row:row),child:const Text('View Payslip')),
+        PopupMenuButton<String>(tooltip:'Salary actions',onSelected:(action){
+          if(action=='edit')_salary(person,row);
+          if(action=='pay'&&row!=null)_payment(row);
+          if(action=='history'&&row!=null)_history(row);
+        },itemBuilder:(_)=>[
+          PopupMenuItem(value:'edit',child:Text(row==null?'Set salary':'Edit salary')),
+          if(row!=null&&StaffPayroll.paid(row)<StaffPayroll.total(row))const PopupMenuItem(value:'pay',child:Text('Record payment')),
+          if(row!=null)const PopupMenuItem(value:'history',child:Text('Payment history')),
+        ]),
+      ])),
     ]);
   }
 }

@@ -1,3 +1,4 @@
+import 'windows_school_image_cache.dart';
 import 'school_qr_link.dart';
 import 'windows_school_profile_store.dart';
 import 'windows_browser_print.dart';
@@ -57,6 +58,16 @@ import 'windows_mobile_scanner_shim.dart';
 /// school_config/google_drive_account document.
 Future<String> _windowsGoogleScriptUrl({bool required = true}) {
   return WindowsConnectionCenter.googleScriptUrl(required: required);
+}
+
+/// Directory mutations commit locally; Drive readiness is needed only for sync.
+Future<String> _windowsDirectoryMutationUrl() async {
+  final saved=await CentralSchoolCloud.saved();
+  if(saved['managed']==true) {
+    if(FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=saved['schoolId']) throw StateError('School changed. Reopen the directory.');
+    return _windowsGoogleScriptUrl(required:false);
+  }
+  return _windowsGoogleScriptUrl();
 }
 
 String _windowsLanguage() => WindowsUiLanguage.current;
@@ -4766,6 +4777,7 @@ void _handleLoginBack(bool didPop) {
   }
 
   void _openAddStudentDialog() {
+    final originProfile=FirebaseFirestore.instance.activeProfileId;
     final nameCtrl = TextEditingController();
     final parentCtrl = TextEditingController();
     final rollCtrl = TextEditingController();
@@ -4930,7 +4942,8 @@ void _handleLoginBack(bool didPop) {
                           // Class 1 + Roll 1/01/001 all use the SAME document ID.
                           final normalizedNewRoll = normalizeRoll(roll);
                           final docId = '${selectedClass}_Roll_$normalizedNewRoll';
-                          String finalPhotoUrl = '';
+                          final localPhoto = selectedPhotoBytes == null ? '' : WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!);
+                          String finalPhotoUrl = localPhoto;
                           bool driveSaved = false;
 
                           try {
@@ -5021,7 +5034,7 @@ void _handleLoginBack(bool didPop) {
                                 );
                               }
 
-                              driveSaved = true;
+                              driveSaved = responseJson['cloudSyncPending'] != true;
 
                               if (responseJson['photoUrl'] != null) {
                                 finalPhotoUrl =
@@ -5029,6 +5042,7 @@ void _handleLoginBack(bool didPop) {
                               }
                             }
 
+                            if(FirebaseFirestore.instance.activeProfileId!=originProfile) throw StateError('School changed. Reopen student entry.');
                             final studentRef = FirebaseFirestore.instance
                                 .collection('students_directory')
                                 .doc(docId);
@@ -5067,7 +5081,7 @@ void _handleLoginBack(bool didPop) {
                                 content: Text(
                                   (driveSaved
                                           ? 'Student Google Sheet, Drive aur Firestore me save ho gaya.'
-                                          : 'Student Firestore me save hua.') +
+                                          : 'Student saved on this PC. Cloud sync pending.') +
                                       (assignedTestUid != null
                                           ? ' Test UID: $assignedTestUid'
                                           : ''),
@@ -5493,6 +5507,7 @@ Future<void> _showIdCardPreview() async {
         qr: data['qrData'].toString());
     if (mounted && bytes != null) {
       await WindowsDocumentTemplates.preview(context, bytes, title: 'Student ID card • Front & back',
+        notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
         onDownload: _downloadIdCard, onPrint: _printIdCard);
     }
   } catch (e) {
@@ -9519,7 +9534,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   ),
                                   SizedBox(height: 4),
                                   Text(
-                                    'Ye details aur files Google Drive me save hongi. School change karne ke liye code edit nahi karna padega.',
+                                    'Details and images save on this PC immediately. Background sync sends them to this school’s connected Drive.',
                                     style: TextStyle(
                                       color: Colors.white54,
                                       fontSize: 11,
@@ -13473,6 +13488,7 @@ class TeachersDirectoryScreen extends StatefulWidget {
 
 class _TeachersDirectoryScreenState
     extends State<TeachersDirectoryScreen> {
+  final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   final TextEditingController _searchController =
       TextEditingController();
 
@@ -13489,12 +13505,13 @@ class _TeachersDirectoryScreenState
   // ============================================================
 
   Future<String> _getTeacherScriptUrl() async {
-    return _windowsGoogleScriptUrl();
+    return _windowsDirectoryMutationUrl();
   }
 
   Future<Map<String, dynamic>> _callTeacherApi(
     Map<String, dynamic> body,
   ) async {
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final scriptUrl = await _getTeacherScriptUrl();
 
     final response = await WindowsBackendBridge.post(
@@ -13512,6 +13529,7 @@ class _TeachersDirectoryScreenState
       );
     }
 
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final decoded = jsonDecode(response.body);
 
     if (decoded is! Map) {
@@ -14873,7 +14891,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 backgroundColor:
                                     Color(0xFF00A884),
                                 content: Text(
-                                  'Teacher Google Sheet aur Firestore dono me update ho gaya!',
+                                  'Teacher saved on this PC. Background school sync queued.',
                                 ),
                               ),
                             );
@@ -15256,7 +15274,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
           backgroundColor:
               Colors.redAccent,
           content: Text(
-            'Teacher Google Sheet, Drive aur Firestore se delete ho gaya!',
+            'Teacher removed on this PC. Background school sync queued.',
           ),
         ),
       );
@@ -15295,7 +15313,16 @@ errorBuilder: (_, __, ___) => _teacherFallback(
         {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData);
     if (bytes != null && mounted) {
       await WindowsDocumentTemplates.preview(context, bytes,
-          title: 'Teacher ID card • Front & back');
+          title: 'Teacher ID card • Front & back',
+          notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
+          onPrint: () async {
+            try { await WindowsBrowserPrint.open(bytes); }
+            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Print preview unavailable: $e'))); }
+          },
+          onDownload: () async {
+            try { await WindowsSavePdf.save(bytes,'teacher-id.pdf'); }
+            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('PDF save failed: $e'))); }
+          });
     }
   }
 
@@ -16041,6 +16068,7 @@ class AddTeacherScreen extends StatefulWidget {
 
 class _AddTeacherScreenState
     extends State<AddTeacherScreen> {
+  final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   final _nameCtrl =
       TextEditingController();
 
@@ -16140,13 +16168,14 @@ class _AddTeacherScreenState
   }
 
   Future<String> _getTeacherScriptUrl() async {
-    return _windowsGoogleScriptUrl();
+    return _windowsDirectoryMutationUrl();
   }
 
   Future<Map<String, dynamic>>
       _callTeacherApi(
     Map<String, dynamic> body,
   ) async {
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final scriptUrl =
         await _getTeacherScriptUrl();
 
@@ -16169,6 +16198,7 @@ class _AddTeacherScreenState
       );
     }
 
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final decoded =
         jsonDecode(response.body);
 
@@ -16407,6 +16437,7 @@ class _AddTeacherScreenState
         );
       }
 
+      if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen teacher entry.');
       // SECOND:
       // Firestore
       final ref =
@@ -16473,7 +16504,7 @@ class _AddTeacherScreenState
           backgroundColor:
               Color(0xFF00A884),
           content: Text(
-            'Teacher Google Sheet, Drive aur Firestore me save ho gaya!',
+            'Teacher saved on this PC. Background school sync queued.',
           ),
         ),
       );
@@ -17085,6 +17116,7 @@ class AllStudentsListScreen extends StatefulWidget {
 }
 
 class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
+  final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   String _selectedClassFilter = 'All Classes';
 
   final List<String> _classes = [
@@ -17253,7 +17285,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
   }
 
   Future<String> _studentBackendScriptUrl() async {
-    return _windowsGoogleScriptUrl();
+    return _windowsDirectoryMutationUrl();
   }
 
   Future<Map<String, dynamic>> _postStudentClassChange({
@@ -17474,7 +17506,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         }
       }
 
-      final scriptUrl = await _windowsGoogleScriptUrl();
+      final scriptUrl = await _windowsDirectoryMutationUrl();
 
       Future<Map<String, dynamic>> deleteFromGoogle() async {
         final response = await WindowsBackendBridge.post(
@@ -17509,7 +17541,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
             result['message'] ?? 'Student Google Sheet delete failed.',
           );
         }
-        if (result['alreadyDeleted'] == true) {
+        if (result['alreadyDeleted'] == true || result['cloudSyncPending'] == true) {
           googleFullyDeleted = true;
           break;
         }
@@ -17522,6 +17554,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       // Same student ke saare legacy aliases (Roll_1 / Roll_01 / etc.)
       // local profile se delete karo. Tracked delete Firebase ke saare alias
       // documents ko bhi next sync me delete karega.
+      if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
       final allStudents = await studentsRef.get();
       var deletedCount = 0;
 
@@ -17546,7 +17579,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text('Student permanently delete ho gaya!'),
+            content: Text('Student removed on this PC. Background school sync queued.'),
           ),
         );
       }
@@ -17854,7 +17887,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
 
                               try {
                                 final scriptUrl =
-                                    await _windowsGoogleScriptUrl();
+                                    await _windowsDirectoryMutationUrl();
 
                                 final studentClass =
                                     data['class']?.toString() ?? '';
@@ -17927,6 +17960,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                                   updateData['photoUrl'] = returnedPhotoUrl;
                                 }
 
+                                if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
                                 await FirebaseFirestore.instance
                                     .collection('students_directory')
                                     .doc(docId)
@@ -17940,8 +17974,8 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                                     backgroundColor: const Color(0xFF00A884),
                                     content: Text(
                                       selectedPhotoBytes == null
-                                          ? 'Student Firestore aur Google Sheet dono me update ho gaya!'
-                                          : 'Student details aur photo successfully update ho gaye!',
+                                          ? 'Student saved on this PC. Background school sync queued.'
+                                          : 'Student details and photo saved on this PC. Background school sync queued.',
                                     ),
                                   ),
                                 );

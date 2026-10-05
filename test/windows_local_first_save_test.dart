@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_school_image_cache.dart';
 import '../lib/windows_connect/school_drive_images.dart';
 import 'dart:typed_data';
@@ -126,6 +127,21 @@ void main() {
     expect(await WindowsSchoolImageCache.read(school,'own-logo'),isNull);
     await expectLater(WindowsSchoolImageCache.store(school,'own-logo','data:image/png;base64,YWJj',profileId:origin),throwsStateError);
     expect((await db.collection('_windows_school_image_cache').get()).docs,isEmpty);
+  });
+
+  test('managed directory mutations work without Drive configuration and retain photos for deferred sync',() async {
+    final response=await WindowsBackendBridge.post(Uri.parse(''),body:jsonEncode({'action':'add_teacher','name':'Own teacher','photoBase64':'YWJj','photoMimeType':'image/png'}));
+    final result=jsonDecode(response.body);
+    expect(response.statusCode,200);expect(result['schoolId'],school);expect(result['cloudSyncPending'],true);
+    expect(result['teacherId'],isNotEmpty);expect(result['photoUrl'],'data:image/png;base64,YWJj');
+    final deletion=jsonDecode((await WindowsBackendBridge.post(Uri.parse(''),body:jsonEncode({'action':'delete_student'}))).body);
+    expect(deletion['cloudSyncPending'],true);expect(deletion['alreadyDeleted'],isNull);
+    await db.switchProfile('directory-school-B',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+    await expectLater(WindowsBackendBridge.post(Uri.parse(''),body:jsonEncode({'action':'add_teacher'})),throwsStateError);
+  });
+  test('local student photo data preserves the actual image MIME before Drive is connected',() {
+    final raw=WindowsSchoolImageCache.dataUrl([137,80,78,71,1,2]);
+    expect(raw,startsWith('data:image/png;base64,'));expect(UriData.parse(raw).contentAsBytes(),[137,80,78,71,1,2]);
   });
 
 }
