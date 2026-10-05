@@ -23158,12 +23158,14 @@ class _ExamMarksEntryScreenState
                       });
 
                       try {
+                        doc.reference.requireOriginProfile();
                         final resultStatus=marks.values.every((m)=>m>=_passMarks)?'PASS':'FAIL';
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
                         final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
                         final reportBytes = await WindowsDocumentTemplates.selected('reportCard', resultData);
                         if (reportBytes == null) throw StateError('Report card could not be generated.');
+                        doc.reference.requireOriginProfile();
                         final savedResult = await _post({
                           'action': 'save_exam_result',
                           'pdfBase64': base64Encode(reportBytes),
@@ -23179,12 +23181,13 @@ class _ExamMarksEntryScreenState
                               FirebaseAuth.instance.currentUser?.email ??
                                   'Admin',
                         });
+                        doc.reference.requireOriginProfile();
                         if (savedResult['reportCardUrl'] != null) resultData['reportCardUrl'] = savedResult['reportCardUrl'];
                         await FirebaseFirestore.instance.collection('exam_results').doc('${_examId}_${doc.id}').set(resultData);
                         savedOffline = savedResult['windowsLocalFallback'] == true;
                         if(isFinal){
                           try{await SchoolPromotionService.apply(studentId:doc.id,student:student,exam:{...widget.exam,'isFinal':true},result:resultStatus);}
-                          catch(e){await FirebaseFirestore.instance.collection('students_directory').doc(doc.id).set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
+                          catch(e){doc.reference.requireOriginProfile();if((await doc.reference.get()).exists) await doc.reference.set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
                         }
                         if (!ctx.mounted) return;
                         Navigator.pop(ctx, true);
