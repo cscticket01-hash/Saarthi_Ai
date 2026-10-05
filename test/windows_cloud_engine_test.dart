@@ -25,7 +25,7 @@ void main(){
     if(lease!=null)'verifiedAccess':lease};
   SchoolCloudEngine engine(Map<String,dynamic> saved,{Future<Map<String,dynamic>> Function()? verify,
     Future<void> Function(Map<String,dynamic>,Map<String,dynamic>)? persist})=>SchoolCloudEngine(
-      readIdentity:()async=>saved,clock:()=>now,activateLocal:()async{},legacyAccess:()async=>null,
+      readIdentity:()async=>saved,clock:()=>now,activateLocal:()async{},legacyAccess:()async=>null,touchClock:(a,b)async{},
       verify:verify??()async=>throw const SocketException('offline'),persist:persist??(a,b)async{});
   test('existing authenticated school restores locally without waiting for cloud',()async{
     final cloud=Completer<Map<String,dynamic>>();final e=engine(identity(access()),verify:()=>cloud.future);
@@ -45,7 +45,8 @@ void main(){
   });
   test('first install and foreign school/UID caches cannot authenticate locally',()async{
     for(final saved in [<String,dynamic>{},identity(null),identity({...access(),'uid':'B'}),
-      identity({...access(),'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'})]){
+      identity({...access(),'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}),
+      {...identity(access()),'lastLocalSeenAt':now.add(const Duration(hours:2)).millisecondsSinceEpoch}]){
       final e=engine(saved);await e.restore();expect(e.canOpen,false);e.dispose();
     }
   });
@@ -72,7 +73,7 @@ void main(){
     final pending=Completer<Map<String,dynamic>>();var writes=0;
     var saved=identity(access());
     final e=SchoolCloudEngine(readIdentity:()async=>saved,verify:()=>pending.future,
-      activateLocal:()async{},legacyAccess:()async=>null,clock:()=>now,persist:(a,b)async{writes++;});
+      activateLocal:()async{},legacyAccess:()async=>null,touchClock:(a,b)async{},clock:()=>now,persist:(a,b)async{writes++;});
     await e.restore();saved={'managed':true,'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','uid':'B','projectId':platformProjectId};
     await e.restore();pending.complete(access());await Future<void>.delayed(Duration.zero);
     expect(e.canOpen,false);expect(e.identity?['uid'],'B');expect(writes,0);e.dispose();

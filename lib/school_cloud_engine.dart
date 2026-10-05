@@ -18,19 +18,22 @@ class SchoolCloudEngine extends ChangeNotifier {
     Future<void> Function(Map<String,dynamic> identity, Map<String,dynamic> access)? persist,
     Future<void> Function()? activateLocal,
     Future<Map<String,dynamic>?> Function()? legacyAccess,
+    Future<void> Function(Map<String,dynamic>,int)? touchClock,
     DateTime Function()? clock})
     : _read = readIdentity ?? CentralSchoolCloud.saved,
       _verify = verify ?? (() => ManagedSchoolSession.call('managed/session')),
       _persist = persist ?? ((identity,access) => CentralSchoolCloud.updateSession(
         identity['schoolId'], {'verifiedAccess':access},expectedUid:identity['uid'])),
       _activate = activateLocal ?? (() => WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false)),
-      _legacy = legacyAccess ?? _legacyCache, _clock = clock ?? DateTime.now;
+      _legacy = legacyAccess ?? _legacyCache, _clock = clock ?? DateTime.now,
+      _touch = touchClock ?? ((identity,time) => CentralSchoolCloud.updateSession(identity['schoolId'], {'lastLocalSeenAt':time},expectedUid:identity['uid']));
   static final instance = SchoolCloudEngine();
   final Future<Map<String,dynamic>> Function() _read, _verify;
   final Future<void> Function(Map<String,dynamic>,Map<String,dynamic>) _persist;
   final Future<void> Function() _activate;
   final Future<Map<String,dynamic>?> Function() _legacy;
   final DateTime Function() _clock;
+  final Future<void> Function(Map<String,dynamic>,int) _touch;
   Map<String,dynamic>? identity, access;
   SchoolCloudState state = SchoolCloudState.authRequired;
   String? error;
@@ -42,7 +45,8 @@ class SchoolCloudEngine extends ChangeNotifier {
     access!['allowed'] == true &&
     (access!['status'] == 'trial' || access!['activated'] == true) &&
     (access!['expiresAt'] as num? ?? 0) > _clock().millisecondsSinceEpoch &&
-    (access!['serverTime'] as num? ?? 0) <= _clock().millisecondsSinceEpoch + 300000;
+    (access!['serverTime'] as num? ?? 0) <= _clock().millisecondsSinceEpoch + 300000 &&
+    (identity!['lastLocalSeenAt'] as num? ?? 0) <= _clock().millisecondsSinceEpoch + 300000;
   static bool sameIdentity(Map<String,dynamic> a,Map<String,dynamic> b) =>
     a['schoolId'] == b['schoolId'] && a['uid'] == b['uid'] &&
     a['projectId'] == b['projectId'] && validSchoolId(a['schoolId']?.toString() ?? '') &&
@@ -73,6 +77,7 @@ class SchoolCloudEngine extends ChangeNotifier {
         final cached=saved['verifiedAccess'] is Map
           ? Map<String,dynamic>.from(saved['verifiedAccess']) : await _legacy();
         if(cached!=null && sameIdentity(cached,saved))access=cached;
+        if(canOpen)await _checkpoint(generation);
         await _activate(); // Selects this tenant's local cache, never refreshes a token.
         if(generation!=_generation||_disposed)return;
         state=canOpen?SchoolCloudState.localReady:SchoolCloudState.authRequired;
@@ -84,6 +89,12 @@ class SchoolCloudEngine extends ChangeNotifier {
       unawaited(verify());
       _retry=Timer.periodic(const Duration(seconds:60),(_){_notify();unawaited(verify());});
     }
+  }
+  Future<void> _checkpoint(int generation) async {
+    final origin=identity, time=_clock().millisecondsSinceEpoch;
+    if(origin==null||generation!=_generation||_disposed)return;
+    await _touch(origin,time);
+    if(generation==_generation&&!_disposed)identity={...origin,'lastLocalSeenAt':time};
   }
   Future<void> verify() async {
     if(_verifying||identity==null||_disposed)return;
@@ -110,7 +121,7 @@ class SchoolCloudEngine extends ChangeNotifier {
         try{await _persist(origin,denied);}catch(_){}
       }else state=SchoolCloudState.offline;
       error='Cloud verification unavailable. Local data and pending sync are retained.';
-    }finally{_verifying=false;if(current())_notify();}
+    }finally{_verifying=false;if(current()){if(canOpen){try{await _checkpoint(generation);}catch(_){}}_notify();}}
   }
   SchoolCloudState get displayState {
     if(state==SchoolCloudState.offline||state==SchoolCloudState.authRequired||state==SchoolCloudState.syncError)return state;

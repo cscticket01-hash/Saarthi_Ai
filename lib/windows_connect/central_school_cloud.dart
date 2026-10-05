@@ -77,7 +77,9 @@ class CentralSchoolCloud {
       final current = raw==null ? <String,dynamic>{} : decodeSaved(raw);
       if (current['schoolId'] != schoolId || expectedUid != null && current['uid'] != expectedUid) throw StateError('School connection changed.');
       if (expectedRefreshToken != null && current['firebaseRefreshToken'] != expectedRefreshToken) throw StateError('School login changed during refresh.');
+      final previousClock=current['lastLocalSeenAt'];
       current.addAll(updates);
+      if(previousClock is num && current['lastLocalSeenAt'] is num && previousClock > current['lastLocalSeenAt'])current['lastLocalSeenAt']=previousClock;
       await const FlutterSecureStorage().write(key:key,value:jsonEncode(current));
     }));
     _pendingSessionWrite = next;
