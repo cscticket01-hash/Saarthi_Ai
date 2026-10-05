@@ -2,12 +2,12 @@ import 'windows_connect/central_school_cloud.dart';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'windows_secure_storage.dart';
 
 class WindowsLocalSecurity {
   WindowsLocalSecurity._();
 
-  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const WindowsSecureStorage _secure = WindowsSecureStorage();
 
   static String _schoolSuffix='';
   static String get _adminIdKey => 'vidya_saarthi_windows_admin_id_v1$_schoolSuffix';

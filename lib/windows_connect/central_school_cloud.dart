@@ -1,5 +1,6 @@
 import '../windows_local_firestore.dart' show Timestamp;
 import 'dart:convert';
+import '../windows_secure_storage.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import '../platform/platform_config.dart';
@@ -71,13 +72,14 @@ class CentralSchoolCloud {
   static final _firebaseTokens = FirebaseTokenCache();
   static void clearFirebaseToken() => _firebaseTokens.clear();
   static Future<void> updateSession(String schoolId, Map<String,dynamic> updates, {String? expectedUid, String? expectedRefreshToken}) {
-    final next = _pendingSessionWrite.catchError((_) {}).then((_) async {
-      final current = await saved();
+    final next = _pendingSessionWrite.catchError((_) {}).then((_) => WindowsSecureStorage.run(() async {
+      final raw=await const FlutterSecureStorage().read(key:key);
+      final current = raw==null ? <String,dynamic>{} : decodeSaved(raw);
       if (current['schoolId'] != schoolId || expectedUid != null && current['uid'] != expectedUid) throw StateError('School connection changed.');
       if (expectedRefreshToken != null && current['firebaseRefreshToken'] != expectedRefreshToken) throw StateError('School login changed during refresh.');
       current.addAll(updates);
       await const FlutterSecureStorage().write(key:key,value:jsonEncode(current));
-    });
+    }));
     _pendingSessionWrite = next;
     return next;
   }
@@ -122,8 +124,11 @@ class CentralSchoolCloud {
   }
   static bool get configured => validEndpoint(apiUrl);
   static Future<Map<String, dynamic>> saved() async {
-    final raw = await const FlutterSecureStorage().read(key: key);
+    final raw = await const WindowsSecureStorage().read(key: key);
     if (raw == null) return {};
+    return decodeSaved(raw);
+  }
+  static Map<String,dynamic> decodeSaved(String raw) {
     final value = jsonDecode(raw);
     if (value is! Map || value['projectId'] != platformProjectId ||
         !validSchoolId(value['schoolId']?.toString() ?? '') || value['firebaseRefreshToken'] is! String ||
@@ -182,7 +187,7 @@ class CentralSchoolCloud {
         (response.statusCode == 401 ? 'Reconnect the same school Google account.' : 'Retry the same school; existing data is retained.');
       final reference = errorBody['requestId'];
       final ref = reference is String && RegExp(r'^[a-f0-9-]{36}$').hasMatch(reference) && uri.toString() == endpoint ? ' Ref: $reference.' : '';
-      throw StateError('$endpointLabel failed (HTTP ${response.statusCode}).$detail $help$ref');
+      throw CentralCloudException(response.statusCode, stage, '$endpointLabel failed (HTTP ${response.statusCode}).$detail $help$ref', invalidRefresh: stage == 'firebase_refresh' && response.statusCode == 400 && {'INVALID_REFRESH_TOKEN','TOKEN_EXPIRED','USER_DISABLED','USER_NOT_FOUND','INVALID_GRANT'}.contains(error is Map ? error['message'] : error));
     }
     if (response.body.isEmpty) return {};
     final value = jsonDecode(response.body);
@@ -239,7 +244,7 @@ class CentralSchoolCloud {
       'googleAccessToken':account.accessToken,
       'googleExpiresAt':DateTime.now().millisecondsSinceEpoch + account.expiresIn * 1000};
     // One encrypted write, only after Firebase rules and school-owned Drive verify.
-    check(); await storage.write(key:key, value:jsonEncode(connection));
+    check(); await WindowsSecureStorage.run(() => storage.write(key:key, value:jsonEncode(connection)));
     return connection;
   }
   Future<String> ensureFolder(String token, String school, String? previous) async {
@@ -361,4 +366,11 @@ class CentralSchoolCloud {
       'fileUrl':{'stringValue':file['fileUrl']},'createdAt':{'timestampValue':at.toIso8601String()}}});
   }
   void close() { cancelled=true; client.close(); }
+}
+
+class CentralCloudException implements Exception {
+  const CentralCloudException(this.status,this.stage,this.message,{this.invalidRefresh=false});
+  final int status; final String stage,message; final bool invalidRefresh;
+  bool get authoritativeAccessDenial => invalidRefresh || stage=='school_cloud' && (status==401||status==403);
+  @override String toString()=>message;
 }

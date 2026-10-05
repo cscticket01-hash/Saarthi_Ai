@@ -2,6 +2,8 @@ import 'windows_pending_school_sync.dart';
 import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'school_cloud_state.dart';
 import 'dart:convert';
 import 'school_backend_transport.dart';
 import 'dart:math';
@@ -63,6 +65,7 @@ class WindowsSyncEngine {
   String _activeFirebaseProject = '';
   String _activeGoogleUrl = '';
 
+  final state = ValueNotifier<SchoolCloudState>(SchoolCloudState.localReady);
   String get activeProfileId => _activeProfileId;
   String get activeSchoolSyncId => _activeSchoolSyncId;
   bool get syncBlocked => _syncBlocked;
@@ -153,6 +156,7 @@ class WindowsSyncEngine {
   }) {
     if (!_initialized || _syncBlocked || _resetPaused) return;
 
+    state.value = SchoolCloudState.syncPending;
     _debounceTimer?.cancel();
     _debounceTimer = Timer(
       delay,
@@ -326,7 +330,6 @@ class WindowsSyncEngine {
   }) async {
     final central = await CentralSchoolCloud.saved();
     if (central.isNotEmpty) {
-      await CentralSchoolCloud.firebaseToken();
       return _ResolvedSyncProfile(profileId:'central_${central['schoolId']}',
         schoolSyncId:central['schoolId'], firebaseProjectId:central['projectId'],
         googleUrl:await WindowsExternalConnections.googleScriptUrl(), googleEmail:central['email'],
@@ -777,6 +780,8 @@ class WindowsSyncEngine {
     if (_syncing || _activating > 0 || _syncBlocked || _resetPaused) return;
 
     _syncing = true;
+    state.value = SchoolCloudState.syncing;
+    final syncOrigin = _activeProfileId;
     lastError = null;
 
     try {
@@ -825,8 +830,10 @@ class WindowsSyncEngine {
       }
 
       lastSuccessfulSync = DateTime.now();
+      if (_activeProfileId == syncOrigin) state.value = SchoolCloudState.synced;
     } catch (e) {
       lastError = e.toString();
+      if (_activeProfileId == syncOrigin) state.value = SchoolCloudState.syncError;
     } finally {
       _syncing = false;
     }

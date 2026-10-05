@@ -18,8 +18,7 @@ void main(){
   await tester.pumpWidget(const MaterialApp(home:WindowsLocalDashboardGate()));
   await tester.pump();
   expect(find.text('Admin Section Password'),findsNothing);
-  expect(find.text('Open Admin Panel'),findsOneWidget);
-  await tester.tap(find.text('Open Admin Panel'));
+  expect(find.text('Open Admin Panel'),findsNothing);expect(find.byType(WindowsAdminSessionDashboard,skipOffstage:false),findsOneWidget);
   await tester.pump();await tester.pump(const Duration(milliseconds:350));
   expect(find.text('Admin Section Password'),findsNothing);
   expect(find.byType(WindowsAdminSessionDashboard,skipOffstage:false),findsOneWidget);
@@ -61,7 +60,7 @@ void main(){
   await tester.pumpWidget(MaterialApp(home:WindowsStartupFlow(
     initializeConnections:()async{},checkSetup:()async=>true)));
   await tester.pump();await tester.pump();await tester.pump();
-  expect(find.text('Open Admin Panel'),findsOneWidget);expect(find.text('Save & Open App'),findsNothing);
+  expect(find.text('Open Admin Panel'),findsNothing);expect(find.byType(WindowsAdminSessionDashboard,skipOffstage:false),findsOneWidget);expect(find.text('Save & Open App'),findsNothing);
   await tester.pumpWidget(const SizedBox());
  });
 

@@ -38,7 +38,7 @@ import 'package:pdf/pdf.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_auth.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'windows_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -312,7 +312,7 @@ class WindowsAdminAccessGate extends StatelessWidget {
 class WindowsSectionLocks {
   WindowsSectionLocks._();
 
-  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const WindowsSecureStorage _secure = WindowsSecureStorage();
 
   static Future<String> _passwordKey(String sectionKey) async {
     final saved=await CentralSchoolCloud.saved();
@@ -421,7 +421,7 @@ const String _windowsAcademicYearRolloverMonthKey =
 class WindowsAcademicYearSettings {
   WindowsAcademicYearSettings._();
 
-  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const WindowsSecureStorage _secure = WindowsSecureStorage();
 
   static int _normalizeMonth(int month) => month == 4 ? 4 : 1;
 
@@ -471,7 +471,7 @@ const String _windowsLicenseSavedAtStorageKey =
 class WindowsLicenseStore {
   WindowsLicenseStore._();
 
-  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const WindowsSecureStorage _secure = WindowsSecureStorage();
 
   static Future<Map<String, String>> load() async {
     try {

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'windows_secure_storage.dart';
 
 import 'windows_local_settings.dart';
 import 'windows_local_firestore.dart';
@@ -52,8 +52,8 @@ class WindowsFirebaseRemote {
     await callback();
   }
 
-  static const FlutterSecureStorage _secure =
-      FlutterSecureStorage();
+  static const WindowsSecureStorage _secure =
+      WindowsSecureStorage();
 
   static const String _emailKey =
       'vidya_saarthi_firebase_email_v1';
