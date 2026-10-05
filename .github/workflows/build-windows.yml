@@ -1,3 +1,4 @@
+# Legacy-school recovery backend is live at 6bc597aa; publish the verified Windows client.
 # Existing-school recovery and token reuse are verified before this installer release.
 # Website Windows downloads automatically select the latest published Windows release.
 name: Build Vidya Saarthi Windows Admin
@@ -359,3 +360,4 @@ jobs:
             school-backend/managed/SaarthiManagedAll.gs
             school-backend/managed/appsscript.json
             docs/manual-school-drive-setup.md
+
