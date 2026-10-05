@@ -22,7 +22,7 @@ void main(){
   await tester.tap(find.text('Open Admin Panel'));
   await tester.pump();await tester.pump(const Duration(milliseconds:350));
   expect(find.text('Admin Section Password'),findsNothing);
-  expect(find.text('Open Admin Panel'),findsNothing);
+  expect(find.byType(WindowsAdminSessionDashboard,skipOffstage:false),findsOneWidget);
   await tester.pumpWidget(const SizedBox());
  });
  testWidgets('fresh Windows startup requires central school login and exposes no licence skip',(tester)async{

@@ -433,8 +433,7 @@ class WindowsLocalDashboardGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The device is enrolled centrally; only the independent Admin lock
-    // protects entry into school administration.
+    // Central enrollment and the independent App Lock guard normal access.
     return Scaffold(
       appBar: AppBar(title: const Text('Vidya Saarthi')),
       body: Center(child: FilledButton.icon(
@@ -448,7 +447,7 @@ class WindowsLocalDashboardGate extends StatelessWidget {
   }
 }
 
-/// Start the idle timer only after the independent Admin gate admits entry.
+/// Start the administration session timer after entering the dashboard.
 class WindowsAdminSessionDashboard extends StatefulWidget {
   const WindowsAdminSessionDashboard({super.key});
   @override

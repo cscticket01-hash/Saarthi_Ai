@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/widgets.dart' as pw;
 import 'windows_browser_print.dart';
 import 'windows_save_pdf.dart';
@@ -127,6 +128,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   bool _loading = true, _local = true;
   String _search = '', _role = 'All staff';
   String? _error;
+  String _schoolName='';
   final Set<String> _selected = {};
   bool _working = false;
   int _loadGeneration = 0;
@@ -138,9 +140,11 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     try {
       final people = await StaffPayroll.staff(_profile);
       final salary = await FirebaseFirestore.instance.collection('teacher_salary').get();
+      final branding=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data();
       final local = await WindowsRuntimeFlags.localStorageEnabled();
       StaffPayroll._sameSchool(_profile);
       if (mounted && generation == _loadGeneration) setState(() {
+        _schoolName=branding?['schoolName']?.toString()??'';
         _staff = people; _rows = salary.docs.map((d) => {...d.data(), 'id': d.id}).toList(); _local = local;
       });
     } catch (e) { if (mounted && generation == _loadGeneration) setState(() => _error = '$e'); }
@@ -247,11 +251,13 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             StaffPayroll.format(StaffPayroll.total(r)-StaffPayroll.paid(r)),r['status']].map(cell).join(',')].join('\r\n');
         await WindowsSavePdf.save(Uint8List.fromList(utf8.encode(content)), 'staff-salary-${StaffPayroll.monthKey(_month)}.csv', csv:true);
       } else {
-        final doc = pw.Document();
+        final regular=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
+        final bold=pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
+        final doc = pw.Document(theme:pw.ThemeData.withFont(base:regular,bold:bold));
         for (final r in rows) {
           doc.addPage(pw.Page(build: (_) => pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start, children:[
             pw.Text('VIDYA SAARTHI - PAYSLIP',style:pw.TextStyle(fontSize:22,fontWeight:pw.FontWeight.bold)),
-            pw.SizedBox(height:20),pw.Text('${r['name']} | ${r['staffId']}'),
+            pw.SizedBox(height:20),if(_schoolName.isNotEmpty)pw.Text(_schoolName),pw.Text('${r['name']} | ${r['staffId']}'),
             pw.Text('${r['role']} | ${r['month']}'),pw.SizedBox(height:20),
             for (final key in {'Basic pay':'basicPaise','Allowances':'allowancePaise','Bonus':'bonusPaise','Overtime':'overtimePaise','Deductions':'deductionPaise'}.entries)
               pw.Padding(padding:const pw.EdgeInsets.only(bottom:10),child:pw.Text('${key.key}: Rs ${StaffPayroll.format((r[key.value] as num?)?.toInt() ?? 0)}')),
@@ -286,7 +292,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final deductions=rows.fold<int>(0,(v,r)=>v+((r['deductionPaise'] as num?)?.toInt() ?? 0));
     final paidCount=rows.where((r)=>StaffPayroll.paid(r)>=StaffPayroll.total(r)).length;
     final people=_staff.where((s)=>(_role=='All staff'||s['role']==_role)&&'${s['name']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
-    final dark=Theme.of(context).copyWith(brightness:Brightness.dark,scaffoldBackgroundColor:const Color(0xff061826),
+    final dark=ThemeData.dark(useMaterial3:true).copyWith(scaffoldBackgroundColor:const Color(0xff061826),
       colorScheme:const ColorScheme.dark(primary:Color(0xff7260ff),surface:Color(0xff102338)),
       dividerColor:const Color(0xff284157),cardColor:const Color(0xff102338));
     return Theme(data:dark,child:Scaffold(appBar:AppBar(backgroundColor:const Color(0xff0c233e),
@@ -329,7 +335,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if(people.isEmpty) const Padding(padding:EdgeInsets.all(30),child:Text('No staff found. Add a teacher in Teachers, or add a staff member here.')),
           Row(crossAxisAlignment:CrossAxisAlignment.start,children:[Expanded(child:Card(child:SingleChildScrollView(scrollDirection:Axis.horizontal,child:DataTable(
             headingRowColor:WidgetStateProperty.all(const Color(0xff172c42)),columnSpacing:22,dataRowMinHeight:64,dataRowMaxHeight:76,
-            columns:[for(final label in ['Name / Employee ID','Role / Department','Basic Pay','Allowances','Deductions','Net Salary','Status','Action'])DataColumn(label:Text(label))],
+            columns:[for(final label in ['Name / Employee ID','Role / Department','Attendance','Basic Pay','Allowances','Deductions','Net Salary','Status','Action'])DataColumn(label:Text(label))],
             rows:[for(final person in people)_tableRow(person,rows)],
           )))),if(constraints.maxWidth>=1350)...[const SizedBox(width:14),SizedBox(width:270,child:_monthSummary(net,paid,deductions,paidCount,rows.length))]]),
           if(constraints.maxWidth<1350)_monthSummary(net,paid,deductions,paidCount,rows.length),
@@ -358,6 +364,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     return DataRow(selected:_selected.contains(person['id']),onSelectChanged:(value)=>setState((){if(value==true)_selected.add(person['id'].toString());else _selected.remove(person['id']);}),cells:[
       DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:const TextStyle(fontWeight:FontWeight.bold)),Text((person['teacherId']??person['id']).toString(),style:const TextStyle(fontSize:11,color:Colors.white54))])),
       DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['role'].toString()),Text(person['designation']?.toString()??'',style:const TextStyle(fontSize:11,color:Colors.white54))])),
+      DataCell(Tooltip(message:'Attendance does not change salary automatically. Configure deductions in the salary editor.',child:Text(row?['attendanceSummary']?.toString()??'—'))),
       DataCell(Text(amount('basicPaise'))),DataCell(Text(amount('allowancePaise'))),DataCell(Text(amount('deductionPaise'))),DataCell(Text(row==null?'—':'₹${StaffPayroll.format(StaffPayroll.total(row))}')),
       DataCell(Chip(label:Text(status),backgroundColor:color.withValues(alpha:.2))),
       DataCell(Row(children:[TextButton(onPressed:()=>_salary(person,row),child:Text(row==null?'Set salary':'Edit salary')),

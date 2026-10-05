@@ -77,6 +77,10 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/windows-operations-tests
       run: flutter test test/windows_operations_test.dart
+    - uses: actions/upload-artifact@v4
+      with:
+        name: staff-salary-layout-preview
+        path: build/payroll-preview
     - name: Verify Windows startup and skip regression
       env:
         APPDATA: ${{ runner.temp }}/windows-startup-tests
@@ -212,7 +216,7 @@ jobs:
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
         SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
-      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.91 --build-number=91 --dart-define=APP_VERSION=2.1.91-review --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.97 --build-number=97 --dart-define=APP_VERSION=2.1.97-review --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
     - uses: actions/upload-artifact@v4
       with:
         name: windows-review-build
@@ -280,7 +284,9 @@ jobs:
     - name: Verify shared Windows QR and Android login compatibility
       run: flutter test test/school_qr_login_test.dart test/mobile_boundary_test.dart
     - name: Build unsigned Android preview
-      run: flutter build apk --debug -t lib/main_android.dart --dart-define=APP_VERSION=review --dart-define=APP_BUILD=0
+      env:
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+      run: flutter build apk --debug -t lib/main_android.dart --build-name=1.0.481 --build-number=481 --dart-define=APP_VERSION=1.0.481-review --dart-define=APP_BUILD=481 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
     - uses: actions/upload-artifact@v4
       with:
         name: android-review-apk

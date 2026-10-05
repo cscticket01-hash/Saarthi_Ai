@@ -1,3 +1,7 @@
+import 'dart:io';
+import 'dart:ui' as rendering;
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -139,12 +143,16 @@ void main() {
     expect(() => SchoolPromotionService.nextClassNumber(13),throwsArgumentError);
   });
   testWidgets('payroll displays teacher salary, totals and actionable payments', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1200,1000));
+    await tester.binding.setSurfaceSize(const Size(1600,900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    final previewKey=GlobalKey();
     await tester.runAsync(() async {
+      final fonts=FontLoader('Roboto')..addFont(rootBundle.load('assets/id_card_regular.ttf'));
+      await fonts.load();
+      await WindowsRuntimeFlags.setLocalStorageEnabled(true);
       final person = await teacher();
       await StaffPayroll.save(db.activeProfileId,person,'${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2,'0')}',basic:1000000);
-      await tester.pumpWidget(const MaterialApp(home:StaffSalaryScreen()));
+      await tester.pumpWidget(MaterialApp(home:RepaintBoundary(key:previewKey,child:const StaffSalaryScreen())));
       await Future<void>.delayed(const Duration(milliseconds:200));
     });
     for (var i=0;i<20;i++) {
@@ -156,6 +164,18 @@ void main() {
     expect(find.text('School Teacher'),findsOneWidget);
     expect(find.text('Record payment'),findsOneWidget);
     expect(find.text('Net payroll'),findsOneWidget);
+    expect(find.text('Generate Payslips'),findsOneWidget);
+    expect(find.text('Export CSV'),findsOneWidget);
+    expect(find.text('Total Deductions'),findsOneWidget);
+    expect(find.byType(DataTable),findsOneWidget);
     expect(tester.takeException(),isNull);
+    await tester.runAsync(() async {
+      final image=await (previewKey.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage(pixelRatio:1);
+      final bytes=await image.toByteData(format:rendering.ImageByteFormat.png);
+      final output=File('build/payroll-preview/staff-salary.png');
+      await output.parent.create(recursive:true);
+      await output.writeAsBytes(bytes!.buffer.asUint8List());
+      image.dispose();
+    });
   });
 }

@@ -288,20 +288,12 @@ const List<_WindowsSectionLockDefinition> _windowsSectionLockDefinitions = [
   ),
 ];
 
-class WindowsAdminAccessGate extends StatefulWidget {
+/// Central school authentication and the separate App Lock guard the app.
+/// Existing legacy Admin-section preferences no longer add another password.
+class WindowsAdminAccessGate extends StatelessWidget {
   const WindowsAdminAccessGate({super.key,required this.child});
   final Widget child;
-  @override State<WindowsAdminAccessGate> createState()=>_WindowsAdminAccessGateState();
-}
-class _WindowsAdminAccessGateState extends State<WindowsAdminAccessGate> {
-  bool unlocked=false,busy=false;
-  @override void initState(){super.initState();WidgetsBinding.instance.addPostFrameCallback((_)=>unlock());}
-  Future<void> unlock() async {
-    if(busy)return;busy=true;
-    try {final allowed=await _requireWindowsSectionPassword(context,_windowsAdminSectionLock,'Admin Section');if(mounted)setState(()=>unlocked=allowed);}
-    finally {busy=false;}
-  }
-  @override Widget build(BuildContext context)=>unlocked?widget.child:Scaffold(body:Center(child:FilledButton(onPressed:unlock,child:const Text('Unlock Admin Section'))));
+  @override Widget build(BuildContext context)=>child;
 }
 
 class WindowsSectionLocks {
