@@ -93,12 +93,14 @@ class WindowsAdminSetup {
           await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
             FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache')
               .set(restored, SetOptions(merge:true)));
+          await verifyIdentity();
           data = restored;
           _data = restored;
         }
       } catch (_) {
         // A known local registration remains usable offline. A fresh PC must
         // retry restoration instead of being mistaken for a new school.
+        await verifyIdentity();
         if (!WindowsSchoolProfileRestore.complete(data)) rethrow;
       }
     }
