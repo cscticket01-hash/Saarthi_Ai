@@ -9,20 +9,51 @@ class ManagedSchoolSession {
   static final changed=ValueNotifier<int>(0);
   static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) async {
     final saved=await CentralSchoolCloud.saved();if(saved['managed']!=true)throw StateError('Managed school login required');
-    final cloud=CentralSchoolCloud(endpoint:saved['endpoint']);
-    try{return await cloud.api({'action':action,...body,'schoolId':saved['schoolId']},token:await CentralSchoolCloud.firebaseToken());}finally{cloud.close();}
+    final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId']);
+    try {
+      final result = await cloud.api({'action':action,...body,'schoolId':saved['schoolId']},token:await CentralSchoolCloud.firebaseToken());
+      final currentIdentity = await CentralSchoolCloud.saved();
+      if (currentIdentity['schoolId'] != saved['schoolId'] || currentIdentity['uid'] != saved['uid']) {
+        throw StateError('School changed during operation. Retry login.');
+      }
+      if (action == 'managed/session') {
+        await CentralSchoolCloud.updateSession(saved['schoolId'],
+          managedSessionConfiguration(result, saved['schoolId'], saved['uid']),
+          expectedUid: saved['uid']);
+      }
+      if (action == 'managed/storage/check' || action == 'managed/storage/connect') {
+        final current = await CentralSchoolCloud.saved();
+        if (current['schoolId'] != saved['schoolId'] || current['uid'] != saved['uid']) {
+          throw StateError('School changed during storage verification. Retry the current school.');
+        }
+        verifyStorageResponse(result, saved['schoolId'].toString(),
+            scriptUrl: action == 'managed/storage/connect' ? body['scriptUrl']?.toString() : null);
+      }
+      return result;
+    } finally {cloud.close();}
   }
-  static Future<Map<String,dynamic>> login(String email,String password) async {
-    if(!CentralSchoolCloud.configured)throw StateError('Central school server is not configured');
-    final cloud=CentralSchoolCloud();
+  /// A successful HTTP response alone does not mean this school's storage is ready.
+  static void verifyStorageResponse(Map<String,dynamic> result, String schoolId, {String? scriptUrl}) {
+    if (result['success'] != true || result['storageReady'] != true || result['schoolId'] != schoolId) {
+      throw StateError('The selected school storage is not ready or belongs to another school.');
+    }
+    if (scriptUrl != null && result['scriptUrl'] != scriptUrl.trim()) {
+      throw StateError('Storage verification returned a different deployment URL.');
+    }
+  }
+  static Future<Map<String,dynamic>> login(String email,String password,
+      {http.Client? client, String endpoint = CentralSchoolCloud.apiUrl}) async {
+    if(!CentralSchoolCloud.validEndpoint(endpoint))throw StateError('Central school server is not configured');
+    final cloud=CentralSchoolCloud(client:client,endpoint:endpoint);
     try {
       final auth=await cloud.send('POST',Uri.https('identitytoolkit.googleapis.com','/v1/accounts:signInWithPassword',{'key':platformApiKey}),body:{'email':email.trim(),'password':password,'returnSecureToken':true});
       if(auth['idToken'] is! String||auth['refreshToken'] is! String||auth['localId'] is! String)throw StateError('School login failed');
       final session=await cloud.api({'action':'managed/session'},token:auth['idToken']);
       if(session['uid']!=auth['localId']||!validSchoolId(session['schoolId']?.toString()??''))throw StateError('School account mapping is invalid');
+      final configuration = managedSessionConfiguration(session, session['schoolId'], auth['localId']);
       final old=await CentralSchoolCloud.saved();
       if(old.isNotEmpty&&old['managed']!=true)await const FlutterSecureStorage().write(key:'vidya_saarthi_legacy_cloud_preserved',value:jsonEncode(old));
-      await const FlutterSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':CentralSchoolCloud.apiUrl,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed','scriptUrl':session['scriptUrl']??''}));
+      await const FlutterSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration}));
       await const FlutterSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
       changed.value++;return session;
     }finally{cloud.close();}

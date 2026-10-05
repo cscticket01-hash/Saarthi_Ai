@@ -165,3 +165,49 @@ test('new GS storage creates one marked root only after explicit operator consen
  const consent=vm.createContext(environment());vm.runInContext(source.replace('const VS_SETUP_CREATE_NEW_STORAGE = false;','const VS_SETUP_CREATE_NEW_STORAGE = true;'),consent);const result=consent.VS_prepareSchoolStorage();assert.equal(result.schoolId,A);assert.equal(result.connectionSecret,undefined);assert.equal(description,'VIDYA_MANAGED_SCHOOL:'+A);assert.equal(created,1);
  consent.VS_prepareSchoolStorage();assert.equal(created,1);assert.equal(props.get('VS_MANAGED_ROOT_ID'),'new-root');
 });
+
+test('new school is explicitly unregistered; reinstall restores lightweight enrollment without Drive',async()=>{
+ const f=fixture();f.docs.delete('school_storage_private/'+A);f.docs.get('platform_schools/'+A).registrationState='new';
+ const entitlement={...f.docs.get('school_entitlements/'+A)};
+ assert.equal((await f.call({action:'managed/profile',operation:'read'})).registrationState,'new');
+ const saved=await f.call({action:'managed/profile',operation:'initialize',schoolName:'School A',principalName:'Principal A',password:'must-not-be-stored',logoUrl:'data:image/png;base64,abc'});
+ assert.equal(saved.storageReady,false);assert.equal(saved.registrationState,'complete');
+ const fresh=await f.call({action:'managed/profile',operation:'read'},'A-new-pc');assert.deepEqual(fresh.profile,saved.profile);
+ assert.deepEqual(f.docs.get('school_entitlements/'+A),entitlement);assert.equal(f.sent.length,0);
+ const data=f.docs.get('school_registration_profiles/'+A);assert.deepEqual(Object.keys(data).sort(),['completedAt','principalName','schoolId','schoolName']);
+});
+test('registration initialization is create-only and cannot reset an existing school',async()=>{
+ const f=fixture();await f.call({action:'managed/profile',operation:'initialize',schoolName:'Original',principalName:'Original principal'});
+ const before={...f.docs.get('school_registration_profiles/'+A)};
+ const r=await f.call({action:'managed/profile',operation:'initialize',schoolName:'Replacement',principalName:'Replacement principal'},'A-new-pc');
+ assert.equal(r.profile.schoolName,'Original');assert.deepEqual(f.docs.get('school_registration_profiles/'+A),before);
+});
+test('legacy unknown enrollment is never silently classified as a new school',async()=>{
+ const f=fixture();for(const storage of [true,false]){
+ if(!storage)f.docs.delete('school_storage_private/'+A);
+ const result=await f.call({action:'managed/profile',operation:'read'},'A-new-pc');assert.equal(result.registrationState,'unknown');assert.equal(result.profile,null);
+ }
+});
+test('registration read/write rejects foreign mapping, blocked school, expired trial, unactivated or revoked licence and invalid login',async()=>{
+ for(const mode of ['foreign','blocked','expired','unactivated','revoked','wrong-login'])for(const operation of ['read','initialize']){
+ const f=fixture();let token='A';const body={action:'managed/profile',operation,schoolName:'School A',principalName:'Principal A'};
+ const e=f.docs.get('school_entitlements/'+A);
+ if(mode==='foreign')body.schoolId=B;if(mode==='blocked')e.blocked=true;if(mode==='expired')e.expiresAt=time;
+ if(['unactivated','revoked'].includes(mode)){e.status='licensed';e.activated=mode==='revoked';e.licenseHash='missing';}
+ if(mode==='wrong-login')token='bad-password-token';
+ await assert.rejects(f.call(body,token));assert(!f.docs.has('school_registration_profiles/'+A));assert(!f.docs.has('school_registration_profiles/'+B));assert.equal(f.sent.length,0);
+ }
+});
+test('active paid licence restores registration without reactivation and tenant B sees only B',async()=>{
+ const f=fixture();const issued=await f.call({action:'developer/managed/licence',schoolId:A,days:30,paid:true},'developer');await f.call({action:'managed/licence/activate',key:issued.key});
+ await f.call({action:'managed/profile',operation:'initialize',schoolName:'School A',principalName:'Principal A'});
+ const before={...f.docs.get('school_entitlements/'+A)};
+ assert.equal((await f.call({action:'managed/profile',operation:'read'},'A-new-pc')).profile.schoolId,A);
+ assert.equal((await f.call({action:'managed/profile',operation:'read'},'B')).profile,null);
+ assert.deepEqual(f.docs.get('school_entitlements/'+A),before);
+});
+test('a concurrent block cannot be overwritten by registration initialization',async()=>{
+ const f=fixture(),transaction=f.db.runTransaction;f.db.runTransaction=async fn=>{f.docs.get('school_entitlements/'+A).blocked=true;return transaction(fn);};
+ await assert.rejects(f.call({action:'managed/profile',operation:'initialize',schoolName:'School A',principalName:'Principal A'}),e=>e.status===403);
+ assert(!f.docs.has('school_registration_profiles/'+A));
+});

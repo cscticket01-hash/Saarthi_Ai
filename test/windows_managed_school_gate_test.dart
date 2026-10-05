@@ -31,6 +31,54 @@ void main(){
     expect(await const FlutterSecureStorage().read(key:CentralSchoolCloud.key),encoded);
     await expectLater(ManagedSchoolSession.reauthenticate('other@school.example','transient-password'),throwsStateError);
   });
+  test('managed session configuration is authoritative, tenant-bound and refreshes stale script URLs', () {
+    const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final response = {'success': true, 'schoolId': school, 'uid': 'A',
+      'projectId': platformProjectId, 'storageReady': true,
+      'scriptUrl': 'https://script.google.com/macros/s/SchoolADeployment/exec'};
+    expect(managedSessionConfiguration(response, school, 'A')['scriptUrl'], response['scriptUrl']);
+    expect(managedSessionConfiguration({...response, 'storageReady': false}, school, 'A')['scriptUrl'], '');
+    for (final change in [ {'schoolId': 'other'}, {'uid': 'B'},
+      {'projectId': 'foreign'}, {'scriptUrl': 'https://foreign.example/exec'} ]) {
+      expect(() => managedSessionConfiguration({...response, ...change}, school, 'A'), throwsStateError);
+    }
+  });
+  test('fresh managed login saves exact server school/configuration, never plaintext password', () async {
+    const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    FlutterSecureStorage.setMockInitialValues({});
+    final client = MockClient((request) async {
+      final body = jsonDecode(request.body);
+      if (request.url.host == 'identitytoolkit.googleapis.com') {
+        expect(body['email'], 'a@school.example');
+        return http.Response(jsonEncode({'localId': 'A', 'idToken': 'A-token', 'refreshToken': 'A-refresh'}), 200);
+      }
+      expect(body.containsKey('schoolId'), false); expect(body.containsKey('password'), false);
+      return http.Response(jsonEncode({'success': true, 'schoolId': school, 'uid': 'A',
+        'projectId': platformProjectId, 'storageReady': true, 'scriptUrl': 'https://script.google.com/macros/s/SchoolADeployment/exec',
+        'allowed': true, 'activated': true, 'status': 'licensed'}), 200);
+    });
+    final session = await ManagedSchoolSession.login(' a@school.example ', 'transient-password',
+      client: client, endpoint: 'https://school.example/school-cloud');
+    final saved = await CentralSchoolCloud.saved();
+    expect(saved['schoolId'], school); expect(saved['uid'], 'A');
+    expect(saved['scriptUrl'], session['scriptUrl']); expect(saved.containsKey('password'), false);
+    expect(await const FlutterSecureStorage().read(key: CentralSchoolCloud.key), isNot(contains('transient-password')));
+  });
+  test('wrong credentials or foreign server identity never save a new session', () async {
+    for (final mode in ['wrong-password', 'foreign-uid']) {
+      FlutterSecureStorage.setMockInitialValues({});
+      final client = MockClient((request) async {
+        if (request.url.host == 'identitytoolkit.googleapis.com') {
+          if (mode == 'wrong-password') return http.Response(jsonEncode({'error': {'message': 'INVALID_LOGIN_CREDENTIALS'}}), 400);
+          return http.Response(jsonEncode({'localId': 'A', 'idToken': 'A-token', 'refreshToken': 'A-refresh'}), 200);
+        }
+        return http.Response(jsonEncode({'success': true, 'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'uid': 'B'}), 200);
+      });
+      await expectLater(ManagedSchoolSession.login('a@school.example', 'wrong',
+        client: client, endpoint: 'https://school.example/school-cloud'), throwsStateError);
+      expect(await const FlutterSecureStorage().read(key: CentralSchoolCloud.key), isNull);
+    }
+  });
   test('ordinary logout retains managed enrollment and school-scoped App Lock', () async {
     final saved = jsonEncode({'managed': true, 'projectId': platformProjectId, 'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'uid': 'school-uid', 'email': 'a@school.example', 'folderId': 'managed', 'firebaseRefreshToken': 'refresh', 'endpoint': 'https://school.example/school-cloud'});
     FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key: saved});

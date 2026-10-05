@@ -1,4 +1,4 @@
-# Approved Windows release: source 5f3789c passed all five jobs in run 37228712896.
+# Approved existing-school restore release: source bb688e7 passed all five jobs in run 37263841161.
 name: Build Vidya Saarthi Windows Admin
 
 on:
@@ -184,7 +184,7 @@ jobs:
         run: |
           flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true
           if ($LASTEXITCODE -ne 0) { throw 'Release cloud configuration verification failed.' }
-          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
+          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed.' }
 
       - name: Verify reference PDF contents and continuation pages
@@ -254,6 +254,7 @@ jobs:
             --build-name=${{ steps.app_version.outputs.version }} `
             -t lib/main_windows.dart `
             --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
+            --dart-define=SAARTHI_MANAGED_ACCOUNTS=true `
             --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID `
             --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true `
             --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL `
@@ -345,6 +346,7 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
+            Existing-school reinstall/new-PC login restores saved enrollment instead of repeating registration. Preserves activated licences, trials and school-bound storage; unknown or unsynced records show recovery guidance.
             Normal Windows logout retains school enrollment and opens the enabled App Lock. The independent Admin lock is checked only at Admin entry. Server school login, licence/block checks and School A/B isolation remain enforced.
             Student ID preview fits the full card to the resized window without changing designs. PDF download uses native Save As, reports the saved path only after writing and handles cancellation without false success.
             Includes the combined per-school GS code, manifest and manual deployment guide. Existing School IDs, Drive roots, secrets, records and offline storage are preserved. The school owner must update/authorize the actual GS deployment; this release does not update a school's live script automatically. Real Drive backup/restore and native PC acceptance remain pending.

@@ -1,3 +1,4 @@
+import 'windows_school_profile_restore.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'dart:convert';
@@ -11,15 +12,14 @@ import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_session.dart';
 
-/// Local-first initial school/admin setup shown after the licence screen is
-/// skipped on a fresh install. It never touches Firebase, Google Drive or any
-/// network service: everything is written to this PC only.
+/// School-scoped registration cache. Managed enrollment is verified centrally;
+/// branding and operational data remain local or in the school's own Drive.
 class WindowsAdminSetup {
   WindowsAdminSetup._();
 
   static const fileVersion = 'admin_setup_v1';
 
-  static File get _file {
+  static File _fileForSchool(String schoolId) {
     final base = Platform.environment['APPDATA'] ??
         Platform.environment['LOCALAPPDATA'];
     if (base == null) {
@@ -27,11 +27,10 @@ class WindowsAdminSetup {
     }
     return File(
       '$base${Platform.pathSeparator}VidyaSaarthi${Platform.pathSeparator}'
-      '$fileVersion${_managedSchool.isEmpty?'':'_$_managedSchool'}.json',
+      '$fileVersion${schoolId.isEmpty?'':'_$schoolId'}.json',
     );
   }
 
-  static String _managedSchool='';
   static Map<String, dynamic> _data = const {};
   static bool? _cachedCompleted;
 
@@ -40,14 +39,27 @@ class WindowsAdminSetup {
   static bool? completedOverride;
 
   static Future<Map<String, dynamic>> read() async {
-    final saved=await CentralSchoolCloud.saved();_managedSchool=saved['managed']==true?saved['schoolId']:'';
+    final saved = await CentralSchoolCloud.saved();
+    final managed = saved['managed'] == true;
+    final school = managed ? saved['schoolId'].toString() : '';
+    final target = _fileForSchool(school);
+    Map<String, dynamic> data;
     try {
-      final text = await _file.readAsString();
-      _data = Map<String, dynamic>.from(jsonDecode(text));
+      data = Map<String, dynamic>.from(jsonDecode(await target.readAsString()));
     } catch (_) {
-      _data = const {};
+      data = {};
     }
-    return _data;
+    if (managed) {
+      final current = await CentralSchoolCloud.saved();
+      if (current['schoolId'] != school || current['uid'] != saved['uid']) {
+        throw StateError('School changed while reading registration. Retry login.');
+      }
+      // Older local files omitted schoolId. Bind their provenance to the exact
+      // tenant filename, without relabelling a foreign declared identity.
+      if (data.isNotEmpty) data.putIfAbsent('schoolId', () => school);
+    }
+    _data = data;
+    return data;
   }
 
   /// True when an admin/school setup already exists — either saved by this
@@ -57,7 +69,52 @@ class WindowsAdminSetup {
   static Future<bool> completed() async {
     if (completedOverride != null) return completedOverride!;
     if (_cachedCompleted == true && WindowsLocalSecurity.configured && (await CentralSchoolCloud.saved())['managed']!=true) return true;
-    final data = await read();
+    var data = await read();
+    final identity = await CentralSchoolCloud.saved();
+    if (identity['managed'] == true) {
+      final school = identity['schoolId'].toString();
+      final uid = identity['uid'];
+      final profileId = FirebaseFirestore.instance.activeProfileId;
+      final target = _fileForSchool(school);
+      Future<void> verifyIdentity() async {
+        final current = await CentralSchoolCloud.saved();
+        if (current['schoolId'] != school || current['uid'] != uid ||
+            FirebaseFirestore.instance.activeProfileId != profileId ||
+            FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) {
+          throw StateError('School changed during profile restore. Retry login.');
+        }
+      }
+      try {
+        await verifyIdentity();
+        final restored = await WindowsSchoolProfileRestore.resolveEnrollment(
+          schoolId: school, localProfile: data,
+          call: (action, body) async {
+            await verifyIdentity();
+            final result = await ManagedSchoolSession.call(action, body);
+            await verifyIdentity();
+            return result;
+          });
+        await verifyIdentity();
+        if (WindowsSchoolProfileRestore.complete(restored)) {
+          await target.parent.create(recursive:true);
+          final tmp = File('${target.path}.tmp');
+          await tmp.writeAsString(jsonEncode(restored),flush:true);
+          await tmp.rename(target.path);
+          await verifyIdentity();
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+            FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache')
+              .set(restored, SetOptions(merge:true)));
+          await verifyIdentity();
+          data = restored;
+          _data = restored;
+        }
+      } catch (_) {
+        // Verification/restore failures must not become a registration screen,
+        // including on a PC with a previously completed local registration.
+        await verifyIdentity();
+        rethrow;
+      }
+    }
     final basic = (data['schoolName']?.toString().isNotEmpty ?? false) &&
         (data['principalName']?.toString().isNotEmpty ?? false);
     if (basic && (WindowsLocalSecurity.configured || (await CentralSchoolCloud.saved())['managed']==true)) {
@@ -70,6 +127,8 @@ class WindowsAdminSetup {
     }
     return false;
   }
+
+  static String get restoreNotice => _data['restoreNotice']?.toString() ?? '';
 
   static String get schoolName => _data['schoolName']?.toString() ?? '';
   static String get principalName => _data['principalName']?.toString() ?? '';
@@ -90,8 +149,8 @@ class WindowsAdminSetup {
     if (principal.length < 2) {
       throw const FormatException('Principal Name is required.');
     }
-    final saved=await CentralSchoolCloud.saved();final managed=saved['managed']==true;_managedSchool=managed?saved['schoolId']:'';
-    final targetFile=_file;
+    final saved=await CentralSchoolCloud.saved();final managed=saved['managed']==true;
+    final targetFile=_fileForSchool(managed?saved['schoolId'].toString():'');
     final brandingRef=FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache');
     if(managed){await ManagedSchoolSession.reauthenticate(saved['email'],adminPassword);if((await CentralSchoolCloud.saved())['schoolId']!=saved['schoolId'])throw StateError('School changed. Sign in and retry.');}
     if (adminPassword.length < 6) {
@@ -100,6 +159,7 @@ class WindowsAdminSetup {
     }
     final map = <String, dynamic>{
       'version': 1,
+      if (managed) 'schoolId': saved['schoolId'],
       'schoolName': name,
       'principalName': principal,
       'logoUrl': await _encodeImage(logoPath),
@@ -107,6 +167,20 @@ class WindowsAdminSetup {
       'principalSignatureUrl': await _encodeImage(signaturePath),
       'savedAt': DateTime.now().toIso8601String(),
     };
+    if (managed) {
+      final result = await ManagedSchoolSession.call('managed/profile', {
+        'operation': 'initialize', 'schoolName': name, 'principalName': principal});
+      if (result['success'] != true || result['schoolId'] != saved['schoolId'] ||
+          result['registrationState'] != 'complete') {
+        throw StateError('School registration could not be saved. Retry.');
+      }
+      final profile = result['profile'];
+      if (profile is! Map || profile['schoolId'] != saved['schoolId'] ||
+          profile['schoolName'] != name || profile['principalName'] != principal) {
+        throw StateError('This school is already registered. Retry login to restore its saved profile.');
+      }
+    }
+    // Keep private images on this PC until the school Drive is connected.
     // Persist locally first so the app works fully offline.
     try {
       await targetFile.parent.create(recursive: true);
@@ -130,7 +204,7 @@ class WindowsAdminSetup {
       }, SetOptions(merge: true)));
     } catch (_) {}
     // Reuse the existing local security lock with the entered password.
-    if(managed){await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;return;}
+    if(managed){await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();return;}
     if (!WindowsLocalSecurity.configured) {
       await WindowsLocalSecurity.create(
         adminId: 'Local Administrator',

@@ -72,11 +72,17 @@ test('managed schools cannot use legacy direct Firestore operational paths or se
  await env.withSecurityRulesDisabled(async c=>{
   await setDoc(doc(c.firestore(),'school_memberships/managed-owner'),{schoolId:A,role:'school_admin',active:true,managed:true});
   await setDoc(doc(c.firestore(),'school_storage_private/'+A),{secret:{body:'encrypted'},url:'private'});
+  await setDoc(doc(c.firestore(),'school_registration_profiles/'+A),{schoolId:A,schoolName:'School A',principalName:'Principal A'});
+  await setDoc(doc(c.firestore(),'school_registration_profiles/'+B),{schoolId:B,schoolName:'School B',principalName:'Principal B'});
  });
  const db=env.authenticatedContext('managed-owner',{schoolId:A,schoolRole:'school_admin'}).firestore();
  await assertFails(getDoc(doc(db,'schools/'+A+'/students_directory/same')));
  await assertFails(setDoc(doc(db,'schools/'+A+'/school_config/drive'),{schoolId:A,folderId:'foreign'}));
  await assertFails(getDoc(doc(db,'school_storage_private/'+A)));
+ await assertFails(getDoc(doc(db,'school_registration_profiles/'+A)));
+ await assertFails(getDoc(doc(db,'school_registration_profiles/'+B)));
+ await assertFails(setDoc(doc(db,'school_registration_profiles/'+A),{schoolId:A,schoolName:'Forged'}));
+ await assertFails(setDoc(doc(db,'platform_schools/'+A),{registrationState:'new'}));
  await assertFails(setDoc(doc(db,'school_entitlements/'+A),{active:true,expiresAt:9999999999999}));
  await assertFails(getDoc(doc(db,'schools/'+B+'/students_directory/same')));
 });

@@ -53,7 +53,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
     if(!owned.empty)fail(409,'Existing account owns school data; migration must be reviewed before linking');
     await auth.updateUser(account.uid,{password});await auth.revokeRefreshTokens(account.uid);reused=true;
    }
-   try{const t=now(),batch=db.batch();batch.create(db.doc('school_memberships/'+account.uid),{schoolId,managed:true,role:'school_admin',active:true});batch.create(db.doc('schools/'+schoolId),{schoolId,ownerUid:account.uid,schoolName:name,architecture:'managed-v1'});batch.create(db.doc('platform_schools/'+schoolId),{schoolId,name,loginEmail:email,authUid:account.uid,managed:true,createdAt:t,trialStartedAt:t,blocked:false});batch.create(db.doc('school_entitlements/'+schoolId),{active:true,blocked:false,status:'trial',startsAt:t,expiresAt:t+5*86400000});await batch.commit();}catch(e){if(!reused)await auth.deleteUser(account.uid);throw e;}
+   try{const t=now(),batch=db.batch();batch.create(db.doc('school_memberships/'+account.uid),{schoolId,managed:true,role:'school_admin',active:true});batch.create(db.doc('schools/'+schoolId),{schoolId,ownerUid:account.uid,schoolName:name,architecture:'managed-v1'});batch.create(db.doc('platform_schools/'+schoolId),{schoolId,name,loginEmail:email,authUid:account.uid,managed:true,registrationState:'new',createdAt:t,trialStartedAt:t,blocked:false});batch.create(db.doc('school_entitlements/'+schoolId),{active:true,blocked:false,status:'trial',startsAt:t,expiresAt:t+5*86400000});await batch.commit();}catch(e){if(!reused)await auth.deleteUser(account.uid);throw e;}
    await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,...(password===undefined?{passwordSetupLink:await auth.generatePasswordResetLink(email)}:{})};
   }
   if(action==='developer/managed/monitor'){const started=now();const metrics=await monitor();return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics};}
@@ -109,6 +109,25 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  if(action==='managed/licence/activate'){if(hash(String(b.key||'').trim().toUpperCase())!==m.entitlement.licenseHash||!lease(m).allowed)fail(403,'Licence does not belong to this school or has expired');const ref=db.doc('school_entitlements/'+m.schoolId);
  await db.runTransaction(async tx=>{const current=await tx.get(ref);const e=current.data();if(!e||e.active!==true||e.blocked===true||e.licenseHash!==m.entitlement.licenseHash||Number(e.expiresAt)<=now()||Number(e.startsAt)>now())fail(403,'School licence changed or access was blocked');tx.set(ref,{activated:true},{merge:true});});return {...lease(m),activated:true,status:'licensed'};}
  if(!lease(m).allowed||(m.entitlement.status!=='trial'&&m.entitlement.activated!==true))fail(403,'Activate the school licence before normal operations');
+ // Lightweight enrollment metadata is independent of the PC and school Drive.
+ // Media and operational records remain in the school's own storage.
+ if(action==='managed/profile'){
+  const ref=db.doc('school_registration_profiles/'+m.schoolId);
+  if(b.operation==='initialize'){
+   const name=String(b.schoolName||'').trim(),principal=String(b.principalName||'').trim();
+   if(name.length<2||name.length>160||principal.length<2||principal.length>160)fail(400,'Valid school and principal names required');
+   await db.runTransaction(async tx=>{
+    const entitlement=await tx.get(db.doc('school_entitlements/'+m.schoolId)),existing=await tx.get(ref);
+    const current={...m,entitlement:entitlement.data()||{}};
+    if(current.entitlement.active!==true||current.entitlement.blocked===true||!lease(current).allowed||current.entitlement.status!=='trial'&&current.entitlement.activated!==true||current.entitlement.licenseHash!==m.entitlement.licenseHash)fail(403,'School access changed during registration');
+    if(!existing.exists)tx.set(ref,{schoolId:m.schoolId,schoolName:name,principalName:principal,completedAt:now()});
+   });
+  }else if(b.operation!=='read')fail(400,'Invalid school profile operation');
+  const profile=await ref.get(),school=await db.doc('platform_schools/'+m.schoolId).get(),storage=await db.doc('school_storage_private/'+m.schoolId).get();
+  const data=profile.data();
+  if(profile.exists&&(data.schoolId!==m.schoolId||typeof data.schoolName!=='string'||data.schoolName.trim().length<2||typeof data.principalName!=='string'||data.principalName.trim().length<2))fail(409,'Saved school registration requires recovery');
+  return {success:true,schoolId:m.schoolId,registrationState:profile.exists?'complete':school.data()?.registrationState==='new'?'new':'unknown',profile:profile.exists?{schoolId:m.schoolId,schoolName:data.schoolName,principalName:data.principalName}:null,storageReady:storage.exists&&storage.data().ready===true};
+ }
  if(action==='managed/storage/connect'){
   const url=scriptUrl(b.scriptUrl),ref=db.doc('school_storage_private/'+m.schoolId),old=await ref.get();
   if(old.exists&&old.data().ready===true){
