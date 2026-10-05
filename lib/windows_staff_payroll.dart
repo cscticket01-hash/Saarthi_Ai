@@ -229,8 +229,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if (RegExp(r'^[=+@\-\t\r]').hasMatch(text)) text = "'$text";
           return '"${text.replaceAll('"', '""')}"';
         }
-        final content = ['Name,Staff ID,Role,Month,Basic,Allowances,Deductions,Net,Paid,Balance,Status',
-          for (final r in rows) [r['name'],r['staffId'],r['role'],r['month'],
+        final content = ['Name,Employee ID,Role,Month,Basic,Allowances,Deductions,Net,Paid,Balance,Status',
+          for (final r in rows) [r['name'],r['employeeId']??r['teacherId']??r['staffId'],r['role'],r['month'],
             StaffPayroll.format((r['basicPaise'] as num?)?.toInt() ?? 0),
             StaffPayroll.format((r['allowancePaise'] as num?)?.toInt() ?? 0),
             StaffPayroll.format((r['deductionPaise'] as num?)?.toInt() ?? 0),
@@ -244,7 +244,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         for (final r in rows) {
           doc.addPage(pw.Page(build: (_) => pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start, children:[
             pw.Text('VIDYA SAARTHI - PAYSLIP',style:pw.TextStyle(fontSize:22,fontWeight:pw.FontWeight.bold)),
-            pw.SizedBox(height:20),if(_schoolName.isNotEmpty)pw.Text(_schoolName),pw.Text('${r['name']} | ${r['staffId']}'),
+            pw.SizedBox(height:20),if(_schoolName.isNotEmpty)pw.Text(_schoolName),pw.Text('${r['name']} | ${r['employeeId']??r['teacherId']??r['staffId']}'),
             pw.Text('${r['role']} | ${r['month']}'),pw.SizedBox(height:20),
             for (final key in {'Basic pay':'basicPaise','Allowances':'allowancePaise','Bonus':'bonusPaise','Overtime':'overtimePaise','Deductions':'deductionPaise'}.entries)
               pw.Padding(padding:const pw.EdgeInsets.only(bottom:10),child:pw.Text('${key.key}: Rs ${StaffPayroll.format((r[key.value] as num?)?.toInt() ?? 0)}')),
@@ -349,7 +349,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final status=row?['status']?.toString()??'Not set';
     final color=status=='Paid'?Colors.green:Colors.orange;
     return DataRow(selected:_selected.contains(person['id']),onSelectChanged:(value)=>setState((){if(value==true)_selected.add(person['id'].toString());else _selected.remove(person['id']);}),cells:[
-      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:const TextStyle(fontWeight:FontWeight.bold)),Text((person['teacherId']??person['id']).toString(),style:const TextStyle(fontSize:11,color:Colors.white54))])),
+      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:const TextStyle(fontWeight:FontWeight.bold)),Text((person['employeeId']??person['teacherId']??person['id']).toString(),style:const TextStyle(fontSize:11,color:Colors.white54))])),
       DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['role'].toString()),Text(person['designation']?.toString()??'',style:const TextStyle(fontSize:11,color:Colors.white54))])),
       DataCell(Tooltip(message:'Attendance does not change salary automatically. Configure deductions in the salary editor.',child:Text(row?['attendanceSummary']?.toString()??'—'))),
       DataCell(Text(amount('basicPaise'))),DataCell(Text(amount('allowancePaise'))),DataCell(Text(amount('deductionPaise'))),DataCell(Text(row==null?'—':'₹${StaffPayroll.format(StaffPayroll.total(row))}')),

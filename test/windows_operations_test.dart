@@ -135,7 +135,10 @@ void main() {
     await OtherStaffDirectory.save(profile, {'id':'staff:guard','name':'School Guard','employeeId':'G-1','role':'Guard','active':true});
     final people=await StaffPayroll.staff(profile);
     expect(people.length,2);
-    expect(people.singleWhere((p)=>p['role']=='Guard')['employeeId'],'G-1');
+    final guard=people.singleWhere((p)=>p['role']=='Guard');
+    expect(guard['employeeId'],'G-1');
+    final salary=await StaffPayroll.save(profile,guard,'2026-10',basic:150000);
+    expect(salary['employeeId'],'G-1');
     expect(people.singleWhere((p)=>p['role']=='Teacher')['id'],teacherRecord['id']);
     await expectLater(OtherStaffDirectory.save(profile, {'name':'Duplicate','employeeId':'g-1','role':'Guard'}),throwsStateError);
     await expectLater(OtherStaffDirectory.save(profile, {'name':'Duplicate Teacher','employeeId':'T-11','role':'Other'}),throwsStateError);
