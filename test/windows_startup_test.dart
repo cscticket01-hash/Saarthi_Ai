@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/main_windows.dart';
 import '../lib/windows_admin_setup.dart';
+import '../lib/windows_local_firestore.dart' as local;
 import '../lib/windows_local_settings.dart';
 import '../lib/windows_managed_school_gate.dart';
 import '../lib/main_dashboard_screen_windows.dart' show WindowsSectionLocks;
@@ -62,6 +63,30 @@ void main(){
     initializeConnections:()async{},checkSetup:()async=>true)));
   await tester.pump();await tester.pump();await tester.pump();
   expect(find.text('Open Admin Panel'),findsOneWidget);expect(find.text('Save & Open App'),findsNothing);
+  await tester.pumpWidget(const SizedBox());
+ });
+
+ testWidgets('saved App Lock rejects wrong password and shows success before opening home',(tester)async{
+  final db=local.FirebaseFirestore.instance;
+  await tester.runAsync(() async {
+   await db.switchProfile('lock-test-${DateTime.now().microsecondsSinceEpoch}');
+   await db.collection('school_config').doc('school_profile_cache').set({'schoolName':'Saved school'});
+   await WindowsLocalSecurity.initialize();
+   await WindowsLocalSecurity.create(adminId:'local-admin',password:'existing-lock-123');
+  });
+  await tester.pumpWidget(const MaterialApp(home:WindowsStartupGate(child:Text('Unlocked home'))));
+  await tester.runAsync(() async {await Future<void>.delayed(const Duration(milliseconds:100));});
+  await tester.pump();
+  expect(find.text('Saved school'),findsOneWidget);
+  expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,isEmpty);
+  await tester.enterText(find.byType(TextField),'wrong-password');
+  await tester.tap(find.text('Unlock App'));await tester.pump();
+  expect(find.text('Unlocked home'),findsNothing);
+  await tester.enterText(find.byType(TextField),'existing-lock-123');
+  await tester.tap(find.text('Unlock App'));await tester.pump();await tester.pump();
+  expect(find.text('Login Successful'),findsOneWidget);
+  await tester.pump(const Duration(milliseconds:900));
+  expect(find.text('Unlocked home'),findsOneWidget);
   await tester.pumpWidget(const SizedBox());
  });
 

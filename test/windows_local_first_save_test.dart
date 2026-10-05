@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../lib/windows_backend_bridge.dart';
+import '../lib/windows_school_operations.dart';
 import '../lib/windows_school_image_cache.dart';
 import '../lib/windows_connect/school_drive_images.dart';
 import 'dart:typed_data';
@@ -192,6 +193,30 @@ void main() {
     expect(requests,1);
     expect(await WindowsSchoolImageCache.read('vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','staff-photo'),isNull);
     await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+  });
+
+  test('saved final results promote PASS offline, retain FAIL and audit the deliberate override', () async {
+    final exam={'examId':'final-local','examName':'Final','isFinal':true};
+    await db.collection('_local_exam_center_exams').doc('final-local').set(exam);
+    await db.collection('students_directory').doc('passed').set({'name':'Passed pupil','class':'Class 1','rollNo':'1'});
+    await db.collection('students_directory').doc('failed').set({'name':'Retained pupil','class':'Class 1','rollNo':'2'});
+    await db.collection('exam_results').doc('final-local_passed').set({'studentId':'passed','result':'PASS'});
+    await db.collection('exam_results').doc('final-local_failed').set({'studentId':'failed','result':'FAIL'});
+    await SchoolPromotionService.apply(studentId:'passed',student:{},exam:exam,result:'PASS');
+    expect((await db.collection('students_directory').doc('Class 2_Roll_1').get()).data()?['classMovement'],'PROMOTED');
+    expect((await db.collection('students_directory').doc('passed').get()).exists,false);
+    await SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL');
+    expect((await db.collection('students_directory').doc('failed').get()).data()?['class'],'Class 1');
+    expect((await db.collection('students_directory').doc('failed').get()).data()?['classMovement'],'RETAINED');
+    await db.collection('school_settings').doc('promotion_policy').set({'allowForcedPromotion':true});
+    await expectLater(SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL',force:true),throwsStateError);
+    await SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL',force:true,reason:'Approved remedial review');
+    final audit=(await db.collection('school_settings').doc('promotion_audit_final-local_failed').get()).data()!;
+    expect(audit['manualAdminOverride'],true);
+    expect(audit['fromClass'],'Class 1');expect(audit['toClass'],'Class 2');
+    expect(audit['reason'],'Approved remedial review');
+    expect(audit['at'],isA<int>());
+    expect((await db.collection('students_directory').doc('Class 2_Roll_2').get()).data()?['classMovement'],'FORCE_PROMOTED');
   });
 
 }

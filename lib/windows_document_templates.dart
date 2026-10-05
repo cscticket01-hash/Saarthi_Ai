@@ -56,6 +56,7 @@ class WindowsDocumentTemplates {
     String qr = '',
   }) async {
     final origin=FirebaseFirestore.instance.activeProfileId;
+    if (data['schoolId']!=null && data['schoolId']!=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']) throw StateError('Another school document is not accessible.');
     final v = (await selections())[kind];
     final profile = (await FirebaseFirestore.instance
                 .collection('school_config')

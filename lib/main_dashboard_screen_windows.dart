@@ -18388,7 +18388,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                           borderRadius: BorderRadius.circular(9),
                                         ),
                                       ),
-                                      onPressed: isMoving || classNumber <= 1
+                                      onPressed: isMoving || latestResult?['isFinal']!=true || resultStatus.toUpperCase()!='FAIL'
                                           ? null
                                           : () => _changeStudentClass(
                                                 doc.id,
@@ -18400,7 +18400,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                         size: 16,
                                       ),
                                       label: const Text(
-                                        'Demote',
+                                        'Retain',
                                         style: TextStyle(
                                           fontSize: 10.5,
                                           fontWeight: FontWeight.w800,
@@ -20223,7 +20223,7 @@ class _DriveUnlinkSecurityDialogState
     return AlertDialog(
       backgroundColor: const Color(0xFF172229),
       title: Text(
-        waiting ? 'Security Waiting Period' : 'Admin Verification',
+        waiting ? 'Security Waiting Period' : 'App Lock Verification',
         style: const TextStyle(color: Colors.white),
       ),
       content: SizedBox(

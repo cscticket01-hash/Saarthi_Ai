@@ -193,7 +193,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
 }
 
 /// Requires the existing local password before showing a saved dashboard.
-/// School Firebase verification remains in Advanced Settings.
+/// Central authentication and licensing are enforced by the outer startup gate.
 class WindowsStartupGate extends StatefulWidget {
   const WindowsStartupGate({super.key, required this.child});
 
@@ -254,16 +254,23 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     final password = _password.text;
     if (WindowsLocalSecurity.verifyPassword(password)) {
       _unlocking = true;
-      await WindowsLocalSession.markLoggedIn();
-      await FirebaseAuth.instance.bootstrapLocalUser();
-      if (!mounted) return;
-      setState(() {
-        _success = true;
-        _error = null;
-      });
-      _password.clear();
-      await Future<void>.delayed(const Duration(milliseconds: 850));
-      if (mounted) setState(() { _locked=false; _success=false; _unlocking=false; });
+      final origin=FirebaseFirestore.instance.activeProfileId;
+      void own() {if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed. Reopen the app.');}
+      try {
+        own();
+        await WindowsLocalSession.markLoggedIn();
+        own();
+        await FirebaseAuth.instance.bootstrapLocalUser();
+        own();
+        if (!mounted) return;
+        setState(() { _success = true; _error = null; });
+        _password.clear();
+        await Future<void>.delayed(const Duration(milliseconds: 850));
+        own();
+        if (mounted) setState(() { _locked=false; _success=false; _unlocking=false; });
+      } catch (e) {
+        if (mounted) setState(() { _success=false; _unlocking=false; _error='$e'; });
+      }
       return;
     }
     setState(() => _error = 'Galat App Password.');
