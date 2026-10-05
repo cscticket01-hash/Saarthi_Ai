@@ -10,6 +10,8 @@ import 'school_text_data.dart';
 import 'school_backend_transport.dart';
 import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
+import 'windows_connect/managed_record_media.dart';
 
 class WindowsFirebaseRemoteStatus {
   const WindowsFirebaseRemoteStatus({
@@ -409,10 +411,10 @@ class WindowsFirebaseRemote {
     await _notifyConnectionChanged();
   }
 
-  static Future<Map<String,dynamic>> _managedRecords(String token,Map<String,dynamic> body) async {
+  static Future<Map<String,dynamic>> _managedRecords(String token,Map<String,dynamic> body, {String? expectedSchoolId}) async {
     final school=FirebaseFirestore.instance.activeProfileIdentity['schoolId']?.toString()??'';
     final saved=await CentralSchoolCloud.saved();
-    if(!validSchoolId(school)||saved['schoolId']!=school)throw StateError('School changed during sync.');
+    if(!validSchoolId(school)||saved['schoolId']!=school||expectedSchoolId!=null&&school!=expectedSchoolId)throw StateError('School changed during sync.');
     final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:school);
     try{return await cloud.api({'action':'managed/records',...body,'schoolId':school},token:token);}
     finally{cloud.close();}
@@ -530,7 +532,26 @@ class WindowsFirebaseRemote {
     required String documentId,
     required Map<String, dynamic> data,
   }) async {
-    if((await CentralSchoolCloud.saved())['managed']==true){await _managedRecords(idToken,{'operation':'write','collection':collection,'id':documentId,'data':migrationJsonValue(centralSchoolData(data,FirebaseFirestore.instance.activeProfileIdentity['schoolId']))});return;}
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+    void unchanged() {
+      if(FirebaseFirestore.instance.activeProfileId != origin || FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) throw StateError('School changed during sync.');
+    }
+    final saved = await CentralSchoolCloud.saved();
+    unchanged();
+    if(saved['managed']==true){
+      if(saved['schoolId'] != school) throw StateError('School identity mismatch.');
+      final safe = await prepareManagedRecord(data, school, (action,body) { unchanged(); return ManagedSchoolSession.callForSchool(school,action,body); });
+      unchanged();
+      await _managedRecords(idToken,{'operation':'write','collection':collection,'id':documentId,'data':migrationJsonValue(safe)}, expectedSchoolId:school);
+      if (collection == 'school_config' && documentId == 'school_profile_cache' &&
+          (data['schoolName']?.toString().length ?? 0) >= 2 && (data['principalName']?.toString().length ?? 0) >= 2) {
+        unchanged();
+        await ManagedSchoolSession.callForSchool(school,'managed/profile', {'operation':'initialize',
+          'schoolName': data['schoolName'], 'principalName': data['principalName']});
+      }
+      return;
+    }
     final remoteCollection = await _remoteCollection(projectId, collection);
     if (documentId.isEmpty || documentId.contains('/') || documentId == '.' || documentId == '..') throw StateError('Invalid school document ID.');
     final documentName =

@@ -68,6 +68,7 @@ class WindowsDocumentTemplates {
         data: {
           'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
           ...data,
+          if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty) 'schoolName': profile['schoolName'],
         },
         qr: qr,
         photo: await _image(data['photoUrl']),
@@ -121,9 +122,11 @@ class WindowsDocumentTemplates {
                 Expanded(
                   child: LayoutBuilder(builder: (context, constraints) => PdfPreview(
                     build: (_) => bytes,
+                    dpi: 200,
+                    canDebug: false,
                     maxPageWidth: onDownload != null
                         ? math.max(60.0, math.min(constraints.maxWidth - 48,
-                            (constraints.maxHeight - 48) * 54 / 85.6))
+                            (constraints.maxHeight - 72) * 54 / (85.6 * 2)))
                         : 700,
                     allowPrinting: onPrint == null,
                     allowSharing: onDownload == null,

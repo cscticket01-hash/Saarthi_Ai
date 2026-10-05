@@ -122,6 +122,13 @@ class FirebaseFirestore {
 
   WriteBatch batch() => WriteBatch._(this);
 
+  Future<void> acknowledgeOutbox(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic> expected) {
+    ref.requireOriginProfile();
+    if(ref.collectionPath!='_windows_firebase_outbox') throw ArgumentError('Outbox reference required');
+    return _database.applyOperations([_WriteOperation._(type:_WriteType.delete,
+      collection:ref.collectionPath, documentId:ref.id, data:expected)]);
+  }
+
   Future<T> runTransaction<T>(
     Future<T> Function(Transaction transaction) action,
   ) async {
@@ -869,6 +876,9 @@ class _LocalJsonDatabase {
 
           switch (operation.type) {
             case _WriteType.delete:
+              // Compare and remove under the same serialized disk write. A save
+              // made while the cloud request was in flight must remain queued.
+              if(operation.data != null && jsonEncode(docs[operation.documentId]) != jsonEncode(_encodeMap(operation.data!))) continue;
               docs.remove(operation.documentId);
               break;
 

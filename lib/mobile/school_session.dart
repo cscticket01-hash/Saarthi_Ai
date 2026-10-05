@@ -3,79 +3,16 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import '../platform/github_updates.dart';
-import '../platform/platform_config.dart';
+import '../school_qr_link.dart';
+export '../school_qr_link.dart';
 import '../school_backend_transport.dart';
 
-class SchoolLink {
-  const SchoolLink(
-      {required this.projectId,
-      required this.scriptUrl,
-      required this.role,
-      required this.personId,
-      required this.linkToken,
-      required this.rawQr,this.managed=false,this.schoolId='',this.endpoint=''});
-  final String projectId, scriptUrl, role, personId, linkToken, rawQr;
-  final bool managed;final String schoolId,endpoint;
-  static SchoolLink parse(String raw) {
-    final d = jsonDecode(raw);
-    if (d is! Map || d['app'] != 'VIDYA_SAARTHI' || (d['v'] as num? ?? 0) < 2)
-      throw const FormatException(
-          'Scan a current Vidya Saarthi student or teacher ID card.');
-    if(d['managed']==true){
-      final id=d['schoolId']?.toString()??'',endpoint=d['centralEndpoint']?.toString()??'';
-      const allowed='https://saarthi-oauth-staging.onrender.com/school-cloud';
-      final role=d['type']?.toString()??'',person=d['personId']?.toString()??'',token=d['linkToken']?.toString()??'';
-      if(!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(id)||endpoint!=allowed||!{'student','teacher'}.contains(role)||person.isEmpty||person.length>200||person.contains('/')||token.length<20)throw const FormatException('Invalid managed school ID card');
-      return SchoolLink(projectId:id,scriptUrl:'',role:role,personId:person,linkToken:token,rawQr:raw,managed:true,schoolId:id,endpoint:endpoint);
-    }
-    Map config = {};
-    try {
-      final rawConfig = d['firebaseLink']?.toString() ?? '{}';
-      final uri = Uri.tryParse(rawConfig);
-      if (uri?.scheme == 'vidyasaarthi' && uri?.host == 'firebase') {
-        config = jsonDecode(utf8.decode(base64Url
-            .decode(base64Url.normalize(uri!.queryParameters['config']!))));
-      } else {
-        config = jsonDecode(rawConfig);
-      }
-    } catch (_) {
-      final text = d['firebaseLink']?.toString() ?? '';
-      final start = text.indexOf('{'), end = text.lastIndexOf('}');
-      if (start >= 0 && end > start)
-        config = jsonDecode(text.substring(start, end + 1));
-    }
-    final project =
-        (d['firebaseProjectId'] ?? config['projectId'] ?? '').toString();
-    final role = d['type']?.toString() ?? '';
-    final token = d['linkToken']?.toString() ?? '';
-    final person = d['personId']?.toString() ?? '';
-    final url = Uri.tryParse(d['googleScriptUrl']?.toString() ?? '');
-    if (project == platformProjectId || !RegExp(r'^[a-z][a-z0-9-]{4,61}[a-z0-9]$').hasMatch(project) ||
-        !{'student', 'teacher'}.contains(role) ||
-        token.length < 20 ||
-        person.isEmpty ||
-        url == null ||
-        url.scheme != 'https' ||
-        url.host != 'script.google.com' ||
-        url.userInfo.isNotEmpty ||
-        !RegExp(r'^/macros/s/[A-Za-z0-9_-]+/exec$').hasMatch(url.path) ||
-        url.hasQuery ||
-        url.hasFragment)
-      throw const FormatException(
-          'This QR has incomplete or invalid school connections. Ask the school to regenerate it.');
-    return SchoolLink(
-        projectId: project,
-        scriptUrl: url.toString(),
-        role: role,
-        personId: person,
-        linkToken: token,
-        rawQr: raw);
-  }
-}
 
 class SchoolSession {
-  SchoolSession._();
-  static final instance = SchoolSession._();
+  SchoolSession({http.Client? client}) : _client = client ?? http.Client();
+  final http.Client _client;
+  int _generation = 0;
+  static final instance = SchoolSession();
   static const _secure = FlutterSecureStorage();
   SchoolLink? link;
   String schoolToken = '', deviceId = '';
@@ -109,41 +46,48 @@ class SchoolSession {
 
   Future<Map<String, dynamic>> schoolCall(
       String action, Map<String, dynamic> body) async {
-    if (link == null) throw StateError('Scan your school ID first.');
-    if(link!.managed){
-      final r=await http.post(Uri.parse(link!.endpoint),headers:{'Content-Type':'application/json'},body:jsonEncode({'action':'managed/mobile','schoolId':link!.schoolId,'request':{...body,'action':action,'sessionToken':schoolToken}})).timeout(const Duration(seconds:90));
+    final current = link;
+    final generation = _generation;
+    if (current == null) throw StateError('Scan your school ID first.');
+    void unchanged() {
+      if (generation != _generation || !identical(current, link)) throw StateError('School session changed. Scan your ID again.');
+    }
+    if(current.managed){
+      final r=await _client.post(Uri.parse(current.endpoint),headers:{'Content-Type':'application/json'},body:jsonEncode({'action':'managed/mobile','schoolId':current.schoolId,'request':{...body,'action':action,'sessionToken':schoolToken}})).timeout(const Duration(seconds:90));
+      unchanged();
       final d=jsonDecode(r.body);
       if(r.statusCode!=200||d is! Map||d['success']!=true)throw StateError(d is Map?d['message']?.toString()??'Unable to connect':'Unable to connect');
-      if(d['schoolId']!=link!.schoolId||d['projectId']!=link!.schoolId)throw StateError('School identity mismatch');
+      if(d['schoolId']!=current.schoolId||d['projectId']!=current.schoolId)throw StateError('School identity mismatch');
       return Map<String,dynamic>.from(d);
     }
-    final r = await http
-        .post(Uri.parse(link!.scriptUrl),
+    final r = await _client
+        .post(Uri.parse(current.scriptUrl),
             headers: {'Content-Type': 'text/plain;charset=utf-8'},
             body: jsonEncode({
+              ...body,
               'action': action,
-              'projectId': link!.projectId,
-              'sessionToken': schoolToken,
-              ...body
+              'projectId': current.projectId,
+              'sessionToken': schoolToken
             }))
         .timeout(const Duration(seconds: 30));
     // Google Apps Script redirects POST responses to a one-time content URL.
     final response = r.isRedirect && r.headers['location'] != null
         ? await _redirect(r.headers['location']!)
         : r;
+    unchanged();
     final d = jsonDecode(response.body);
     if (d is! Map || d['success'] != true)
       throw StateError(d is Map
           ? d['message']?.toString() ?? 'School service unavailable'
           : 'School service unavailable');
-    if (d['projectId'] != link!.projectId)
+    if (d['projectId'] != current.projectId)
       throw StateError('School identity mismatch. Login blocked.');
     return Map<String, dynamic>.from(d);
   }
 
   Future<http.Response> _redirect(String location) async {
     final uri=Uri.parse(location);requireSchoolBackendUri(uri);
-    return http.get(uri).timeout(const Duration(seconds:20));
+    return _client.get(uri).timeout(const Duration(seconds:20));
   }
 
   Future<Map<String, dynamic>> platformCall(
@@ -161,15 +105,26 @@ class SchoolSession {
       String fcmToken = ''}) async {
     await clear();
     link = newLink;
-    final login = await schoolCall('mobile_login', {
+    final generation = _generation;
+    late final Map<String, dynamic> login;
+    try {
+      login = await schoolCall('mobile_login', {
       'role': newLink.role,
       'personId': newLink.personId,
       'linkToken': newLink.linkToken,
       'studentClass': studentClass,
       'rollNo': roll,
       'dob': dob
-    });
-    schoolToken = login['sessionToken'].toString();
+      });
+    } catch (_) {
+      if (generation == _generation) await clear();
+      rethrow;
+    }
+    if (login['sessionToken'] is! String || (login['sessionToken'] as String).isEmpty || login['expiresAt'] is! num || (login['expiresAt'] as num) <= DateTime.now().millisecondsSinceEpoch) {
+      await clear();
+      throw StateError('School returned an invalid login session.');
+    }
+    schoolToken = login['sessionToken'] as String;
     person = Map<String, dynamic>.from(login['person'] ?? {});
     schoolName=login['schoolName']?.toString() ?? newLink.projectId;
     messaging=login['messaging'] is Map ? Map<String,dynamic>.from(login['messaging']) : null;
@@ -198,6 +153,7 @@ class SchoolSession {
   }
 
   Future<void> clear() async {
+    _generation++;
     link = null;
     schoolToken = '';
     messaging = null;

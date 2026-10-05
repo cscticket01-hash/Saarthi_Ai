@@ -801,6 +801,7 @@ class WindowsSyncEngine {
           return;
         }
 
+        await _pushFirebaseOutbox(projectId:projectId,idToken:idToken);
         await _pullFirebase(
           projectId: projectId,
           idToken: idToken,
@@ -816,13 +817,6 @@ class WindowsSyncEngine {
 
       if (scriptUrl.isNotEmpty && central.isEmpty) {
         await _pullGoogleSnapshot(scriptUrl);
-      }
-
-      if (projectId != null && idToken != null) {
-        await _pushFirebaseOutbox(
-          projectId: projectId,
-          idToken: idToken,
-        );
       }
 
       if (scriptUrl.isNotEmpty && central.isEmpty) {
@@ -1048,6 +1042,7 @@ class WindowsSyncEngine {
     required String projectId,
     required String idToken,
   }) async {
+    final origin=FirebaseFirestore.instance.activeProfileId;
     final snapshot =
         await FirebaseFirestore.instance
             .collection(
@@ -1055,6 +1050,7 @@ class WindowsSyncEngine {
             )
             .get();
 
+    if(FirebaseFirestore.instance.activeProfileId != origin) throw StateError('School changed during sync.');
     final docs = snapshot.docs.toList()
       ..sort((a, b) {
         return _modifiedMillis(a.data())
@@ -1064,6 +1060,7 @@ class WindowsSyncEngine {
       });
 
     for (final queued in docs) {
+      queued.reference.requireOriginProfile();
       final data = queued.data();
 
       final collection =
@@ -1117,7 +1114,7 @@ class WindowsSyncEngine {
         );
       }
 
-      await queued.reference.delete();
+      await FirebaseFirestore.instance.acknowledgeOutbox(queued.reference, data);
     }
   }
 

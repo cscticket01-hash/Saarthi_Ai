@@ -88,7 +88,10 @@ class WindowsAdminSetup {
         await verifyIdentity();
         // The tenant database can survive an app upgrade even when its separate
         // registration JSON is missing. Never inspect another/unscoped profile.
-        if (!WindowsSchoolProfileRestore.complete(data)) {
+        final pending = await FirebaseFirestore.instance.collection('_windows_firebase_outbox')
+            .where('collection',isEqualTo:'school_config').where('documentId',isEqualTo:'school_profile_cache').get();
+        await verifyIdentity();
+        if (!WindowsSchoolProfileRestore.complete(data) || pending.docs.isNotEmpty) {
           final cached = await FirebaseFirestore.instance.readSchoolRegistrationCache(school);
           await verifyIdentity();
           if (cached != null && cached['schoolId'] == school &&
@@ -96,6 +99,7 @@ class WindowsAdminSetup {
         }
         final restored = await WindowsSchoolProfileRestore.resolveEnrollment(
           schoolId: school, localProfile: data,
+          preferLocalProfile: pending.docs.isNotEmpty,
           call: (action, body) async {
             await verifyIdentity();
             final result = await ManagedSchoolSession.call(action, body);
@@ -161,8 +165,9 @@ class WindowsAdminSetup {
     final saved=await CentralSchoolCloud.saved();final managed=saved['managed']==true;
     final targetFile=_fileForSchool(managed?saved['schoolId'].toString():'');
     final brandingRef=FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache');
-    if(managed){await ManagedSchoolSession.reauthenticate(saved['email'],adminPassword);if((await CentralSchoolCloud.saved())['schoolId']!=saved['schoolId'])throw StateError('School changed. Sign in and retry.');}
-    if (adminPassword.length < 6) {
+
+    if (managed && adminPassword.isNotEmpty && adminPassword.length < 6) throw const FormatException('App Lock password must be at least 6 characters.');
+    if (!managed && adminPassword.length < 6) {
       throw const FormatException(
           'Admin Password must be at least 6 characters.');
     }
@@ -213,7 +218,7 @@ class WindowsAdminSetup {
       }, SetOptions(merge: true)));
     } catch (_) {}
     // Reuse the existing local security lock with the entered password.
-    if(managed){await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();return;}
+    if(managed){if(adminPassword.isNotEmpty){if(adminPassword.length<6)throw const FormatException('App Lock password must be at least 6 characters.');await WindowsLocalSecurity.create(adminId:'School app',password:adminPassword);}await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();return;}
     if (!WindowsLocalSecurity.configured) {
       await WindowsLocalSecurity.create(
         adminId: 'Local Administrator',
@@ -409,7 +414,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                     controller: _password,
                     obscureText: _obscure,
                     decoration: InputDecoration(
-                      labelText: 'Current School Password *',
+                      labelText: 'New App Lock password (optional)',
                       border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                           onPressed: () =>

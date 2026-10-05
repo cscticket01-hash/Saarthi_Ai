@@ -66,3 +66,18 @@ test('generated school bundle retains managed mobile, summary and preparation im
  for(const source of ['SaarthiManagedAdapter.gs','SaarthiManagedMobile.gs'])assert(bundle.includes(fs.readFileSync('../school-backend/managed/'+source,'utf8')));
  assert.match(bundle,/function VS_prepareSchoolStorage\(/);assert.match(bundle,/function VS_managedMobile\(/);assert.match(bundle,/function VS_managedSummary\(/);
 });
+
+test('exact Windows/Android shared QR fixtures login student and teacher through signed GS and reject cross-school or wrong credentials',()=>{
+ const fixtures=JSON.parse(fs.readFileSync('../test/fixtures/windows_person_qr.json','utf8'));
+ for(const qr of fixtures){
+  const f=storage(),collection=qr.type==='student'?'students_directory':'teachers_directory';
+  assert.equal(f.call({action:'managed_records',operation:'write',collection,id:qr.personId,data:{schoolId:A,name:qr.name,class:'Class 1',rollNo:'1',dob:'2015-01-01',mobileLinkToken:qr.linkToken}}).success,true);
+  const request={action:'mobile_login',role:qr.type,personId:qr.personId,linkToken:qr.linkToken,studentClass:qr.class||'',rollNo:qr.rollNo||'',dob:'2015-01-01'};
+  const mobile=(request,school=A)=>f.call({action:'managed_mobile',lease:{schoolId:school,expiresAt:Date.now()+60000},request});
+  assert.equal(mobile({...request,linkToken:'wrong-token'}).success,false);
+  if(qr.type==='student')assert.equal(mobile({...request,dob:'2010-01-01'}).success,false);
+  assert.equal(mobile(request,B).success,false);
+  const result=mobile(request);assert.equal(result.success,true);assert.equal(result.schoolId,qr.schoolId);assert.equal(result.projectId,qr.schoolId);
+  assert.equal(mobile({action:'mobile_dashboard',sessionToken:result.sessionToken}).success,true);
+ }
+});

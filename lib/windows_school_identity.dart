@@ -7,7 +7,10 @@ import 'windows_local_firestore.dart';
 class SchoolPersonIdentity {
   static Future<Map<String, dynamic>> ensure(String collection, String id) async {
     final ref = FirebaseFirestore.instance.collection(collection).doc(id);
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    void unchanged() { if(FirebaseFirestore.instance.activeProfileId != origin) throw StateError('School changed before QR creation.'); }
     final current = (await ref.get()).data();
+    unchanged();
     if (current == null) throw StateError('School record changed. Refresh first.');
     var token = current['mobileLinkToken']?.toString() ?? '';
     if (token.length < 20) {
@@ -23,8 +26,10 @@ class SchoolPersonIdentity {
       final previous = stable ?? id;
       if (collection == 'students_directory') {
         for (final name in ['fee_ledger', 'fee_payments', 'exam_results', 'attendance_records']) {
+          unchanged();
           final records = await FirebaseFirestore.instance.collection(name)
               .where('studentId', isEqualTo: id).get();
+          unchanged();
           for (final record in records.docs) {
             final d = record.data();
             final owner = d['personId']?.toString();
