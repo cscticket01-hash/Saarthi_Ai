@@ -70,10 +70,11 @@ class CentralSchoolCloud {
   static Future<void> _pendingSessionWrite = Future<void>.value();
   static final _firebaseTokens = FirebaseTokenCache();
   static void clearFirebaseToken() => _firebaseTokens.clear();
-  static Future<void> updateSession(String schoolId, Map<String,dynamic> updates, {String? expectedUid}) {
+  static Future<void> updateSession(String schoolId, Map<String,dynamic> updates, {String? expectedUid, String? expectedRefreshToken}) {
     final next = _pendingSessionWrite.catchError((_) {}).then((_) async {
       final current = await saved();
       if (current['schoolId'] != schoolId || expectedUid != null && current['uid'] != expectedUid) throw StateError('School connection changed.');
+      if (expectedRefreshToken != null && current['firebaseRefreshToken'] != expectedRefreshToken) throw StateError('School login changed during refresh.');
       current.addAll(updates);
       await const FlutterSecureStorage().write(key:key,value:jsonEncode(current));
     });
@@ -290,7 +291,7 @@ class CentralSchoolCloud {
           ? managedSessionConfiguration(session, data['schoolId'], data['uid']) : <String,dynamic>{};
       await updateSession(data['schoolId'], {...configuration,
         'firebaseRefreshToken':response['refresh_token'] ?? data['firebaseRefreshToken']},
-        expectedUid: data['uid']);
+        expectedUid: data['uid'], expectedRefreshToken: data['firebaseRefreshToken']);
       final seconds = int.tryParse(response['expires_in']?.toString() ?? '') ?? 0;
       return (token: response['id_token'] as String,
         expiresAt: DateTime.now().millisecondsSinceEpoch + seconds * 1000);

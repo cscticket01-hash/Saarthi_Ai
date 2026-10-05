@@ -89,8 +89,7 @@ class WindowsAdminSetup {
         // The tenant database can survive an app upgrade even when its separate
         // registration JSON is missing. Never inspect another/unscoped profile.
         if (!WindowsSchoolProfileRestore.complete(data)) {
-          final cached = (await FirebaseFirestore.instance.collection('school_config')
-              .doc('school_profile_cache').get()).data();
+          final cached = await FirebaseFirestore.instance.readSchoolRegistrationCache(school);
           await verifyIdentity();
           if (cached != null && cached['schoolId'] == school &&
               WindowsSchoolProfileRestore.complete(cached)) data = Map<String, dynamic>.from(cached);

@@ -16,6 +16,17 @@ import '../lib/windows_local_settings.dart';
 import '../lib/windows_local_auth.dart' as local;
 import '../lib/windows_connect/managed_school_session.dart';
 void main(){
+  test('legacy branding cache without schoolId is recovered only from its immutable tenant profile', () async {
+    final db = FirebaseFirestore.instance;
+    final profile = 'registration-cache-${DateTime.now().microsecondsSinceEpoch}';
+    const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    await db.switchProfile(profile, identity: {'schoolSyncId': school});
+    await db.collection('school_config').doc('school_profile_cache').set({'schoolName': 'Saved School', 'principalName': 'Saved Principal'});
+    expect((await db.readSchoolRegistrationCache(school))?['schoolId'], school);
+    await expectLater(db.readSchoolRegistrationCache('vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'), throwsStateError);
+    await db.collection('school_config').doc('school_profile_cache').set({'schoolId': 'other-school'});
+    await expectLater(db.readSchoolRegistrationCache(school), throwsStateError);
+  });
   test('Firebase token exchanges coalesce, expire early and isolate accounts', () async {
     final cache = FirebaseTokenCache(); var calls = 0;
     Future<({String token, int expiresAt})> refresh() async {
