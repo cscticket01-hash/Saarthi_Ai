@@ -1,3 +1,4 @@
+import 'windows_school_profile_restore.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'dart:convert';
@@ -57,7 +58,50 @@ class WindowsAdminSetup {
   static Future<bool> completed() async {
     if (completedOverride != null) return completedOverride!;
     if (_cachedCompleted == true && WindowsLocalSecurity.configured && (await CentralSchoolCloud.saved())['managed']!=true) return true;
-    final data = await read();
+    var data = await read();
+    final identity = await CentralSchoolCloud.saved();
+    if (identity['managed'] == true && data['cloudProfileSaved'] != true && (identity['scriptUrl']?.toString() ?? '').isNotEmpty) {
+      final school = identity['schoolId'].toString();
+      final uid = identity['uid'];
+      final profileId = FirebaseFirestore.instance.activeProfileId;
+      final target = _file;
+      Future<void> verifyIdentity() async {
+        final current = await CentralSchoolCloud.saved();
+        if (current['schoolId'] != school || current['uid'] != uid ||
+            FirebaseFirestore.instance.activeProfileId != profileId ||
+            FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) {
+          throw StateError('School changed during profile restore. Retry login.');
+        }
+      }
+      try {
+        await verifyIdentity();
+        final restored = await WindowsSchoolProfileRestore.resolve(
+          schoolId: school, localProfile: data,
+          call: (action, body) async {
+            await verifyIdentity();
+            final result = await ManagedSchoolSession.call(action, body);
+            await verifyIdentity();
+            return result;
+          });
+        await verifyIdentity();
+        if (WindowsSchoolProfileRestore.complete(restored)) {
+          await target.parent.create(recursive:true);
+          final tmp = File('${target.path}.tmp');
+          await tmp.writeAsString(jsonEncode({...restored, 'cloudProfileSaved':true}),flush:true);
+          await tmp.rename(target.path);
+          await verifyIdentity();
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+            FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache')
+              .set(restored, SetOptions(merge:true)));
+          data = restored;
+          _data = restored;
+        }
+      } catch (_) {
+        // A known local registration remains usable offline. A fresh PC must
+        // retry restoration instead of being mistaken for a new school.
+        if (!WindowsSchoolProfileRestore.complete(data)) rethrow;
+      }
+    }
     final basic = (data['schoolName']?.toString().isNotEmpty ?? false) &&
         (data['principalName']?.toString().isNotEmpty ?? false);
     if (basic && (WindowsLocalSecurity.configured || (await CentralSchoolCloud.saved())['managed']==true)) {
@@ -130,7 +174,7 @@ class WindowsAdminSetup {
       }, SetOptions(merge: true)));
     } catch (_) {}
     // Reuse the existing local security lock with the entered password.
-    if(managed){await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;return;}
+    if(managed){await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();return;}
     if (!WindowsLocalSecurity.configured) {
       await WindowsLocalSecurity.create(
         adminId: 'Local Administrator',

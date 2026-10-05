@@ -121,6 +121,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
   bool _loading = true;
   bool _setupDone = false;
   bool _managed = false;
+  String? _restoreError;
 
   @override
   void initState() {
@@ -133,6 +134,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
   }
 
   Future<void> _prepare() async {
+    if (mounted) setState(() { _loading = true; _restoreError = null; });
     try {
       await WindowsLocalSecurity.initialize();
       final done = await WindowsAdminSetup.completed();
@@ -146,7 +148,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _setupDone = WindowsLocalSecurity.configured;
+        _restoreError = 'School profile could not be restored. $e';
         _loading = false;
       });
     }
@@ -162,6 +164,11 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
         ),
       );
     }
+    if (_restoreError != null) return Scaffold(body:Center(child:Padding(
+      padding:const EdgeInsets.all(24), child:Column(mainAxisSize:MainAxisSize.min,children:[
+        Text(_restoreError!),
+        FilledButton(onPressed:_prepare,child:const Text('Retry school profile restore')),
+      ]))));
     if(_managed) return _setupDone ? const WindowsStartupGate(child:WindowsLocalDashboardGate()) : const WindowsAdminSetupScreen();
     // Fresh install: local-first Admin Setup before the dashboard.
     if (!_setupDone && !WindowsLocalSecurity.configured) {
