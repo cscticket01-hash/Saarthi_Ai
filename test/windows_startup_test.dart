@@ -83,9 +83,14 @@ void main(){
   await tester.tap(find.text('Unlock App'));await tester.pump();
   expect(find.text('Unlocked home'),findsNothing);
   await tester.enterText(find.byType(TextField),'existing-lock-123');
-  await tester.tap(find.text('Unlock App'));await tester.pump();await tester.pump();
+  await tester.runAsync(() async {
+   await tester.tap(find.text('Unlock App'));
+   await Future<void>.delayed(const Duration(milliseconds:100));
+  });
+  await tester.pump();
   expect(find.text('Login Successful'),findsOneWidget);
-  await tester.pump(const Duration(milliseconds:900));
+  await tester.runAsync(() async {await Future<void>.delayed(const Duration(milliseconds:900));});
+  await tester.pump();
   expect(find.text('Unlocked home'),findsOneWidget);
   await tester.pumpWidget(const SizedBox());
  });
