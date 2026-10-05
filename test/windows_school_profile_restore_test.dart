@@ -1,6 +1,13 @@
+import 'dart:io';
+import 'dart:convert';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../lib/windows_admin_setup.dart';
+import '../lib/windows_connect/central_school_cloud.dart';
+import '../lib/platform/platform_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_school_profile_restore.dart';
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   const school = 'vs-11111111111111111111111111111111';
   const profile = {'schoolId':school,'schoolName':'School A','principalName':'Principal A'};
   test('new PC restores saved school and private logo without writing registration', () async {
@@ -105,6 +112,29 @@ void main() {
       localProfile: profile, call: (a, b) async => throw StateError('blocked or offline')), throwsStateError);
     await expectLater(WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
       localProfile: {...profile, 'schoolId': 'other'}, call: (a, b) async => enrollment('complete')), throwsStateError);
+  });
+
+  test('legacy local registration provenance follows its tenant file and foreign IDs are never relabelled', () async {
+    final base = Platform.environment['APPDATA'] ?? Platform.environment['LOCALAPPDATA'];
+    expect(base, isNotNull);
+    final file = File('$base${Platform.pathSeparator}VidyaSaarthi${Platform.pathSeparator}admin_setup_v1_$school.json');
+    final previous = await file.exists() ? await file.readAsBytes() : null;
+    addTearDown(() async {
+      if (previous != null) { await file.writeAsBytes(previous); }
+      else if (await file.exists()) { await file.delete(); }
+    });
+    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key: jsonEncode({
+      'managed': true, 'projectId': platformProjectId, 'schoolId': school,
+      'uid': 'A', 'email': 'a@school.example', 'folderId': 'managed',
+      'firebaseRefreshToken': 'refresh', 'endpoint': 'https://school.example/school-cloud'})});
+    await file.parent.create(recursive: true);
+    await file.writeAsString(jsonEncode({'schoolName': 'School A', 'principalName': 'Principal A'}));
+    expect((await WindowsAdminSetup.read())['schoolId'], school);
+    await file.writeAsString(jsonEncode({...profile, 'schoolId': 'other'}));
+    final foreign = await WindowsAdminSetup.read();
+    expect(foreign['schoolId'], 'other');
+    await expectLater(WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+      localProfile: foreign, call: (a, b) async => enrollment('complete')), throwsStateError);
   });
 
 }

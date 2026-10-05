@@ -19,7 +19,7 @@ class WindowsAdminSetup {
 
   static const fileVersion = 'admin_setup_v1';
 
-  static File get _file {
+  static File _fileForSchool(String schoolId) {
     final base = Platform.environment['APPDATA'] ??
         Platform.environment['LOCALAPPDATA'];
     if (base == null) {
@@ -27,11 +27,10 @@ class WindowsAdminSetup {
     }
     return File(
       '$base${Platform.pathSeparator}VidyaSaarthi${Platform.pathSeparator}'
-      '$fileVersion${_managedSchool.isEmpty?'':'_$_managedSchool'}.json',
+      '$fileVersion${schoolId.isEmpty?'':'_$schoolId'}.json',
     );
   }
 
-  static String _managedSchool='';
   static Map<String, dynamic> _data = const {};
   static bool? _cachedCompleted;
 
@@ -40,14 +39,27 @@ class WindowsAdminSetup {
   static bool? completedOverride;
 
   static Future<Map<String, dynamic>> read() async {
-    final saved=await CentralSchoolCloud.saved();_managedSchool=saved['managed']==true?saved['schoolId']:'';
+    final saved = await CentralSchoolCloud.saved();
+    final managed = saved['managed'] == true;
+    final school = managed ? saved['schoolId'].toString() : '';
+    final target = _fileForSchool(school);
+    Map<String, dynamic> data;
     try {
-      final text = await _file.readAsString();
-      _data = Map<String, dynamic>.from(jsonDecode(text));
+      data = Map<String, dynamic>.from(jsonDecode(await target.readAsString()));
     } catch (_) {
-      _data = const {};
+      data = {};
     }
-    return _data;
+    if (managed) {
+      final current = await CentralSchoolCloud.saved();
+      if (current['schoolId'] != school || current['uid'] != saved['uid']) {
+        throw StateError('School changed while reading registration. Retry login.');
+      }
+      // Older local files omitted schoolId. Bind their provenance to the exact
+      // tenant filename, without relabelling a foreign declared identity.
+      if (data.isNotEmpty) data.putIfAbsent('schoolId', () => school);
+    }
+    _data = data;
+    return data;
   }
 
   /// True when an admin/school setup already exists — either saved by this
@@ -63,7 +75,7 @@ class WindowsAdminSetup {
       final school = identity['schoolId'].toString();
       final uid = identity['uid'];
       final profileId = FirebaseFirestore.instance.activeProfileId;
-      final target = _file;
+      final target = _fileForSchool(school);
       Future<void> verifyIdentity() async {
         final current = await CentralSchoolCloud.saved();
         if (current['schoolId'] != school || current['uid'] != uid ||
@@ -137,8 +149,8 @@ class WindowsAdminSetup {
     if (principal.length < 2) {
       throw const FormatException('Principal Name is required.');
     }
-    final saved=await CentralSchoolCloud.saved();final managed=saved['managed']==true;_managedSchool=managed?saved['schoolId']:'';
-    final targetFile=_file;
+    final saved=await CentralSchoolCloud.saved();final managed=saved['managed']==true;
+    final targetFile=_fileForSchool(managed?saved['schoolId'].toString():'');
     final brandingRef=FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache');
     if(managed){await ManagedSchoolSession.reauthenticate(saved['email'],adminPassword);if((await CentralSchoolCloud.saved())['schoolId']!=saved['schoolId'])throw StateError('School changed. Sign in and retry.');}
     if (adminPassword.length < 6) {
