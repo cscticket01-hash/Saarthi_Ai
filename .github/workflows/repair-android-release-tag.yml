@@ -7,6 +7,7 @@ on:
       - '.github/workflows/repair-android-release-tag.yml'
 permissions:
   contents: write
+  actions: read
 jobs:
   correct-release-source:
     if: contains(github.event.head_commit.message, '[release-metadata-fix]')
@@ -23,6 +24,7 @@ jobs:
             echo "::error::Unexpected release tag target; refusing modification."
             exit 1
           fi
-          gh api repos/$GH_REPO/actions/runs/37323885410 --jq '.head_sha + " " + .conclusion' |             rg '^8b98c7f58c3309faf6f4455c160605d7ba4496f9 success$'
+          verified=$(gh api repos/$GH_REPO/actions/runs/37323885410 --jq '.head_sha + " " + .conclusion')
+          test "$verified" = "8b98c7f58c3309faf6f4455c160605d7ba4496f9 success"
           gh api --method PATCH repos/$GH_REPO/git/refs/tags/android-v1.0.487 -f sha=8b98c7f58c3309faf6f4455c160605d7ba4496f9 -F force=true --jq '.object.sha'
           gh api --method PATCH repos/$GH_REPO/releases/403808258 -f target_commitish=8b98c7f58c3309faf6f4455c160605d7ba4496f9 --jq '.tag_name'
