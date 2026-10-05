@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+import '../lib/windows_connect/central_school_cloud.dart';
+import '../lib/platform/platform_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -37,4 +41,27 @@ void main(){
   expect(confirm,findsOneWidget);expect(licence,findsOneWidget);expect(tester.getTopLeft(licence).dy,greaterThan(tester.getTopLeft(confirm).dy));
   expect(find.text('Admin Setup'),findsNothing);expect(find.text('Skip'),findsNothing);await tester.pumpWidget(const SizedBox());
  });
+ testWidgets('tenant connection completes before registration lookup; restore failure shows retry not setup',(tester)async{
+  final connected=Completer<void>();var checked=false;
+  await tester.pumpWidget(MaterialApp(home:WindowsStartupFlow(
+    initializeConnections:()=>connected.future,
+    checkSetup:()async{checked=true;throw StateError('restore unavailable');})));
+  await tester.pump();expect(checked,false);
+  connected.complete();await tester.pump();await tester.pump();
+  expect(checked,true);expect(find.text('Retry school profile restore'),findsOneWidget);
+  expect(find.text('Save & Open App'),findsNothing);
+  await tester.pumpWidget(const SizedBox());
+ });
+ testWidgets('verified existing enrollment with no local preferences opens home rather than registration',(tester)async{
+  FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({
+    'managed':true,'projectId':platformProjectId,'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'uid':'A','email':'a@school.example','folderId':'managed','firebaseRefreshToken':'refresh',
+    'endpoint':'https://school.example/school-cloud'})});
+  await tester.pumpWidget(MaterialApp(home:WindowsStartupFlow(
+    initializeConnections:()async{},checkSetup:()async=>true)));
+  await tester.pump();await tester.pump();await tester.pump();
+  expect(find.text('Open Admin Panel'),findsOneWidget);expect(find.text('Save & Open App'),findsNothing);
+  await tester.pumpWidget(const SizedBox());
+ });
+
 }

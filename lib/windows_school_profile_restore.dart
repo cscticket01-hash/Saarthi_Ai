@@ -5,11 +5,67 @@ class WindowsSchoolProfileRestore {
       (profile['schoolName']?.toString().trim().length ?? 0) >= 2 &&
       (profile['principalName']?.toString().trim().length ?? 0) >= 2;
 
+  /// A missing PC cache is never evidence that a school is new. Only the
+  /// authenticated server can declare first registration safe.
+  static Future<Map<String, dynamic>> resolveEnrollment({
+    required String schoolId,
+    required Map<String, dynamic> localProfile,
+    required Future<Map<String, dynamic>> Function(String, Map<String, dynamic>) call,
+  }) async {
+    if (localProfile['schoolId'] != null && localProfile['schoolId'] != schoolId) {
+      throw StateError('Foreign local school profile blocked.');
+    }
+    Future<Map<String, dynamic>> registry(String operation, [Map<String, dynamic> data = const {}]) async {
+      final result = await call('managed/profile', {'operation': operation, ...data});
+      if (result['success'] != true || result['schoolId'] != schoolId ||
+          !['new', 'complete', 'unknown'].contains(result['registrationState']) ||
+          result['storageReady'] is! bool) {
+        throw StateError('School registration could not be verified. Retry restore.');
+      }
+      final profile = result['profile'];
+      if (result['registrationState'] == 'complete' &&
+          (profile is! Map || profile['schoolId'] != schoolId ||
+           !complete(Map<String, dynamic>.from(profile)))) {
+        throw StateError('Saved school registration requires recovery.');
+      }
+      return result;
+    }
+    final enrollment = await registry('read');
+    final central = enrollment['profile'] is Map
+        ? Map<String, dynamic>.from(enrollment['profile']) : <String, dynamic>{};
+    Map<String, dynamic> restored;
+    if (enrollment['storageReady'] == true) {
+      restored = await resolve(schoolId: schoolId, localProfile: localProfile, call: call);
+    } else {
+      restored = complete(localProfile) ? Map<String, dynamic>.from(localProfile) : {};
+    }
+    if (!complete(restored) && complete(central)) {
+      restored = {...central,
+        'restoreNotice': 'School registration restored. Files and local-only data that were not synced are unavailable on this PC.'};
+    }
+    if (complete(restored)) {
+      if (!complete(central)) {
+        // Backfill an existing Drive/local registration without creating a new
+        // school, resetting its trial, or changing its licence.
+        await registry('initialize', {'schoolName': restored['schoolName'],
+          'principalName': restored['principalName']});
+      }
+      restored['schoolId'] = schoolId;
+      return restored;
+    }
+    if (enrollment['registrationState'] == 'new') return {};
+    throw StateError('Existing school registration is not available in synced storage. '
+      'Restore its original PC backup or contact the developer; do not create another school.');
+  }
+
   static Future<Map<String, dynamic>> resolve({
     required String schoolId,
     required Map<String, dynamic> localProfile,
     required Future<Map<String, dynamic>> Function(String, Map<String, dynamic>) call,
   }) async {
+    if (localProfile['schoolId'] != null && localProfile['schoolId'] != schoolId) {
+      throw StateError('Foreign local school profile blocked.');
+    }
     Future<Map<String, dynamic>> request(String action, Map<String, dynamic> body) async {
       final result = await call(action, body);
       if (result['success'] != true || result['schoolId'] != schoolId) {

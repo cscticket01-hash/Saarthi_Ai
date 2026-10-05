@@ -98,3 +98,44 @@ new accounts A/B, password reset/disable, block existing session, licence expiry
 GS root cross-access, Drive file/backup/restore, app restart, local cache separation,
 loss of network, and actual monitoring IAM/data. Offline verification failure
 pauses managed UI; no 72-hour licence grace or normal-work Skip in managed mode.
+
+
+## Existing-school reinstall recovery (2026-10-05 review)
+
+Base reviewed: `feature/managed-school-accounts` at `4cc9325`; the earlier
+Drive-profile recovery and post-restore identity checks are retained. This change
+is an isolated follow-up, not a replacement of the existing managed-school work.
+
+A missing local admin setup file is not registration authority. After verified
+central login/licensing, Windows selects the tenant cache before resolving setup.
+The authenticated `managed/profile` endpoint stores only School ID, school name,
+principal name and completion time in `school_registration_profiles/{schoolId}`.
+New developer-created accounts have an explicit `registrationState: new` marker.
+Initialization is create-only and preserves an existing registration, trial,
+licence, account, Drive root and operational data. Media/passwords are never
+stored in this registry. Managed clients cannot read/write it directly through
+Firestore; the existing server membership and entitlement checks authorize it.
+
+An existing local or Drive registration backfills the registry after login.
+A fresh PC restores the school-owned Drive profile/images when available. If the
+Drive profile is absent but central enrollment is saved, names restore with an
+explicit notice that unsynced files/local-only records are unavailable. The app
+does not invent missing students/photos or create a replacement Drive root.
+Verification/transport/foreign-tenant failures show retry/recovery, never setup.
+Session refresh also refreshes the server-bound GS URL, retaining correct tenant
+configuration when the developer connected storage after the PC first logged in.
+
+Legacy accounts without either saved enrollment or a recoverable local/Drive
+profile have `unknown` registration state. They need the original PC/backup or a
+reviewed developer recovery; they are not assumed new. A legacy account that was
+created but never registered is likewise ambiguous until reviewed. There is no
+automatic bulk migration, destructive reset, trial extension or licence change.
+
+Deployment order for later explicit approval: compatible backend first, then
+Windows preview. The new client intentionally stops at restore retry if the live
+backend does not yet support `managed/profile`. No backend has been deployed by
+this change. Actual Firebase password login/revocation, A/B school-owned Drive,
+GS deployment/configuration, interrupted sync, existing legacy backfill and a
+clean-PC Windows acceptance test still require a separately approved environment.
+Only the review workflow runs on the isolated fix branch; production release and
+Hosting workflows do not run for it.

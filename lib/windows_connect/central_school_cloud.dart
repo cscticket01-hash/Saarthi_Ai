@@ -19,6 +19,22 @@ String tenantCollectionPath(String schoolId, String collection) {
   }
   return 'schools/$schoolId/$collection';
 }
+Map<String, dynamic> managedSessionConfiguration(Map<String, dynamic> session,
+    String schoolId, String uid) {
+  if (session['success'] != true || session['schoolId'] != schoolId ||
+      session['uid'] != uid || session['projectId'] != platformProjectId ||
+      session['storageReady'] is! bool) {
+    throw StateError('School session identity verification failed.');
+  }
+  final script = session['scriptUrl']?.toString() ?? '';
+  if (session['storageReady'] == true &&
+      !RegExp(r'^https://script\.google\.com/macros/s/[A-Za-z0-9_-]{10,300}/exec$').hasMatch(script)) {
+    throw StateError('Saved school storage configuration is invalid.');
+  }
+  return {'scriptUrl': session['storageReady'] == true ? script : '',
+    'storageReady': session['storageReady']};
+}
+
 Map<String, dynamic> centralSchoolData(Map<String, dynamic> data, String schoolId) {
   if (!validSchoolId(schoolId)) throw StateError('Invalid school identity.');
   Object? scrub(Object? value) {
@@ -51,10 +67,10 @@ class CentralSchoolCloud {
   static const apiUrl = String.fromEnvironment('SAARTHI_SCHOOL_CLOUD_URL');
   static const key = 'vidya_saarthi_central_school_v2';
   static Future<void> _pendingSessionWrite = Future<void>.value();
-  static Future<void> updateSession(String schoolId, Map<String,dynamic> updates) {
+  static Future<void> updateSession(String schoolId, Map<String,dynamic> updates, {String? expectedUid}) {
     final next = _pendingSessionWrite.catchError((_) {}).then((_) async {
       final current = await saved();
-      if (current['schoolId'] != schoolId) throw StateError('School connection changed.');
+      if (current['schoolId'] != schoolId || expectedUid != null && current['uid'] != expectedUid) throw StateError('School connection changed.');
       current.addAll(updates);
       await const FlutterSecureStorage().write(key:key,value:jsonEncode(current));
     });
@@ -258,8 +274,12 @@ class CentralSchoolCloud {
       final response = await cloud.send('POST', Uri.https('securetoken.googleapis.com','/v1/token',{'key':platformApiKey}),
         body:'grant_type=refresh_token&refresh_token=${Uri.encodeQueryComponent(data['firebaseRefreshToken'])}', contentType:'application/x-www-form-urlencoded');
       if (response['user_id'] != data['uid'] || response['id_token'] is! String) throw StateError('Firebase school identity changed.');
-      await cloud.api({'action':data['managed']==true?'managed/session':'status', 'schoolId':data['schoolId']}, token:response['id_token']);
-      await updateSession(data['schoolId'],{'firebaseRefreshToken':response['refresh_token'] ?? data['firebaseRefreshToken']});
+      final session = await cloud.api({'action':data['managed']==true?'managed/session':'status', 'schoolId':data['schoolId']}, token:response['id_token']);
+      final configuration = data['managed'] == true
+          ? managedSessionConfiguration(session, data['schoolId'], data['uid']) : <String,dynamic>{};
+      await updateSession(data['schoolId'], {...configuration,
+        'firebaseRefreshToken':response['refresh_token'] ?? data['firebaseRefreshToken']},
+        expectedUid: data['uid']);
       return response['id_token'];
     } finally { cloud.close(); }
   }

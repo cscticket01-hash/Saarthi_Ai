@@ -101,17 +101,16 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
   }
 }
 
-/// Startup order after the licence gate:
-///   License screen (handled by WindowsLicenseGate) -> Skip -> Admin Setup
-///   (only when not already completed) -> Home.
-/// The optional online connection check now runs in the background; it never
-/// blocks opening the app and Firebase is not required to reach Home.
+/// After central account/licence verification, select the exact tenant cache
+/// and resolve saved registration before allowing first setup or the dashboard.
 class WindowsStartupFlow extends StatefulWidget {
   const WindowsStartupFlow(
       {super.key,
-      this.initializeConnections = WindowsConnectionCenter.initialize});
+      this.initializeConnections = WindowsConnectionCenter.initialize,
+      this.checkSetup = WindowsAdminSetup.completed});
 
   final Future<void> Function() initializeConnections;
+  final Future<bool> Function() checkSetup;
 
   @override
   State<WindowsStartupFlow> createState() => _WindowsStartupFlowState();
@@ -126,18 +125,16 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
   @override
   void initState() {
     super.initState();
-    // Optional school-connection init continues in the background only.
-    unawaited(widget.initializeConnections().catchError((error) {
-      debugPrint('Windows background connection init: $error');
-    }));
     _prepare();
   }
 
   Future<void> _prepare() async {
     if (mounted) setState(() { _loading = true; _restoreError = null; });
     try {
+      // Select the authenticated tenant cache before inspecting registration.
+      await widget.initializeConnections();
       await WindowsLocalSecurity.initialize();
-      final done = await WindowsAdminSetup.completed();
+      final done = await widget.checkSetup();
       final managed=(await CentralSchoolCloud.saved())['managed']==true;
       if (!mounted) return;
       setState(() {
@@ -169,7 +166,15 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
         Text(_restoreError!),
         FilledButton(onPressed:_prepare,child:const Text('Retry school profile restore')),
       ]))));
-    if(_managed) return _setupDone ? const WindowsStartupGate(child:WindowsLocalDashboardGate()) : const WindowsAdminSetupScreen();
+    if (_managed) {
+      if (!_setupDone) return const WindowsAdminSetupScreen();
+      return Column(children: [
+        if (WindowsAdminSetup.restoreNotice.isNotEmpty)
+          Material(child: Padding(padding: const EdgeInsets.all(12),
+            child: Text(WindowsAdminSetup.restoreNotice))),
+        const Expanded(child: WindowsStartupGate(child: WindowsLocalDashboardGate())),
+      ]);
+    }
     // Fresh install: local-first Admin Setup before the dashboard.
     if (!_setupDone && !WindowsLocalSecurity.configured) {
       return const WindowsAdminSetupScreen();

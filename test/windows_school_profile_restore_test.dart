@@ -36,4 +36,75 @@ void main() {
     await expectLater(WindowsSchoolProfileRestore.resolve(schoolId:school,localProfile:{},call:(a,b) async=>throw StateError('offline')),throwsStateError);
     expect(await WindowsSchoolProfileRestore.resolve(schoolId:school,localProfile:{},call:(a,b) async=>{'success':true,'schoolId':school,'records':{}}),isEmpty);
   });
+  Map<String, dynamic> enrollment(String state, {bool storage = false}) => {
+    'success': true, 'schoolId': school, 'registrationState': state,
+    'storageReady': storage, 'profile': state == 'complete' ? profile : null};
+  test('new PC restores central names with no script and honestly reports unsynced files', () async {
+    final actions = <String>[];
+    final result = await WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+      localProfile: {}, call: (action, body) async {
+        actions.add(action); return enrollment('complete');
+      });
+    expect(result['schoolName'], 'School A');
+    expect(result['restoreNotice'], contains('not synced'));
+    expect(result.containsKey('logoUrl'), false);
+    expect(actions, ['managed/profile']);
+  });
+  test('new school setup requires explicit server new state, not an empty PC', () async {
+    expect(await WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+      localProfile: {}, call: (a, b) async => enrollment('new')), isEmpty);
+    await expectLater(WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+      localProfile: {}, call: (a, b) async => enrollment('unknown')), throwsStateError);
+  });
+  test('existing Drive profile backfills central metadata without registering another school', () async {
+    final operations = <String>[];
+    final result = await WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+      localProfile: {}, call: (action, body) async {
+        operations.add('$action:${body['operation']}');
+        if (action == 'managed/profile') {
+          if (body['operation'] == 'initialize') {
+            expect(body.keys, unorderedEquals(['operation', 'schoolName', 'principalName']));
+            return enrollment('complete', storage: true);
+          }
+          return enrollment('unknown', storage: true);
+        }
+        return {'success': true, 'schoolId': school,
+          'records': {'school_profile_cache': profile}};
+      });
+    expect(result['schoolName'], 'School A');
+    expect(operations, ['managed/profile:read', 'managed/records:read', 'managed/profile:initialize']);
+  });
+  test('missing Drive registration uses saved central enrollment and does not recreate it', () async {
+    final result = await WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+      localProfile: {}, call: (action, body) async => action == 'managed/profile'
+        ? enrollment('complete', storage: true)
+        : {'success': true, 'schoolId': school, 'records': {}});
+    expect(result['schoolId'], school); expect(result['restoreNotice'], isNotEmpty);
+  });
+  test('known local registration backfills metadata before storage has been connected', () async {
+    final result = await WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+      localProfile: {...profile, 'logoUrl': 'data:image/png;base64,YWJj'},
+      call: (action, body) async => enrollment(body['operation'] == 'read' ? 'unknown' : 'complete'));
+    expect(result['logoUrl'], startsWith('data:image/'));
+    expect(result.containsKey('restoreNotice'), false);
+  });
+  test('blocked, failed, malformed and foreign registration responses never show setup', () async {
+    for (final response in [
+      {...enrollment('new'), 'schoolId': 'other'},
+      {...enrollment('complete'), 'profile': {...profile, 'schoolId': 'other'}},
+      {...enrollment('complete'), 'profile': {}},
+      {...enrollment('new'), 'success': false},
+      {...enrollment('new'), 'registrationState': 'invalid'},
+    ]) {
+      await expectLater(WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+        localProfile: {}, call: (a, b) async => response), throwsStateError);
+    }
+    await expectLater(WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+      localProfile: profile, call: (a, b) async => throw StateError('blocked or offline')), throwsStateError);
+    await expectLater(WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+      localProfile: {...profile, 'schoolId': 'other'}, call: (a, b) async => enrollment('complete')), throwsStateError);
+  });
+
 }
+
+// Enrollment routing covers PCs without any local preferences or profile files.

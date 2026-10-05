@@ -12,9 +12,8 @@ import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_session.dart';
 
-/// Local-first initial school/admin setup shown after the licence screen is
-/// skipped on a fresh install. It never touches Firebase, Google Drive or any
-/// network service: everything is written to this PC only.
+/// School-scoped registration cache. Managed enrollment is verified centrally;
+/// branding and operational data remain local or in the school's own Drive.
 class WindowsAdminSetup {
   WindowsAdminSetup._();
 
@@ -60,7 +59,7 @@ class WindowsAdminSetup {
     if (_cachedCompleted == true && WindowsLocalSecurity.configured && (await CentralSchoolCloud.saved())['managed']!=true) return true;
     var data = await read();
     final identity = await CentralSchoolCloud.saved();
-    if (identity['managed'] == true && data['cloudProfileSaved'] != true && (identity['scriptUrl']?.toString() ?? '').isNotEmpty) {
+    if (identity['managed'] == true) {
       final school = identity['schoolId'].toString();
       final uid = identity['uid'];
       final profileId = FirebaseFirestore.instance.activeProfileId;
@@ -75,7 +74,7 @@ class WindowsAdminSetup {
       }
       try {
         await verifyIdentity();
-        final restored = await WindowsSchoolProfileRestore.resolve(
+        final restored = await WindowsSchoolProfileRestore.resolveEnrollment(
           schoolId: school, localProfile: data,
           call: (action, body) async {
             await verifyIdentity();
@@ -87,7 +86,7 @@ class WindowsAdminSetup {
         if (WindowsSchoolProfileRestore.complete(restored)) {
           await target.parent.create(recursive:true);
           final tmp = File('${target.path}.tmp');
-          await tmp.writeAsString(jsonEncode({...restored, 'cloudProfileSaved':true}),flush:true);
+          await tmp.writeAsString(jsonEncode(restored),flush:true);
           await tmp.rename(target.path);
           await verifyIdentity();
           await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
@@ -98,10 +97,10 @@ class WindowsAdminSetup {
           _data = restored;
         }
       } catch (_) {
-        // A known local registration remains usable offline. A fresh PC must
-        // retry restoration instead of being mistaken for a new school.
+        // Verification/restore failures must not become a registration screen,
+        // including on a PC with a previously completed local registration.
         await verifyIdentity();
-        if (!WindowsSchoolProfileRestore.complete(data)) rethrow;
+        rethrow;
       }
     }
     final basic = (data['schoolName']?.toString().isNotEmpty ?? false) &&
@@ -116,6 +115,8 @@ class WindowsAdminSetup {
     }
     return false;
   }
+
+  static String get restoreNotice => _data['restoreNotice']?.toString() ?? '';
 
   static String get schoolName => _data['schoolName']?.toString() ?? '';
   static String get principalName => _data['principalName']?.toString() ?? '';
@@ -146,6 +147,7 @@ class WindowsAdminSetup {
     }
     final map = <String, dynamic>{
       'version': 1,
+      if (managed) 'schoolId': saved['schoolId'],
       'schoolName': name,
       'principalName': principal,
       'logoUrl': await _encodeImage(logoPath),
@@ -153,6 +155,20 @@ class WindowsAdminSetup {
       'principalSignatureUrl': await _encodeImage(signaturePath),
       'savedAt': DateTime.now().toIso8601String(),
     };
+    if (managed) {
+      final result = await ManagedSchoolSession.call('managed/profile', {
+        'operation': 'initialize', 'schoolName': name, 'principalName': principal});
+      if (result['success'] != true || result['schoolId'] != saved['schoolId'] ||
+          result['registrationState'] != 'complete') {
+        throw StateError('School registration could not be saved. Retry.');
+      }
+      final profile = result['profile'];
+      if (profile is! Map || profile['schoolId'] != saved['schoolId'] ||
+          profile['schoolName'] != name || profile['principalName'] != principal) {
+        throw StateError('This school is already registered. Retry login to restore its saved profile.');
+      }
+    }
+    // Keep private images on this PC until the school Drive is connected.
     // Persist locally first so the app works fully offline.
     try {
       await targetFile.parent.create(recursive: true);

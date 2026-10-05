@@ -287,6 +287,7 @@ jobs:
   push:
     branches:
     - feature/managed-school-accounts
+    - fix/existing-school-restore-20261005
   pull_request:
     branches:
     - main

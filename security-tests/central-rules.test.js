@@ -77,6 +77,10 @@ test('managed schools cannot use legacy direct Firestore operational paths or se
  await assertFails(getDoc(doc(db,'schools/'+A+'/students_directory/same')));
  await assertFails(setDoc(doc(db,'schools/'+A+'/school_config/drive'),{schoolId:A,folderId:'foreign'}));
  await assertFails(getDoc(doc(db,'school_storage_private/'+A)));
+ await assertFails(getDoc(doc(db,'school_registration_profiles/'+A)));
+ await assertFails(getDoc(doc(db,'school_registration_profiles/'+B)));
+ await assertFails(setDoc(doc(db,'school_registration_profiles/'+A),{schoolId:A,schoolName:'Forged'}));
+ await assertFails(setDoc(doc(db,'platform_schools/'+A),{registrationState:'new'}));
  await assertFails(setDoc(doc(db,'school_entitlements/'+A),{active:true,expiresAt:9999999999999}));
  await assertFails(getDoc(doc(db,'schools/'+B+'/students_directory/same')));
 });
