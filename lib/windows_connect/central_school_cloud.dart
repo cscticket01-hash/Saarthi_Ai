@@ -368,9 +368,9 @@ class CentralSchoolCloud {
   void close() { cancelled=true; client.close(); }
 }
 
-class CentralCloudException implements Exception {
-  const CentralCloudException(this.status,this.stage,this.message,{this.invalidRefresh=false});
-  final int status; final String stage,message; final bool invalidRefresh;
+class CentralCloudException extends StateError {
+  CentralCloudException(this.status,this.stage,String message,{this.invalidRefresh=false}):super(message);
+  final int status; final String stage; final bool invalidRefresh;
   bool get authoritativeAccessDenial => invalidRefresh || stage=='school_cloud' && (status==401||status==403);
   @override String toString()=>message;
 }

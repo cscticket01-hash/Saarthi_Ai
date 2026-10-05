@@ -195,9 +195,11 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
 /// Requires the existing local password before showing a saved dashboard.
 /// Central authentication and licensing are enforced by the outer startup gate.
 class WindowsStartupGate extends StatefulWidget {
-  const WindowsStartupGate({super.key, required this.child});
+  const WindowsStartupGate({super.key, required this.child, this.prepareLock, this.completeUnlock});
 
   final Widget child;
+  final Future<bool> Function()? prepareLock;
+  final Future<void> Function()? completeUnlock;
 
   @override
   State<WindowsStartupGate> createState() => _WindowsStartupGateState();
@@ -225,6 +227,11 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
 
   Future<void> _prepare() async {
     try {
+      if(widget.prepareLock!=null) {
+        final locked=await widget.prepareLock!();
+        if(mounted)setState((){_locked=locked;_loading=false;});
+        return;
+      }
       await WindowsLocalSecurity.initialize();
       final shouldLock = WindowsLocalSecurity.configured;
       _schoolName=WindowsAdminSetup.schoolName;
@@ -258,9 +265,12 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
       void own() {if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed. Reopen the app.');}
       try {
         own();
-        await WindowsLocalSession.markLoggedIn();
-        own();
-        await FirebaseAuth.instance.bootstrapLocalUser();
+        if(widget.completeUnlock!=null)await widget.completeUnlock!();
+        else {
+          await WindowsLocalSession.markLoggedIn();
+          own();
+          await FirebaseAuth.instance.bootstrapLocalUser();
+        }
         own();
         if (!mounted) return;
         setState(() { _success = true; _error = null; });

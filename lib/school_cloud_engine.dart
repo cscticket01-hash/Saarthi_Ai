@@ -104,7 +104,7 @@ class SchoolCloudEngine extends ChangeNotifier {
     }catch(e){
       if(!current())return;
       if(e is CentralCloudException && e.authoritativeAccessDenial){
-        final denied={...origin,'allowed':false,'activated':false,'expiresAt':0,
+        final denied={'schoolId':origin['schoolId'],'uid':origin['uid'],'projectId':origin['projectId'],'allowed':false,'activated':false,'expiresAt':0,
           'status':e.status==403?'blocked':'auth_required','serverTime':_clock().millisecondsSinceEpoch};
         access=denied;state=SchoolCloudState.authRequired;
         try{await _persist(origin,denied);}catch(_){}

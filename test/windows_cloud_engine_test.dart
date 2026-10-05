@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/platform/platform_config.dart';
+import '../lib/main_windows.dart';
+import '../lib/windows_local_settings.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/school_cloud_engine.dart';
 import '../lib/windows_secure_storage.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
@@ -55,7 +58,7 @@ void main(){
       expect(e.canOpen,false);expect(persisted?['allowed'],false);e.dispose();
       final restart=engine(identity(persisted!));await restart.restore();expect(restart.canOpen,false);restart.dispose();
     }
-    final e=engine(identity(access()),verify:()async=>throw const CentralCloudException(503,'school_cloud','unavailable'));
+    final e=engine(identity(access()),verify:()async=>throw CentralCloudException(503,'school_cloud','unavailable'));
     await e.restore();await Future<void>.delayed(Duration.zero);expect(e.canOpen,true);e.dispose();
   });
   test('failed verification retries and refreshes real licence status',()async{
@@ -99,4 +102,25 @@ void main(){
     expect(find.textContaining('Offline / Sync pending'),findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('App Lock rejects wrong password then animates success and directly opens console',(tester)async{
+    FlutterSecureStorage.setMockInitialValues({});
+    await tester.runAsync(()async{
+      await WindowsLocalSecurity.initialize();
+      await WindowsLocalSecurity.create(adminId:'School app',password:'saved-app-lock');
+    });
+    await tester.pumpWidget(MaterialApp(home:WindowsStartupGate(
+      prepareLock:()async=>true,completeUnlock:()async{},child:const Text('Unlocked Console'))));
+    await tester.pump();await tester.pump();
+    final field=find.byType(TextField);
+    await tester.enterText(field,'wrong-password');
+    await tester.tap(find.text('Unlock App'));await tester.pump();
+    expect(find.text('Unlocked Console'),findsNothing);expect(find.text('Galat App Password.'),findsOneWidget);
+    await tester.enterText(field,'saved-app-lock');
+    await tester.tap(find.text('Unlock App'));await tester.pump();await tester.pump();
+    expect(find.text('Login Successful'),findsOneWidget);
+    await tester.pump(const Duration(milliseconds:900));await tester.pump();
+    expect(find.text('Unlocked Console'),findsOneWidget);expect(find.text('Open Admin Panel'),findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
 }
