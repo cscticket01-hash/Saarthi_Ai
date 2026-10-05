@@ -71,7 +71,7 @@ class _QrScanner extends StatefulWidget {
 }
 
 class _QrScannerState extends State<_QrScanner> {
-  bool _done = false;
+  final _capture = SchoolQrCapture();
   final _scanner = MobileScannerController();
   String? _error;
   @override
@@ -88,18 +88,17 @@ class _QrScannerState extends State<_QrScanner> {
             child: MobileScanner(
                 controller: _scanner,
                 onDetect: (capture) async {
-                  if (_done) return;
+                  if (_capture.paused) return;
                   for (final b in capture.barcodes) {
                     final raw = b.rawValue;
                     if (raw == null) continue;
                     try {
-                      final link = SchoolLink.parse(raw);
-                      _done = true;
+                      final link = _capture.capture(raw);
+                      if (link == null) return;
                       try { await _scanner.stop().timeout(const Duration(seconds:2)); } catch (_) {}
                       if (mounted) Navigator.pop(context, link);
                       return;
                     } catch (e) {
-                      _done = true;
                       try { await _scanner.stop().timeout(const Duration(seconds:2)); } catch (_) {}
                       if (mounted) setState(() => _error = 'Invalid or older ID QR. Ask your school to regenerate this card.');
                       return;
@@ -114,7 +113,14 @@ class _QrScannerState extends State<_QrScanner> {
           Padding(
               padding: const EdgeInsets.all(16),
               child: Column(children: [Text(_error!, style: const TextStyle(color: Colors.orangeAccent)),
-                TextButton(onPressed: () async { setState(() { _done=false; _error=null; }); await _scanner.start(); }, child: const Text('Scan again'))]))
+                TextButton(onPressed: () async {
+                  try {
+                    await _scanner.start().timeout(const Duration(seconds:5));
+                    if (mounted) setState(() { _capture.retry(); _error=null; });
+                  } catch (_) {
+                    if (mounted) setState(() => _error='Camera could not restart. Reopen the scanner and check camera permission.');
+                  }
+                }, child: const Text('Scan again'))]))
       ]));
 }
 

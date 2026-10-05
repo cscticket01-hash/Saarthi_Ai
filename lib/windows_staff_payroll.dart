@@ -54,6 +54,7 @@ class StaffPayroll {
       for (final d in teachers.docs) {
         'id': 'teacher:${d.id}',
         'teacherId': (d.data()['teacherId']?.toString().trim().isNotEmpty ?? false) ? d.data()['teacherId'] : d.id,
+        'employeeId': d.data()['teacherId'] ?? d.id,
         'name': d.data()['name'] ?? d.data()['teacherName'] ?? d.id,
         'role': 'Teacher', 'designation': d.data()['designation'] ?? 'Teacher',
       },
@@ -89,7 +90,7 @@ class StaffPayroll {
     final alreadyPaid = paid(old);
     if (amount < alreadyPaid) throw StateError('Net salary cannot be lower than the payments already recorded.');
     final row = <String, dynamic>{...old, 'id': id, 'staffId': employee['id'],
-      'teacherId': employee['teacherId'] ?? '', 'name': employee['name'], 'role': employee['role'],
+      'teacherId': employee['teacherId'] ?? '', 'employeeId':employee['employeeId']??employee['teacherId']??'', 'name': employee['name'], 'role': employee['role'],
       'designation': employee['designation'], 'month': month, 'basicPaise': basic,
       'allowancePaise': allowance, 'bonusPaise': bonus, 'overtimePaise': overtime,
       'deductionPaise': deduction, 'netPaise': amount, 'amount': amount / 100,

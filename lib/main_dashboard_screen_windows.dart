@@ -10596,7 +10596,6 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                             ),
                             alignment: Alignment.center,
                             child: WindowsAdminAvatar(key:ValueKey('${FirebaseFirestore.instance.activeProfileId}:${user?.email}'),initial:_profileInitial(user)),
-                            ),
                           ),
                           const SizedBox(width: 15),
                           Expanded(

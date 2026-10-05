@@ -34,6 +34,15 @@ void main() {
       expect(restored.link!.schoolId,fixture['schoolId']);expect(restored.link!.role,fixture['type']);expect(restored.loggedIn,true);
     });
   }
+  test('scanner accepts one shared QR, pauses duplicates and requires retry after invalid QR', () {
+    final capture=SchoolQrCapture();
+    expect(() => capture.capture('not-a-school-qr'), throwsFormatException);
+    expect(capture.paused,isTrue);
+    expect(capture.capture(SchoolLink.encode(fixtures.first)),isNull);
+    capture.retry();
+    expect(capture.capture(SchoolLink.encode(fixtures.first))!.schoolId,fixtures.first['schoolId']);
+    expect(capture.capture(SchoolLink.encode(fixtures.last)),isNull);
+  });
   test('foreign-school response and wrong credentials never persist a mobile login',() async {
     for(final response in [http.Response(jsonEncode(reply('vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')),200),http.Response(jsonEncode({'success':false,'message':'Wrong credentials'}),403)]) {
       final session=SchoolSession(client:MockClient((_) async=>response));
