@@ -54,7 +54,13 @@ class User {
   Future<UserCredential> reauthenticateWithCredential(
     AuthCredential credential,
   ) async {
-    if((await CentralSchoolCloud.saved())['managed']==true){await ManagedSchoolSession.reauthenticate(credential.email,credential.password);return UserCredential(user:this);}
+    if((await CentralSchoolCloud.saved())['managed']==true){
+      await WindowsLocalSecurity.initialize();
+      if (!WindowsLocalSecurity.configured || !WindowsLocalSecurity.verifyPassword(credential.password)) {
+        throw FirebaseAuthException(code:'wrong-password', message:'Enter the local App Lock password.');
+      }
+      return UserCredential(user:this);
+    }
     if (!WindowsLocalSecurity.configured) {
       throw FirebaseAuthException(
         code: 'local-settings-lock-not-configured',

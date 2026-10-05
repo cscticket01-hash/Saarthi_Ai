@@ -68,6 +68,7 @@ class WindowsDocumentTemplates {
         data: {
           'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
           ...data,
+          if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty) 'schoolName': profile['schoolName'],
         },
         qr: qr,
         photo: await _image(data['photoUrl']),
@@ -100,6 +101,7 @@ class WindowsDocumentTemplates {
     BuildContext context,
     Uint8List bytes, {
     String title = 'Document preview',
+    String? notice,
     VoidCallback? onDownload,
     VoidCallback? onPrint,
   }) =>
@@ -118,12 +120,15 @@ class WindowsDocumentTemplates {
                     icon: const Icon(Icons.close),
                   ),
                 ),
+                if(notice!=null) Padding(padding:const EdgeInsets.symmetric(horizontal:16,vertical:8),child:Text(notice,textAlign:TextAlign.center)),
                 Expanded(
                   child: LayoutBuilder(builder: (context, constraints) => PdfPreview(
                     build: (_) => bytes,
+                    dpi: 200,
+                    canDebug: false,
                     maxPageWidth: onDownload != null
                         ? math.max(60.0, math.min(constraints.maxWidth - 48,
-                            (constraints.maxHeight - 48) * 54 / 85.6))
+                            (constraints.maxHeight - 72) * 54 / (85.6 * 2)))
                         : 700,
                     allowPrinting: onPrint == null,
                     allowSharing: onDownload == null,

@@ -136,14 +136,14 @@ void main(){
     await WindowsLocalSecurity.initialize();expect(WindowsLocalSecurity.verifyPassword('app-only-pass'),true);expect(await WindowsSectionLocks.enabled('admin_section'),true);
     await WindowsLocalSecurity.clearAppLock();expect(await WindowsSectionLocks.enabled('admin_section'),true);
   });
-  testWidgets('direct admin entry is open until its independent lock is enabled',(tester)async{
+  testWidgets('Admin entry no longer asks a second password even with a legacy lock saved',(tester)async{
     FlutterSecureStorage.setMockInitialValues({});
     await tester.pumpWidget(const MaterialApp(home:WindowsAdminAccessGate(child:Text('Direct admin panel'))));
     await tester.pump();await tester.pump();expect(find.text('Direct admin panel'),findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'admin-only-pass');
     await tester.pumpWidget(const MaterialApp(home:WindowsAdminAccessGate(child:Text('Direct admin panel'))));
-    await tester.pump();await tester.pump();expect(find.text('Direct admin panel'),findsNothing);expect(find.text('Admin Section Password'),findsOneWidget);
+    await tester.pump();await tester.pump();expect(find.text('Direct admin panel'),findsOneWidget);expect(find.text('Admin Section Password'),findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
   test('queued local writes and stale batches cannot cross a school switch',()async{

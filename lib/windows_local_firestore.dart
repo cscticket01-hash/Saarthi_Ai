@@ -122,6 +122,22 @@ class FirebaseFirestore {
 
   WriteBatch batch() => WriteBatch._(this);
 
+  Future<void> acknowledgeOutbox(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic> expected) {
+    ref.requireOriginProfile();
+    if(ref.collectionPath!='_windows_firebase_outbox') throw ArgumentError('Outbox reference required');
+    return _database.applyOperations([_WriteOperation._(type:_WriteType.delete,
+      collection:ref.collectionPath, documentId:ref.id, data:expected)]);
+  }
+
+  /// Check the live outbox inside the serialized disk write, not a stale pull snapshot.
+  Future<void> applySyncedDocument(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? data) {
+    ref.requireOriginProfile();
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>_database.applyOperations([
+      _WriteOperation._(type:data==null?_WriteType.delete:_WriteType.set,
+        collection:ref.collectionPath,documentId:ref.id,data:data,preservePending:true),
+    ]));
+  }
+
   Future<T> runTransaction<T>(
     Future<T> Function(Transaction transaction) action,
   ) async {
@@ -584,6 +600,7 @@ class _WriteOperation {
     required this.documentId,
     this.data,
     this.merge = false,
+    this.preservePending = false,
   });
 
   factory _WriteOperation.set(
@@ -630,6 +647,7 @@ class _WriteOperation {
   final String documentId;
   final Map<String, dynamic>? data;
   final bool merge;
+  final bool preservePending;
 }
 
 class _LocalJsonDatabase {
@@ -852,6 +870,11 @@ class _LocalJsonDatabase {
         var trackedMutation = false;
 
         for (final operation in operations) {
+          if(operation.preservePending) {
+            final pending=collections['_windows_firebase_outbox'];
+            if(pending is Map && pending.values.any((item)=>item is Map &&
+                item['collection']==operation.collection && item['documentId']==operation.documentId)) continue;
+          }
           touched.add(operation.collection);
 
           final rawCollection =
@@ -869,6 +892,9 @@ class _LocalJsonDatabase {
 
           switch (operation.type) {
             case _WriteType.delete:
+              // Compare and remove under the same serialized disk write. A save
+              // made while the cloud request was in flight must remain queued.
+              if(operation.data != null && jsonEncode(docs[operation.documentId]) != jsonEncode(_encodeMap(operation.data!))) continue;
               docs.remove(operation.documentId);
               break;
 

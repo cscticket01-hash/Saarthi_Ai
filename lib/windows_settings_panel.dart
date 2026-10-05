@@ -475,7 +475,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'App kholne ka local password. School Login aur Admin Section Lock se alag hai.',
+            'App kholne ka local password. School Login se alag hai.',
             style: TextStyle(color: Colors.white38, fontSize: 10.5, height: 1.4),
           ),
           const SizedBox(height: 12),

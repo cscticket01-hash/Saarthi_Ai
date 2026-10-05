@@ -7,8 +7,10 @@ import 'central_school_cloud.dart';
 class ManagedSchoolSession {
   static const enabled=bool.fromEnvironment('SAARTHI_MANAGED_ACCOUNTS');
   static final changed=ValueNotifier<int>(0);
-  static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) async {
+  static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) => callForSchool(null, action, body);
+  static Future<Map<String,dynamic>> callForSchool(String? expectedSchoolId, String action, Map<String,dynamic> body) async {
     final saved=await CentralSchoolCloud.saved();if(saved['managed']!=true)throw StateError('Managed school login required');
+    if(expectedSchoolId != null && saved['schoolId'] != expectedSchoolId) throw StateError('School changed before operation.');
     final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId']);
     try {
       final result = await cloud.api({'action':action,...body,'schoolId':saved['schoolId']},token:await CentralSchoolCloud.firebaseToken());

@@ -186,7 +186,7 @@ jobs:
         run: |
           flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true
           if ($LASTEXITCODE -ne 0) { throw 'Release cloud configuration verification failed.' }
-          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
+          flutter test test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/school_qr_login_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed.' }
 
       - name: Verify reference PDF contents and continuation pages
@@ -348,11 +348,11 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
-            Fixes the repeated Retry loop for existing school accounts created before the enrollment marker. Recovers the same server-verified School ID/name from matching ownership records and existing tenant caches; missing unsynced details are reported honestly. Brand-new schools still perform first setup. Preserves existing licences/trials/storage and all school data.
-            Reuses and coalesces memory-only Firebase ID tokens to remove redundant authentication exchanges. Current licence, block and tenant checks remain enforced by the server for every operation.
-            Normal Windows logout retains school enrollment and opens the enabled App Lock. The independent Admin lock is checked only at Admin entry. Server school login, licence/block checks and School A/B isolation remain enforced.
-            Student ID preview fits the full card to the resized window without changing designs. PDF download uses native Save As, reports the saved path only after writing and handles cancellation without false success.
-            Includes the combined per-school GS code, manifest and manual deployment guide. Existing School IDs, Drive roots, secrets, records and offline storage are preserved. The school owner must update/authorize the actual GS deployment; this release does not update a school's live script automatically. Real Drive backup/restore and native PC acceptance remain pending.
+            Local-first school settings, directory and photo saves work while Drive/network is unavailable. Durable school-specific sync retries preserve newer edits and retain offline image copies after upload.
+            Removes redundant Admin password gates; separate App Lock remains. Central authentication, licence/block enforcement and School A/B isolation remain enforced.
+            Shared Windows/Android student and teacher QR login format; install the matching latest Android update. Unsynced records need to sync before mobile login.
+            Staff Salary layout with real records, payment history, payslips and CSV. ID cards and payslips have local browser/native print preview. Analytics loads local expenses immediately.
+            Existing school IDs, licences, local data and Drive roots are preserved. Automated regression checks passed. Actual phone-camera, printer and live Google Drive acceptance tests remain pending.
           generate_release_notes: true
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe

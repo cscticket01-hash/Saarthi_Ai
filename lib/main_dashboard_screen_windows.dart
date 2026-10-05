@@ -1,3 +1,7 @@
+import 'windows_school_image_cache.dart';
+import 'school_qr_link.dart';
+import 'windows_school_profile_store.dart';
+import 'windows_browser_print.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_school_map.dart';
@@ -56,6 +60,16 @@ Future<String> _windowsGoogleScriptUrl({bool required = true}) {
   return WindowsConnectionCenter.googleScriptUrl(required: required);
 }
 
+/// Directory mutations commit locally; Drive readiness is needed only for sync.
+Future<String> _windowsDirectoryMutationUrl() async {
+  final saved=await CentralSchoolCloud.saved();
+  if(saved['managed']==true) {
+    if(FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=saved['schoolId']) throw StateError('School changed. Reopen the directory.');
+    return _windowsGoogleScriptUrl(required:false);
+  }
+  return _windowsGoogleScriptUrl();
+}
+
 String _windowsLanguage() => WindowsUiLanguage.current;
 void _setWindowsLanguage(String value) => WindowsUiLanguage.change(value);
 String windowsTr(String key) => WindowsUiLanguage.translate(const {
@@ -112,6 +126,7 @@ Future<String> _windowsBuildPersonQrPayload({
   required String documentId,
   required Map<String, dynamic> person,
 }) async {
+  final origin=FirebaseFirestore.instance.activeProfileId;
   final connections = await WindowsConnectionCenter.reload();
   final firebaseLink = connections.firebaseLink;
   final googleScriptUrl = connections.googleScriptUrl;
@@ -122,10 +137,16 @@ Future<String> _windowsBuildPersonQrPayload({
     documentId: documentId,
     data: person,
   );
+  final managed = await CentralSchoolCloud.saved();
+  if (managed['managed'] == true) {
+    if (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != managed['schoolId']) throw StateError('School changed before QR creation.');
+    WindowsSyncEngine.instance.scheduleSoon();
+  }
+  if(FirebaseFirestore.instance.activeProfileId != origin) throw StateError('School changed before QR creation.');
   final payload = <String, dynamic>{
     'app': 'VIDYA_SAARTHI',
     'v': 2,
-    if((await CentralSchoolCloud.saved())['managed']==true)...{'managed':true,'schoolId':(await CentralSchoolCloud.saved())['schoolId'],'centralEndpoint':CentralSchoolCloud.apiUrl},
+    if(managed['managed']==true)...{'managed':true,'schoolId':managed['schoolId'],'centralEndpoint':managed['endpoint']},
     'type': type,
     'schoolProfileId': profileId,
     'firebaseProjectId': connections.firebaseProjectId,
@@ -142,7 +163,7 @@ Future<String> _windowsBuildPersonQrPayload({
     'schoolLng': location['longitude'],
     'attendanceRadiusMeters': location['radiusMeters'] ?? 200,
   };
-  return jsonEncode(payload);
+  return SchoolLink.encode(payload);
 }
 
 Map<String, dynamic>? _windowsParsePersonQr(String raw) {
@@ -249,13 +270,6 @@ class _WindowsSectionLockDefinition {
 
 const List<_WindowsSectionLockDefinition> _windowsSectionLockDefinitions = [
   _WindowsSectionLockDefinition(
-    key: _windowsAdminSectionLock,
-    title: 'Admin Section',
-    subtitle: 'App open hone ke baad full management panel unlock karein.',
-    icon: Icons.admin_panel_settings_rounded,
-    color: Color(0xFF00D9A5),
-  ),
-  _WindowsSectionLockDefinition(
     key: _windowsStudentRecordsLock,
     title: 'Student Records',
     subtitle: 'Students, profiles aur ID cards ko protect karein.',
@@ -285,20 +299,12 @@ const List<_WindowsSectionLockDefinition> _windowsSectionLockDefinitions = [
   ),
 ];
 
-class WindowsAdminAccessGate extends StatefulWidget {
+/// Central school authentication and the separate App Lock guard the app.
+/// Existing legacy Admin-section preferences no longer add another password.
+class WindowsAdminAccessGate extends StatelessWidget {
   const WindowsAdminAccessGate({super.key,required this.child});
   final Widget child;
-  @override State<WindowsAdminAccessGate> createState()=>_WindowsAdminAccessGateState();
-}
-class _WindowsAdminAccessGateState extends State<WindowsAdminAccessGate> {
-  bool unlocked=false,busy=false;
-  @override void initState(){super.initState();WidgetsBinding.instance.addPostFrameCallback((_)=>unlock());}
-  Future<void> unlock() async {
-    if(busy)return;busy=true;
-    try {final allowed=await _requireWindowsSectionPassword(context,_windowsAdminSectionLock,'Admin Section');if(mounted)setState(()=>unlocked=allowed);}
-    finally {busy=false;}
-  }
-  @override Widget build(BuildContext context)=>unlocked?widget.child:Scaffold(body:Center(child:FilledButton(onPressed:unlock,child:const Text('Unlock Admin Section'))));
+  @override Widget build(BuildContext context)=>child;
 }
 
 class WindowsSectionLocks {
@@ -804,6 +810,7 @@ Future<bool> _requireWindowsSectionPassword(
   String sectionKey,
   String sectionTitle,
 ) async {
+  if (sectionKey == _windowsAdminSectionLock) return true;
   if (!await WindowsSectionLocks.enabled(sectionKey)) return true;
   if (!context.mounted) return false;
 
@@ -4770,6 +4777,7 @@ void _handleLoginBack(bool didPop) {
   }
 
   void _openAddStudentDialog() {
+    final originProfile=FirebaseFirestore.instance.activeProfileId;
     final nameCtrl = TextEditingController();
     final parentCtrl = TextEditingController();
     final rollCtrl = TextEditingController();
@@ -4934,7 +4942,8 @@ void _handleLoginBack(bool didPop) {
                           // Class 1 + Roll 1/01/001 all use the SAME document ID.
                           final normalizedNewRoll = normalizeRoll(roll);
                           final docId = '${selectedClass}_Roll_$normalizedNewRoll';
-                          String finalPhotoUrl = '';
+                          final localPhoto = selectedPhotoBytes == null ? '' : WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!);
+                          String finalPhotoUrl = localPhoto;
                           bool driveSaved = false;
 
                           try {
@@ -5025,7 +5034,7 @@ void _handleLoginBack(bool didPop) {
                                 );
                               }
 
-                              driveSaved = true;
+                              driveSaved = responseJson['cloudSyncPending'] != true;
 
                               if (responseJson['photoUrl'] != null) {
                                 finalPhotoUrl =
@@ -5033,6 +5042,7 @@ void _handleLoginBack(bool didPop) {
                               }
                             }
 
+                            if(FirebaseFirestore.instance.activeProfileId!=originProfile) throw StateError('School changed. Reopen student entry.');
                             final studentRef = FirebaseFirestore.instance
                                 .collection('students_directory')
                                 .doc(docId);
@@ -5071,7 +5081,7 @@ void _handleLoginBack(bool didPop) {
                                 content: Text(
                                   (driveSaved
                                           ? 'Student Google Sheet, Drive aur Firestore me save ho gaya.'
-                                          : 'Student Firestore me save hua.') +
+                                          : 'Student saved on this PC. Cloud sync pending.') +
                                       (assignedTestUid != null
                                           ? ' Test UID: $assignedTestUid'
                                           : ''),
@@ -5497,6 +5507,7 @@ Future<void> _showIdCardPreview() async {
         qr: data['qrData'].toString());
     if (mounted && bytes != null) {
       await WindowsDocumentTemplates.preview(context, bytes, title: 'Student ID card • Front & back',
+        notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
         onDownload: _downloadIdCard, onPrint: _printIdCard);
     }
   } catch (e) {
@@ -5579,18 +5590,8 @@ Future<void> _printIdCard() async {
     final pdfBytes =
         await _buildIdCardPdf();
 
-    await Printing.layoutPdf(
-      name: 'Vidya Saarthi Student ID Card',
-      format: const PdfPageFormat(
-        243,
-        153,
-        marginAll: 0,
-      ),
-      onLayout:
-          (PdfPageFormat format) async {
-        return pdfBytes;
-      },
-    );
+    await WindowsBrowserPrint.open(pdfBytes);
+
   } catch (e) {
     debugPrint(
         'ID Card print error: $e');
@@ -5677,213 +5678,8 @@ Future<void> _printIdCard() async {
   /// Opens the protected Analytics page only after the currently signed-in
   /// Firebase Admin re-authenticates successfully. No password is stored.
   Future<void> _openAdminAnalyticsGate() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final email = user?.email?.trim() ?? '';
-
-    if (user == null || email.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Admin login session nahi mila.'),
-        ),
-      );
-      return;
-    }
-
-    final passwordController = TextEditingController();
-    var obscurePassword = true;
-    var verifying = false;
-    String? errorMessage;
-
-    final verified = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            Future<void> verifyPassword() async {
-              final password = passwordController.text;
-              if (password.isEmpty || verifying) {
-                if (password.isEmpty) {
-                  setDialogState(() {
-                    errorMessage = 'Admin Password required hai.';
-                  });
-                }
-                return;
-              }
-
-              setDialogState(() {
-                verifying = true;
-                errorMessage = null;
-              });
-
-              try {
-                final credential = EmailAuthProvider.credential(
-                  email: email,
-                  password: password,
-                );
-                await user.reauthenticateWithCredential(credential);
-
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop(true);
-                }
-              } on FirebaseAuthException catch (e) {
-                if (!dialogContext.mounted) return;
-                setDialogState(() {
-                  verifying = false;
-                  errorMessage =
-                      e.code == 'too-many-requests'
-                          ? 'Bahut attempts ho gaye. Thodi der baad try karein.'
-                          : 'Galat Admin Password.';
-                });
-              } catch (_) {
-                if (!dialogContext.mounted) return;
-                setDialogState(() {
-                  verifying = false;
-                  errorMessage = 'Admin Password verify nahi hua.';
-                });
-              }
-            }
-
-            return AlertDialog(
-              backgroundColor: const Color(0xFF172229),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              title: const Row(
-                children: [
-                  Icon(
-                    Icons.analytics_rounded,
-                    color: Color(0xFF00D9A5),
-                  ),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Admin Password',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'School Analytics kholne ke liye Admin Password enter karein.',
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11.5,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-                    TextField(
-                      controller: passwordController,
-                      autofocus: true,
-                      obscureText: obscurePassword,
-                      enabled: !verifying,
-                      onSubmitted: (_) => verifyPassword(),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        labelText: 'Admin Password',
-                        labelStyle: const TextStyle(color: Colors.white54),
-                        prefixIcon: const Icon(
-                          Icons.lock_outline_rounded,
-                          color: Color(0xFF00D9A5),
-                        ),
-                        suffixIcon: IconButton(
-                          onPressed: verifying
-                              ? null
-                              : () => setDialogState(
-                                    () => obscurePassword = !obscurePassword,
-                                  ),
-                          icon: Icon(
-                            obscurePassword
-                                ? Icons.visibility_off_rounded
-                                : Icons.visibility_rounded,
-                            color: Colors.white54,
-                          ),
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFF0F191F),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: errorMessage == null
-                                ? Colors.white10
-                                : Colors.redAccent,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(
-                            color: Color(0xFF00D9A5),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (errorMessage != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        errorMessage!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: verifying
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: verifying ? null : verifyPassword,
-                  icon: verifying
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.lock_open_rounded, size: 18),
-                  label: Text(verifying ? 'Verifying...' : 'Continue'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    passwordController.dispose();
-
-    if (verified != true || !mounted) return;
-
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => const AdminAnalyticsScreen(),
-      ),
-    );
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => const AdminAnalyticsScreen()));
   }
 
   void _openAdminDrawerPage(
@@ -7808,30 +7604,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _analyticsLoadExpenses() async {
-    try {
-      final connection = await WindowsConnectionCenter.reload();
-      if (!connection.remoteReady) return <Map<String, dynamic>>[];
-      final url = connection.googleScriptUrl;
-      final response = await WindowsBackendBridge.post(
-        Uri.parse(url),
-        headers: const {'Content-Type': 'text/plain;charset=utf-8'},
-        body: jsonEncode(const {'action': 'list_school_expenses'}),
-      );
-
-      if (response.statusCode != 200) return <Map<String, dynamic>>[];
-      final decoded = jsonDecode(response.body);
-      if (decoded is! Map || decoded['expenses'] is! List) {
-        return <Map<String, dynamic>>[];
-      }
-
-      return (decoded['expenses'] as List)
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList();
-    } catch (e) {
-      debugPrint('Analytics expenses read skipped: $e');
-      return <Map<String, dynamic>>[];
-    }
+    final snapshot = await FirebaseFirestore.instance.collection('school_expenses').get();
+    return snapshot.docs.map((d) => <String,dynamic>{...d.data(), 'id': d.id}).toList();
   }
 
   double _analyticsNumber(dynamic value) {
@@ -8750,7 +8524,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-                        if (_loading)
+                        if (_loading && data == null)
                           const Padding(
                             padding: EdgeInsets.symmetric(vertical: 100),
                             child: Center(
@@ -9432,213 +9206,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
       debugPrint('School profile cache load warning: $e');
     }
 
-    // Google Drive is source-of-truth, but refresh does not block opening.
-    Future<void>(() async {
-      try {
-        final fresh = await _refreshSchoolProfileFromDrive();
-        if (!mounted) return;
-        setState(() {
-          _applyProfile(fresh);
-          _error = null;
-        });
-      } catch (e) {
-        debugPrint('School profile background refresh warning: $e');
-      }
-    });
-  }
 
-  Future<bool> _confirmAdminPasswordBeforeSave() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final email = user?.email?.trim() ?? '';
-
-    if (user == null || email.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('Admin login session nahi mila.'),
-          ),
-        );
-      }
-      return false;
-    }
-
-    final passwordController = TextEditingController();
-    bool obscure = true;
-    bool verifying = false;
-    String? errorMessage;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF172229),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
-              ),
-              title: const Row(
-                children: [
-                  Icon(
-                    Icons.lock_rounded,
-                    color: Color(0xFF00D9A5),
-                  ),
-                  SizedBox(width: 10),
-                  Text(
-                    'Confirm Admin Password',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'School Settings save karne se pehle Admin Password verify karein.',
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11.5,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: passwordController,
-                      obscureText: obscure,
-                      autofocus: true,
-                      onSubmitted: verifying
-                          ? null
-                          : (_) async {
-                              final password = passwordController.text;
-                              if (password.isEmpty) {
-                                setDialogState(() {
-                                  errorMessage = 'Admin Password required hai.';
-                                });
-                                return;
-                              }
-                              setDialogState(() {
-                                verifying = true;
-                                errorMessage = null;
-                              });
-                              try {
-                                final credential = EmailAuthProvider.credential(
-                                  email: email,
-                                  password: password,
-                                );
-                                await user.reauthenticateWithCredential(credential);
-                                if (dialogContext.mounted) {
-                                  Navigator.pop(dialogContext, true);
-                                }
-                              } catch (_) {
-                                setDialogState(() {
-                                  verifying = false;
-                                  errorMessage = 'Galat Admin Password.';
-                                });
-                              }
-                            },
-                      style: const TextStyle(color: Colors.white),
-                      decoration: _field(
-                        'Admin Password',
-                        Icons.password_rounded,
-                      ).copyWith(
-                        suffixIcon: IconButton(
-                          onPressed: verifying
-                              ? null
-                              : () => setDialogState(() => obscure = !obscure),
-                          icon: Icon(
-                            obscure
-                                ? Icons.visibility_off_rounded
-                                : Icons.visibility_rounded,
-                            color: Colors.white54,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (errorMessage != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        errorMessage!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: verifying
-                      ? null
-                      : () => Navigator.pop(dialogContext, false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: verifying
-                      ? null
-                      : () async {
-                          final password = passwordController.text;
-                          if (password.isEmpty) {
-                            setDialogState(() {
-                              errorMessage = 'Admin Password required hai.';
-                            });
-                            return;
-                          }
-                          setDialogState(() {
-                            verifying = true;
-                            errorMessage = null;
-                          });
-                          try {
-                            final credential = EmailAuthProvider.credential(
-                              email: email,
-                              password: password,
-                            );
-                            await user.reauthenticateWithCredential(credential);
-                            if (dialogContext.mounted) {
-                              Navigator.pop(dialogContext, true);
-                            }
-                          } catch (_) {
-                            setDialogState(() {
-                              verifying = false;
-                              errorMessage = 'Galat Admin Password.';
-                            });
-                          }
-                        },
-                  icon: verifying
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.verified_user_rounded, size: 18),
-                  label: Text(verifying ? 'Verifying...' : 'Verify & Save'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    passwordController.dispose();
-    return confirmed == true;
   }
 
   Future<void> _pickAsset(String type) async {
@@ -9714,8 +9282,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
       return;
     }
 
-    final passwordConfirmed = await _confirmAdminPasswordBeforeSave();
-    if (!passwordConfirmed || !mounted) return;
+    if (!mounted) return;
 
     setState(() {
       _saving = true;
@@ -9759,40 +9326,9 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
         });
       }
 
-      final result = await _schoolProfileBackendPost(payload);
-      final raw = result['profile'];
-      if (raw is! Map) {
-        throw Exception('School profile response invalid hai.');
-      }
-
-      final profile = _mergeSchoolProfile(Map<String, dynamic>.from(raw));
+      final profile = await WindowsSchoolProfileStore.saveLocal(payload);
       _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
-
-      await FirebaseFirestore.instance
-          .collection('school_settings')
-          .doc('school_location')
-          .set({
-            'latitude': schoolLatitude,
-            'longitude': schoolLongitude,
-            'radiusMeters': attendanceRadius,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-
-      // Drive save is already complete. Firestore is only the fast cache,
-      // so do not keep the Save button waiting for a second network round-trip.
-      unawaited(
-        _schoolProfileCacheRef()
-            .set(
-              {
-                ...profile,
-                'cachedAt': FieldValue.serverTimestamp(),
-              },
-              SetOptions(merge: true),
-            )
-            .catchError((e) {
-              debugPrint('School profile Firestore cache warning: $e');
-            }),
-      );
+      WindowsSyncEngine.instance.scheduleSoon();
 
       if (!mounted) return;
       setState(() {
@@ -9807,7 +9343,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
         const SnackBar(
           backgroundColor: Color(0xFF00A884),
           content: Text(
-            'School Settings Google Drive me save ho gaya.',
+            'School settings saved on this PC. Cloud sync pending.',
           ),
         ),
       );
@@ -9998,7 +9534,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   ),
                                   SizedBox(height: 4),
                                   Text(
-                                    'Ye details aur files Google Drive me save hongi. School change karne ke liye code edit nahi karna padega.',
+                                    'Details and images save on this PC immediately. Background sync sends them to this school’s connected Drive.',
                                     style: TextStyle(
                                       color: Colors.white54,
                                       fontSize: 11,
@@ -10258,7 +9794,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                           label: Text(
                             _saving
                                 ? 'Saving to Google Drive...'
-                                : 'SAVE SCHOOL SETTINGS TO GOOGLE DRIVE',
+                                : 'SAVE SCHOOL SETTINGS',
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
                             ),
@@ -10657,7 +10193,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                       child: Text(
                         secondsLeft > 0
                             ? 'Student Directory verify karein... Password option $secondsLeft sec baad unlock hoga.'
-                            : 'Verification time complete. Ab Admin Password enter karein.',
+                            : 'Verification time complete. Ab App Lock Password enter karein.',
                         style: TextStyle(
                           color: secondsLeft > 0
                               ? Colors.orangeAccent
@@ -10675,7 +10211,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                       style: const TextStyle(color: Colors.white),
                       onChanged: (_) => setDialogState(() {}),
                       decoration: InputDecoration(
-                        labelText: 'Admin Password',
+                        labelText: 'App Lock Password',
                         labelStyle: const TextStyle(color: Colors.white54),
                         prefixIcon: const Icon(
                           Icons.lock_outline_rounded,
@@ -10896,7 +10432,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           backgroundColor: Colors.redAccent,
           content: Text(
             e.code == 'wrong-password' || e.code == 'invalid-credential'
-                ? 'Admin Password galat hai.'
+                ? 'App Lock Password galat hai.'
                 : 'Admin verification failed: ${e.message ?? e.code}',
           ),
         ),
@@ -13952,6 +13488,7 @@ class TeachersDirectoryScreen extends StatefulWidget {
 
 class _TeachersDirectoryScreenState
     extends State<TeachersDirectoryScreen> {
+  final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   final TextEditingController _searchController =
       TextEditingController();
 
@@ -13968,12 +13505,13 @@ class _TeachersDirectoryScreenState
   // ============================================================
 
   Future<String> _getTeacherScriptUrl() async {
-    return _windowsGoogleScriptUrl();
+    return _windowsDirectoryMutationUrl();
   }
 
   Future<Map<String, dynamic>> _callTeacherApi(
     Map<String, dynamic> body,
   ) async {
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final scriptUrl = await _getTeacherScriptUrl();
 
     final response = await WindowsBackendBridge.post(
@@ -13991,6 +13529,7 @@ class _TeachersDirectoryScreenState
       );
     }
 
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final decoded = jsonDecode(response.body);
 
     if (decoded is! Map) {
@@ -15352,7 +14891,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 backgroundColor:
                                     Color(0xFF00A884),
                                 content: Text(
-                                  'Teacher Google Sheet aur Firestore dono me update ho gaya!',
+                                  'Teacher saved on this PC. Background school sync queued.',
                                 ),
                               ),
                             );
@@ -15484,7 +15023,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    'Admin Password daalein:',
+                    'App Lock Password daalein:',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 12,
@@ -15502,7 +15041,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                     decoration:
                         InputDecoration(
                       hintText:
-                          'Admin Password',
+                          'App Lock Password',
                       hintStyle:
                           const TextStyle(
                         color:
@@ -15603,7 +15142,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             setDialogState(
                               () {
                                 errorText =
-                                    'Admin Password daalein.';
+                                    'App Lock Password daalein.';
                               },
                             );
                             return;
@@ -15659,7 +15198,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 deleting =
                                     false;
                                 errorText =
-                                    'Galat Admin Password!';
+                                    'Galat App Lock Password!';
                               },
                             );
                           }
@@ -15735,7 +15274,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
           backgroundColor:
               Colors.redAccent,
           content: Text(
-            'Teacher Google Sheet, Drive aur Firestore se delete ho gaya!',
+            'Teacher removed on this PC. Background school sync queued.',
           ),
         ),
       );
@@ -15774,7 +15313,16 @@ errorBuilder: (_, __, ___) => _teacherFallback(
         {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData);
     if (bytes != null && mounted) {
       await WindowsDocumentTemplates.preview(context, bytes,
-          title: 'Teacher ID card • Front & back');
+          title: 'Teacher ID card • Front & back',
+          notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
+          onPrint: () async {
+            try { await WindowsBrowserPrint.open(bytes); }
+            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Print preview unavailable: $e'))); }
+          },
+          onDownload: () async {
+            try { await WindowsSavePdf.save(bytes,'teacher-id.pdf'); }
+            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('PDF save failed: $e'))); }
+          });
     }
   }
 
@@ -16520,6 +16068,7 @@ class AddTeacherScreen extends StatefulWidget {
 
 class _AddTeacherScreenState
     extends State<AddTeacherScreen> {
+  final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   final _nameCtrl =
       TextEditingController();
 
@@ -16619,13 +16168,14 @@ class _AddTeacherScreenState
   }
 
   Future<String> _getTeacherScriptUrl() async {
-    return _windowsGoogleScriptUrl();
+    return _windowsDirectoryMutationUrl();
   }
 
   Future<Map<String, dynamic>>
       _callTeacherApi(
     Map<String, dynamic> body,
   ) async {
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final scriptUrl =
         await _getTeacherScriptUrl();
 
@@ -16648,6 +16198,7 @@ class _AddTeacherScreenState
       );
     }
 
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final decoded =
         jsonDecode(response.body);
 
@@ -16886,6 +16437,7 @@ class _AddTeacherScreenState
         );
       }
 
+      if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen teacher entry.');
       // SECOND:
       // Firestore
       final ref =
@@ -16952,7 +16504,7 @@ class _AddTeacherScreenState
           backgroundColor:
               Color(0xFF00A884),
           content: Text(
-            'Teacher Google Sheet, Drive aur Firestore me save ho gaya!',
+            'Teacher saved on this PC. Background school sync queued.',
           ),
         ),
       );
@@ -17564,6 +17116,7 @@ class AllStudentsListScreen extends StatefulWidget {
 }
 
 class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
+  final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   String _selectedClassFilter = 'All Classes';
 
   final List<String> _classes = [
@@ -17732,7 +17285,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
   }
 
   Future<String> _studentBackendScriptUrl() async {
-    return _windowsGoogleScriptUrl();
+    return _windowsDirectoryMutationUrl();
   }
 
   Future<Map<String, dynamic>> _postStudentClassChange({
@@ -17834,14 +17387,14 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                     style: TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                   const SizedBox(height: 18),
-                  const Text('Admin Password daalein:', style: TextStyle(color: Colors.white, fontSize: 12)),
+                  const Text('App Lock Password daalein:', style: TextStyle(color: Colors.white, fontSize: 12)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: passwordController,
                     obscureText: obscureText,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      hintText: 'Enter Admin Password',
+                      hintText: 'Enter App Lock Password',
                       hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
                       filled: true,
                       fillColor: const Color(0xFF121B22),
@@ -17953,7 +17506,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         }
       }
 
-      final scriptUrl = await _windowsGoogleScriptUrl();
+      final scriptUrl = await _windowsDirectoryMutationUrl();
 
       Future<Map<String, dynamic>> deleteFromGoogle() async {
         final response = await WindowsBackendBridge.post(
@@ -17988,7 +17541,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
             result['message'] ?? 'Student Google Sheet delete failed.',
           );
         }
-        if (result['alreadyDeleted'] == true) {
+        if (result['alreadyDeleted'] == true || result['cloudSyncPending'] == true) {
           googleFullyDeleted = true;
           break;
         }
@@ -18001,6 +17554,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       // Same student ke saare legacy aliases (Roll_1 / Roll_01 / etc.)
       // local profile se delete karo. Tracked delete Firebase ke saare alias
       // documents ko bhi next sync me delete karega.
+      if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
       final allStudents = await studentsRef.get();
       var deletedCount = 0;
 
@@ -18025,7 +17579,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text('Student permanently delete ho gaya!'),
+            content: Text('Student removed on this PC. Background school sync queued.'),
           ),
         );
       }
@@ -18333,7 +17887,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
 
                               try {
                                 final scriptUrl =
-                                    await _windowsGoogleScriptUrl();
+                                    await _windowsDirectoryMutationUrl();
 
                                 final studentClass =
                                     data['class']?.toString() ?? '';
@@ -18406,6 +17960,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                                   updateData['photoUrl'] = returnedPhotoUrl;
                                 }
 
+                                if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
                                 await FirebaseFirestore.instance
                                     .collection('students_directory')
                                     .doc(docId)
@@ -18419,8 +17974,8 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                                     backgroundColor: const Color(0xFF00A884),
                                     content: Text(
                                       selectedPhotoBytes == null
-                                          ? 'Student Firestore aur Google Sheet dono me update ho gaya!'
-                                          : 'Student details aur photo successfully update ho gaye!',
+                                          ? 'Student saved on this PC. Background school sync queued.'
+                                          : 'Student details and photo saved on this PC. Background school sync queued.',
                                     ),
                                   ),
                                 );
@@ -20050,7 +19605,7 @@ class _AdvancedStudentUidSettingsPanelState
                       child: Text(
                         secondsLeft > 0
                             ? 'Student Directory verify karein... Password option $secondsLeft sec baad unlock hoga.'
-                            : 'Verification time complete. Ab Admin Password enter karein.',
+                            : 'Verification time complete. Ab App Lock Password enter karein.',
                         style: TextStyle(
                           color: secondsLeft > 0
                               ? Colors.orangeAccent
@@ -20068,7 +19623,7 @@ class _AdvancedStudentUidSettingsPanelState
                       style: const TextStyle(color: Colors.white),
                       onChanged: (_) => setDialogState(() {}),
                       decoration: InputDecoration(
-                        labelText: 'Admin Password',
+                        labelText: 'App Lock Password',
                         labelStyle: const TextStyle(color: Colors.white54),
                         prefixIcon: const Icon(
                           Icons.lock_outline_rounded,
@@ -20289,7 +19844,7 @@ class _AdvancedStudentUidSettingsPanelState
           backgroundColor: Colors.redAccent,
           content: Text(
             e.code == 'wrong-password' || e.code == 'invalid-credential'
-                ? 'Admin Password galat hai.'
+                ? 'App Lock Password galat hai.'
                 : 'Admin verification failed: ${e.message ?? e.code}',
           ),
         ),
@@ -20560,7 +20115,7 @@ class _AdvancedStudentUidSettingsPanelState
               title: 'Enable Student UID',
               subtitle: _uidMasterEnabled
                   ? 'TEST UID assignment active hai.'
-                  : 'ON karne par 20 sec warning + Admin Password verification hoga.',
+                  : 'ON karne par 20 sec warning + App Lock Password verification hoga.',
               value: _uidMasterEnabled,
               onChanged: _setUidMasterEnabled,
             ),
@@ -20635,7 +20190,7 @@ class _DriveUnlinkSecurityDialogState
     if (_seconds > 0 || _busy) return;
     final pass = _password.text.trim();
     if (pass.isEmpty) {
-      setState(() => _error = 'Admin Password daalein.');
+      setState(() => _error = 'App Lock Password daalein.');
       return;
     }
     setState(() {
@@ -20645,7 +20200,7 @@ class _DriveUnlinkSecurityDialogState
     try {
       await WindowsLocalSecurity.initialize();
       if (!WindowsLocalSecurity.verifyPassword(pass)) {
-        throw Exception('Invalid Local Admin password');
+        throw Exception('Invalid Local App Lock password');
       }
       if (!mounted) return;
       Navigator.pop(context, true);
@@ -20653,7 +20208,7 @@ class _DriveUnlinkSecurityDialogState
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = 'Galat Admin Password.';
+        _error = 'Galat App Lock Password.';
       });
     }
   }
@@ -20687,7 +20242,7 @@ class _DriveUnlinkSecurityDialogState
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Countdown complete hone ke baad Admin Password maanga jayega.',
+                    'Countdown complete hone ke baad App Lock Password maanga jayega.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white60),
                   ),
@@ -20702,7 +20257,7 @@ class _DriveUnlinkSecurityDialogState
                     obscureText: _obscure,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      hintText: 'Admin Password',
+                      hintText: 'App Lock Password',
                       hintStyle: const TextStyle(color: Colors.white30),
                       filled: true,
                       fillColor: const Color(0xFF0F191F),

@@ -1,3 +1,4 @@
+import 'windows_school_image_cache.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_school_map.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -63,6 +64,29 @@ class WindowsBackendBridge {
     Encoding? encoding,
   }) async {
     final status = WindowsServiceStatus.instance;
+    final originProfile=FirebaseFirestore.instance.activeProfileId;
+    final savedIdentity = await CentralSchoolCloud.saved();
+    final localAction = _decodeBody(body);
+    if (savedIdentity['managed'] == true && {
+      'add_student','edit_student','delete_student','change_student_class',
+      'add_teacher','edit_teacher','delete_teacher','update_teacher_schedule',
+    }.contains(localAction['action'])) {
+      if (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != savedIdentity['schoolId']) {
+        throw StateError('School changed. Reopen the directory.');
+      }
+      if (!await WindowsRuntimeFlags.localStorageEnabled()) throw StateError('Enable Local Data before saving offline.');
+      final currentIdentity=await CentralSchoolCloud.saved();
+      if(FirebaseFirestore.instance.activeProfileId!=originProfile||currentIdentity['schoolId']!=savedIdentity['schoolId']||currentIdentity['uid']!=savedIdentity['uid']) throw StateError('School changed. Reopen the directory.');
+      // Directory screens commit the final record to the local database and
+      // durable outbox. Keep photos local until that background sync uploads them.
+      final raw = localAction['photoBase64']?.toString() ?? '';
+      final photo = raw.isEmpty ? localAction['photoUrl']?.toString() ?? ''
+          : raw.startsWith('data:') ? raw : 'data:${localAction['photoMimeType'] ?? 'image/jpeg'};base64,$raw';
+      return http.Response(jsonEncode({'success':true,'windowsLocalFallback':true,
+        'cloudSyncPending':true,'schoolId':savedIdentity['schoolId'],'photoUrl':photo,
+        if(localAction['action']=='add_teacher') 'teacherId':localAction['teacherId'] ?? 'T-${secureSetupToken(12)}',
+      }),200,headers:{'content-type':'application/json'});
+    }
     status.checking(
       WindowsServiceType.googleDrive,
       'Google Drive / Apps Script request chal raha hai...',

@@ -1,3 +1,4 @@
+import 'windows_pending_school_sync.dart';
 import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'dart:async';
@@ -801,6 +802,7 @@ class WindowsSyncEngine {
           return;
         }
 
+        await _pushFirebaseOutbox(projectId:projectId,idToken:idToken);
         await _pullFirebase(
           projectId: projectId,
           idToken: idToken,
@@ -816,13 +818,6 @@ class WindowsSyncEngine {
 
       if (scriptUrl.isNotEmpty && central.isEmpty) {
         await _pullGoogleSnapshot(scriptUrl);
-      }
-
-      if (projectId != null && idToken != null) {
-        await _pushFirebaseOutbox(
-          projectId: projectId,
-          idToken: idToken,
-        );
       }
 
       if (scriptUrl.isNotEmpty && central.isEmpty) {
@@ -1044,82 +1039,15 @@ class WindowsSyncEngine {
     }).toSet();
   }
 
-  Future<void> _pushFirebaseOutbox({
-    required String projectId,
-    required String idToken,
-  }) async {
-    final snapshot =
-        await FirebaseFirestore.instance
-            .collection(
-              '_windows_firebase_outbox',
-            )
-            .get();
-
-    final docs = snapshot.docs.toList()
-      ..sort((a, b) {
-        return _modifiedMillis(a.data())
-            .compareTo(
-          _modifiedMillis(b.data()),
-        );
-      });
-
-    for (final queued in docs) {
-      final data = queued.data();
-
-      final collection =
-          data['collection']
-                  ?.toString()
-                  .trim() ??
-              '';
-
-      final documentId =
-          data['documentId']
-                  ?.toString()
-                  .trim() ??
-              '';
-
-      final operation =
-          data['operation']
-                  ?.toString()
-                  .trim() ??
-              '';
-
-      if (collection.isEmpty ||
-          documentId.isEmpty) {
-        await queued.reference.delete();
-        continue;
-      }
-
-      if (operation == 'delete') {
-        await WindowsFirebaseRemote
-            .deleteDocument(
-          projectId: projectId,
-          idToken: idToken,
-          collection: collection,
-          documentId: documentId,
-        );
-      } else {
-        final raw = data['data'];
-
-        if (raw is! Map) {
-          await queued.reference.delete();
-          continue;
-        }
-
-        await WindowsFirebaseRemote
-            .writeDocument(
-          projectId: projectId,
-          idToken: idToken,
-          collection: collection,
-          documentId: documentId,
-          data:
-              Map<String, dynamic>.from(raw),
-        );
-      }
-
-      await queued.reference.delete();
-    }
-  }
+  Future<void> _pushFirebaseOutbox({required String projectId, required String idToken}) =>
+      WindowsPendingSchoolSync.flush(profileId:FirebaseFirestore.instance.activeProfileId,
+        send:(collection,id,operation,data) async {
+          if(operation=='delete') {
+            await WindowsFirebaseRemote.deleteDocument(projectId:projectId,idToken:idToken,collection:collection,documentId:id);
+          } else {
+            await WindowsFirebaseRemote.writeDocument(projectId:projectId,idToken:idToken,collection:collection,documentId:id,data:data!);
+          }
+        });
 
   Future<String> _googleScriptUrl() {
     return WindowsExternalConnections.googleScriptUrl();
@@ -1488,31 +1416,13 @@ class WindowsSyncEngine {
     }
   }
 
-  Future<void> _remoteSetLocal(
-    String collection,
-    String documentId,
-    Map<String, dynamic> data,
-  ) {
-    return WindowsLocalFirestoreSyncControl
-        .runWithoutSyncTracking(
-      () => FirebaseFirestore.instance
-          .collection(collection)
-          .doc(documentId)
-          .set(data),
-    );
+  Future<void> _remoteSetLocal(String collection,String documentId,Map<String,dynamic> data) {
+    final db=FirebaseFirestore.instance;
+    return db.applySyncedDocument(db.collection(collection).doc(documentId),data);
   }
-
-  Future<void> _remoteDeleteLocal(
-    String collection,
-    String documentId,
-  ) {
-    return WindowsLocalFirestoreSyncControl
-        .runWithoutSyncTracking(
-      () => FirebaseFirestore.instance
-          .collection(collection)
-          .doc(documentId)
-          .delete(),
-    );
+  Future<void> _remoteDeleteLocal(String collection,String documentId) {
+    final db=FirebaseFirestore.instance;
+    return db.applySyncedDocument(db.collection(collection).doc(documentId),null);
   }
 
   String _pendingKey(

@@ -15,6 +15,7 @@ class WindowsSchoolProfileRestore {
     required String schoolId,
     required Map<String, dynamic> localProfile,
     required Future<Map<String, dynamic>> Function(String, Map<String, dynamic>) call,
+    bool preferLocalProfile = false,
   }) async {
     if (localProfile['schoolId'] != null && localProfile['schoolId'] != schoolId) {
       throw StateError('Foreign local school profile blocked.');
@@ -41,7 +42,7 @@ class WindowsSchoolProfileRestore {
     final central = enrollment['profile'] is Map
         ? Map<String, dynamic>.from(enrollment['profile']) : <String, dynamic>{};
     Map<String, dynamic> restored;
-    if (enrollment['storageReady'] == true) {
+    if (enrollment['storageReady'] == true && !preferLocalProfile) {
       restored = await resolve(schoolId: schoolId, localProfile: localProfile, call: call);
     } else {
       restored = Map<String, dynamic>.from(localProfile);
