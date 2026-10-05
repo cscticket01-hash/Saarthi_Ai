@@ -237,3 +237,27 @@ test('recovery refuses inconsistent account ownership and retains explicit new-s
  assert(!f.docs.has('school_registration_profiles/'+A));
  }
 });
+
+test('managed QR returns safe actionable errors and hides arbitrary or foreign-script failures',async()=>{
+ const safe='This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.';
+ for(const [schoolId,message,status] of [[A,safe,403],[A,'Secret internal folder ID and password',502],[B,safe,502]]){
+  const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId,message})}));
+  f.docs.get('platform_schools/'+A).lastSeenAt=time;
+  await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_login',role:'teacher',personId:'own',linkToken:'x'.repeat(48)}}),e=>e.status===status && (status===403?e.message===safe:!e.message.includes('Secret')));
+ }
+});
+test('school storage change requires exact old connection and preserves both schools previous data',async()=>{
+ const f=fixture(async(url,opt,authorize)=>{
+  const b=JSON.parse(opt.body);
+  if(b.action==='managed_connect')await authorize({action:'managed/storage/authorize',schoolId:A,ticket:b.ticket});
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,storageReady:true,connectionSecret:secret,googleEmail:'school-a@gmail.com'})};
+ });
+ const old=f.docs.get('school_storage_private/'+A),foreign=f.docs.get('school_storage_private/'+B);
+ const request={action:'managed/storage/connect',scriptUrl:'https://script.google.com/macros/s/NewOwnDeployment/exec',replace:true};
+ await assert.rejects(f.call({...request,expectedScriptUrl:'https://script.google.com/macros/s/WrongDeployment/exec'}),e=>e.status===409);
+ const result=await f.call({...request,expectedScriptUrl:old.url});
+ assert.equal(result.googleEmail,'school-a@gmail.com');
+ assert.equal(f.docs.get('school_storage_private/'+A).previousConnections[0].url,old.url);
+ assert.equal(f.docs.get('school_storage_private/'+A).previousConnections[0].secret,old.secret);
+ assert.deepEqual(f.docs.get('school_storage_private/'+B),foreign);
+});

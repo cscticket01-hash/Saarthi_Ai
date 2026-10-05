@@ -17351,15 +17351,17 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     final status = result['result']?.toString().toUpperCase() ?? '';
     final force = direction > 0 && status == 'FAIL';
     final decision = direction < 0 ? 'FAIL' : status;
-    final yes = await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+    var overrideReason='';
+    final yes = await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setDialog)=>AlertDialog(
       title:Text(direction < 0 ? 'Retain in the same class?' : force ? 'Force promote this student?' : 'Apply final exam decision?'),
-      content:Text('${student['name']} • ${student['class']}\nFinal result: $status'),
-      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]));
+      content:Column(mainAxisSize:MainAxisSize.min,children:[Text('${student['name']} • ${student['class']}\nFinal result: $status'),
+        if(force)TextField(maxLength:500,onChanged:(v)=>setDialog(()=>overrideReason=v.trim()),decoration:const InputDecoration(labelText:'Required reason for administrator override'))]),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))])));
     if(yes!=true||!mounted)return;
     setState(()=>_movingStudentIds.add(docId));
     try {
       if(direction < 0 && status != 'FAIL')throw StateError('Retention is only for a final-exam FAIL result.');
-      final message=await SchoolPromotionService.apply(studentId:docId,student:student,exam:result,result:decision,force:force);
+      final message=await SchoolPromotionService.apply(studentId:docId,student:student,exam:result,result:decision,force:force,reason:overrideReason);
       if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(message)));
     }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('$e')));}
     finally{if(mounted)setState(()=>_movingStudentIds.remove(docId));}

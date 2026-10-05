@@ -418,7 +418,7 @@ class WindowsPlatformClient {
     await ref.set({...data,'deliveryStatus':'sync_pending'});
     final remote = await WindowsFirebaseRemote.status();
     if (!remote.authenticated || remote.schoolIdentity.isEmpty) {
-      throw StateError('Notice not sent. Connect and verify this school Firebase and Google Script first.');
+      throw StateError('Saved locally; no notification was sent. Connect and verify this school Firebase and Google Script to sync.');
     }
     final token = await WindowsFirebaseRemote.freshIdToken();
     final roster = await WindowsFirebaseRemote.readCollection(

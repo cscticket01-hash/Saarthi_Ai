@@ -177,4 +177,21 @@ void main() {
     expect(await schoolImageBytes((await db.collection('students_directory').doc('photo-pupil').get()).data()!['photoUrl'] as String),[97,98,99]);
   });
 
+  test('nested other-staff photos retain usable local copies and cannot continue under another school', () async {
+    final origin=db.activeProfileId;
+    const photo='data:image/png;base64,YWJj';
+    final prepared=await prepareManagedRecord({'staff':[{'id':'staff:own','photoUrl':photo}]},school,(action,body) async => {'success':true,'schoolId':school,'fileId':'staff-photo','fileUrl':'https://drive.google.com/file/d/staff-photo/view'});
+    expect((prepared['staff'] as List).single['photoUrl'],'https://drive.google.com/file/d/staff-photo/view');
+    expect(await WindowsSchoolImageCache.read(school,'staff-photo'),[97,98,99]);
+    var requests=0;
+    await expectLater(prepareManagedRecord({'staff':[{'photoUrl':photo},{'photoUrl':photo}]},school,(action,body) async {
+      requests++;
+      await db.switchProfile('foreign-media',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+      return {'success':true,'schoolId':school,'fileId':'wrong-session','fileUrl':'https://drive.google.com/file/d/wrong-session/view'};
+    }),throwsStateError);
+    expect(requests,1);
+    expect(await WindowsSchoolImageCache.read('vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','staff-photo'),isNull);
+    await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+  });
+
 }

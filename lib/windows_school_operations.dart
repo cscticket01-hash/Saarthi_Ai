@@ -354,6 +354,7 @@ class SchoolPromotionService {
     if(verifiedResult==null || verifiedResult['result']!=result || (verifiedResult['studentId']!=null&&verifiedResult['studentId']!=studentId))throw StateError('Calculate and save this student final-exam result first.');
     if (result != 'PASS' && result != 'FAIL')
       throw StateError('Final PASS/FAIL result is missing.');
+    if (force && (reason.trim().isEmpty || reason.trim().length>500)) throw StateError('Enter an administrator override reason (maximum 500 characters).');
     if (force && !await forceEnabled())
       throw StateError(
           'Enable the administrator force-promotion switch first.');

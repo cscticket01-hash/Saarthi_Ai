@@ -260,7 +260,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     finally { if(mounted) setState(() => _working=false); }
   }
   Future<void> _calculatePayroll() async {
-    final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx)=>SimpleDialog(title:const Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['role']}'))]));
+    final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx)=>SimpleDialog(title:const Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['employeeId']??person['teacherId']??person['id']} • ${person['role']}'))]));
     if(person != null && mounted) await _salary(person,_monthRows.where((r)=>r['staffId']==person['id']).firstOrNull);
   }
   Future<void> _paySelected() async {
@@ -278,7 +278,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final paid=rows.fold<int>(0,(v,r)=>v+StaffPayroll.paid(r));
     final deductions=rows.fold<int>(0,(v,r)=>v+((r['deductionPaise'] as num?)?.toInt() ?? 0));
     final paidCount=rows.where((r)=>StaffPayroll.paid(r)>=StaffPayroll.total(r)).length;
-    final people=_staff.where((s)=>(_role=='All staff'||s['role']==_role)&&'${s['name']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
+    final people=_staff.where((s)=>(_role=='All staff'||s['role']==_role)&&'${s['name']} ${s['employeeId']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
     final dark=ThemeData.dark(useMaterial3:true).copyWith(scaffoldBackgroundColor:const Color(0xff061826),
       colorScheme:const ColorScheme.dark(primary:Color(0xff7260ff),onPrimary:Colors.white,surface:Color(0xff102338)),
       dividerColor:const Color(0xff284157),cardColor:const Color(0xff102338));
