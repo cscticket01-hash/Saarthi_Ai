@@ -690,6 +690,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: android-v1.0.${{ github.run_number }}
+        target_commitish: ${{ github.sha }}
         name: Vidya Saarthi v1.0.${{ github.run_number }}
         make_latest: true
         generate_release_notes: true
