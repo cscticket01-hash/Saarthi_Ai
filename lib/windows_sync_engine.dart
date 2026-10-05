@@ -1,3 +1,4 @@
+import 'windows_pending_school_sync.dart';
 import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'dart:async';
@@ -1038,85 +1039,15 @@ class WindowsSyncEngine {
     }).toSet();
   }
 
-  Future<void> _pushFirebaseOutbox({
-    required String projectId,
-    required String idToken,
-  }) async {
-    final origin=FirebaseFirestore.instance.activeProfileId;
-    final snapshot =
-        await FirebaseFirestore.instance
-            .collection(
-              '_windows_firebase_outbox',
-            )
-            .get();
-
-    if(FirebaseFirestore.instance.activeProfileId != origin) throw StateError('School changed during sync.');
-    final docs = snapshot.docs.toList()
-      ..sort((a, b) {
-        return _modifiedMillis(a.data())
-            .compareTo(
-          _modifiedMillis(b.data()),
-        );
-      });
-
-    for (final queued in docs) {
-      queued.reference.requireOriginProfile();
-      final data = queued.data();
-
-      final collection =
-          data['collection']
-                  ?.toString()
-                  .trim() ??
-              '';
-
-      final documentId =
-          data['documentId']
-                  ?.toString()
-                  .trim() ??
-              '';
-
-      final operation =
-          data['operation']
-                  ?.toString()
-                  .trim() ??
-              '';
-
-      if (collection.isEmpty ||
-          documentId.isEmpty) {
-        await queued.reference.delete();
-        continue;
-      }
-
-      if (operation == 'delete') {
-        await WindowsFirebaseRemote
-            .deleteDocument(
-          projectId: projectId,
-          idToken: idToken,
-          collection: collection,
-          documentId: documentId,
-        );
-      } else {
-        final raw = data['data'];
-
-        if (raw is! Map) {
-          await queued.reference.delete();
-          continue;
-        }
-
-        await WindowsFirebaseRemote
-            .writeDocument(
-          projectId: projectId,
-          idToken: idToken,
-          collection: collection,
-          documentId: documentId,
-          data:
-              Map<String, dynamic>.from(raw),
-        );
-      }
-
-      await FirebaseFirestore.instance.acknowledgeOutbox(queued.reference, data);
-    }
-  }
+  Future<void> _pushFirebaseOutbox({required String projectId, required String idToken}) =>
+      WindowsPendingSchoolSync.flush(profileId:FirebaseFirestore.instance.activeProfileId,
+        send:(collection,id,operation,data) async {
+          if(operation=='delete') {
+            await WindowsFirebaseRemote.deleteDocument(projectId:projectId,idToken:idToken,collection:collection,documentId:id);
+          } else {
+            await WindowsFirebaseRemote.writeDocument(projectId:projectId,idToken:idToken,collection:collection,documentId:id,data:data!);
+          }
+        });
 
   Future<String> _googleScriptUrl() {
     return WindowsExternalConnections.googleScriptUrl();

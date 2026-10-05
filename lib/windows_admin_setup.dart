@@ -206,17 +206,18 @@ class WindowsAdminSetup {
     } catch (e) {
       throw StateError('Could not save the setup on this PC: $e');
     }
-    // Mirror into the same local cache document the dashboard branding uses,
-    // best-effort and strictly offline (local Firestore store).
-    try {
-      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => brandingRef.set({
-        'schoolName': name,
-        'principalName': principal,
-        'logoUrl': map['logoUrl'],
-        'sealUrl': map['sealUrl'],
-        'principalSignatureUrl': map['principalSignatureUrl'],
-      }, SetOptions(merge: true)));
-    } catch (_) {}
+    // Keep initial branding in the durable outbox until its own Drive is ready.
+    final cache = <String,dynamic>{
+      if(managed) 'schoolId':saved['schoolId'],
+      'schoolName':name,'principalName':principal,'logoUrl':map['logoUrl'],
+      'sealUrl':map['sealUrl'],'principalSignatureUrl':map['principalSignatureUrl'],
+      'updatedAt':DateTime.now().millisecondsSinceEpoch,
+    };
+    if(managed) {
+      await brandingRef.set(cache,SetOptions(merge:true));
+    } else {
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>brandingRef.set(cache,SetOptions(merge:true)));
+    }
     // Reuse the existing local security lock with the entered password.
     if(managed){if(adminPassword.isNotEmpty){if(adminPassword.length<6)throw const FormatException('App Lock password must be at least 6 characters.');await WindowsLocalSecurity.create(adminId:'School app',password:adminPassword);}await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();return;}
     if (!WindowsLocalSecurity.configured) {
@@ -429,7 +430,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                     controller: _confirm,
                     obscureText: _obscure,
                     decoration: const InputDecoration(
-                        labelText: 'Confirm Password *',
+                        labelText: 'Confirm App Lock password',
                         border: OutlineInputBorder()),
                   ),
                   const SizedBox(height: 12),

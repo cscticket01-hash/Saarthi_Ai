@@ -13,15 +13,16 @@ import '../lib/main_dashboard_screen_windows.dart' show WindowsSectionLocks;
 void main(){
  TestWidgetsFlutterBinding.ensureInitialized();
  setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
- testWidgets('Admin lock appears only after Admin entry, never on the home screen',(tester)async{
+ testWidgets('legacy Admin lock does not add another password prompt',(tester)async{
   await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'admin-only-pass');
   await tester.pumpWidget(const MaterialApp(home:WindowsLocalDashboardGate()));
   await tester.pump();
   expect(find.text('Admin Section Password'),findsNothing);
   expect(find.text('Open Admin Panel'),findsOneWidget);
   await tester.tap(find.text('Open Admin Panel'));
-  await tester.pumpAndSettle();
-  expect(find.text('Admin Section Password'),findsOneWidget);
+  await tester.pump();await tester.pump(const Duration(milliseconds:350));
+  expect(find.text('Admin Section Password'),findsNothing);
+  expect(find.text('Open Admin Panel'),findsNothing);
   await tester.pumpWidget(const SizedBox());
  });
  testWidgets('fresh Windows startup requires central school login and exposes no licence skip',(tester)async{
@@ -37,7 +38,7 @@ void main(){
  testWidgets('registration licence box sits below confirmation and header is removed',(tester)async{
   await tester.binding.setSurfaceSize(const Size(1400,1000));addTearDown(()=>tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(const MaterialApp(home:WindowsAdminSetupScreen()));
-  final confirm=find.widgetWithText(TextField,'Confirm Password *'),licence=find.widgetWithText(TextField,'Licence Key (optional during five-day trial)');
+  final confirm=find.widgetWithText(TextField,'Confirm App Lock password'),licence=find.widgetWithText(TextField,'Licence Key (optional during five-day trial)');
   expect(confirm,findsOneWidget);expect(licence,findsOneWidget);expect(tester.getTopLeft(licence).dy,greaterThan(tester.getTopLeft(confirm).dy));
   expect(find.text('Admin Setup'),findsNothing);expect(find.text('Skip'),findsNothing);await tester.pumpWidget(const SizedBox());
  });

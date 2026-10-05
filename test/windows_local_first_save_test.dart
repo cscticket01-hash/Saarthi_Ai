@@ -1,4 +1,10 @@
 import 'dart:convert';
+import '../lib/windows_school_image_cache.dart';
+import '../lib/windows_connect/school_drive_images.dart';
+import 'dart:typed_data';
+import '../lib/windows_browser_print.dart';
+import '../lib/windows_pending_school_sync.dart';
+import '../lib/windows_school_profile_restore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/platform/platform_config.dart';
@@ -68,4 +74,58 @@ void main() {
     await expectLater(user.reauthenticateWithCredential(auth.AuthCredential(email:'a@example.com',password:'school-password')),throwsA(isA<auth.FirebaseAuthException>()));
     expect((await CentralSchoolCloud.saved())['firebaseRefreshToken'],'saved-refresh');
   });
+  test('network failure retains durable data; later retry publishes only the original school',() async {
+    await db.collection('teachers_directory').doc('same').set({'name':'School A teacher','schoolId':school,'photoUrl':'data:image/png;base64,YWJj'});
+    final profile=db.activeProfileId;
+    await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(c,id,op,data) async=>throw StateError('Network unavailable')),throwsStateError);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+    await db.switchProfile('sync-school-B',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+    await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(c,id,op,data) async=>fail('Must not publish A as B')),throwsStateError);
+    expect((await db.collection('teachers_directory').get()).docs,isEmpty);
+    await db.switchProfile(profile,identity:{'schoolId':school,'schoolSyncId':school});
+    await WindowsPendingSchoolSync.flush(profileId:profile,send:(c,id,op,data) async {
+      expect(c,'teachers_directory');expect(data!['schoolId'],school);
+      final safe=await prepareManagedRecord(data,school,(action,body) async=>{'success':true,'schoolId':school,'fileId':'own','fileUrl':'https://drive.google.com/file/d/own/view'});
+      expect(safe['photoFileId'],'own');expect(safe['name'],'School A teacher');
+    });
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  });
+  test('sync retry never acknowledges edits saved while an older version was uploading',() async {
+    final ref=db.collection('teachers_directory').doc('same');
+    await ref.set({'name':'First'});
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(c,id,op,data) async {expect(data!['name'],'First');await ref.set({'name':'Second'});});
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(c,id,op,data) async=>expect(data!['name'],'Second'));
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  });
+  test('pending offline branding wins over stale Drive registration at startup',() async {
+    final restored=await WindowsSchoolProfileRestore.resolveEnrollment(schoolId:school,
+      localProfile:{'schoolId':school,'schoolName':'New offline name','principalName':'Principal','logoUrl':'data:image/png;base64,YWJj'},
+      preferLocalProfile:true,call:(action,body) async {
+        expect(action,'managed/profile');expect(body['operation'],'read');
+        return {'success':true,'schoolId':school,'registrationState':'complete','storageReady':true,
+          'profile':{'schoolId':school,'schoolName':'Old cloud name','principalName':'Principal'}};
+      });
+    expect(restored['schoolName'],'New offline name');expect(restored['logoUrl'],'data:image/png;base64,YWJj');
+  });
+
+  test('browser preview retains both print pages locally and fits printable paper',() {
+    final html=WindowsBrowserPrint.html([(png:Uint8List.fromList([1,2,3]),width:638,height:1011),(png:Uint8List.fromList([4,5,6]),width:638,height:1011)]);
+    expect('<section>'.allMatches(html),hasLength(2));
+    expect(html,contains('AQID'));expect(html,contains('BAUG'));expect(html,contains('window.print()'));
+    expect(html,contains('max-width:190mm;max-height:277mm;height:auto'));
+    expect(html, isNot(contains('https://')));
+  });
+
+  test('uploaded Drive images remain available offline and never enter another school cache',() async {
+    final origin=db.activeProfileId;
+    await WindowsSchoolImageCache.store(school,'own-logo','data:image/png;base64,YWJj');
+    expect(await schoolImageBytes('https://drive.google.com/file/d/own-logo/view'),[97,98,99]);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    await db.switchProfile('image-school-B',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+    expect(await WindowsSchoolImageCache.read(school,'own-logo'),isNull);
+    await expectLater(WindowsSchoolImageCache.store(school,'own-logo','data:image/png;base64,YWJj',profileId:origin),throwsStateError);
+    expect((await db.collection('_windows_school_image_cache').get()).docs,isEmpty);
+  });
+
 }

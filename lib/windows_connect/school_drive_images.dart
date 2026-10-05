@@ -1,3 +1,5 @@
+import '../windows_school_image_cache.dart';
+import '../windows_local_firestore.dart';
 import 'dart:convert';
 import 'managed_school_session.dart';
 import 'dart:typed_data';
@@ -13,14 +15,26 @@ String? schoolDriveFileId(String source) {
   return id != null && RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(id) ? id : null;
 }
 Future<Uint8List?> schoolImageBytes(String source) async {
+  if(source.startsWith('data:image/')) { try{return UriData.parse(source).contentAsBytes();}catch(_){return null;} }
+  final origin=FirebaseFirestore.instance.activeProfileId;
   final uri = Uri.tryParse(source);
   if (uri == null || uri.scheme != 'https' || uri.userInfo.isNotEmpty) return null;
   final id = schoolDriveFileId(source);
   final connection = await CentralSchoolCloud.saved();
   if (connection.isNotEmpty && id != null) {
+    if(connection['managed']==true) {
+      final cached=await WindowsSchoolImageCache.read(connection['schoolId'].toString(),id);
+      if(cached!=null)return cached;
+    }
     final cloud = CentralSchoolCloud(endpoint:connection['endpoint']);
     try {
-      if(connection['managed']==true){final result=await ManagedSchoolSession.call('managed/file/read',{'fileId':id});if((result['mime']?.toString()??'').startsWith('image/'))return Uint8List.fromList(base64Decode(result['base64']));return null;}
+      if(connection['managed']==true){
+        final result=await ManagedSchoolSession.callForSchool(connection['schoolId'].toString(),'managed/file/read',{'fileId':id});
+        if(result['schoolId']!=connection['schoolId']||!(result['mime']?.toString()??'').startsWith('image/'))return null;
+        final bytes=Uint8List.fromList(base64Decode(result['base64']));
+        await WindowsSchoolImageCache.store(connection['schoolId'].toString(),id,'data:${result['mime']};base64,${base64Encode(bytes)}',profileId:origin);
+        return bytes;
+      }
       final token = await cloud.googleToken(connection);
       final metadata = await cloud.send('GET',Uri.https('www.googleapis.com','/drive/v3/files/$id',
         {'fields':'id,appProperties,parents,trashed'}),token:token);
