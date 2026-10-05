@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../lib/windows_backend_bridge.dart';
+import '../lib/windows_school_operations.dart';
 import '../lib/windows_school_image_cache.dart';
 import '../lib/windows_connect/school_drive_images.dart';
 import 'dart:typed_data';
@@ -175,6 +176,55 @@ void main() {
     await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
     expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
     expect(await schoolImageBytes((await db.collection('students_directory').doc('photo-pupil').get()).data()!['photoUrl'] as String),[97,98,99]);
+  });
+
+  test('nested other-staff photos retain usable local copies and cannot continue under another school', () async {
+    final origin=db.activeProfileId;
+    const photo='data:image/png;base64,YWJj';
+    final prepared=await prepareManagedRecord({'staff':[{'id':'staff:own','photoUrl':photo}]},school,(action,body) async => {'success':true,'schoolId':school,'fileId':'staff-photo','fileUrl':'https://drive.google.com/file/d/staff-photo/view'});
+    expect((prepared['staff'] as List).single['photoUrl'],'https://drive.google.com/file/d/staff-photo/view');
+    expect(await WindowsSchoolImageCache.read(school,'staff-photo'),[97,98,99]);
+    var requests=0;
+    await expectLater(prepareManagedRecord({'staff':[{'photoUrl':photo},{'photoUrl':photo}]},school,(action,body) async {
+      requests++;
+      await db.switchProfile('foreign-media',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+      return {'success':true,'schoolId':school,'fileId':'wrong-session','fileUrl':'https://drive.google.com/file/d/wrong-session/view'};
+    }),throwsStateError);
+    expect(requests,1);
+    expect(await WindowsSchoolImageCache.read('vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','staff-photo'),isNull);
+    await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+  });
+
+  test('saved final results promote PASS offline, retain FAIL and audit the deliberate override', () async {
+    final exam={'examId':'final-local','examName':'Final','isFinal':true};
+    await db.collection('_local_exam_center_exams').doc('final-local').set(exam);
+    await db.collection('students_directory').doc('passed').set({'name':'Passed pupil','class':'Class 1','rollNo':'1'});
+    await db.collection('students_directory').doc('failed').set({'name':'Retained pupil','class':'Class 1','rollNo':'2'});
+    await db.collection('exam_results').doc('final-local_passed').set({'studentId':'passed','result':'PASS'});
+    await db.collection('exam_results').doc('final-local_failed').set({'studentId':'failed','result':'FAIL'});
+    await SchoolPromotionService.apply(studentId:'passed',student:{},exam:exam,result:'PASS');
+    expect((await db.collection('students_directory').doc('Class 2_Roll_1').get()).data()?['classMovement'],'PROMOTED');
+    expect((await db.collection('students_directory').doc('passed').get()).exists,false);
+    await SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL');
+    expect((await db.collection('students_directory').doc('failed').get()).data()?['class'],'Class 1');
+    expect((await db.collection('students_directory').doc('failed').get()).data()?['classMovement'],'RETAINED');
+    await db.collection('school_settings').doc('promotion_policy').set({'allowForcedPromotion':true});
+    await expectLater(SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL',force:true),throwsStateError);
+    await SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL',force:true,reason:'Approved remedial review');
+    final audit=(await db.collection('school_settings').doc('promotion_audit_final-local_failed').get()).data()!;
+    expect(audit['manualAdminOverride'],true);
+    expect(audit['fromClass'],'Class 1');expect(audit['toClass'],'Class 2');
+    expect(audit['reason'],'Approved remedial review');
+    expect(audit['at'],isA<int>());
+    expect((await db.collection('students_directory').doc('Class 2_Roll_2').get()).data()?['classMovement'],'FORCE_PROMOTED');
+  });
+
+  test('nested photo preparation leaves exam marks and payment structures unchanged', () async {
+    final original={'marks':{'Math':80,'English':75},'payments':[{'id':'payment-1','amountPaise':15000}]};
+    final prepared=await prepareManagedRecord(original,school,(_,__) async => throw StateError('No upload expected'));
+    expect(prepared['schoolId'],school);
+    expect(prepared['marks'],original['marks']);
+    expect(prepared['payments'],original['payments']);
   });
 
 }

@@ -97,6 +97,17 @@ class WindowsAdminSetup {
           if (cached != null && cached['schoolId'] == school &&
               WindowsSchoolProfileRestore.complete(cached)) data = Map<String, dynamic>.from(cached);
         }
+        // Central auth/licence has already been checked by the startup gate.
+        // A complete cache in this exact tenant needs no synchronous Drive pull.
+        if (data['schoolId'] == school && WindowsSchoolProfileRestore.ready(data)) {
+          await verifyIdentity();
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+            FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache')
+              .set(data, SetOptions(merge:true)));
+          await verifyIdentity();
+          _data = data; _cachedCompleted = true;
+          return true;
+        }
         final restored = await WindowsSchoolProfileRestore.resolveEnrollment(
           schoolId: school, localProfile: data,
           preferLocalProfile: pending.docs.isNotEmpty,

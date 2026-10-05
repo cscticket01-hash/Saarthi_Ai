@@ -1,3 +1,4 @@
+import 'windows_other_staff.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -47,16 +48,17 @@ class StaffPayroll {
   static Future<List<Map<String, dynamic>>> staff(String profile) async {
     _sameSchool(profile);
     final teachers = await FirebaseFirestore.instance.collection('teachers_directory').get();
-    final extra = await FirebaseFirestore.instance.collection('school_settings').doc('staff_payroll_directory').get();
+    final extra = await OtherStaffDirectory.load(profile);
     _sameSchool(profile);
     return [
       for (final d in teachers.docs) {
         'id': 'teacher:${d.id}',
         'teacherId': (d.data()['teacherId']?.toString().trim().isNotEmpty ?? false) ? d.data()['teacherId'] : d.id,
+        'employeeId': d.data()['teacherId'] ?? d.id,
         'name': d.data()['name'] ?? d.data()['teacherName'] ?? d.id,
         'role': 'Teacher', 'designation': d.data()['designation'] ?? 'Teacher',
       },
-      for (final d in (extra.data()?['staff'] as List? ?? [])) Map<String, dynamic>.from(d as Map),
+      for (final d in extra.where((p)=>p['active']!=false)) d,
     ];
   }
   static Future<void> addStaff(String profile, String name, String role, String designation) => _serial(() async {
@@ -88,7 +90,7 @@ class StaffPayroll {
     final alreadyPaid = paid(old);
     if (amount < alreadyPaid) throw StateError('Net salary cannot be lower than the payments already recorded.');
     final row = <String, dynamic>{...old, 'id': id, 'staffId': employee['id'],
-      'teacherId': employee['teacherId'] ?? '', 'name': employee['name'], 'role': employee['role'],
+      'teacherId': employee['teacherId'] ?? '', 'employeeId':employee['employeeId']??employee['teacherId']??'', 'name': employee['name'], 'role': employee['role'],
       'designation': employee['designation'], 'month': month, 'basicPaise': basic,
       'allowancePaise': allowance, 'bonusPaise': bonus, 'overtimePaise': overtime,
       'deductionPaise': deduction, 'netPaise': amount, 'amount': amount / 100,
@@ -149,21 +151,6 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       });
     } catch (e) { if (mounted && generation == _loadGeneration) setState(() => _error = '$e'); }
     finally { if (mounted && generation == _loadGeneration) setState(() => _loading = false); }
-  }
-  Future<void> _addStaff() async {
-    final name = TextEditingController(), designation = TextEditingController();
-    var role = 'Office staff';
-    await _editor('Add staff member', (setDialog) => [
-      TextField(controller: name, decoration: const InputDecoration(labelText: 'Staff name')),
-      DropdownButtonFormField<String>(isExpanded: true, initialValue: role, decoration: const InputDecoration(labelText: 'Role'),
-        items: ['Office staff', 'Driver', 'Guard', 'Support staff', 'Other'].map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
-        onChanged: (v) => setDialog(() => role = v!)),
-      TextField(controller: designation, decoration: const InputDecoration(labelText: 'Designation')),
-      const Text('Teachers are loaded automatically from the Teachers section.'),
-    ], () => StaffPayroll.addStaff(_profile, name.text, role, designation.text));
-    // Dialog route may still be animating; controllers are disposed after exit.
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    name.dispose(); designation.dispose();
   }
   Future<void> _editor(String title, List<Widget> Function(StateSetter) fields, Future<void> Function() save) async {
     bool saving = false; String? error;
@@ -242,8 +229,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if (RegExp(r'^[=+@\-\t\r]').hasMatch(text)) text = "'$text";
           return '"${text.replaceAll('"', '""')}"';
         }
-        final content = ['Name,Staff ID,Role,Month,Basic,Allowances,Deductions,Net,Paid,Balance,Status',
-          for (final r in rows) [r['name'],r['staffId'],r['role'],r['month'],
+        final content = ['Name,Employee ID,Role,Month,Basic,Allowances,Deductions,Net,Paid,Balance,Status',
+          for (final r in rows) [r['name'],r['employeeId']??r['teacherId']??r['staffId'],r['role'],r['month'],
             StaffPayroll.format((r['basicPaise'] as num?)?.toInt() ?? 0),
             StaffPayroll.format((r['allowancePaise'] as num?)?.toInt() ?? 0),
             StaffPayroll.format((r['deductionPaise'] as num?)?.toInt() ?? 0),
@@ -257,7 +244,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         for (final r in rows) {
           doc.addPage(pw.Page(build: (_) => pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start, children:[
             pw.Text('VIDYA SAARTHI - PAYSLIP',style:pw.TextStyle(fontSize:22,fontWeight:pw.FontWeight.bold)),
-            pw.SizedBox(height:20),if(_schoolName.isNotEmpty)pw.Text(_schoolName),pw.Text('${r['name']} | ${r['staffId']}'),
+            pw.SizedBox(height:20),if(_schoolName.isNotEmpty)pw.Text(_schoolName),pw.Text('${r['name']} | ${r['employeeId']??r['teacherId']??r['staffId']}'),
             pw.Text('${r['role']} | ${r['month']}'),pw.SizedBox(height:20),
             for (final key in {'Basic pay':'basicPaise','Allowances':'allowancePaise','Bonus':'bonusPaise','Overtime':'overtimePaise','Deductions':'deductionPaise'}.entries)
               pw.Padding(padding:const pw.EdgeInsets.only(bottom:10),child:pw.Text('${key.key}: Rs ${StaffPayroll.format((r[key.value] as num?)?.toInt() ?? 0)}')),
@@ -273,7 +260,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     finally { if(mounted) setState(() => _working=false); }
   }
   Future<void> _calculatePayroll() async {
-    final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx)=>SimpleDialog(title:const Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['role']}'))]));
+    final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx)=>SimpleDialog(title:const Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['employeeId']??person['teacherId']??person['id']} • ${person['role']}'))]));
     if(person != null && mounted) await _salary(person,_monthRows.where((r)=>r['staffId']==person['id']).firstOrNull);
   }
   Future<void> _paySelected() async {
@@ -291,7 +278,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final paid=rows.fold<int>(0,(v,r)=>v+StaffPayroll.paid(r));
     final deductions=rows.fold<int>(0,(v,r)=>v+((r['deductionPaise'] as num?)?.toInt() ?? 0));
     final paidCount=rows.where((r)=>StaffPayroll.paid(r)>=StaffPayroll.total(r)).length;
-    final people=_staff.where((s)=>(_role=='All staff'||s['role']==_role)&&'${s['name']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
+    final people=_staff.where((s)=>(_role=='All staff'||s['role']==_role)&&'${s['name']} ${s['employeeId']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
     final dark=ThemeData.dark(useMaterial3:true).copyWith(scaffoldBackgroundColor:const Color(0xff061826),
       colorScheme:const ColorScheme.dark(primary:Color(0xff7260ff),onPrimary:Colors.white,surface:Color(0xff102338)),
       dividerColor:const Color(0xff284157),cardColor:const Color(0xff102338));
@@ -313,7 +300,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:const Color(0xff12b975)),onPressed:_selected.isEmpty?null:_paySelected,icon:const Icon(Icons.done_all),label:const Text('Mark Selected as Paid')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(),icon:const Icon(Icons.print_outlined),label:const Text('Generate Payslips')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:const Icon(Icons.download_outlined),label:const Text('Export CSV')),
-            OutlinedButton.icon(onPressed:_addStaff,icon:const Icon(Icons.person_add_alt),label:const Text('Add staff member')),
+
           ]),const SizedBox(height:18),
           Wrap(spacing:12,runSpacing:12,children:[
             _metric('Total Staff','${_staff.length}',Colors.blue,Icons.groups_outlined,'${_staff.where((s)=>s['role']=='Teacher').length} Teachers'),
@@ -362,7 +349,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final status=row?['status']?.toString()??'Not set';
     final color=status=='Paid'?Colors.green:Colors.orange;
     return DataRow(selected:_selected.contains(person['id']),onSelectChanged:(value)=>setState((){if(value==true)_selected.add(person['id'].toString());else _selected.remove(person['id']);}),cells:[
-      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:const TextStyle(fontWeight:FontWeight.bold)),Text((person['teacherId']??person['id']).toString(),style:const TextStyle(fontSize:11,color:Colors.white54))])),
+      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:const TextStyle(fontWeight:FontWeight.bold)),Text((person['employeeId']??person['teacherId']??person['id']).toString(),style:const TextStyle(fontSize:11,color:Colors.white54))])),
       DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['role'].toString()),Text(person['designation']?.toString()??'',style:const TextStyle(fontSize:11,color:Colors.white54))])),
       DataCell(Tooltip(message:'Attendance does not change salary automatically. Configure deductions in the salary editor.',child:Text(row?['attendanceSummary']?.toString()??'—'))),
       DataCell(Text(amount('basicPaise'))),DataCell(Text(amount('allowancePaise'))),DataCell(Text(amount('deductionPaise'))),DataCell(Text(row==null?'—':'₹${StaffPayroll.format(StaffPayroll.total(row))}')),

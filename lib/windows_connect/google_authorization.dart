@@ -10,8 +10,8 @@ String secureSetupToken([int bytes = 32]) => base64Url
     .replaceAll('=', '');
 
 class GoogleSetupAccount {
-  const GoogleSetupAccount(this.subject, this.email, this.accessToken, {this.refreshToken = '', this.expiresIn = 3600});
-  final String subject, email, accessToken, refreshToken;
+  const GoogleSetupAccount(this.subject, this.email, this.accessToken, {this.refreshToken = '', this.expiresIn = 3600, this.photoUrl = '', this.displayName = ''});
+  final String subject, email, accessToken, refreshToken, photoUrl, displayName;
   final int expiresIn;
 }
 
@@ -147,6 +147,7 @@ class GoogleAuthorization {
       }
       if (_cancelled) throw SetupCancelled();
       return GoogleSetupAccount(info['sub'], info['email'], access,
+        photoUrl: info['picture']?.toString() ?? '', displayName: info['name']?.toString() ?? '',
         refreshToken: token['refresh_token']?.toString() ?? '', expiresIn: (token['expires_in'] as num? ?? 3600).toInt());
     } finally {
       if (!pending.isCompleted) pending.completeError(SetupCancelled());

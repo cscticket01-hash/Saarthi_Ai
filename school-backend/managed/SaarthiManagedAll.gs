@@ -6573,7 +6573,7 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true};}
+    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
     else if(b.action==='managed_records'){const lock=LockService.getScriptLock();lock.waitLock(30000);try{result=VS_managedRecord(b);}finally{lock.releaseLock();}}
@@ -6592,7 +6592,16 @@ function VS_managedHandle(e) {
       let copied=0,skipped=0;const lock=LockService.getScriptLock();lock.waitLock(30000);try{pending.forEach(r=>{const result=VS_managedRecord(r);if(result.skipped)skipped++;else copied++;});}finally{lock.releaseLock();}result={copied:copied,skipped:skipped};
     }else throw new Error('Unknown managed storage action');
     return jsonResponse(Object.assign({success:true,schoolId:school},result));
-  }catch(_){return jsonResponse({success:false,schoolId:school,message:'School storage request rejected'});}
+  }catch(error){
+    const safe={
+      'This QR does not belong to the active school':'This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.',
+      'This ID card needs a new secure school QR':'Ask your school to regenerate this ID card.',
+      'Class, roll number or date of birth is incorrect':'Class, roll number or date of birth is incorrect',
+      'School session expired':'School session expired. Scan your ID again.',
+      'School record or ID card was changed; scan again':'School record or ID card was changed; scan again'
+    };
+    return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected'});
+  }
 }
 
 /** Managed mobile bridge. Only called AFTER central server verification and

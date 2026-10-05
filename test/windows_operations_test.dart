@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_staff_payroll.dart';
+import '../lib/windows_other_staff.dart';
 import '../lib/windows_local_firestore.dart' as local;
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_license_gate.dart';
@@ -128,10 +129,44 @@ void main() {
     }
     await WindowsSyncEngine.instance.pauseForAppReset();
   });
+  test('other staff directory feeds payroll without changing teachers or mixing schools', () async {
+    final profile=db.activeProfileId;
+    final teacherRecord=await teacher();
+    await OtherStaffDirectory.save(profile, {'id':'staff:guard','name':'School Guard','employeeId':'G-1','role':'Guard','active':true});
+    final people=await StaffPayroll.staff(profile);
+    expect(people.length,2);
+    final guard=people.singleWhere((p)=>p['role']=='Guard');
+    expect(guard['employeeId'],'G-1');
+    final salary=await StaffPayroll.save(profile,guard,'2026-10',basic:150000);
+    expect(salary['employeeId'],'G-1');
+    expect(people.singleWhere((p)=>p['role']=='Teacher')['id'],teacherRecord['id']);
+    await expectLater(OtherStaffDirectory.save(profile, {'name':'Duplicate','employeeId':'g-1','role':'Guard'}),throwsStateError);
+    await expectLater(OtherStaffDirectory.save(profile, {'name':'Duplicate Teacher','employeeId':'T-11','role':'Other'}),throwsStateError);
+    await db.switchProfile('other-school');
+    expect(await StaffPayroll.staff(db.activeProfileId),isEmpty);
+    await expectLater(OtherStaffDirectory.load(profile),throwsStateError);
+    await expectLater(OtherStaffDirectory.save(profile, {'name':'Foreign','employeeId':'F-1','role':'Other'}),throwsStateError);
+    await db.switchProfile(profile);
+    expect((await OtherStaffDirectory.load(profile)).single['name'],'School Guard');
+  });
+  test('promotion rejects invented final flags, unsaved results and mismatched results', () async {
+    final exam={'examId':'final-check','isFinal':true};
+    await db.collection('students_directory').doc('student').set({'name':'Student','class':'Class 1','rollNo':'1'});
+    await expectLater(SchoolPromotionService.apply(studentId:'student',student:{},exam:exam,result:'PASS'),throwsStateError);
+    await db.collection('_local_exam_center_exams').doc('final-check').set(exam);
+    await expectLater(SchoolPromotionService.apply(studentId:'student',student:{},exam:exam,result:'PASS'),throwsStateError);
+    await db.collection('exam_results').doc('final-check_student').set({'studentId':'student','result':'FAIL'});
+    await expectLater(SchoolPromotionService.apply(studentId:'student',student:{},exam:exam,result:'PASS'),throwsStateError);
+    expect((await db.collection('students_directory').doc('student').get()).data()?['class'],'Class 1');
+  });
   test('Class 12 final pass graduates; a final failure remains in Class 12', () async {
     await db.collection('students_directory').doc('pass').set({'name':'Senior','class':'Class 12','rollNo':'1'});
     await db.collection('students_directory').doc('fail').set({'name':'Retained','class':'Class 12','rollNo':'2'});
     final exam={'examId':'final-12','examName':'Final','isFinal':true};
+    await db.collection('_local_exam_center_exams').doc('final-12').set(exam);
+    for (final entry in {'pass':'PASS','fail':'FAIL'}.entries) {
+      await db.collection('exam_results').doc('final-12_${entry.key}').set({'studentId':entry.key,'result':entry.value});
+    }
     expect(await SchoolPromotionService.apply(studentId:'pass',student:{},exam:exam,result:'PASS'),'Completed Class 12');
     expect(await SchoolPromotionService.apply(studentId:'fail',student:{},exam:exam,result:'FAIL'),'Retained in Class 12');
     expect((await db.collection('students_directory').doc('fail').get()).data()?['class'],'Class 12');

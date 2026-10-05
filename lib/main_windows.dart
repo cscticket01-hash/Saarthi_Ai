@@ -15,6 +15,7 @@ import 'windows_local_auth.dart';
 import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
+import 'windows_local_firestore.dart';
 import 'windows_connection_center.dart';
 import 'windows_admin_setup.dart';
 import 'windows_update_service.dart' as update_service;
@@ -192,7 +193,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
 }
 
 /// Requires the existing local password before showing a saved dashboard.
-/// School Firebase verification remains in Advanced Settings.
+/// Central authentication and licensing are enforced by the outer startup gate.
 class WindowsStartupGate extends StatefulWidget {
   const WindowsStartupGate({super.key, required this.child});
 
@@ -207,6 +208,8 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
   bool _loading = true;
   bool _locked = false;
   String? _error;
+  String _schoolName = '';
+  bool _success = false, _unlocking = false;
 
   @override
   void initState() {
@@ -224,6 +227,13 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     try {
       await WindowsLocalSecurity.initialize();
       final shouldLock = WindowsLocalSecurity.configured;
+      _schoolName=WindowsAdminSetup.schoolName;
+      if (shouldLock) {
+        final origin=FirebaseFirestore.instance.activeProfileId;
+        final profile=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data();
+        if (FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen the app.');
+        _schoolName=profile?['schoolName']?.toString().trim()??_schoolName;
+      }
       if (!mounted) return;
       setState(() {
         _locked = shouldLock;
@@ -240,16 +250,27 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
   }
 
   Future<void> _unlock() async {
+    if (_unlocking) return;
     final password = _password.text;
     if (WindowsLocalSecurity.verifyPassword(password)) {
-      await WindowsLocalSession.markLoggedIn();
-      await FirebaseAuth.instance.bootstrapLocalUser();
-      if (!mounted) return;
-      setState(() {
-        _locked = false;
-        _error = null;
-      });
-      _password.clear();
+      _unlocking = true;
+      final origin=FirebaseFirestore.instance.activeProfileId;
+      void own() {if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed. Reopen the app.');}
+      try {
+        own();
+        await WindowsLocalSession.markLoggedIn();
+        own();
+        await FirebaseAuth.instance.bootstrapLocalUser();
+        own();
+        if (!mounted) return;
+        setState(() { _success = true; _error = null; });
+        _password.clear();
+        await Future<void>.delayed(const Duration(milliseconds: 850));
+        own();
+        if (mounted) setState(() { _locked=false; _success=false; _unlocking=false; });
+      } catch (e) {
+        if (mounted) setState(() { _success=false; _unlocking=false; _error='$e'; });
+      }
       return;
     }
     setState(() => _error = 'Galat App Password.');
@@ -267,6 +288,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     }
 
     if (!_locked) return widget.child;
+    if (_success) return Scaffold(body:Center(child:TweenAnimationBuilder<double>(tween:Tween(begin:0,end:1),duration:const Duration(milliseconds:500),builder:(context,value,child)=>Opacity(opacity:value,child:Transform.scale(scale:0.85+value*0.15,child:child)),child:const Column(mainAxisSize:MainAxisSize.min,children:[Icon(Icons.check_circle,color:Color(0xFF00D9A5),size:76),SizedBox(height:18),Text('Login Successful',style:TextStyle(fontSize:26,fontWeight:FontWeight.bold))]))));
 
     return Scaffold(
       backgroundColor: const Color(0xFF0B141A),
@@ -284,8 +306,8 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                   const Icon(Icons.lock_rounded,
                       color: Color(0xFF00D9A5), size: 42),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Vidya Saarthi Locked',
+                  Text(
+                    _schoolName.isEmpty ? 'Vidya Saarthi' : _schoolName,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.white,
@@ -295,7 +317,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'App open karne ke liye password daalein.',
+                    'App Lock • Enter your saved local password.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white60),
                   ),
@@ -307,7 +329,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                     onSubmitted: (_) => _unlock(),
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      labelText: 'App Password',
+                      labelText: 'App Lock Password',
                       errorText: _error,
                       prefixIcon: const Icon(Icons.password_rounded),
                       filled: true,

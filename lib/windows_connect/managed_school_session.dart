@@ -57,9 +57,17 @@ class ManagedSchoolSession {
       final session=await cloud.api({'action':'managed/session'},token:auth['idToken']);
       if(session['uid']!=auth['localId']||!validSchoolId(session['schoolId']?.toString()??''))throw StateError('School account mapping is invalid');
       final configuration = managedSessionConfiguration(session, session['schoolId'], auth['localId']);
+      Map<String,dynamic> googleProfile={};
+      try {
+        final lookup=await cloud.send('POST',Uri.https('identitytoolkit.googleapis.com','/v1/accounts:lookup',{'key':platformApiKey}),body:{'idToken':auth['idToken']});
+        final accounts=lookup['users'] as List? ?? [];
+        if(accounts.length==1 && accounts.first['localId']==auth['localId'] && (accounts.first['providerUserInfo'] as List? ?? []).any((p)=>p['providerId']=='google.com')) {
+          googleProfile={'photoUrl':accounts.first['photoUrl']??'','displayName':accounts.first['displayName']??''};
+        }
+      }catch(_){}
       final old=await CentralSchoolCloud.saved();
       if(old.isNotEmpty&&old['managed']!=true)await const FlutterSecureStorage().write(key:'vidya_saarthi_legacy_cloud_preserved',value:jsonEncode(old));
-      await const FlutterSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration}));
+      await const FlutterSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration,...googleProfile}));
       await const FlutterSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
       changed.value++;return session;
     }finally{cloud.close();}

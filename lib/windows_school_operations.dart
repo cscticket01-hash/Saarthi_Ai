@@ -1,3 +1,4 @@
+import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
@@ -7,6 +8,7 @@ import 'windows_backend_bridge.dart';
 import 'windows_connection_center.dart';
 import 'windows_platform_client.dart';
 import 'windows_school_identity.dart';
+import 'windows_local_settings.dart';
 
 String schoolDateKey(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -322,12 +324,16 @@ class SchoolPromotionService {
           .data()?['allowForcedPromotion'] ==
       true;
   static Future<bool> isFinal(Map<String, dynamic> exam) async {
-    if (exam['isFinal'] == true) return true;
-    final d = await FirebaseFirestore.instance
-        .collection('school_settings')
-        .doc('exam_${exam['examId']}')
-        .get();
-    return d.data()?['isFinal'] == true;
+    final db=FirebaseFirestore.instance,profile=FirebaseFirestore.instance.activeProfileId;
+    final id=exam['examId']?.toString()??'';
+    if(id.isEmpty)return false;
+    final definitions=await Future.wait([
+      db.collection('_local_exam_center_exams').doc(id).get(),
+      db.collection('exams').doc(id).get(),
+      db.collection('school_settings').doc('exam_$id').get(),
+    ]);
+    if(db.activeProfileId!=profile)throw StateError('School changed during final-exam verification.');
+    return definitions.any((d)=>d.data()?['isFinal']==true);
   }
 
   static Future<String> apply(
@@ -335,12 +341,20 @@ class SchoolPromotionService {
       required Map<String, dynamic> student,
       required Map<String, dynamic> exam,
       required String result,
-      bool force = false}) async {
+      bool force = false, String reason=''}) async {
+    final profile=FirebaseFirestore.instance.activeProfileId;
+    void own(){if(FirebaseFirestore.instance.activeProfileId!=profile)throw StateError('School changed during promotion.');}
     if (!await isFinal(exam))
       throw StateError(
           'Promotion or retention is available only after a final exam.');
+    own();
+    final verifiedResult=(await FirebaseFirestore.instance.collection('exam_results').doc('${exam['examId']}_$studentId').get()).data() ??
+      (await FirebaseFirestore.instance.collection('_local_exam_center_results').doc('${exam['examId']}_$studentId').get()).data();
+    own();
+    if(verifiedResult==null || verifiedResult['result']!=result || (verifiedResult['studentId']!=null&&verifiedResult['studentId']!=studentId))throw StateError('Calculate and save this student final-exam result first.');
     if (result != 'PASS' && result != 'FAIL')
       throw StateError('Final PASS/FAIL result is missing.');
+    if (force && (reason.trim().isEmpty || reason.trim().length>500)) throw StateError('Enter an administrator override reason (maximum 500 characters).');
     if (force && !await forceEnabled())
       throw StateError(
           'Enable the administrator force-promotion switch first.');
@@ -348,8 +362,10 @@ class SchoolPromotionService {
         .collection('students_directory')
         .doc(studentId);
     final live = await SchoolPersonIdentity.ensure('students_directory',studentId);
+    own();
     final examId = exam['examId']?.toString() ?? '';
     if (examId.isEmpty) throw StateError('Final exam ID missing.');
+    if(force && (result!='FAIL' || live['classMovement']!='RETAINED' || live['promotionExamId']!=examId))throw StateError('Admin override is only for this final-exam retained student.');
     if (live['promotionExamId'] == examId &&
         live['classMovement'] != 'RETAINED') return 'Already processed';
     final classNo = int.tryParse(
@@ -388,7 +404,10 @@ class SchoolPromotionService {
     final target = FirebaseFirestore.instance.collection('students_directory')
         .doc('${newClass}_Roll_$nextRoll');
     final stableId = live['mobileStableId'] ?? studentId;
-    final url = await WindowsConnectionCenter.googleScriptUrl();
+    own();
+    final connection=await CentralSchoolCloud.saved();
+    own();
+    final url = connection['managed']==true ? await WindowsExternalConnections.googleScriptUrl() : await WindowsConnectionCenter.googleScriptUrl();
     final response = await WindowsBackendBridge.post(Uri.parse(url),
         headers: {'Content-Type': 'text/plain;charset=utf-8'},
         body: jsonEncode({
@@ -406,6 +425,7 @@ class SchoolPromotionService {
           'result': result,
           'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin'
         }));
+    own();
     final data = jsonDecode(response.body);
     if (response.statusCode >= 400 || data is! Map || data['success'] != true)
       throw StateError(data is Map
@@ -413,6 +433,7 @@ class SchoolPromotionService {
           : 'Class sync failed');
     final aliases = List<String>.from(live['previousStudentIds'] ?? []);
     if (!aliases.contains(studentId)) aliases.add(studentId);
+    own();
     final batch = FirebaseFirestore.instance.batch();
     batch.set(target, {
       ...live,
@@ -423,6 +444,11 @@ class SchoolPromotionService {
       'mobileStableId': stableId,
       'previousStudentIds': aliases,
       'classMovement': force ? 'FORCE_PROMOTED' : 'PROMOTED'
+    });
+    batch.set(FirebaseFirestore.instance.collection('school_settings').doc('promotion_audit_${examId}_$studentId'),{
+      'studentId':studentId,'name':live['name'],'fromClass':live['class'],'toClass':newClass,
+      'examId':examId,'at':DateTime.now().millisecondsSinceEpoch,'reason':reason.trim(),
+      'manualAdminOverride':force,'actor':FirebaseAuth.instance.currentUser?.email??'Admin',
     });
     batch.delete(ref);
     try { await batch.commit(); }

@@ -13,7 +13,10 @@ def document(name):
     return reader, normalized
 for index in range(4):
     reader, text = document(f'teacherId_{index}.pdf')
-    assert len(reader.pages) == 2
+    assert len(reader.pages) == 1
+    width,height=map(float,reader.pages[0].mediabox[2:])
+    assert abs(width-(((85.6 if index==2 else 54)*2+8)*72/25.4))<0.02
+    assert abs(height-((54 if index==2 else 85.6)*72/25.4))<0.02
     assert 'ananyasharma' in text and 't-001' in text
     assert 'principalsignature' in text
     if index == 2:

@@ -49,7 +49,7 @@ void main() {
       );
       final raw = latin1.decode(bytes);
       expect(raw.startsWith('%PDF'), isTrue);
-      expect(RegExp(r'/Type\s*/Page\b').allMatches(raw).length, 2);
+      expect(RegExp(r'/Type\s*/Page\b').allMatches(raw).length, 1);
       await File('${output.path}/student_reference_$i.pdf').writeAsBytes(bytes);
       // Very long fields and missing assets must also remain printable.
       final longBytes = await renderWindowsStudentId(

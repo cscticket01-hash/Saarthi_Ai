@@ -1,3 +1,4 @@
+import 'windows_id_pair.dart';
 import 'dart:typed_data';
 import 'dart:async';
 import 'dart:ui' as ui;
@@ -147,7 +148,7 @@ Future<Uint8List> renderWindowsReferenceDocument(
     String qr = '',
     Uint8List? photo,
     Uint8List? logo,
-    Uint8List? signature}) async {
+    Uint8List? signature, Uint8List? seal}) async {
   if (!windowsReferenceDocumentNames.containsKey(kind))
     throw ArgumentError.value(kind, 'kind');
   final i = windowsReferenceDocumentIndex(kind, template);
@@ -643,8 +644,7 @@ Future<Uint8List> renderWindowsReferenceDocument(
                 size: 10, color: white, align: pw.TextAlign.center))
       ]);
     }
-    page(w, h, front, card: true);
-    page(w, h, back, card: true);
+    addIdCardPair(pdf, front, back, w, h, landscape: landscape);
   } else if (kind == 'reportCard') {
     final ink = PdfColor.fromHex(i == 0
         ? '#29367b'
@@ -1179,6 +1179,7 @@ Future<Uint8List> renderWindowsReferenceDocument(
                 first(['installmentAmount', 'amount', 'totalAmount'])
               ]
             ], firstHeader: false, font: 9, rowHeight: 18.6)),
+        if(seal!=null) at(285, 638,  60, 48, asset(seal, '')),
         at(86, 625, 330, 22,
             label('Authorized Title and Signature', size: 12, heavy: true)),
         at(86, 659, 200, 17,

@@ -1,3 +1,4 @@
+import 'windows_id_pair.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
 
@@ -507,24 +508,6 @@ Future<Uint8List> renderWindowsStudentId({
         text('Student UID: ${value('studentUid')}', size: 9, color: ink),
       ),
     );
-  final format = PdfPageFormat(
-    (portrait ? 54 : 85.6) * PdfPageFormat.mm,
-    (portrait ? 85.6 : 54) * PdfPageFormat.mm,
-  );
-  for (final side in [front, back]) {
-    pdf.addPage(
-      pw.Page(
-        pageFormat: format,
-        margin: pw.EdgeInsets.zero,
-        build: (_) => pw.FittedBox(
-          child: pw.SizedBox(
-            width: width,
-            height: height,
-            child: pw.Stack(children: side),
-          ),
-        ),
-      ),
-    );
-  }
+  addIdCardPair(pdf, front, back, width, height, landscape: !portrait);
   return pdf.save();
 }

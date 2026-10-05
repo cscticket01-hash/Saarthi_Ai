@@ -213,9 +213,11 @@ void main() {
     expect(await secure.read(key:'vidya_saarthi_windows_section_password_v1_admin'),isNull);
     await WindowsSyncEngine.instance.pauseForAppReset();
   });
-  test('offline publish never reports delivery or creates a notice', () async {
+  test('offline publish retains a pending notice without reporting delivery', () async {
     await expectLater(WindowsPlatformClient.instance.publishNotice('unsent', {'title':'Example'}), throwsStateError);
-    expect((await local.FirebaseFirestore.instance.collection('school_notices').get()).docs, isEmpty);
+    final pending=(await local.FirebaseFirestore.instance.collection('school_notices').doc('unsent').get()).data();
+    expect(pending?['title'],'Example');
+    expect(pending?['deliveryStatus'],'sync_pending');
   });
   test('monthly attendance honours closures, duplicates, role and future days', () {
     final january = windowsMonthlyAttendance(records: [

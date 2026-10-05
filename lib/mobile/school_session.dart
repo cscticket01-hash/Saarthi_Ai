@@ -53,7 +53,7 @@ class SchoolSession {
       if (generation != _generation || !identical(current, link)) throw StateError('School session changed. Scan your ID again.');
     }
     if(current.managed){
-      final r=await _client.post(Uri.parse(current.endpoint),headers:{'Content-Type':'application/json'},body:jsonEncode({'action':'managed/mobile','schoolId':current.schoolId,'request':{...body,'action':action,'sessionToken':schoolToken}})).timeout(const Duration(seconds:90));
+      final r=await _client.post(Uri.parse(current.endpoint),headers:{'Content-Type':'application/json'},body:jsonEncode({'action':'managed/mobile','schoolId':current.schoolId,'request':{...body,'action':action,'sessionToken':schoolToken}})).timeout(const Duration(seconds:25));
       unchanged();
       final d=jsonDecode(r.body);
       if(r.statusCode!=200||d is! Map||d['success']!=true)throw StateError(d is Map?d['message']?.toString()??'Unable to connect':'Unable to connect');

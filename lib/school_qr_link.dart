@@ -74,3 +74,14 @@ class SchoolLink {
   }
 }
 
+
+/// Pause camera events immediately, including invalid codes, until explicit retry.
+class SchoolQrCapture {
+  bool paused = false;
+  SchoolLink? capture(String raw) {
+    if (paused) return null;
+    paused = true;
+    return SchoolLink.parse(raw);
+  }
+  void retry() => paused = false;
+}

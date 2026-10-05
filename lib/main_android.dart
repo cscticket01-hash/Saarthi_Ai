@@ -71,8 +71,11 @@ class _QrScanner extends StatefulWidget {
 }
 
 class _QrScannerState extends State<_QrScanner> {
-  bool _done = false;
+  final _capture = SchoolQrCapture();
+  final _scanner = MobileScannerController();
   String? _error;
+  @override
+  void dispose() { _scanner.dispose(); super.dispose(); }
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: const Text('Scan school ID card')),
@@ -83,18 +86,22 @@ class _QrScannerState extends State<_QrScanner> {
                 'Use the QR printed on your own student or teacher ID card.')),
         Expanded(
             child: MobileScanner(
-                onDetect: (capture) {
-                  if (_done) return;
+                controller: _scanner,
+                onDetect: (capture) async {
+                  if (_capture.paused) return;
                   for (final b in capture.barcodes) {
                     final raw = b.rawValue;
                     if (raw == null) continue;
                     try {
-                      final link = SchoolLink.parse(raw);
-                      _done = true;
-                      Navigator.pop(context, link);
+                      final link = _capture.capture(raw);
+                      if (link == null) return;
+                      try { await _scanner.stop().timeout(const Duration(seconds:2)); } catch (_) {}
+                      if (mounted) Navigator.pop(context, link);
                       return;
                     } catch (e) {
-                      if (mounted) setState(() => _error = e.toString());
+                      try { await _scanner.stop().timeout(const Duration(seconds:2)); } catch (_) {}
+                      if (mounted) setState(() => _error = 'Invalid or older ID QR. Ask your school to regenerate this card.');
+                      return;
                     }
                   }
                 },
@@ -105,8 +112,15 @@ class _QrScannerState extends State<_QrScanner> {
         if (_error != null)
           Padding(
               padding: const EdgeInsets.all(16),
-              child: Text(_error!,
-                  style: const TextStyle(color: Colors.orangeAccent)))
+              child: Column(children: [Text(_error!, style: const TextStyle(color: Colors.orangeAccent)),
+                TextButton(onPressed: () async {
+                  try {
+                    await _scanner.start().timeout(const Duration(seconds:5));
+                    if (mounted) setState(() { _capture.retry(); _error=null; });
+                  } catch (_) {
+                    if (mounted) setState(() => _error='Camera could not restart. Reopen the scanner and check camera permission.');
+                  }
+                }, child: const Text('Scan again'))]))
       ]));
 }
 
@@ -139,29 +153,39 @@ class _SchoolLoginState extends State<_SchoolLogin> {
       _roll.clear();
       _dob.clear();
     });
+    if (link.role == 'teacher') await _login();
   }
 
   Future<void> _login() async {
-    if (_link == null) return;
+    if (_link == null || _busy) return;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await SchoolMessaging.stop();
-      await SchoolNotifications.clear();
       await SchoolSession.instance.login(_link!,
-          studentClass: _class,
-          roll: _roll.text.trim(),
-          dob: _dob.text.trim());
-      try {
-        if(await SchoolMessaging.configure(SchoolSession.instance.messaging)) return;
-      } catch(_) {
-        _messenger.currentState?.showSnackBar(const SnackBar(content:Text('School login is ready. Ask the school to finish notification setup.')));
-      }
-      if (mounted)
-        Navigator.pushReplacement(context,
-            MaterialPageRoute(builder: (_) => const _SchoolDashboard()));
+          studentClass: _class, roll: _roll.text.trim(), dob: _dob.text.trim());
+      if (!mounted) return;
+      Navigator.pushReplacement(context,
+          MaterialPageRoute(builder: (_) => const _SchoolDashboard()));
+      // Optional notification setup must not hold an authenticated account on
+      // the login screen. The native restart restores the same saved session.
+      final account=SchoolSession.instance.link;
+      final token=SchoolSession.instance.schoolToken;
+      bool same()=>identical(SchoolSession.instance.link,account)&&SchoolSession.instance.schoolToken==token;
+      final messaging=SchoolSession.instance.messaging;
+      unawaited(() async {
+        try {
+          if(!same())return;
+          await SchoolMessaging.stop().timeout(const Duration(seconds: 5));
+          if(!same())return;
+          await SchoolNotifications.clear().timeout(const Duration(seconds: 5));
+          if(!same())return;
+          await SchoolMessaging.configure(messaging).timeout(const Duration(seconds: 10));
+        } catch (_) {
+          _messenger.currentState?.showSnackBar(const SnackBar(content:Text('Logged in. School notifications are unavailable; notices remain in your school dashboard.')));
+        }
+      }());
     } catch (e) {
       if (mounted)
         setState(() => _error = e.toString().replaceFirst('Bad state: ', ''));

@@ -1,3 +1,5 @@
+import 'windows_admin_avatar.dart';
+import 'windows_other_staff.dart';
 import 'windows_school_image_cache.dart';
 import 'school_qr_link.dart';
 import 'windows_school_profile_store.dart';
@@ -526,6 +528,7 @@ class _WindowsLicenseSettingsPanelState
   String _savedKey = '';
   String _status = '';
   String _savedAt = '';
+  bool _centralManaged=false;
 
   @override
   void initState() {
@@ -547,6 +550,7 @@ class _WindowsLicenseSettingsPanelState
 
   Future<void> _load() async {
     final data = await WindowsLicenseStore.load();
+    _centralManaged=(await CentralSchoolCloud.saved())['managed']==true;
     if (!mounted) return;
     setState(() {
       _savedKey = data['key'] ?? '';
@@ -562,6 +566,8 @@ class _WindowsLicenseSettingsPanelState
   }
 
   String _statusText() {
+    final real=WindowsPlatformClient.instance.state.value;
+    if (_centralManaged) return real.status=='licensed' && real.allowed && real.activated ? 'License Activated ✓' : real.status=='trial' ? 'Trial active' : real.allowed && !real.activated ? 'License activation required' : 'License ${real.status}';
     if (_savedKey.isEmpty) return 'License Key not added';
     final state = WindowsPlatformClient.instance.state.value;
     if (state.allowed && state.status == 'licensed') return 'License Active';
@@ -570,6 +576,7 @@ class _WindowsLicenseSettingsPanelState
   }
 
   Color _statusColor() {
+    if (_centralManaged) return WindowsPlatformClient.instance.state.value.allowed?const Color(0xFF00D9A5):Colors.redAccent;
     if (_savedKey.isEmpty) return Colors.white54;
     final state = WindowsPlatformClient.instance.state.value;
     if (state.allowed && state.status == 'licensed') return const Color(0xFF00D9A5);
@@ -652,6 +659,8 @@ class _WindowsLicenseSettingsPanelState
     });
   }
 
+  String _licenceDate(DateTime d) {const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];final v=d.toLocal();return '${v.day.toString().padLeft(2,'0')} ${months[v.month-1]} ${v.year}';}
+
   String _savedAtText() {
     final date = DateTime.tryParse(_savedAt);
     if (date == null) return 'Not saved yet';
@@ -710,6 +719,7 @@ class _WindowsLicenseSettingsPanelState
             style: TextStyle(color: Colors.white60, fontSize: 11, height: 1.4),
           ),
           const SizedBox(height: 14),
+          if(_centralManaged) Padding(padding:const EdgeInsets.only(bottom:14),child:Text('Expiry / renewal: ${_licenceDate(WindowsPlatformClient.instance.state.value.expiresAt)}\nDays remaining: ${WindowsPlatformClient.instance.state.value.daysLeft}')),
           if (_savedKey.isNotEmpty) ...[
             Container(
               width: double.infinity,
@@ -756,6 +766,7 @@ class _WindowsLicenseSettingsPanelState
             ),
             const SizedBox(height: 12),
           ],
+          if (!_centralManaged || WindowsPlatformClient.instance.state.value.status != 'licensed' || !WindowsPlatformClient.instance.state.value.allowed || !WindowsPlatformClient.instance.state.value.activated) ...[
           TextField(
             controller: _licenseKey,
             textCapitalization: TextCapitalization.characters,
@@ -794,6 +805,7 @@ class _WindowsLicenseSettingsPanelState
               label: Text(_saving ? 'Saving...' : 'Save Licensing Key'),
             ),
           ),
+          ],
           const SizedBox(height: 10),
           const Text(
             'Keys are verified by the developer platform and bound to this school.',
@@ -1409,6 +1421,7 @@ Future<Map<String, dynamic>> _schoolProfileBackendPost(
 }
 
 Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
+  _ensureSchoolProfileMemoryTenant();
   final tenant=FirebaseFirestore.instance.activeProfileId;
   if (_schoolProfileMemoryCache != null) {
     return _mergeSchoolProfile(_schoolProfileMemoryCache);
@@ -1511,7 +1524,7 @@ Widget _windowsAdminModule(WindowsAdminPage page) => switch (page) {
   WindowsAdminPage.students => const AllStudentsListScreen(),
   WindowsAdminPage.fees => const FeesCollectionScreen(),
   WindowsAdminPage.exams => const ExamCenterScreen(),
-  WindowsAdminPage.teachers => const TeachersDirectoryScreen(),
+  WindowsAdminPage.teachers => const SchoolStaffDirectory(teachers:TeachersDirectoryScreen()),
   WindowsAdminPage.salary => const StaffSalaryScreen(),
   WindowsAdminPage.support => const WindowsSupportScreen(),
   WindowsAdminPage.expenses => const WindowsSchoolExpensesScreen(),
@@ -5133,8 +5146,7 @@ void _handleLoginBack(bool didPop) {
     }
     setState(() => _isSavingNotice = true);
     try {
-      final connection = await WindowsConnectionCenter.reload();
-      if (!connection.remoteReady) throw StateError('Notice not sent. Connect and verify this school Firebase and Google Script first.');
+
       final now = DateTime.now().millisecondsSinceEpoch;
       final id = 'NOTICE-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
       // An edited announcement is a new notification, avoiding old FCM-job dedupe.
@@ -5142,14 +5154,14 @@ void _handleLoginBack(bool didPop) {
         'title': title, 'description': description, 'category': _noticeCategory,
         'timestamp': now, 'lastEdited': now,
       });
-      if (_editingNoticeId != null) await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).delete();
+      if (_editingNoticeId != null && (result.schoolPublished || result.notificationSent)) await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).delete();
       if (!mounted) return;
       _cancelNoticeEdit();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         backgroundColor: result.notificationSent ? const Color(0xFF00A884) : Colors.orange,
         content: Text(result.notificationSent
           ? 'Published to the school student app. Notification accepted for ${result.recipients} registered students.'
-          : 'Published to the school portal. Notification pending: ${result.error}')));
+          : result.schoolPublished ? 'Notice published to this school dashboard. ${result.error}' : 'Notice saved locally. ${result.error}')));
     } catch (e) {
       if (mounted) {
         setState(() => _isSavingNotice = false);
@@ -5465,7 +5477,7 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
     },
   );
 
-  final schoolProfile = await _loadSchoolProfile();
+  final schoolProfile = await _loadSchoolProfileCache();
 
   return {
     'name': name,
@@ -6420,7 +6432,7 @@ Widget _buildOverviewCards() {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const TeachersDirectoryScreen(),
+                  builder: (context) => const SchoolStaffDirectory(teachers:TeachersDirectoryScreen()),
                 ),
               );
             },
@@ -7900,7 +7912,9 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
 
       _ExamCenterSnapshot? examSnapshot;
       try {
-        examSnapshot = await _ExamCenterDataCache.refresh(force: true);
+        final localExams=await WindowsBackendBridge.localExamAction({'action':'list_exam_center'});
+        examSnapshot=_ExamCenterSnapshot(exams:(localExams['exams'] as List? ?? []).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList(),results:(localExams['results'] as List? ?? []).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList(),studentCounts:const {},loadedAt:DateTime.now());
+        WindowsSyncEngine.instance.scheduleSoon();
       } catch (e) {
         debugPrint('Analytics exam data skipped: $e');
       }
@@ -10581,14 +10595,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                               ],
                             ),
                             alignment: Alignment.center,
-                            child: Text(
-                              _profileInitial(user),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 25,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
+                            child: WindowsAdminAvatar(key:ValueKey('${FirebaseFirestore.instance.activeProfileId}:${user?.email}'),initial:_profileInitial(user)),
                           ),
                           const SizedBox(width: 15),
                           Expanded(
@@ -11771,7 +11778,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     setState(() => _isSavingPayment = true);
 
     final now = DateTime.now();
-    final schoolProfile = await _loadSchoolProfile();
+    final schoolProfile = await _loadSchoolProfileCache();
     final receiptNo =
         'VS-${now.year}${now.month.toString().padLeft(2, '0')}-${now.millisecondsSinceEpoch}';
     final totalPaid = oldPaid + amount;
@@ -17253,6 +17260,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     final roll = _normalizeStudentRoll(student['rollNo']);
 
     final matches = _studentExamResults.where((result) {
+      if(result['isFinal']!=true)return false;
       final resultStudentId = result['studentId']?.toString().trim() ?? '';
       if (resultStudentId.isNotEmpty && resultStudentId == docId) {
         return true;
@@ -17274,7 +17282,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       return <String, dynamic>{
         'result': storedResult,
         'examId': student['promotionExamId'] ?? '',
-        'isFinal': student['promotionExamId'] != null,
+        'isFinal': student['promotionExamId']?.toString().isNotEmpty==true,
         'examName': student['lastExamName']?.toString() ?? 'Previous Exam',
         'percentage': student['lastExamPercentage'] ?? 0,
         'timestamp': student['lastExamTimestamp'] ?? 0,
@@ -17339,18 +17347,21 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Enter the final exam result before promotion or retention.')));
       return;
     }
+    if(result['isFinal']!=true)return;
     final status = result['result']?.toString().toUpperCase() ?? '';
     final force = direction > 0 && status == 'FAIL';
     final decision = direction < 0 ? 'FAIL' : status;
-    final yes = await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+    var overrideReason='';
+    final yes = await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setDialog)=>AlertDialog(
       title:Text(direction < 0 ? 'Retain in the same class?' : force ? 'Force promote this student?' : 'Apply final exam decision?'),
-      content:Text('${student['name']} • ${student['class']}\nFinal result: $status'),
-      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]));
+      content:Column(mainAxisSize:MainAxisSize.min,children:[Text('${student['name']} • ${student['class']}\nFinal result: $status'),
+        if(force)TextField(maxLength:500,onChanged:(v)=>setDialog(()=>overrideReason=v.trim()),decoration:const InputDecoration(labelText:'Required reason for administrator override'))]),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))])));
     if(yes!=true||!mounted)return;
     setState(()=>_movingStudentIds.add(docId));
     try {
       if(direction < 0 && status != 'FAIL')throw StateError('Retention is only for a final-exam FAIL result.');
-      final message=await SchoolPromotionService.apply(studentId:docId,student:student,exam:result,result:decision,force:force);
+      final message=await SchoolPromotionService.apply(studentId:docId,student:student,exam:result,result:decision,force:force,reason:overrideReason);
       if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(message)));
     }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('$e')));}
     finally{if(mounted)setState(()=>_movingStudentIds.remove(docId));}
@@ -18335,7 +18346,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                           borderRadius: BorderRadius.circular(9),
                                         ),
                                       ),
-                                      onPressed: isMoving || classNumber >= 12
+                                      onPressed: isMoving || classNumber >= 12 || latestResult?['isFinal']!=true || resultStatus.toUpperCase()!='FAIL' || student['classMovement']!='RETAINED'
                                           ? null
                                           : () => _changeStudentClass(
                                                 doc.id,
@@ -18377,7 +18388,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                           borderRadius: BorderRadius.circular(9),
                                         ),
                                       ),
-                                      onPressed: isMoving || classNumber <= 1
+                                      onPressed: isMoving || latestResult?['isFinal']!=true || resultStatus.toUpperCase()!='FAIL'
                                           ? null
                                           : () => _changeStudentClass(
                                                 doc.id,
@@ -18389,7 +18400,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                         size: 16,
                                       ),
                                       label: const Text(
-                                        'Demote',
+                                        'Retain',
                                         style: TextStyle(
                                           fontSize: 10.5,
                                           fontWeight: FontWeight.w800,
@@ -18532,8 +18543,6 @@ class PasswordManagementScreen extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 900),
             child: Column(
               children: const [
-                WindowsSettingsPanel(),
-                SizedBox(height: 14),
                 _WindowsSectionPasswordLocksPanel(),
               ],
             ),
@@ -18560,10 +18569,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   bool _loading = true;
   bool _saving = false;
   bool _managedConnection=false;
+  bool _editingDrive=false;
 
   bool get _linked =>
-      (_linkedGmail?.trim().isNotEmpty ?? false) &&
-      (_linkedScript?.trim().isNotEmpty ?? false);
+      !_editingDrive && (_linkedScript?.trim().isNotEmpty ?? false);
 
   @override
   void initState() {
@@ -18582,7 +18591,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     try {
       final data = await WindowsExternalConnections.load();
       final managed=await CentralSchoolCloud.saved();
-      if(managed['managed']==true){data['googleEmail']=managed['email'];data['googleScriptUrl']=managed['scriptUrl'];}
+      if(managed['managed']==true){data['googleEmail']=managed['googleEmail']??'';data['googleScriptUrl']=managed['scriptUrl'];}
       if (!mounted) return;
       setState(() {
         _managedConnection=managed['managed']==true;
@@ -18614,12 +18623,27 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   }
 
   Future<void> _verifyDrive(String url) async {
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    WindowsServiceStatus.instance.checking(WindowsServiceType.googleDrive,'Checking the actual school Drive / Apps Script connection…');
     try {
-      if ((await CentralSchoolCloud.saved())['managed']==true) {
-        await ManagedSchoolSession.call('managed/storage/check');
-        WindowsServiceStatus.instance.healthy(WindowsServiceType.googleDrive,'School Drive / GS verified.');
-      } else { await WindowsBackendBridge.testRemote(Uri.parse(url)); }
-    } catch (_) { WindowsServiceStatus.instance.unhealthy(WindowsServiceType.googleDrive,'School Drive / GS verification failed.'); }
+      final saved=await CentralSchoolCloud.saved();
+      if (saved['managed']==true) {
+        final result=await ManagedSchoolSession.callForSchool(saved['schoolId'],'managed/storage/check',{});
+        if(FirebaseFirestore.instance.activeProfileId!=origin) return;
+        final account=result['googleEmail']?.toString()??'';
+        if(account.isNotEmpty) {
+          await CentralSchoolCloud.updateSession(saved['schoolId'],{'googleEmail':account},expectedUid:saved['uid']);
+          if(mounted)setState(()=>_linkedGmail=account);
+        }
+        WindowsServiceStatus.instance.healthy(WindowsServiceType.googleDrive,'School Drive / GS actual verification succeeded.');
+      } else {
+        final healthy=await WindowsBackendBridge.testRemote(Uri.parse(url));
+        if(FirebaseFirestore.instance.activeProfileId!=origin)return;
+        if(!healthy)throw StateError('School Drive health check failed.');
+      }
+    } catch (e) {
+      if(FirebaseFirestore.instance.activeProfileId==origin) WindowsServiceStatus.instance.unhealthy(WindowsServiceType.googleDrive,'School Drive / GS error: $e');
+    }
   }
 
   Future<void> _save() async {
@@ -18648,16 +18672,21 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     }
 
     setState(() => _saving = true);
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    var connectedEmail=email;
     try {
       final managed=await CentralSchoolCloud.saved();
       if(managed['managed']==true){
-        await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url});
-        await CentralSchoolCloud.updateSession(managed['schoolId'],{'scriptUrl':url});
+        final result=await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url,if(_editingDrive)'replace':true,if(_editingDrive)'expectedScriptUrl':_linkedScript});
+        if(result['googleEmail'] is String) await CentralSchoolCloud.updateSession(managed['schoolId'],{'googleEmail':result['googleEmail']},expectedUid:managed['uid']);
+        connectedEmail=result['googleEmail']?.toString()??'';
+        await CentralSchoolCloud.updateSession(managed['schoolId'],{'scriptUrl':url},expectedUid:managed['uid']);
         await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
       }else{await WindowsSyncEngine.instance.changeGoogleConnection(email:email,scriptUrl:url);}
-      if (!mounted) return;
+      if (!mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
       setState(() {
-        _linkedGmail = email;
+        _linkedGmail = connectedEmail;
+        _editingDrive=false;
         _linkedScript = url;
         _saving = false;
       });
@@ -18696,6 +18725,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   }
 
   Future<void> _unlink() async {
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    if(!WindowsLocalSecurity.configured){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Set App Lock in Password Management before changing Drive.')));return;}
     final sure = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -18706,7 +18737,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           style: TextStyle(color: Colors.white),
         ),
         content: const Text(
-          'Google Drive / Apps Script connection remove hoga. Existing Drive files delete nahi honge.',
+          'Change the saved Drive connection? Your existing files remain preserved. A 30-second delay and App Lock verification are required.',
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -18732,39 +18763,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       barrierDismissible: false,
       builder: (_) => const _DriveUnlinkSecurityDialog(),
     );
-    if (verified != true || !mounted) return;
+    if (verified != true || !mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
 
-    setState(() => _saving = true);
-    try {
-      await WindowsSyncEngine.instance.disconnectGoogle();
-      if (!mounted) return;
-      setState(() {
-        _linkedGmail = null;
-        _linkedScript = null;
-        _gmail.clear();
-        _script.clear();
-        _saving = false;
-      });
-      WindowsServiceStatus.instance.unhealthy(
-        WindowsServiceType.googleDrive,
-        'Google Drive / Apps Script disconnected.',
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
-          content: Text('Google Drive configuration unlink ho gayi.'),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Unlink error: $e'),
-        ),
-      );
-    }
+    // Editing does not disconnect or erase the existing school storage.
+    setState(() => _editingDrive=true);
   }
 
   InputDecoration _input(String text, IconData icon) => InputDecoration(
@@ -18888,7 +18890,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                             ),
                             const SizedBox(height: 14),
                             if (_linked) ...[
-                              _info('Linked Gmail ID', _linkedGmail ?? '',
+                              _info('Linked Gmail ID', (_linkedGmail?.isNotEmpty??false)?_linkedGmail!:'Account unavailable from this deployment',
                                   Icons.mail_outline_rounded),
                               const SizedBox(height: 10),
                               _info('Google Apps Script URL',
@@ -18902,14 +18904,13 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                                     height: 1.4),
                               ),
                               const SizedBox(height: 14),
-                              FilledButton.icon(onPressed:_saving?null:_backupDrive,icon:const Icon(Icons.backup),label:const Text('Back up school records to Google Drive')),
-                              const SizedBox(height: 14),
+
                               SizedBox(
                                 width: double.infinity,
                                 child: OutlinedButton.icon(
-                                  onPressed: _saving ? null : (_managedConnection?()=>_verifyDrive(_linkedScript!):_unlink),
+                                  onPressed: _saving ? null : _unlink,
                                   icon: const Icon(Icons.sync_alt_rounded),
-                                  label: Text(_managedConnection?'Check school storage':'Unlink / Change Google Drive Account'),
+                                  label: const Text('Change'),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: Colors.orangeAccent,
                                     side: BorderSide(
@@ -19433,13 +19434,14 @@ class _WindowsSectionPasswordLocksPanelState
           ),
           const SizedBox(height: 7),
           const Text(
-            'Ye passwords App Open/Firebase password aur Local Settings Lock se completely independent hain. Password ON hone par section kholte waqt alag password maanga jayega.',
+            'App Lock protects app opening. Other section passwords remain independent and keep their existing values.',
             style: TextStyle(
               color: Colors.white54,
               fontSize: 10.5,
               height: 1.45,
             ),
           ),
+          const WindowsSettingsPanel(lockRowOnly:true),
           if (_loading)
             const Padding(
               padding: EdgeInsets.only(top: 18),
@@ -20155,6 +20157,7 @@ class _DriveUnlinkSecurityDialog extends StatefulWidget {
 
 class _DriveUnlinkSecurityDialogState
     extends State<_DriveUnlinkSecurityDialog> {
+  final _profile=FirebaseFirestore.instance.activeProfileId;
   final _password = TextEditingController();
   Timer? _timer;
   int _seconds = 30;
@@ -20198,6 +20201,7 @@ class _DriveUnlinkSecurityDialogState
       _error = null;
     });
     try {
+      if(FirebaseFirestore.instance.activeProfileId!=_profile)throw StateError('School changed. Reopen Drive settings.');
       await WindowsLocalSecurity.initialize();
       if (!WindowsLocalSecurity.verifyPassword(pass)) {
         throw Exception('Invalid Local App Lock password');
@@ -20219,7 +20223,7 @@ class _DriveUnlinkSecurityDialogState
     return AlertDialog(
       backgroundColor: const Color(0xFF172229),
       title: Text(
-        waiting ? 'Security Waiting Period' : 'Admin Verification',
+        waiting ? 'Security Waiting Period' : 'App Lock Verification',
         style: const TextStyle(color: Colors.white),
       ),
       content: SizedBox(
@@ -23154,12 +23158,14 @@ class _ExamMarksEntryScreenState
                       });
 
                       try {
+                        doc.reference.requireOriginProfile();
                         final resultStatus=marks.values.every((m)=>m>=_passMarks)?'PASS':'FAIL';
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
                         final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
                         final reportBytes = await WindowsDocumentTemplates.selected('reportCard', resultData);
                         if (reportBytes == null) throw StateError('Report card could not be generated.');
+                        doc.reference.requireOriginProfile();
                         final savedResult = await _post({
                           'action': 'save_exam_result',
                           'pdfBase64': base64Encode(reportBytes),
@@ -23175,12 +23181,13 @@ class _ExamMarksEntryScreenState
                               FirebaseAuth.instance.currentUser?.email ??
                                   'Admin',
                         });
+                        doc.reference.requireOriginProfile();
                         if (savedResult['reportCardUrl'] != null) resultData['reportCardUrl'] = savedResult['reportCardUrl'];
                         await FirebaseFirestore.instance.collection('exam_results').doc('${_examId}_${doc.id}').set(resultData);
                         savedOffline = savedResult['windowsLocalFallback'] == true;
                         if(isFinal){
                           try{await SchoolPromotionService.apply(studentId:doc.id,student:student,exam:{...widget.exam,'isFinal':true},result:resultStatus);}
-                          catch(e){await FirebaseFirestore.instance.collection('students_directory').doc(doc.id).set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
+                          catch(e){doc.reference.requireOriginProfile();if((await doc.reference.get()).exists) await doc.reference.set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
                         }
                         if (!ctx.mounted) return;
                         Navigator.pop(ctx, true);

@@ -65,4 +65,15 @@ void main(){
   await tester.pumpWidget(const SizedBox());
  });
 
+ test('existing App Lock password survives reload and stays separate from school login and section locks',() async {
+  await WindowsLocalSecurity.initialize();
+  await WindowsLocalSecurity.create(adminId:'local-admin',password:'existing-lock-123');
+  await WindowsSectionLocks.addPassword(sectionKey:'admin_section',password:'section-only-123');
+  await WindowsLocalSecurity.initialize();
+  expect(WindowsLocalSecurity.verifyPassword('existing-lock-123'),true);
+  expect(WindowsLocalSecurity.verifyPassword('wrong-password'),false);
+  expect(WindowsLocalSecurity.verifyPassword('school-login-123'),false);
+  expect(WindowsLocalSecurity.verifyPassword('section-only-123'),false);
+ });
+
 }
