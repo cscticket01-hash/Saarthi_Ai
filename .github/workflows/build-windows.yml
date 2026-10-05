@@ -1,3 +1,4 @@
+# Backend enrollment API is live at approved commit 49d9b2c; publish installer and retain automatic website downloads.
 # Approved existing-school restore release: source bb688e7 passed all five jobs in run 37263841161.
 name: Build Vidya Saarthi Windows Admin
 
