@@ -288,6 +288,7 @@ jobs:
     branches:
     - feature/managed-school-accounts
     - fix/existing-school-restore-20261005
+    - fix/legacy-school-recovery-latency
   pull_request:
     branches:
     - main

@@ -211,3 +211,29 @@ test('a concurrent block cannot be overwritten by registration initialization',a
  await assert.rejects(f.call({action:'managed/profile',operation:'initialize',schoolName:'School A',principalName:'Principal A'}),e=>e.status===403);
  assert(!f.docs.has('school_registration_profiles/'+A));
 });
+test('legacy developer account recovery uses matching authoritative ownership and preserves all data',async()=>{
+ for(const storage of [true,false]){
+ const f=fixture();if(!storage)f.docs.delete('school_storage_private/'+A);
+ Object.assign(f.docs.get('platform_schools/'+A),{schoolId:A,name:'Original School'});
+ f.docs.set('schools/'+A,{schoolId:A,ownerUid:'A',schoolName:'Original School'});
+ const before=JSON.stringify([...f.docs]);
+ const result=await f.call({action:'managed/profile',operation:'read'},'A-new-pc');
+ assert.equal(result.registrationState,'recovery');assert.deepEqual(result.profile,{schoolId:A,schoolName:'Original School',principalName:''});
+ assert.equal(JSON.stringify([...f.docs]),before);assert.equal(f.sent.length,0);
+ const foreign=await f.call({action:'managed/profile',operation:'read'},'B');assert.equal(foreign.profile,null);
+ }
+});
+test('recovery refuses inconsistent account ownership and retains explicit new-school setup',async()=>{
+ for(const mode of ['owner','schoolId','name','new','blocked','expired','wrong']){
+ const f=fixture();const account=f.docs.get('platform_schools/'+A);
+ Object.assign(account,{schoolId:A,name:'Original School'});f.docs.set('schools/'+A,{schoolId:A,ownerUid:'A',schoolName:'Original School'});
+ if(mode==='owner')f.docs.get('schools/'+A).ownerUid='B';
+ if(mode==='schoolId')account.schoolId=B;if(mode==='name')f.docs.get('schools/'+A).schoolName='Other';
+ if(mode==='new')account.registrationState='new';
+ if(mode==='blocked')f.docs.get('school_entitlements/'+A).blocked=true;
+ if(mode==='expired')f.docs.get('school_entitlements/'+A).expiresAt=time;
+ if(['blocked','expired','wrong'].includes(mode))await assert.rejects(f.call({action:'managed/profile',operation:'read'},mode==='wrong'?'bad':'A'));
+ else{const result=await f.call({action:'managed/profile',operation:'read'});assert.equal(result.registrationState,mode==='new'?'new':'unknown');assert.equal(result.profile,null);}
+ assert(!f.docs.has('school_registration_profiles/'+A));
+ }
+});

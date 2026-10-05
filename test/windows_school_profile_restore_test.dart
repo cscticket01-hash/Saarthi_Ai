@@ -10,6 +10,34 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const school = 'vs-11111111111111111111111111111111';
   const profile = {'schoolId':school,'schoolName':'School A','principalName':'Principal A'};
+  test('pre-marker account recovers same environment without fabricated registration', () async {
+    for (final storage in [false, true]) {
+      final actions = <String>[];
+      final restored = await WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+        localProfile: {}, call: (action, body) async {
+          actions.add(action);
+          return action == 'managed/profile'
+            ? {'success': true, 'schoolId': school, 'registrationState': 'recovery',
+              'storageReady': storage, 'profile': {'schoolId': school, 'schoolName': 'School A', 'principalName': ''}}
+            : {'success': true, 'schoolId': school, 'records': {}};
+        });
+      expect(WindowsSchoolProfileRestore.ready(restored), true);
+      expect(WindowsSchoolProfileRestore.complete(restored), false);
+      expect(restored['principalName'], ''); expect(restored.containsKey('logoUrl'), false);
+      expect(restored['restoreNotice'], contains('never synced'));
+      expect(actions, storage ? ['managed/profile', 'managed/records'] : ['managed/profile']);
+    }
+  });
+  test('foreign or malformed recovery identity never opens a school', () async {
+    for (final saved in [
+      {'schoolId': 'other', 'schoolName': 'School B', 'principalName': ''},
+      {'schoolId': school, 'schoolName': '', 'principalName': ''},
+    ]) {
+      await expectLater(WindowsSchoolProfileRestore.resolveEnrollment(schoolId: school,
+        localProfile: {}, call: (a,b) async => {'success': true, 'schoolId': school,
+          'registrationState': 'recovery', 'storageReady': false, 'profile': saved}), throwsStateError);
+    }
+  });
   test('new PC restores saved school and private logo without writing registration', () async {
     final actions = <String>[];
     final restored = await WindowsSchoolProfileRestore.resolve(schoolId:school,localProfile:{},call:(action,body) async {

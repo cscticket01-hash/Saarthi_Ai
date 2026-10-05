@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import '../platform/platform_config.dart';
 import 'google_authorization.dart';
+import 'firebase_token_cache.dart';
 
 Object? migrationJsonValue(Object? value) {
   if (value is Timestamp) return {'__vsTimestamp':value.toDate().toUtc().toIso8601String()};
@@ -67,6 +68,8 @@ class CentralSchoolCloud {
   static const apiUrl = String.fromEnvironment('SAARTHI_SCHOOL_CLOUD_URL');
   static const key = 'vidya_saarthi_central_school_v2';
   static Future<void> _pendingSessionWrite = Future<void>.value();
+  static final _firebaseTokens = FirebaseTokenCache();
+  static void clearFirebaseToken() => _firebaseTokens.clear();
   static Future<void> updateSession(String schoolId, Map<String,dynamic> updates, {String? expectedUid}) {
     final next = _pendingSessionWrite.catchError((_) {}).then((_) async {
       final current = await saved();
@@ -269,6 +272,14 @@ class CentralSchoolCloud {
   static Future<String> firebaseToken() async {
     final data = await saved();
     if (data.isEmpty) throw StateError('School cloud is not connected.');
+    if (data['managed'] == true) {
+      // Endpoint, tenant and account all bind the cache. Login/logout clear it.
+      final identity = jsonEncode([data['endpoint'], data['projectId'], data['schoolId'], data['uid']]);
+      return _firebaseTokens.get(identity, () => _refreshFirebaseToken(data));
+    }
+    return (await _refreshFirebaseToken(data)).token;
+  }
+  static Future<({String token, int expiresAt})> _refreshFirebaseToken(Map<String,dynamic> data) async {
     final cloud = CentralSchoolCloud(endpoint:data['endpoint']);
     try {
       final response = await cloud.send('POST', Uri.https('securetoken.googleapis.com','/v1/token',{'key':platformApiKey}),
@@ -280,7 +291,9 @@ class CentralSchoolCloud {
       await updateSession(data['schoolId'], {...configuration,
         'firebaseRefreshToken':response['refresh_token'] ?? data['firebaseRefreshToken']},
         expectedUid: data['uid']);
-      return response['id_token'];
+      final seconds = int.tryParse(response['expires_in']?.toString() ?? '') ?? 0;
+      return (token: response['id_token'] as String,
+        expiresAt: DateTime.now().millisecondsSinceEpoch + seconds * 1000);
     } finally { cloud.close(); }
   }
   Future<String> googleToken(Map<String,dynamic> data) async {

@@ -5,6 +5,10 @@ class WindowsSchoolProfileRestore {
       (profile['schoolName']?.toString().trim().length ?? 0) >= 2 &&
       (profile['principalName']?.toString().trim().length ?? 0) >= 2;
 
+  static bool ready(Map<String, dynamic> profile) => complete(profile) ||
+      profile['enrollmentRecovery'] == true &&
+      (profile['schoolName']?.toString().trim().length ?? 0) >= 2;
+
   /// A missing PC cache is never evidence that a school is new. Only the
   /// authenticated server can declare first registration safe.
   static Future<Map<String, dynamic>> resolveEnrollment({
@@ -18,7 +22,7 @@ class WindowsSchoolProfileRestore {
     Future<Map<String, dynamic>> registry(String operation, [Map<String, dynamic> data = const {}]) async {
       final result = await call('managed/profile', {'operation': operation, ...data});
       if (result['success'] != true || result['schoolId'] != schoolId ||
-          !['new', 'complete', 'unknown'].contains(result['registrationState']) ||
+          !['new', 'complete', 'unknown', 'recovery'].contains(result['registrationState']) ||
           result['storageReady'] is! bool) {
         throw StateError('School registration could not be verified. Retry restore.');
       }
@@ -26,7 +30,9 @@ class WindowsSchoolProfileRestore {
       if (profile != null && (profile is! Map || profile['schoolId'] != schoolId) ||
           result['registrationState'] == 'complete' &&
           (profile is! Map || !complete(Map<String, dynamic>.from(profile))) ||
-          result['registrationState'] != 'complete' && profile != null) {
+          result['registrationState'] == 'recovery' &&
+          (profile is! Map || (profile['schoolName']?.toString().trim().length ?? 0) < 2 || profile['principalName'] != '') ||
+          !['complete', 'recovery'].contains(result['registrationState']) && profile != null) {
         throw StateError('Saved school registration requires recovery.');
       }
       return result;
@@ -38,10 +44,10 @@ class WindowsSchoolProfileRestore {
     if (enrollment['storageReady'] == true) {
       restored = await resolve(schoolId: schoolId, localProfile: localProfile, call: call);
     } else {
-      restored = complete(localProfile) ? Map<String, dynamic>.from(localProfile) : {};
+      restored = Map<String, dynamic>.from(localProfile);
     }
     if (!complete(restored) && complete(central)) {
-      restored = {...central,
+      restored = {...restored, ...central,
         'restoreNotice': 'School registration restored. Files and local-only data that were not synced are unavailable on this PC.'};
     }
     if (complete(restored)) {
@@ -55,6 +61,10 @@ class WindowsSchoolProfileRestore {
       return restored;
     }
     if (enrollment['registrationState'] == 'new') return {};
+    if (enrollment['registrationState'] == 'recovery') {
+      return {...restored, ...central, 'enrollmentRecovery': true,
+        'restoreNotice': 'Your existing school account was recovered. The saved principal details, logo and any data that was never synced are unavailable. No new school or licence was created. Restore the original PC backup to recover those details.'};
+    }
     throw StateError('Existing school registration is not available in synced storage. '
       'Restore its original PC backup or contact the developer; do not create another school.');
   }
@@ -101,7 +111,7 @@ class WindowsSchoolProfileRestore {
       }
       await request('managed/records', {'collection':'school_config','operation':'write','id':'school_profile_cache','data':profile});
     }
-    if (!complete(profile)) return {};
+    if (profile.isEmpty) return {};
     final restored = Map<String,dynamic>.from(profile);
     for (final prefix in ['logo','seal','principalSignature']) {
       final fileId = profile['${prefix}FileId'];

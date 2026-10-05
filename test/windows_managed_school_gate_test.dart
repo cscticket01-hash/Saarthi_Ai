@@ -1,3 +1,5 @@
+import 'dart:async';
+import '../lib/windows_connect/firebase_token_cache.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'dart:convert';
@@ -14,6 +16,23 @@ import '../lib/windows_local_settings.dart';
 import '../lib/windows_local_auth.dart' as local;
 import '../lib/windows_connect/managed_school_session.dart';
 void main(){
+  test('Firebase token exchanges coalesce, expire early and isolate accounts', () async {
+    final cache = FirebaseTokenCache(); var calls = 0;
+    Future<({String token, int expiresAt})> refresh() async {
+      calls++; return (token: 'token-$calls', expiresAt: 3600000);
+    }
+    expect(await Future.wait([cache.get('A', refresh, now: 0), cache.get('A', refresh, now: 0)]), ['token-1', 'token-1']);
+    expect(await cache.get('A', refresh, now: 1000), 'token-1'); expect(calls, 1);
+    expect(await cache.get('A', refresh, now: 3540000), 'token-2');
+    expect(await cache.get('B', refresh, now: 0), 'token-3');
+    cache.clear(); expect(await cache.get('B', refresh, now: 0), 'token-4');
+    final pending = Completer<({String token, int expiresAt})>(); cache.clear();
+    final old = cache.get('A', () => pending.future, now: 0);
+    final rejected = expectLater(old, throwsStateError);
+    await cache.get('B', refresh, now: 0);
+    pending.complete((token: 'old-A', expiresAt: 3600000)); await rejected;
+    expect(await cache.get('B', refresh, now: 0), 'token-5');
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
   test('managed protected settings reauthenticate against Firebase without storing a password',()async{
     const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';

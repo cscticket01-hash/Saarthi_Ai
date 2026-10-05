@@ -30,6 +30,9 @@ class ManagedSchoolSession {
             scriptUrl: action == 'managed/storage/connect' ? body['scriptUrl']?.toString() : null);
       }
       return result;
+    } catch (_) {
+      CentralSchoolCloud.clearFirebaseToken();
+      rethrow;
     } finally {cloud.close();}
   }
   /// A successful HTTP response alone does not mean this school's storage is ready.
@@ -43,6 +46,7 @@ class ManagedSchoolSession {
   }
   static Future<Map<String,dynamic>> login(String email,String password,
       {http.Client? client, String endpoint = CentralSchoolCloud.apiUrl}) async {
+    CentralSchoolCloud.clearFirebaseToken();
     if(!CentralSchoolCloud.validEndpoint(endpoint))throw StateError('Central school server is not configured');
     final cloud=CentralSchoolCloud(client:client,endpoint:endpoint);
     try {
@@ -82,8 +86,10 @@ class ManagedSchoolSession {
     await logout(); // Password change revokes old Firebase tokens; require fresh login.
   }
   static Future<void> logout() async {
+    CentralSchoolCloud.clearFirebaseToken();
     try {await call('managed/disconnect').timeout(const Duration(seconds:5));}catch(_){}
 
-    await const FlutterSecureStorage().delete(key:CentralSchoolCloud.key);changed.value++;
+    await const FlutterSecureStorage().delete(key:CentralSchoolCloud.key);
+    CentralSchoolCloud.clearFirebaseToken();changed.value++;
   }
 }

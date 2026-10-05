@@ -126,7 +126,20 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   const profile=await ref.get(),school=await db.doc('platform_schools/'+m.schoolId).get(),storage=await db.doc('school_storage_private/'+m.schoolId).get();
   const data=profile.data();
   if(profile.exists&&(data.schoolId!==m.schoolId||typeof data.schoolName!=='string'||data.schoolName.trim().length<2||typeof data.principalName!=='string'||data.principalName.trim().length<2))fail(409,'Saved school registration requires recovery');
-  return {success:true,schoolId:m.schoolId,registrationState:profile.exists?'complete':school.data()?.registrationState==='new'?'new':'unknown',profile:profile.exists?{schoolId:m.schoolId,schoolName:data.schoolName,principalName:data.principalName}:null,storageReady:storage.exists&&storage.data().ready===true};
+  let registrationState=profile.exists?'complete':school.data()?.registrationState==='new'?'new':'unknown';
+  let recovered=profile.exists?{schoolId:m.schoolId,schoolName:data.schoolName,principalName:data.principalName}:null;
+  // Pre-marker accounts already have an authoritative developer-created name.
+  // Recover that SAME account, without asserting that missing registration or
+  // operational data was backed up, and without creating/changing any records.
+  if(registrationState==='unknown'){
+   const account=school.data(),owned=await db.doc('schools/'+m.schoolId).get(),details=owned.data();
+   if(account?.managed===true&&account.authUid===m.uid&&account.schoolId===m.schoolId&&
+      details?.schoolId===m.schoolId&&details.ownerUid===m.uid&&
+      typeof account.name==='string'&&account.name.trim().length>=2&&typeof details.schoolName==='string'&&account.name.trim()===details.schoolName.trim()){
+    registrationState='recovery';recovered={schoolId:m.schoolId,schoolName:account.name.trim(),principalName:''};
+   }
+  }
+  return {success:true,schoolId:m.schoolId,registrationState,profile:recovered,storageReady:storage.exists&&storage.data().ready===true};
  }
  if(action==='managed/storage/connect'){
   const url=scriptUrl(b.scriptUrl),ref=db.doc('school_storage_private/'+m.schoolId),old=await ref.get();

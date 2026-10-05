@@ -86,6 +86,15 @@ class WindowsAdminSetup {
       }
       try {
         await verifyIdentity();
+        // The tenant database can survive an app upgrade even when its separate
+        // registration JSON is missing. Never inspect another/unscoped profile.
+        if (!WindowsSchoolProfileRestore.complete(data)) {
+          final cached = (await FirebaseFirestore.instance.collection('school_config')
+              .doc('school_profile_cache').get()).data();
+          await verifyIdentity();
+          if (cached != null && cached['schoolId'] == school &&
+              WindowsSchoolProfileRestore.complete(cached)) data = Map<String, dynamic>.from(cached);
+        }
         final restored = await WindowsSchoolProfileRestore.resolveEnrollment(
           schoolId: school, localProfile: data,
           call: (action, body) async {
@@ -95,7 +104,7 @@ class WindowsAdminSetup {
             return result;
           });
         await verifyIdentity();
-        if (WindowsSchoolProfileRestore.complete(restored)) {
+        if (WindowsSchoolProfileRestore.ready(restored)) {
           await target.parent.create(recursive:true);
           final tmp = File('${target.path}.tmp');
           await tmp.writeAsString(jsonEncode(restored),flush:true);
@@ -115,7 +124,8 @@ class WindowsAdminSetup {
         rethrow;
       }
     }
-    final basic = (data['schoolName']?.toString().isNotEmpty ?? false) &&
+    final basic = (identity['managed'] == true && WindowsSchoolProfileRestore.ready(data)) ||
+        (data['schoolName']?.toString().isNotEmpty ?? false) &&
         (data['principalName']?.toString().isNotEmpty ?? false);
     if (basic && (WindowsLocalSecurity.configured || (await CentralSchoolCloud.saved())['managed']==true)) {
       _cachedCompleted = true;
