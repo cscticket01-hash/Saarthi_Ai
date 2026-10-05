@@ -61,11 +61,16 @@ class SchoolCloudEngine extends ChangeNotifier {
   Map<String, dynamic>? identity, access;
   SchoolCloudState state = SchoolCloudState.authRequired;
   String? error;
-  bool restoring = true, _disposed = false, _verifying = false;
+  bool restoring = true,
+      _disposed = false,
+      _verifying = false,
+      _localReady = false;
+  bool get localReady => _localReady;
   int _generation = 0;
   Timer? _retry;
   bool get hasIdentity => identity != null;
-  bool get canOpen =>
+  bool get canOpen => _localReady && _leaseUsable;
+  bool get _leaseUsable =>
       access != null &&
       sameIdentity(access!, identity!) &&
       access!['allowed'] == true &&
@@ -115,6 +120,7 @@ class SchoolCloudEngine extends ChangeNotifier {
     final generation = ++_generation;
     _retry?.cancel();
     restoring = true;
+    _localReady = false;
     identity = null;
     access = null;
     error = null;
@@ -128,9 +134,13 @@ class SchoolCloudEngine extends ChangeNotifier {
             ? Map<String, dynamic>.from(saved['verifiedAccess'])
             : await _legacy();
         if (cached != null && sameIdentity(cached, saved)) access = cached;
-        if (canOpen) await _checkpoint(generation);
+        if (_leaseUsable) await _checkpoint(generation);
         await _activate(); // Selects this tenant's local cache, never refreshes a token.
         if (generation != _generation || _disposed) return;
+        final selectedIdentity = await _read();
+        if (!sameIdentity(selectedIdentity, identity!))
+          throw StateError('School changed while selecting local data.');
+        _localReady = true;
         state = canOpen
             ? SchoolCloudState.localReady
             : SchoolCloudState.authRequired;

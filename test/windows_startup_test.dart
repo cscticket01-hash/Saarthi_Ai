@@ -49,8 +49,7 @@ void main() {
       await tester.pumpWidget(
         VidyaSaarthiWindowsApp(initializeConnections: () async {}),
       );
-      await tester.pump();
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(find.text('School Login'), findsOneWidget);
       expect(find.text('School login email'), findsOneWidget);
       expect(find.byKey(const ValueKey('license-skip-button')), findsNothing);

@@ -144,7 +144,10 @@ class CentralSchoolCloud {
             );
           }),
         );
-    _pendingSessionWrite = next;
+    _pendingSessionWrite = next.then<void>(
+      (_) {},
+      onError: (Object e, StackTrace s) {},
+    );
     return next;
   }
 

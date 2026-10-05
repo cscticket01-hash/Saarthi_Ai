@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -333,22 +334,89 @@ void main() {
           '-NoProfile',
           '-NonInteractive',
           '-Command',
-          "\$f=[IO.File]::Open(\$env:SAARTHI_TEST_LOCK,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None); [Console]::WriteLine('locked'); Start-Sleep -Milliseconds 500; \$f.Dispose()",
+          "\$f=[IO.File]::Open(\$env:SAARTHI_TEST_LOCK,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None); [Console]::WriteLine('locked'); Start-Sleep -Milliseconds 1500; \$f.Dispose()",
         ],
         environment: {'SAARTHI_TEST_LOCK': path},
       );
       await process.stdout.transform(systemEncoding.decoder).first;
+      FlutterSecureStorage.setMockInitialValues({
+        'crossprocess_credential': 'retained-credential',
+      });
       WindowsSecureStorage.forceCrossProcessLock = true;
+      final watch = Stopwatch()..start();
       try {
         expect(
-          await WindowsSecureStorage.run(() async => 'credentials retained'),
-          'credentials retained',
+          await const WindowsSecureStorage().read(
+            key: 'crossprocess_credential',
+          ),
+          'retained-credential',
         );
+        expect(watch.elapsedMilliseconds, greaterThanOrEqualTo(400));
         expect(await process.exitCode, 0);
       } finally {
         WindowsSecureStorage.forceCrossProcessLock = null;
       }
     },
     skip: !Platform.isWindows,
+  );
+  test(
+    'credential transaction retains newer denial and monotonic clock',
+    () async {
+      final saved = {
+        ...identity(access(allowed: false, status: 'blocked')),
+        'firebaseRefreshToken': 'refresh-A',
+        'folderId': 'managed',
+        'endpoint': 'https://school.example/school-cloud',
+        'lastLocalSeenAt': now.millisecondsSinceEpoch,
+      };
+      FlutterSecureStorage.setMockInitialValues({
+        CentralSchoolCloud.key: jsonEncode(saved),
+      });
+      await CentralSchoolCloud.updateSession(school, {
+        'verifiedAccess': {
+          ...access(),
+          'serverTime': now
+              .subtract(const Duration(minutes: 1))
+              .millisecondsSinceEpoch,
+        },
+        'lastLocalSeenAt': now
+            .subtract(const Duration(minutes: 1))
+            .millisecondsSinceEpoch,
+      }, expectedUid: 'A');
+      final result = await CentralSchoolCloud.saved();
+      expect(result['verifiedAccess']['allowed'], false);
+      expect(result['lastLocalSeenAt'], now.millisecondsSinceEpoch);
+      await expectLater(
+        CentralSchoolCloud.updateSession(school, {
+          'verifiedAccess': access(),
+        }, expectedUid: 'B'),
+        throwsStateError,
+      );
+      expect((await CentralSchoolCloud.saved())['uid'], 'A');
+    },
+  );
+  test(
+    'failed tenant activation cannot expose a previous school console',
+    () async {
+      var fails = true;
+      final e = SchoolCloudEngine(
+        readIdentity: () async => identity(access()),
+        verify: () async => throw const SocketException('offline'),
+        persist: (a, b) async {},
+        touchClock: (a, b) async {},
+        legacyAccess: () async => null,
+        clock: () => now,
+        activateLocal: () async {
+          if (fails) throw StateError('local storage busy');
+        },
+      );
+      await e.restore();
+      expect(e.canOpen, false);
+      expect(e.localReady, false);
+      fails = false;
+      await e.restore();
+      expect(e.canOpen, true);
+      e.dispose();
+    },
   );
 }

@@ -5,13 +5,9 @@ import 'windows_service_status.dart';
 
 import 'package:flutter/material.dart';
 
-import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'main_dashboard_screen_windows.dart' show WindowsLicenseSettingsPanel;
-import 'windows_platform_client.dart';
-import 'windows_local_auth.dart' as local;
 import 'windows_sync_engine.dart';
-import 'windows_admin_setup.dart';
 
 class WindowsManagedSchoolGate extends StatefulWidget {
   const WindowsManagedSchoolGate({
@@ -99,6 +95,23 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
         );
       return const WindowsManagedSchoolLogin();
     }
+    if (!engine.localReady)
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'School local data could not be opened. Existing data is retained.',
+              ),
+              FilledButton(
+                onPressed: engine.restore,
+                child: const Text('Retry saved school access'),
+              ),
+            ],
+          ),
+        ),
+      );
     if (!engine.canOpen) {
       final s = engine.access;
       if (s == null)
