@@ -40,5 +40,5 @@ Future<Map<String,dynamic>> _prepareManagedRecord(Map<String,dynamic> data, Stri
     }
   }
   if(FirebaseFirestore.instance.activeProfileId!=profile) throw StateError('School changed during media preparation.');
-  return centralSchoolData(result, school);
+  return depth == 0 ? centralSchoolData(result, school) : result;
 }

@@ -219,4 +219,12 @@ void main() {
     expect((await db.collection('students_directory').doc('Class 2_Roll_2').get()).data()?['classMovement'],'FORCE_PROMOTED');
   });
 
+  test('nested photo preparation leaves exam marks and payment structures unchanged', () async {
+    final original={'marks':{'Math':80,'English':75},'payments':[{'id':'payment-1','amountPaise':15000}]};
+    final prepared=await prepareManagedRecord(original,school,(_,__) async => throw StateError('No upload expected'));
+    expect(prepared['schoolId'],school);
+    expect(prepared['marks'],original['marks']);
+    expect(prepared['payments'],original['payments']);
+  });
+
 }
