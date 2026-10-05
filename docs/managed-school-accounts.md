@@ -125,17 +125,24 @@ Verification/transport/foreign-tenant failures show retry/recovery, never setup.
 Session refresh also refreshes the server-bound GS URL, retaining correct tenant
 configuration when the developer connected storage after the PC first logged in.
 
-Legacy accounts without either saved enrollment or a recoverable local/Drive
-profile have `unknown` registration state. They need the original PC/backup or a
-reviewed developer recovery; they are not assumed new. A legacy account that was
-created but never registered is likewise ambiguous until reviewed. There is no
-automatic bulk migration, destructive reset, trial extension or licence change.
+Pre-marker accounts first try their exact authenticated tenant's local database
+cache and school-owned Drive profile. If those are incomplete, `managed/profile`
+can return `recovery` using the existing developer-created school name only when
+both central account and school records agree on schoolId, owner UID and name.
+That opens the same existing environment with an explicit missing-data notice;
+it does not claim that principal details, branding or local-only records exist.
+No registration, account, licence or Drive root is created by this fallback.
+An explicit `new` state still requires first setup. Unverifiable/conflicting
+ownership remains `unknown` and requires the original backup/developer recovery.
 
-Deployment order for later explicit approval: compatible backend first, then
-Windows preview. The new client intentionally stops at restore retry if the live
-backend does not yet support `managed/profile`. No backend has been deployed by
-this change. Actual Firebase password login/revocation, A/B school-owned Drive,
-GS deployment/configuration, interrupted sync, existing legacy backfill and a
-clean-PC Windows acceptance test still require a separately approved environment.
-Only the review workflow runs on the isolated fix branch; production release and
-Hosting workflows do not run for it.
+Firebase ID tokens are cached only in memory, bounded by Firebase's expiry minus
+one minute and scoped to endpoint/project/school/UID. Concurrent exchanges share
+one refresh; login/logout/errors clear the cache, stale account refresh writes
+are rejected. Every actual backend operation continues to verify Firebase token
+revocation, authoritative membership and current licensing/block status. Session
+checks still refresh the server-bound Drive/GS configuration.
+
+Native Windows regressions, Firestore emulator rules and backend tests run on the
+isolated fix branch. Real Firebase password login/revocation, A/B school Drive,
+interrupted sync and clean-PC acceptance require live testing with school accounts.
+Unsynced data cannot be restored without its original PC backup.

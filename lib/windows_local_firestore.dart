@@ -91,6 +91,14 @@ class FirebaseFirestore {
   Map<String, dynamic> get activeProfileIdentity =>
       _database.activeProfileIdentity;
 
+  Future<Map<String, dynamic>?> readSchoolRegistrationCache(String schoolId) async {
+    final profile = activeProfileId;
+    if (activeProfileIdentity['schoolSyncId'] != schoolId) throw StateError('School cache identity changed.');
+    final result = await _database.readSchoolRegistrationCache(profile, schoolId);
+    if (activeProfileId != profile || activeProfileIdentity['schoolSyncId'] != schoolId) throw StateError('School changed while reading cache.');
+    return result == null ? null : _decodeMap(result);
+  }
+
   Future<void> switchProfile(
     String profileId, {
     Map<String, dynamic>? identity,
@@ -706,6 +714,22 @@ class _LocalJsonDatabase {
           () => StreamController<void>.broadcast(),
         )
         .stream;
+  }
+
+  Future<Map<String, dynamic>?> readSchoolRegistrationCache(String profileId, String schoolId) async {
+    final root = await _readRoot();
+    final profile = _profiles(root)[profileId];
+    if (profile is! Map || profile['identity'] is! Map || profile['identity']['schoolSyncId'] != schoolId) {
+      throw StateError('School cache provenance could not be verified.');
+    }
+    final collections = profile['collections'];
+    final docs = collections is Map ? collections['school_config'] : null;
+    final value = docs is Map ? docs['school_profile_cache'] : null;
+    if (value is! Map) return null;
+    final result = Map<String, dynamic>.from(value);
+    if (result['schoolId'] != null && result['schoolId'] != schoolId) throw StateError('Foreign school cache blocked.');
+    result.putIfAbsent('schoolId', () => schoolId);
+    return result;
   }
 
   Future<Map<String, dynamic>?> readDocument(

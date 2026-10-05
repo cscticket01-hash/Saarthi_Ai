@@ -1,3 +1,4 @@
+import 'windows_connect/managed_school_session.dart';
 import 'windows_managed_school_gate.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
@@ -165,6 +166,9 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
       padding:const EdgeInsets.all(24), child:Column(mainAxisSize:MainAxisSize.min,children:[
         Text(_restoreError!),
         FilledButton(onPressed:_prepare,child:const Text('Retry school profile restore')),
+        TextButton(onPressed:() async {
+          await ManagedSchoolSession.logout();
+        },child:const Text('Sign out and choose school account')),
       ]))));
     if (_managed) {
       if (!_setupDone) return const WindowsAdminSetupScreen();

@@ -1,5 +1,5 @@
-# Backend enrollment API is live at approved commit 49d9b2c; publish installer and retain automatic website downloads.
-# Approved existing-school restore release: source bb688e7 passed all five jobs in run 37263841161.
+# Existing-school recovery and token reuse are verified before this installer release.
+# Website Windows downloads automatically select the latest published Windows release.
 name: Build Vidya Saarthi Windows Admin
 
 on:
@@ -347,7 +347,8 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
-            Existing-school reinstall/new-PC login restores saved enrollment instead of repeating registration. Preserves activated licences, trials and school-bound storage; unknown or unsynced records show recovery guidance.
+            Fixes the repeated Retry loop for existing school accounts created before the enrollment marker. Recovers the same server-verified School ID/name from matching ownership records and existing tenant caches; missing unsynced details are reported honestly. Brand-new schools still perform first setup. Preserves existing licences/trials/storage and all school data.
+            Reuses and coalesces memory-only Firebase ID tokens to remove redundant authentication exchanges. Current licence, block and tenant checks remain enforced by the server for every operation.
             Normal Windows logout retains school enrollment and opens the enabled App Lock. The independent Admin lock is checked only at Admin entry. Server school login, licence/block checks and School A/B isolation remain enforced.
             Student ID preview fits the full card to the resized window without changing designs. PDF download uses native Save As, reports the saved path only after writing and handles cancellation without false success.
             Includes the combined per-school GS code, manifest and manual deployment guide. Existing School IDs, Drive roots, secrets, records and offline storage are preserved. The school owner must update/authorize the actual GS deployment; this release does not update a school's live script automatically. Real Drive backup/restore and native PC acceptance remain pending.
