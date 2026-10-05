@@ -23,9 +23,10 @@ class WindowsSchoolProfileRestore {
         throw StateError('School registration could not be verified. Retry restore.');
       }
       final profile = result['profile'];
-      if (result['registrationState'] == 'complete' &&
-          (profile is! Map || profile['schoolId'] != schoolId ||
-           !complete(Map<String, dynamic>.from(profile)))) {
+      if (profile != null && (profile is! Map || profile['schoolId'] != schoolId) ||
+          result['registrationState'] == 'complete' &&
+          (profile is! Map || !complete(Map<String, dynamic>.from(profile))) ||
+          result['registrationState'] != 'complete' && profile != null) {
         throw StateError('Saved school registration requires recovery.');
       }
       return result;

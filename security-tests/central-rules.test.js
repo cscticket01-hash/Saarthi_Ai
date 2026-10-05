@@ -72,6 +72,8 @@ test('managed schools cannot use legacy direct Firestore operational paths or se
  await env.withSecurityRulesDisabled(async c=>{
   await setDoc(doc(c.firestore(),'school_memberships/managed-owner'),{schoolId:A,role:'school_admin',active:true,managed:true});
   await setDoc(doc(c.firestore(),'school_storage_private/'+A),{secret:{body:'encrypted'},url:'private'});
+  await setDoc(doc(c.firestore(),'school_registration_profiles/'+A),{schoolId:A,schoolName:'School A',principalName:'Principal A'});
+  await setDoc(doc(c.firestore(),'school_registration_profiles/'+B),{schoolId:B,schoolName:'School B',principalName:'Principal B'});
  });
  const db=env.authenticatedContext('managed-owner',{schoolId:A,schoolRole:'school_admin'}).firestore();
  await assertFails(getDoc(doc(db,'schools/'+A+'/students_directory/same')));

@@ -91,6 +91,8 @@ void main() {
   test('blocked, failed, malformed and foreign registration responses never show setup', () async {
     for (final response in [
       {...enrollment('new'), 'schoolId': 'other'},
+      {...enrollment('new'), 'profile': {...profile, 'schoolId': 'other'}},
+      {...enrollment('unknown'), 'profile': profile},
       {...enrollment('complete'), 'profile': {...profile, 'schoolId': 'other'}},
       {...enrollment('complete'), 'profile': {}},
       {...enrollment('new'), 'success': false},
