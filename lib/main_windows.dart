@@ -226,9 +226,14 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
   Future<void> _prepare() async {
     try {
       await WindowsLocalSecurity.initialize();
-      final profile=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data();
-      _schoolName=profile?['schoolName']?.toString().trim()??'';
       final shouldLock = WindowsLocalSecurity.configured;
+      _schoolName=WindowsAdminSetup.schoolName;
+      if (shouldLock) {
+        final origin=FirebaseFirestore.instance.activeProfileId;
+        final profile=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data();
+        if (FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen the app.');
+        _schoolName=profile?['schoolName']?.toString().trim()??_schoolName;
+      }
       if (!mounted) return;
       setState(() {
         _locked = shouldLock;
