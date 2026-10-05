@@ -1,3 +1,4 @@
+import 'windows_sync_engine.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'dart:async';
@@ -20,8 +21,9 @@ class WindowsLicenseState {
       {required this.allowed,
       required this.status,
       required this.expiresAt,
-      this.error = ''});
+      this.error = '',this.activated=false});
   final bool allowed;
+  final bool activated;
   final String status;
   final DateTime expiresAt;
   final String error;
@@ -356,6 +358,7 @@ class WindowsPlatformClient {
   }
 
   Future<void> _relayNotices() async {
+    if((await CentralSchoolCloud.saved())['managed']==true)return; // Managed notices are read from the school dashboard; do not pretend a session check sends FCM.
     final profile = FirebaseFirestore.instance.activeProfileId;
     final list =
         await FirebaseFirestore.instance.collection('school_notices').get();
@@ -395,6 +398,24 @@ class WindowsPlatformClient {
 
   Future<WindowsNoticeDelivery> publishNotice(String id, Map<String, dynamic> data) async {
     final profile = FirebaseFirestore.instance.activeProfileId;
+    final saved=await CentralSchoolCloud.saved();
+    final ref=FirebaseFirestore.instance.collection('school_notices').doc(id);
+    if(FirebaseFirestore.instance.activeProfileId!=profile)throw StateError('School changed. Reopen notices.');
+    if(saved['managed']==true) {
+      if(FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=saved['schoolId'])throw StateError('School identity mismatch. Notice not saved.');
+      final payload={...data,'schoolId':saved['schoolId'],'deliveryStatus':'sync_pending'};
+      await ref.set(payload);
+      WindowsSyncEngine.instance.scheduleSoon();
+      if(saved['storageReady']!=true)return const WindowsNoticeDelivery(notificationSent:false,recipients:0,error:'Saved on this PC. Connect school Drive to sync; no notification was sent.');
+      try {
+        final remote=await WindowsFirebaseRemote.status();
+        ref.requireOriginProfile();
+        await WindowsFirebaseRemote.writeDocument(projectId:remote.projectId,idToken:await WindowsFirebaseRemote.freshIdToken(),collection:'school_notices',documentId:id,data:payload);
+        ref.requireOriginProfile();
+        return const WindowsNoticeDelivery(notificationSent:false,schoolPublished:true,recipients:0,error:'Available in this school student/teacher dashboard after refresh. Push delivery is not configured for managed school storage.');
+      } catch(e) {return WindowsNoticeDelivery(notificationSent:false,recipients:0,error:'Saved locally; sync can retry. $e');}
+    }
+    await ref.set({...data,'deliveryStatus':'sync_pending'});
     final remote = await WindowsFirebaseRemote.status();
     if (!remote.authenticated || remote.schoolIdentity.isEmpty) {
       throw StateError('Notice not sent. Connect and verify this school Firebase and Google Script first.');

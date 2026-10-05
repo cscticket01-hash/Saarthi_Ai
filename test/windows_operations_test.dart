@@ -132,6 +132,10 @@ void main() {
     await db.collection('students_directory').doc('pass').set({'name':'Senior','class':'Class 12','rollNo':'1'});
     await db.collection('students_directory').doc('fail').set({'name':'Retained','class':'Class 12','rollNo':'2'});
     final exam={'examId':'final-12','examName':'Final','isFinal':true};
+    await db.collection('_local_exam_center_exams').doc('final-12').set(exam);
+    for (final entry in {'pass':'PASS','fail':'FAIL'}.entries) {
+      await db.collection('exam_results').doc('final-12_${entry.key}').set({'studentId':entry.key,'result':entry.value});
+    }
     expect(await SchoolPromotionService.apply(studentId:'pass',student:{},exam:exam,result:'PASS'),'Completed Class 12');
     expect(await SchoolPromotionService.apply(studentId:'fail',student:{},exam:exam,result:'FAIL'),'Retained in Class 12');
     expect((await db.collection('students_directory').doc('fail').get()).data()?['class'],'Class 12');

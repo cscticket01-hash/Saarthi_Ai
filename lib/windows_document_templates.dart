@@ -31,7 +31,7 @@ class WindowsDocumentTemplates {
     final u = Uri.tryParse(raw?.toString() ?? '');
     if (u == null || u.scheme != 'https') return null;
     try {
-      return await schoolImageBytes(u.toString());
+      return await schoolImageBytes(u.toString()).timeout(const Duration(milliseconds: 600), onTimeout:()=>null);
     } catch (_) {}
     return null;
   }
@@ -55,6 +55,7 @@ class WindowsDocumentTemplates {
     Map<String, dynamic> data, {
     String qr = '',
   }) async {
+    final origin=FirebaseFirestore.instance.activeProfileId;
     final v = (await selections())[kind];
     final profile = (await FirebaseFirestore.instance
                 .collection('school_config')
@@ -62,6 +63,14 @@ class WindowsDocumentTemplates {
                 .get())
             .data() ??
         {};
+    if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed during document preview.');
+    final assets = await Future.wait<Uint8List?>([
+      _personPhoto(data),
+      _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
+      _image(data['principalSignatureUrl'] ?? profile['principalSignatureUrl']),
+      _image(profile['sealUrl']),
+    ]);
+    if (FirebaseFirestore.instance.activeProfileId != origin) throw StateError('School changed during document preview.');
     if (kind == 'studentId') {
       return renderWindowsStudentId(
         template: windowsStudentIdIndex(v),
@@ -71,11 +80,9 @@ class WindowsDocumentTemplates {
           if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty) 'schoolName': profile['schoolName'],
         },
         qr: qr,
-        photo: await _image(data['photoUrl']),
-        logo: await _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
-        signature: await _image(
-          data['principalSignatureUrl'] ?? profile['principalSignatureUrl'],
-        ),
+        photo: assets[0],
+        logo: assets[1],
+        signature: assets[2],
       );
     }
     return renderWindowsReferenceDocument(
@@ -87,14 +94,28 @@ class WindowsDocumentTemplates {
         'schoolAddress': profile['address'] ?? '',
         'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
         ...data,
+        if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty) 'schoolName': profile['schoolName'],
+        'schoolAddress': profile['address'] ?? '',
+        'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
         if (kind == 'reportCard' && (data['dateText']?.toString().trim().isEmpty ?? true))
           'dateText': _documentDate(data['timestamp']),
       },
       qr: qr,
-      photo: await _personPhoto(data),
-      logo: await _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
-      signature: await _image(data['principalSignatureUrl'] ?? profile['principalSignatureUrl']),
+      photo: assets[0],
+      logo: assets[1],
+      signature: assets[2],
+      seal: assets[3],
     );
+  }
+
+  static Future<Uint8List?> renderTemplate(String kind, int index, Map<String,dynamic> data) async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    final profile=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data()??{};
+    final branding={...data,...profile,'schoolName':profile['schoolName']??'', 'schoolAddress':profile['address']??'', 'schoolEmail':profile['schoolEmail']??profile['email']??''};
+    final images=await Future.wait<Uint8List?>([_image(profile['logoUrl']),_image(profile['principalSignatureUrl']),_image(profile['sealUrl'])]);
+    if (FirebaseFirestore.instance.activeProfileId != origin) throw StateError('School changed during template preview.');
+    if(kind=='studentId') return renderWindowsStudentId(template:index,data:branding,logo:images[0],signature:images[1]);
+    return renderWindowsReferenceDocument(kind:kind,template:index,data:branding,logo:images[0],signature:images[1],seal:images[2]);
   }
 
   static Future<void> preview(
@@ -126,12 +147,10 @@ class WindowsDocumentTemplates {
                     build: (_) => bytes,
                     dpi: 200,
                     canDebug: false,
-                    maxPageWidth: onDownload != null
-                        ? math.max(60.0, math.min(constraints.maxWidth - 48,
-                            (constraints.maxHeight - 72) * 54 / (85.6 * 2)))
-                        : 700,
-                    allowPrinting: onPrint == null,
-                    allowSharing: onDownload == null,
+                    maxPageWidth: math.max(200, constraints.maxWidth - 36),
+                    allowPrinting: false,
+                    allowSharing: false,
+                    useActions: false,
                     canChangePageFormat: false,
                     canChangeOrientation: false,
                   )),
@@ -189,9 +208,7 @@ class _SchoolDocumentTemplatesScreenState
     final kind = _kind;
     final sample = _sample;
     return _thumbnails.putIfAbsent('$kind:$index', () async {
-      final bytes = kind == 'studentId'
-          ? await renderWindowsStudentId(template: index, data: sample)
-          : await renderWindowsReferenceDocument(kind: kind, template: index, data: sample);
+      final bytes = (await WindowsDocumentTemplates.renderTemplate(kind,index,sample))!;
       final page = await Printing.raster(bytes, pages: [0], dpi: 100).first;
       return page.toPng();
     });
@@ -209,7 +226,7 @@ class _SchoolDocumentTemplatesScreenState
   }
 
   Map<String, dynamic> get _sample => {
-        'schoolName': 'Your School',
+        'schoolName': '',
         'name': _kind == 'teacherId' ? 'Ananya Sharma' : 'Arup Das',
         'teacherId': 'T-0001',
         'designation': 'Senior Teacher',
@@ -219,7 +236,7 @@ class _SchoolDocumentTemplatesScreenState
         'rollNo': '12',
         'parentName': 'Bikash Das',
         'contact': '9876543210',
-        'address': '12 School Road, Silchar',
+        'address': '',
         'district': 'Cachar',
         'state': 'Assam',
         'pinCode': '788001',
@@ -237,22 +254,11 @@ class _SchoolDocumentTemplatesScreenState
         'paymentMode': 'Cash',
       };
   Future<void> _preview(int index) async {
-    final bytes = _kind == 'studentId'
-        ? await renderWindowsStudentId(
-            template: index,
-            data: _sample,
-            qr: 'VIDYA_SAARTHI_PREVIEW_ONLY',
-          )
-        : await renderWindowsReferenceDocument(
-            kind: _kind,
-            template: index,
-            data: _sample,
-            qr: 'VIDYA_SAARTHI_PREVIEW_ONLY',
-          );
+    final bytes = await WindowsDocumentTemplates.renderTemplate(_kind, index, _sample);
     if (mounted)
       await WindowsDocumentTemplates.preview(
         context,
-        bytes,
+        bytes!,
         title: index < 0 ? 'Default preview' : _names[_kind]![index],
       );
   }
@@ -385,9 +391,9 @@ class _SchoolDocumentTemplatesScreenState
                               i < 0
                                   ? 'Standard school layout'
                                   : portrait
-                                      ? 'Portrait • 54 × 85.6 mm'
+                                      ? 'Front | Back • each 54 × 85.6 mm'
                                       : _kind.endsWith('Id')
-                                          ? 'Landscape • 85.6 × 54 mm'
+                                          ? 'Front | Back • each 85.6 × 54 mm'
                                           : 'Printable school document',
                               style: const TextStyle(
                                 color: Colors.white54,

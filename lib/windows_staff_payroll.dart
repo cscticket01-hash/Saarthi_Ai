@@ -1,3 +1,4 @@
+import 'windows_other_staff.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -47,7 +48,7 @@ class StaffPayroll {
   static Future<List<Map<String, dynamic>>> staff(String profile) async {
     _sameSchool(profile);
     final teachers = await FirebaseFirestore.instance.collection('teachers_directory').get();
-    final extra = await FirebaseFirestore.instance.collection('school_settings').doc('staff_payroll_directory').get();
+    final extra = await OtherStaffDirectory.load(profile);
     _sameSchool(profile);
     return [
       for (final d in teachers.docs) {
@@ -56,7 +57,7 @@ class StaffPayroll {
         'name': d.data()['name'] ?? d.data()['teacherName'] ?? d.id,
         'role': 'Teacher', 'designation': d.data()['designation'] ?? 'Teacher',
       },
-      for (final d in (extra.data()?['staff'] as List? ?? [])) Map<String, dynamic>.from(d as Map),
+      for (final d in extra.where((p)=>p['active']!=false)) d,
     ];
   }
   static Future<void> addStaff(String profile, String name, String role, String designation) => _serial(() async {
@@ -149,21 +150,6 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       });
     } catch (e) { if (mounted && generation == _loadGeneration) setState(() => _error = '$e'); }
     finally { if (mounted && generation == _loadGeneration) setState(() => _loading = false); }
-  }
-  Future<void> _addStaff() async {
-    final name = TextEditingController(), designation = TextEditingController();
-    var role = 'Office staff';
-    await _editor('Add staff member', (setDialog) => [
-      TextField(controller: name, decoration: const InputDecoration(labelText: 'Staff name')),
-      DropdownButtonFormField<String>(isExpanded: true, initialValue: role, decoration: const InputDecoration(labelText: 'Role'),
-        items: ['Office staff', 'Driver', 'Guard', 'Support staff', 'Other'].map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
-        onChanged: (v) => setDialog(() => role = v!)),
-      TextField(controller: designation, decoration: const InputDecoration(labelText: 'Designation')),
-      const Text('Teachers are loaded automatically from the Teachers section.'),
-    ], () => StaffPayroll.addStaff(_profile, name.text, role, designation.text));
-    // Dialog route may still be animating; controllers are disposed after exit.
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    name.dispose(); designation.dispose();
   }
   Future<void> _editor(String title, List<Widget> Function(StateSetter) fields, Future<void> Function() save) async {
     bool saving = false; String? error;
@@ -313,7 +299,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:const Color(0xff12b975)),onPressed:_selected.isEmpty?null:_paySelected,icon:const Icon(Icons.done_all),label:const Text('Mark Selected as Paid')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(),icon:const Icon(Icons.print_outlined),label:const Text('Generate Payslips')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:const Icon(Icons.download_outlined),label:const Text('Export CSV')),
-            OutlinedButton.icon(onPressed:_addStaff,icon:const Icon(Icons.person_add_alt),label:const Text('Add staff member')),
+
           ]),const SizedBox(height:18),
           Wrap(spacing:12,runSpacing:12,children:[
             _metric('Total Staff','${_staff.length}',Colors.blue,Icons.groups_outlined,'${_staff.where((s)=>s['role']=='Teacher').length} Teachers'),

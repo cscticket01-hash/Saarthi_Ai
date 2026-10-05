@@ -232,7 +232,7 @@ class CentralSchoolCloud {
       'googleAccessToken':account.accessToken}, token:auth['idToken']);
     progress?.call('drive');
     final connection = <String,dynamic>{'schemaVersion':2, 'projectId':platformProjectId,
-      'schoolId':school, 'schoolName':name, 'uid':verified['uid'], 'email':account.email,
+      'schoolId':school, 'schoolName':name, 'uid':verified['uid'], 'email':account.email, 'photoUrl':account.photoUrl, 'displayName':account.displayName,
       'accountSub':account.subject, 'endpoint':endpoint, 'folderId':folder,
       'firebaseRefreshToken':auth['refreshToken'],
       'googleRefreshToken':account.refreshToken.isNotEmpty ? account.refreshToken : old['googleRefreshToken'] ?? '',

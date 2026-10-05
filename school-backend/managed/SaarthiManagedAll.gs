@@ -6573,7 +6573,7 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true};}
+    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
     else if(b.action==='managed_records'){const lock=LockService.getScriptLock();lock.waitLock(30000);try{result=VS_managedRecord(b);}finally{lock.releaseLock();}}

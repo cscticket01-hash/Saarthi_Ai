@@ -23,5 +23,15 @@ Future<Map<String,dynamic>> prepareManagedRecord(Map<String,dynamic> data, Strin
     result['${prefix}Url'] = upload['fileUrl'];
     result['${prefix}FileId'] = upload['fileId'];
   }
+  for(final key in result.keys.toList()) {
+    final value=result[key];
+    if(value is Map) result[key]=await prepareManagedRecord(Map<String,dynamic>.from(value),school,call);
+    if(value is List) {
+      final items=<dynamic>[];
+      for(final item in value) items.add(item is Map ? await prepareManagedRecord(Map<String,dynamic>.from(item),school,call) : item);
+      result[key]=items;
+    }
+  }
+  if(FirebaseFirestore.instance.activeProfileId!=profile) throw StateError('School changed during media preparation.');
   return centralSchoolData(result, school);
 }

@@ -298,6 +298,7 @@ jobs:
     - fix/existing-school-restore-20261005
     - fix/legacy-school-recovery-latency
     - fix/local-save-print-qr
+    - fix/school-workflows-15
   pull_request:
     branches:
     - main

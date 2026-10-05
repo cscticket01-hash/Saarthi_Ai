@@ -92,7 +92,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
   const seen=Number(school.data().lastSeenAt||0);
   if(seen>now()||now()-seen>90000)fail(409,'Unable to connect: school Windows app is offline');
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_attendance_list','mobile_mark_attendance','mobile_asset','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_asset','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
   return signed(m,{action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
  }
  const m=await identity(req,b.schoolId);
@@ -144,8 +144,8 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  if(action==='managed/storage/connect'){
   const url=scriptUrl(b.scriptUrl),ref=db.doc('school_storage_private/'+m.schoolId),old=await ref.get();
   if(old.exists&&old.data().ready===true){
-   if(old.data().url!==url)fail(409,'Existing storage retained. Developer must approve replacing this school Drive connection');
-   const health=await signed(m,{action:'managed_health'});if(health.storageReady!==true)fail(502,'School Drive verification failed');return {success:true,schoolId:m.schoolId,storageReady:true,scriptUrl:url};
+   if(old.data().url!==url){if(b.replace!==true||b.expectedScriptUrl!==old.data().url)fail(409,'Existing storage retained. Confirm the current school Drive connection before replacement');}
+   else {const health=await signed(m,{action:'managed_health'});if(health.storageReady!==true)fail(502,'School Drive verification failed');return {success:true,schoolId:m.schoolId,storageReady:true,scriptUrl:url,googleEmail:health.googleEmail||''};}
   }
   for(const [k,v] of pairingTickets)if(v.expiresAt<=now())pairingTickets.delete(k);
   if(pairingTickets.size>=100)fail(429,'Retry storage connection shortly');
@@ -157,10 +157,10 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
    const health=await scriptRequest(url,{schoolId:m.schoolId,timestamp,nonce,payload,signature});
    if(health.success!==true||health.schoolId!==m.schoolId||health.storageReady!==true)fail(409,'Script is not prepared for this school');
    const fresh=await identity(req,m.schoolId);if(!lease(fresh).allowed||fresh.entitlement.status!=='trial'&&fresh.entitlement.activated!==true)fail(403,'School licence is inactive');
-   await db.runTransaction(async tx=>{const current=await tx.get(ref);if(current.exists)fail(409,'Existing storage retained. Developer must approve replacing this school Drive connection');tx.set(ref,{url,secret:protect(secret,encryptionKey),ready:true});});
+   await db.runTransaction(async tx=>{const current=await tx.get(ref);if(current.exists&&(!old.exists||b.replace!==true||b.expectedScriptUrl!==current.data().url))fail(409,'Existing storage retained. Confirm the current school Drive connection before replacement');tx.set(ref,{url,secret:protect(secret,encryptionKey),ready:true,...(current.exists?{previousConnections:[...(current.data().previousConnections||[]),{url:current.data().url,secret:current.data().secret,at:now()}]}:{})});});
    await db.doc('platform_schools/'+m.schoolId).set({storageReady:true,storageCheckedAt:now()},{merge:true});
    await db.collection('platform_audit').add({action,schoolId:m.schoolId,actor:m.uid,at:now()});
-   return {success:true,schoolId:m.schoolId,storageReady:true,scriptUrl:url};
+   return {success:true,schoolId:m.schoolId,storageReady:true,scriptUrl:url,googleEmail:health.googleEmail||''};
   }finally{pairingTickets.delete(ticketHash);}
  }
  if(action==='managed/storage/check')return signed(m,{action:'managed_health'});

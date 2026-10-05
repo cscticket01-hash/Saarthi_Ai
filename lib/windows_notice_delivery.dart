@@ -9,8 +9,9 @@ int schoolNoticeRecipients(Iterable<Map<String, dynamic>> students,
 }
 
 class WindowsNoticeDelivery {
-  const WindowsNoticeDelivery({required this.notificationSent, required this.recipients, this.error = ''});
+  const WindowsNoticeDelivery({required this.notificationSent, required this.recipients, this.error = '',this.schoolPublished=false});
   final bool notificationSent;
+  final bool schoolPublished;
   final int recipients;
   final String error;
 }

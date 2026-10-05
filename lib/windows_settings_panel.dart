@@ -21,6 +21,7 @@ class WindowsSettingsPanel extends StatefulWidget {
     super.key,
     this.showLocalLock = true,
     this.showFirebase = false,
+    this.lockRowOnly = false,
   });
 
   /// Keeps the Local Settings Lock on Password Management.
@@ -28,6 +29,7 @@ class WindowsSettingsPanel extends StatefulWidget {
 
   /// Shows the school Firebase connection only from Advanced Settings.
   final bool showFirebase;
+  final bool lockRowOnly;
 
   @override
   State<WindowsSettingsPanel> createState() => _WindowsSettingsPanelState();
@@ -61,7 +63,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
 
   Future<void> _load() async {
     _managed=(await CentralSchoolCloud.saved())['managed']==true;
-    if (!widget.showFirebase) {
+    if (!widget.showFirebase || _managed) {
       if (mounted) setState(() => _loading = false);
       return;
     }
@@ -438,18 +440,19 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
     return Column(
       children: [
         if (widget.showLocalLock) ...[
-          if(_managed)SchoolPasswordPanel(change:ManagedSchoolSession.changePassword),
-          if(_managed)const SizedBox(height:14),
+          if(_managed && !widget.lockRowOnly)SchoolPasswordPanel(change:ManagedSchoolSession.changePassword),
+          if(_managed && !widget.lockRowOnly)const SizedBox(height:14),
           _localLockCard(),
         ],
         if (widget.showLocalLock && widget.showFirebase)
           const SizedBox(height: 14),
-        if (widget.showFirebase) _firebaseCard(),
+        if (widget.showFirebase && !_managed) _firebaseCard(),
       ],
     );
   }
 
   Widget _localLockCard() {
+    if(widget.lockRowOnly) return ListTile(leading:const Icon(Icons.lock),title:const Text('App Lock'),subtitle:Text(WindowsLocalSecurity.configured?'ON • local app-open password':'OFF • password not set'),trailing:Wrap(children:[TextButton(onPressed:_changeLock,child:const Text('Set / Change Password')),if(WindowsLocalSecurity.configured)TextButton(onPressed:()async{if(!await _unlock())return;await WindowsLocalSecurity.clearAppLock();if(mounted)setState((){});},child:const Text('Disable'))]));
     return _panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
