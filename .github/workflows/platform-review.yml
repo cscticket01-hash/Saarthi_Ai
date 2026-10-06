@@ -204,10 +204,13 @@ jobs:
       run: dart format lib/windows_reference_documents.dart test/windows_reference_documents_test.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/managed_developer_panel.dart lib/platform/managed_developer_service.dart
     - name: Verify Windows ID cards, licence date and startup
       run: flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
+    - name: Verify manifest IDs on Windows
+      run: flutter test test/id_card_engine_test.dart
     - name: Verify reference PDF contents and continuation pages
       run: |
-        python -m pip install "pypdf>=6,<7"
+        python -m pip install "pypdf>=6,<7" "pymupdf>=1.26,<2" "opencv-python-headless>=4.12,<5"
         python .github/scripts/check_reference_document_previews.py
+        python .github/scripts/check_id_qr_scannability.py
     - name: Analyze Windows ID card changes
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart lib/windows_school_map.dart lib/windows_school_map_dialog.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/windows_reference_documents.dart
     - uses: actions/upload-artifact@v4

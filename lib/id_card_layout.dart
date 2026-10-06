@@ -111,7 +111,8 @@ class IdCardLayout {
   }) => pw.LayoutBuilder(
     builder: (context, constraints) {
       final pdfFont = font.getFont(context);
-      final width = constraints.maxWidth, height = constraints.maxHeight;
+      final width = constraints?.maxWidth ?? double.infinity,
+          height = constraints?.maxHeight ?? double.infinity;
       // Compatibility labels in unconstrained table cells keep their normal
       // style; every positioned ID field has finite template bounds.
       if (!width.isFinite || !height.isFinite) {
@@ -220,6 +221,8 @@ class IdCardLayout {
     double focusY = .35,
   }) => pw.LayoutBuilder(
     builder: (_, bounds) {
+      if (bounds == null)
+        throw const FormatException("ID image has no template bounds.");
       if (!bounds.maxWidth.isFinite ||
           !bounds.maxHeight.isFinite ||
           bounds.maxWidth <= 0 ||
@@ -257,6 +260,8 @@ class IdCardLayout {
   static pw.Widget qr(String value, {double? millimetresPerUnit}) =>
       pw.LayoutBuilder(
         builder: (_, bounds) {
+          if (bounds == null)
+            throw const FormatException("QR has no template bounds.");
           final side = math.min(bounds.maxWidth, bounds.maxHeight);
           if (!side.isFinite || side <= 0)
             throw const FormatException('Invalid QR region.');
