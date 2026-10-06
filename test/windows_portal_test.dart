@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
+import '../lib/windows_connect/central_school_cloud.dart';
+import '../lib/platform/platform_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -214,7 +217,12 @@ void main() {
     await WindowsSyncEngine.instance.pauseForAppReset();
   });
   test('offline publish retains a pending notice without reporting delivery', () async {
-    await expectLater(WindowsPlatformClient.instance.publishNotice('unsent', {'title':'Example'}), throwsStateError);
+    const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'managed':true,'schoolId':school,'uid':'A','projectId':platformProjectId,'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseRefreshToken':'refresh','storageReady':false})});
+    await local.FirebaseFirestore.instance.switchProfile('notice-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});
+    final delivery=await WindowsPlatformClient.instance.publishNotice('unsent', {'title':'Example'});
+    expect(delivery.notificationSent,false);expect(delivery.schoolPublished,false);
+    expect((await local.FirebaseFirestore.instance.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
     final pending=(await local.FirebaseFirestore.instance.collection('school_notices').doc('unsent').get()).data();
     expect(pending?['title'],'Example');
     expect(pending?['deliveryStatus'],'sync_pending');
