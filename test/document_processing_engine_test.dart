@@ -32,7 +32,8 @@ void main() {
     expect(decoded.width, 600);
     expect(decoded.height, 800);
     expect(result['perspectiveCorrected'], false);
-    expect(decoded.getPixel(200, 200).r, greaterThan(230));
+    expect(decoded.getPixel(200, 210).r, greaterThan(230));
+    expect(decoded.getPixel(200, 200).r, lessThan(60));
   });
   test(
     'confident paper boundary is cropped; ambiguous scans retain full content',

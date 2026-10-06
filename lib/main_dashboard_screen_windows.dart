@@ -20337,6 +20337,9 @@ class StudentDocumentsScreen extends StatefulWidget {
 class _StudentDocumentsScreenState
     extends State<StudentDocumentsScreen> {
   static const int _maxBytes = 50 * 1024 * 1024;
+  late final String _schoolProfile;
+  Timer? _refreshTimer;
+  int _loadGeneration=0;
   bool _loading = true;
   bool _uploading = false;
   String? _error;
@@ -20358,19 +20361,26 @@ class _StudentDocumentsScreenState
   @override
   void initState() {
     super.initState();
+    _schoolProfile=FirebaseFirestore.instance.activeProfileId;
     _load();
+    _refreshTimer=Timer.periodic(const Duration(seconds:15),(_){if(mounted&&!_uploading&&!_loading)_load();});
   }
+
+  @override
+  void dispose(){_refreshTimer?.cancel();super.dispose();}
 
   Future<String> _scriptUrl() async {
     return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
+    if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile) throw StateError('School changed. Reopen documents.');
     final response = await WindowsBackendBridge.post(
       Uri.parse(await _scriptUrl()),
       headers: {'Content-Type': 'text/plain;charset=utf-8'},
       body: jsonEncode(body),
     );
+    if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile) throw StateError('School changed while loading documents.');
     if (response.statusCode != 200) {
       throw Exception('Google backend error: ${response.statusCode}');
     }
@@ -20386,11 +20396,18 @@ class _StudentDocumentsScreenState
   }
 
   Future<void> _load() async {
+    if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile){if(mounted)setState((){_documents=[];_loading=false;_error='School changed. Reopen documents.';});return;}
+    final generation=++_loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
+      final remote=await FirebaseFirestore.instance.collection('documents').where('studentId',isEqualTo:widget.studentId).get();
+      final local=await FirebaseFirestore.instance.collection('_local_student_documents').where('studentId',isEqualTo:widget.studentId).get();
+      if(!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
+      final cached=<String,Map<String,dynamic>>{for(final d in remote.docs)d.id:{...d.data(),'documentId':d.id},for(final d in local.docs)d.id:d.data()};
+      setState((){_documents=cached.values.where((d)=>d['deleted']!=true).toList();_loading=false;});
       final result = await _post({
         'action': 'list_student_documents',
         'studentId': widget.studentId,
@@ -20405,7 +20422,7 @@ class _StudentDocumentsScreenState
               .map((e) => Map<String, dynamic>.from(e))
               .toList()
           : <Map<String, dynamic>>[];
-      if (!mounted) return;
+      if (!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_schoolProfile) return;
       setState(() {
         _documents = docs;
         _loading = false;
@@ -20610,7 +20627,7 @@ class _StudentDocumentsScreenState
 
   @override
   Widget build(BuildContext context) {
-    final ratio = (_totalBytes / _maxBytes).clamp(0.0, 1.0).toDouble();
+    final ratio = (_totalBytes / (300*1024)).clamp(0.0, 1.0).toDouble();
     return Scaffold(
       backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(
@@ -20683,7 +20700,7 @@ class _StudentDocumentsScreenState
                               color: Colors.white,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Text('${_formatBytes(_totalBytes)} actual stored size',
+                      Text('${_formatBytes(_totalBytes)} optimized • target 300 KB',
                           style: const TextStyle(
                               color: Colors.white54, fontSize: 10.5)),
                     ],
@@ -20705,7 +20722,7 @@ class _StudentDocumentsScreenState
                   const Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'PDF/JPG/JPEG • up to 50 MB per source. Originals preserved; cloud failures remain pending.',
+                      'PDF/JPG/JPEG • source up to 50 MB. Target: about 300 KB for 7–8 normal scans; quality takes priority. Preview uses original. Actual optimized sizes shown.',
                       style: TextStyle(color: Colors.white38, fontSize: 10),
                     ),
                   ),
@@ -20775,6 +20792,7 @@ class _StudentDocumentsScreenState
                               style: const TextStyle(
                                   color: Colors.white38, fontSize: 9.5),
                             ),
+                            if(document['cleanupStatus']!=null) Text('${document['cleanupStatus']} • ${document['targetMet']==true?'Within per-document target':'Quality preserved; target may be exceeded'}',style:const TextStyle(color:Colors.white54,fontSize:10)),
                           ],
                         ),
                       ),

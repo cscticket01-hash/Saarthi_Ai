@@ -1,8 +1,4 @@
-import 'dart:convert';
-
-import 'package:flutter/services.dart' show rootBundle;
-
-import 'id_card_manifest.dart';
+import 'id_card_catalog.dart';
 import 'id_card_engine.dart';
 import 'fitted_document_preview.dart';
 import 'windows_connect/school_drive_images.dart';
@@ -22,22 +18,19 @@ class WindowsDocumentTemplates {
   static Future<Uint8List> manifestId(
     Map<String, dynamic> data, {
     String qr = '',
+    String templateId = 'school-id-v1',
     Uint8List? photo,
     Uint8List? logo,
     Uint8List? signature,
     Uint8List? seal,
   }) async {
-    final manifest = IdCardManifest.fromJson(
-      Map<String, dynamic>.from(
-        jsonDecode(
-          await rootBundle.loadString('assets/school_id_manifest_v1.json'),
-        ),
-      ),
-    );
+    final entry = await IdCardCatalog.find(templateId);
+    final manifest = await entry.manifest();
     return IdCardEngine.render(
       manifest,
       data,
       qr: qr,
+      backgrounds: await entry.backgrounds(),
       images: {
         if (photo != null) 'photo': photo,
         if (logo != null) 'logo': logo,
@@ -121,7 +114,7 @@ class WindowsDocumentTemplates {
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
-    if (v == 'manifest:school-id-v1' || kind == 'otherStaffId') {
+    if ((v is String && v.startsWith('manifest:')) || kind == 'otherStaffId') {
       return manifestId(
         {
           ...profile,
@@ -137,6 +130,11 @@ class WindowsDocumentTemplates {
           'parentName': data['parentName'] ?? data['fatherName'] ?? '',
         },
         qr: qr,
+        templateId: v is String && v.startsWith('manifest:')
+            ? v.substring(9)
+            : (await IdCardCatalog.load())
+                  .firstWhere((e) => e.kinds.contains(kind))
+                  .id,
         photo: assets[0],
         logo: assets[1],
         signature: assets[2],
@@ -210,12 +208,21 @@ class WindowsDocumentTemplates {
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during template preview.');
-    if (kind == 'otherStaffId' ||
-        (kind == 'studentId' && index == windowsStudentIdNames.length) ||
-        (kind == 'teacherId' &&
-            index == windowsReferenceDocumentNames['teacherId']!.length)) {
+    final legacyCount = kind == 'studentId'
+        ? windowsStudentIdNames.length
+        : kind == 'teacherId'
+        ? windowsReferenceDocumentNames['teacherId']!.length
+        : kind == 'otherStaffId'
+        ? 0
+        : -1;
+    if (legacyCount >= 0 && index >= legacyCount) {
+      final choices = (await IdCardCatalog.load())
+          .where((e) => e.kinds.contains(kind))
+          .toList();
+      final entry = choices[index - legacyCount];
       return manifestId(
         branding,
+        templateId: entry.id,
         logo: images[0],
         signature: images[1],
         seal: images[2],
@@ -315,7 +322,7 @@ class SchoolDocumentTemplatesScreen extends StatefulWidget {
 
 class _SchoolDocumentTemplatesScreenState
     extends State<SchoolDocumentTemplatesScreen> {
-  static final _names = <String, List<String>>{
+  final _names = <String, List<String>>{
     ...windowsReferenceDocumentNames,
     'studentId': [
       ...windowsStudentIdNames,
@@ -327,6 +334,28 @@ class _SchoolDocumentTemplatesScreenState
     ],
     'otherStaffId': [WindowsDocumentTemplates.manifestName],
   };
+  List<IdCardCatalogEntry> _catalog = [];
+  String? _catalogError;
+  int _legacyCount(String kind) => kind == 'studentId'
+      ? windowsStudentIdNames.length
+      : kind == 'teacherId'
+      ? windowsReferenceDocumentNames['teacherId']!.length
+      : 0;
+  List<IdCardCatalogEntry> _choices(String kind) =>
+      _catalog.where((e) => e.kinds.contains(kind)).toList();
+  int _chosen() {
+    final value = _selected[_kind];
+    if (value is String && value.startsWith('manifest:')) {
+      final i = _choices(_kind).indexWhere((e) => e.id == value.substring(9));
+      return i < 0 ? -1 : _legacyCount(_kind) + i;
+    }
+    return _kind == 'studentId'
+        ? windowsStudentIdIndex(value)
+        : _kind == 'otherStaffId'
+        ? 0
+        : windowsReferenceDocumentIndex(_kind, value);
+  }
+
   String _kind = 'studentId';
   Map<String, dynamic> _selected = {};
   bool _loading = true;
@@ -349,13 +378,33 @@ class _SchoolDocumentTemplatesScreenState
   @override
   void initState() {
     super.initState();
-    WindowsDocumentTemplates.selections().then((v) {
+    _initializeCatalog();
+  }
+
+  Future<void> _initializeCatalog() async {
+    try {
+      final entries = await IdCardCatalog.load(),
+          v = await WindowsDocumentTemplates.selections();
       if (mounted)
         setState(() {
+          _catalog = entries;
           _selected = v;
+          for (final kind in ['studentId', 'teacherId', 'otherStaffId'])
+            _names[kind] = [
+              if (kind == 'studentId') ...windowsStudentIdNames,
+              if (kind == 'teacherId')
+                ...windowsReferenceDocumentNames['teacherId']!,
+              ..._choices(kind).map((e) => e.name),
+            ];
           _loading = false;
         });
-    });
+    } catch (e) {
+      if (mounted)
+        setState(() {
+          _loading = false;
+          _catalogError = 'Invalid template catalog: $e';
+        });
+    }
   }
 
   Map<String, dynamic> get _sample => {
@@ -401,29 +450,20 @@ class _SchoolDocumentTemplatesScreenState
   }
 
   Future<void> _select(int index) async {
+    final kind = _kind, count = _legacyCount(_kind);
+    final value =
+        {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
+            index >= count
+        ? 'manifest:${_choices(kind)[index - count].id}'
+        : index;
     await FirebaseFirestore.instance
         .collection('school_settings')
         .doc('document_templates')
         .set({
-          _kind:
-              _kind == 'otherStaffId' ||
-                  (_kind == 'studentId' &&
-                      index == windowsStudentIdNames.length) ||
-                  (_kind == 'teacherId' &&
-                      index ==
-                          windowsReferenceDocumentNames['teacherId']!.length)
-              ? 'manifest:school-id-v1'
-              : index,
+          kind: value,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
-    if (mounted)
-      setState(
-        () => _selected[_kind] =
-            index == _names[_kind]!.length - 1 &&
-                {'studentId', 'teacherId', 'otherStaffId'}.contains(_kind)
-            ? 'manifest:school-id-v1'
-            : index,
-      );
+    if (mounted) setState(() => _selected[kind] = value);
   }
 
   @override
@@ -434,6 +474,7 @@ class _SchoolDocumentTemplatesScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (_catalogError != null) Text(_catalogError!),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -473,11 +514,7 @@ class _SchoolDocumentTemplatesScreenState
               itemCount: _names[_kind]!.length,
               itemBuilder: (ctx, n) {
                 final i = n;
-                final chosen = _selected[_kind] == 'manifest:school-id-v1'
-                    ? _names[_kind]!.length - 1
-                    : _kind == 'studentId'
-                    ? windowsStudentIdIndex(_selected[_kind])
-                    : windowsReferenceDocumentIndex(_kind, _selected[_kind]);
+                final chosen = _chosen();
                 final active = i == chosen;
                 final portrait =
                     (_kind == 'studentId' || _kind == 'teacherId') &&
@@ -561,7 +598,9 @@ class _SchoolDocumentTemplatesScreenState
                             ),
                             const SizedBox(width: 10),
                             FilledButton(
-                              onPressed: active ? null : () => _select(i),
+                              onPressed: active || _catalogError != null
+                                  ? null
+                                  : () => _select(i),
                               child: Text(
                                 active ? 'Selected' : 'Use for school',
                               ),

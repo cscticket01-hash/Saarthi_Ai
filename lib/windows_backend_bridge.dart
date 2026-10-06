@@ -1,3 +1,5 @@
+import 'package:crypto/crypto.dart' as crypto;
+
 import 'dart:typed_data';
 
 import 'document_pipeline.dart';
@@ -105,6 +107,13 @@ class WindowsBackendBridge {
           'mimeType': record['optimizedMimeType'] ?? record['mimeType'],
           'documentId': queued.id,
           'schoolId': record['schoolId'],
+          'documentRevision': record['documentRevision'],
+          'sizeBytes': record['sizeBytes'],
+          'sourceBytes': record['sourceBytes'],
+          'cleanupStatus': record['cleanupStatus'],
+          'targetMet': record['targetMet'],
+          'baseCloudRevision': record['baseCloudRevision'] ?? '',
+          'baseCloudUploadedAt': record['baseCloudUploadedAt'],
           'fileBase64': base64Encode(bytes),
         };
         final result = await (send ?? _handleCentral)(payload);
@@ -118,11 +127,41 @@ class WindowsBackendBridge {
               .doc(queued.id);
           final current = (await ref.get()).data();
           if (current?['localPath'] != generationPath ||
-              current?['deleted'] != record['deleted'])
-            return; // a replacement remains queued
+              current?['deleted'] != record['deleted']) {
+            // The earlier version reached the cloud, but the replacement is
+            // still pending. Advance only its compare-and-set baseline.
+            if (current != null &&
+                current['baseCloudRevision'] == record['baseCloudRevision']) {
+              final baseline = result['document'] is Map
+                  ? result['document']['documentRevision']
+                  : null;
+              if (baseline != null) {
+                final batch = FirebaseFirestore.instance.batch();
+                batch.set(ref, {
+                  'cloudRevision': baseline,
+                  'baseCloudRevision': baseline,
+                }, SetOptions(merge: true));
+                batch.set(
+                  FirebaseFirestore.instance
+                      .collection('_windows_document_outbox')
+                      .doc(queued.id),
+                  {'baseCloudRevision': baseline},
+                  SetOptions(merge: true),
+                );
+                await batch.commit();
+              }
+            }
+            return;
+          }
           final batch = FirebaseFirestore.instance.batch();
           batch.set(ref, {
             'cloudFileUrl': result['fileUrl'],
+            'cloudRevision': result['document'] is Map
+                ? result['document']['documentRevision']
+                : record['baseCloudRevision'],
+            'cloudUploadedAt': result['document'] is Map
+                ? result['document']['uploadedAt']
+                : record['baseCloudUploadedAt'],
             'syncState': 'Synced',
           }, SetOptions(merge: true));
           batch.delete(
@@ -233,6 +272,15 @@ class WindowsBackendBridge {
             'documentId': id,
             'schoolId': savedIdentity['schoolId'],
             'deleted': true,
+            'baseCloudRevision':
+                old['cloudRevision'] ??
+                old['baseCloudRevision'] ??
+                old['documentRevision'] ??
+                '',
+            'baseCloudUploadedAt':
+                old['cloudUploadedAt'] ??
+                old['baseCloudUploadedAt'] ??
+                old['uploadedAt'],
             'localPath': old['localPath'] ?? '',
             'syncState': 'Pending',
           };
@@ -882,6 +930,20 @@ class WindowsBackendBridge {
     }
 
     final action = body['action']?.toString() ?? '';
+    if (connection['managed'] == true &&
+        {
+          'upload_student_document',
+          'delete_student_document',
+        }.contains(action)) {
+      final health = await cloud.api({
+        'action': 'managed/storage/check',
+        'schoolId': school,
+      }, token: token);
+      if (health['documentVersions'] != 1)
+        throw StateError(
+          'School storage needs the version-safe document adapter upgrade. Local originals and pending changes are retained.',
+        );
+    }
     Future<Map<String, dynamic>> read(String collection) =>
         WindowsFirebaseRemote.readCollection(
           projectId: connection['projectId'],
@@ -891,8 +953,10 @@ class WindowsBackendBridge {
     Future<void> save(
       String collection,
       String id,
-      Map<String, dynamic> data,
-    ) async {
+      Map<String, dynamic> data, {
+      String? expectedRevision,
+      num? expectedUploadedAt,
+    }) async {
       if ((await CentralSchoolCloud.saved())['schoolId'] != school ||
           FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] !=
               school)
@@ -903,6 +967,8 @@ class WindowsBackendBridge {
         collection: collection,
         documentId: id,
         data: data,
+        expectedRevision: expectedRevision,
+        expectedUploadedAt: expectedUploadedAt,
       );
       await ensureSchool();
       await FirebaseFirestore.instance
@@ -984,10 +1050,29 @@ class WindowsBackendBridge {
         final old = (await read('documents'))[id];
         if (old != null && old['studentId'] != data['studentId'])
           throw StateError('Document belongs to another student.');
+        final revision = data['documentRevision']?.toString() ?? '';
+        if (revision.isEmpty || revision.length > 100)
+          throw StateError('Document revision missing.');
+        if (old?['documentRevision'] == revision)
+          return {
+            'success': true,
+            'documentId': id,
+            'fileUrl': old?['fileUrl'],
+            'document': old,
+          };
+        final base = data['baseCloudRevision']?.toString() ?? '';
+        if ((old?['documentRevision']?.toString() ?? '') != base)
+          throw StateError(
+            'Newer cloud document retained; resolve version conflict.',
+          );
+        final uploadKey = crypto.sha256
+            .convert(utf8.encode('$id:$revision'))
+            .toString();
         final file = await cloud.upload(
-          data['fileName']?.toString() ?? '$id.bin',
+          'Document_$uploadKey.${data['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
           data['mimeType']?.toString() ?? 'application/octet-stream',
           data['fileBase64']?.toString() ?? '',
+          uploadKey: uploadKey,
         );
         final document = centralSchoolData({
           ...data,
@@ -995,7 +1080,13 @@ class WindowsBackendBridge {
           'documentId': id,
           'uploadedAt': DateTime.now().millisecondsSinceEpoch,
         }, school);
-        await save('documents', id, document);
+        await save(
+          'documents',
+          id,
+          document,
+          expectedRevision: base,
+          expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
+        );
         return {
           'success': true,
           'documentId': id,
@@ -1004,12 +1095,19 @@ class WindowsBackendBridge {
         };
       }
       if (action == 'delete_student_document') {
+        final id = data['documentId']?.toString() ?? '';
+        final old = (await read('documents'))[id];
+        if (old == null) return {'success': true};
+        if (old['studentId'] != data['studentId'])
+          throw StateError('Document belongs to another student.');
         // Remove the index only. Drive file retention avoids accidental data loss.
         await WindowsFirebaseRemote.deleteDocument(
           projectId: connection['projectId'],
           idToken: token,
           collection: 'documents',
-          documentId: data['documentId']?.toString() ?? '',
+          documentId: id,
+          expectedRevision: data['baseCloudRevision']?.toString() ?? '',
+          expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );
         await ensureSchool();
         await FirebaseFirestore.instance
@@ -1378,6 +1476,12 @@ class WindowsBackendBridge {
         .collection('_local_student_documents')
         .doc(documentId);
     final previous = (await ref.get()).data();
+    final remoteBase =
+        (await FirebaseFirestore.instance
+                .collection('documents')
+                .doc(documentId)
+                .get())
+            .data();
     if (previous != null && previous['studentId'] != studentId)
       throw StateError('Document belongs to another student.');
     final raw = body['fileBase64']?.toString() ?? '';
@@ -1444,6 +1548,18 @@ class WindowsBackendBridge {
       'mimeType': body['mimeType'] ?? '',
       'sizeBytes': optimized?.length ?? bytes.length,
       'sourceBytes': bytes.length,
+      'documentRevision': secureSetupToken(24),
+      'baseCloudRevision':
+          previous?['cloudRevision'] ??
+          previous?['baseCloudRevision'] ??
+          remoteBase?['documentRevision'] ??
+          '',
+      'baseCloudUploadedAt':
+          previous?['cloudUploadedAt'] ??
+          previous?['baseCloudUploadedAt'] ??
+          remoteBase?['uploadedAt'],
+      'cloudRevision':
+          previous?['cloudRevision'] ?? remoteBase?['documentRevision'] ?? '',
       'optimizedPath': optimized != null ? optimizedFile.path : file.path,
       'processedPath': highQuality != null ? highFile.path : file.path,
       'optimizedMimeType': processing['mimeType'] ?? body['mimeType'],

@@ -10,7 +10,7 @@ class DocumentProcessingEngine {
   static const setTarget = 300 * 1024;
   static Map<String, dynamic> process(Map<String, dynamic> input) {
     final bytes = input['bytes'] as Uint8List;
-    if (bytes.isEmpty || bytes.length > sourceLimit)
+    if (bytes.length < 12 || bytes.length > sourceLimit)
       throw const FormatException('Source exceeds document safety limit.');
     final decoder = img.findDecoderForData(bytes);
     final info = decoder?.startDecode(bytes);

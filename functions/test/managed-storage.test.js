@@ -5,16 +5,34 @@ const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),secret='d'.repeat(64);
 function storage(){
  const all=new Map();let serial=0;
  const iterator=items=>{let n=0;return {hasNext:()=>n<items.length,next:()=>items[n++]};};
- function folder(id,school){const children=[],files=[];const f={getId:()=>id,getName:()=>id,getDescription:()=> 'VIDYA_MANAGED_SCHOOL:'+school,getFolders:()=>iterator(children),getFoldersByName:name=>iterator(children.filter(c=>c.getName()===name)),createFolder:name=>{const c=folder(name,school);children.push(c);return c;},getFiles:()=>iterator(files.filter(x=>!x.trash)),getFilesByName:name=>iterator(files.filter(x=>!x.trash&&x.name===name)),createFile:(name,text,mime)=>{const file={id:'file'+ ++serial,name,text,mime,getId(){return this.id;},getSize(){return Buffer.byteLength(this.text);},getParents:()=>iterator([f]),getBlob(){return {getDataAsString:()=>this.text,getBytes:()=>[...Buffer.from(this.text)],getContentType:()=>this.mime};},setContent(text){this.text=text;},setTrashed(v){this.trash=v;}};files.push(file);all.set(file.id,file);return file;}};all.set(id,f);return f;}
+ function folder(id,school){const children=[],files=[];const f={getId:()=>id,getName:()=>id,getDescription:()=> 'VIDYA_MANAGED_SCHOOL:'+school,getFolders:()=>iterator(children),getFoldersByName:name=>iterator(children.filter(c=>c.getName()===name)),createFolder:name=>{const c=folder(name,school);children.push(c);return c;},getFiles:()=>iterator(files.filter(x=>!x.trash)),getFilesByName:name=>iterator(files.filter(x=>!x.trash&&x.name===name)),createFile:(name,text,mime)=>{if(typeof name==='object'){mime=name.mime;text=Buffer.from(name.bytes).toString('binary');name=name.name;}const file={id:'file'+ ++serial,name,text,mime,getId(){return this.id;},getDescription(){return this.description||'';},setDescription(v){this.description=v;},getSize(){return Buffer.byteLength(this.text);},getParents:()=>iterator([f]),getBlob(){return {getDataAsString:()=>this.text,getBytes:()=>[...Buffer.from(this.text)],getContentType:()=>this.mime};},setContent(text){this.text=text;},setTrashed(v){this.trash=v;}};files.push(file);all.set(file.id,file);return file;}};all.set(id,f);return f;}
  const roots={[A]:folder('rootA',A),[B]:folder('rootB',B)};
  const props=new Map([['VS_MANAGED_SCHOOL_ID',A],['VS_MANAGED_ROOT_ID','rootA'],['VS_MANAGED_SECRET',secret]]);
  const p={getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v),getProperties:()=>Object.fromEntries(props),deleteProperty:k=>props.delete(k)};
- const context=vm.createContext({Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,v)=>[...crypto.createHash('sha256').update(v).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
+ const context=vm.createContext({Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},base64Decode:v=>[...Buffer.from(v,'base64')],newBlob:(bytes,mime,name)=>({bytes,mime,name}),computeDigest:(_,v)=>[...crypto.createHash('sha256').update(typeof v==='string'?v:Buffer.from(v)).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),context);
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedMobile.gs','utf8'),context);
  const call=body=>{const b={schoolId:A,timestamp:Date.now(),nonce:crypto.randomBytes(24).toString('hex'),payload:JSON.stringify(body)};b.signature=crypto.createHmac('sha256',secret).update(A+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex');return context.VS_managedHandle({postData:{contents:JSON.stringify(b)}});};
  return {call,roots,all};
 }
+test('document compare-and-set preserves newer edits and refuses unversioned overwrites/deletes',()=>{
+ const f=storage(),write=(revision,expected)=>f.call({action:'managed_records',operation:'write',collection:'documents',id:'DOC-1',expectedRevision:expected,data:{schoolId:A,studentId:'S-1',documentRevision:revision}});
+ assert.equal(write('first','').success,true);
+ assert.equal(write('stale','').success,false);
+ assert.equal(write('second','first').success,true);
+ assert.equal(f.call({action:'managed_records',operation:'write',collection:'documents',id:'DOC-1',data:{schoolId:A,documentRevision:'unsafe'}}).success,false);
+ assert.equal(f.call({action:'managed_records',operation:'delete',collection:'documents',id:'DOC-1',expectedRevision:'first'}).success,false);
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'documents'}).records['DOC-1'].documentRevision,'second');
+ assert.equal(f.call({action:'managed_records',operation:'write',collection:'documents',id:'DOC-1',createOnly:true,data:{schoolId:A,documentRevision:'backup'}}).skipped,true);
+ assert.equal(f.call({action:'managed_records',operation:'delete',collection:'documents',id:'DOC-1',expectedRevision:'second'}).success,true);
+});
+test('upload retries reuse one own-school immutable file and reject changed content with the same key',()=>{
+ const f=storage(),body={action:'managed_upload',name:'Document_own.jpg',mime:'image/jpeg',base64:Buffer.from('own bytes').toString('base64'),uploadKey:'own-revision'};
+ const first=f.call(body),second=f.call(body);
+ assert.equal(first.success,true);assert.equal(second.fileId,first.fileId);
+ assert.equal(f.call({...body,base64:Buffer.from('changed').toString('base64')}).success,false);
+ assert.equal(f.call({action:'managed_health'}).documentVersions,1);
+});
 test('GS backup and create-only restore retain current records and reject another school backup',()=>{
  const f=storage(),write=(id,name)=>f.call({action:'managed_records',operation:'write',collection:'students_directory',id,data:{schoolId:A,name}});
  assert.equal(write('student','Original').success,true);

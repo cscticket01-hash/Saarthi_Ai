@@ -5,12 +5,35 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/id_card_manifest.dart';
 import '../lib/id_card_engine.dart';
+import '../lib/id_card_catalog.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   Map<String, dynamic> manifest() => Map<String, dynamic>.from(
     jsonDecode(File('assets/school_id_manifest_v1.json').readAsStringSync()),
   );
+  test('bundled catalog validates manifests and rejects external or traversing assets', () async {
+    final entries = await IdCardCatalog.load();
+    expect(
+      entries.single.kinds,
+      containsAll(['studentId', 'teacherId', 'otherStaffId']),
+    );
+    expect((await entries.single.manifest()).id, entries.single.id);
+    for (final asset in [
+      'https://evil.example/card.json',
+      'assets/../private.json',
+    ]) {
+      expect(
+        () => IdCardCatalogEntry({
+          'id': 'test-id',
+          'name': 'Test',
+          'manifest': asset,
+          'kinds': ['studentId'],
+        }),
+        throwsFormatException,
+      );
+    }
+  });
   test('manifest rejects overflow, duplicate regions, unknown version and distorted print dimensions', () {
     final raw = manifest();
     final valid = IdCardManifest.fromJson(raw);

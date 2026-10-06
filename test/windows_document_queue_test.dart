@@ -107,6 +107,10 @@ void main() {
         return {
           'success': true,
           'fileUrl': 'https://drive.google.com/file/d/old/view',
+          'document': {
+            'documentRevision': payload['documentRevision'],
+            'uploadedAt': 42,
+          },
         };
       },
     );
@@ -118,6 +122,10 @@ void main() {
       send: (payload) async => {
         'success': true,
         'fileUrl': 'https://drive.google.com/file/d/current/view',
+        'document': {
+          'documentRevision': payload['documentRevision'],
+          'uploadedAt': 43,
+        },
       },
     );
     expect(
