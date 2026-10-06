@@ -184,4 +184,17 @@ void main() {
     }
   });
 
+  test('standalone legacy OFF remains RAM-only without a managed school identity', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final profile = 'standalone-${DateTime.now().microsecondsSinceEpoch}';
+    await db.switchProfile(profile);
+    expect(await db.localPersistenceEnabled(), false);
+    await db.collection('notices').doc('temporary').set({'text': 'session-only'});
+    final file = await WindowsLocalStorage.databaseFile();
+    final disk = await file.exists() ? jsonDecode(await file.readAsString()) : {'profiles': {}};
+    expect((disk['profiles'] as Map).containsKey(profile), false);
+    await db.resetVolatileSession();
+    expect((await db.collection('notices').get()).docs, isEmpty);
+  });
+
 }

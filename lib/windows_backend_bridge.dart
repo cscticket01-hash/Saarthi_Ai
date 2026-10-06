@@ -1463,6 +1463,7 @@ class WindowsBackendBridge {
     Map<String, dynamic> body,
   ) async {
     final originProfile = FirebaseFirestore.instance.activeProfileId;
+    final owner = body['_queueCloud'] == true ? await CentralSchoolCloud.saved() : <String, dynamic>{};
     final studentId = body['studentId']?.toString().trim() ?? '';
     if (studentId.isEmpty) {
       return {'success': false, 'message': 'Student ID missing.'};
@@ -1523,7 +1524,8 @@ class WindowsBackendBridge {
     }
     if (body['_queueCloud'] == true) {
       final current = await CentralSchoolCloud.saved();
-      if (current['managed'] != true ||
+      if (current['managed'] != true || current['uid'] != owner['uid'] ||
+          current['schoolId'] != owner['schoolId'] ||
           current['schoolId'] != FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] ||
           FirebaseFirestore.instance.activeProfileId != originProfile ||
           !await FirebaseFirestore.instance.localPersistenceEnabled()) {

@@ -115,6 +115,9 @@ class FirebaseFirestore {
   /// the startup gate; this validates its saved identity against the live store.
   Future<bool> localPersistenceEnabled() async {
     final origin = activeProfileId;
+    if (!validSchoolId(activeProfileIdentity['schoolSyncId']?.toString() ?? '')) {
+      return WindowsRuntimeFlags.localStorageEnabled();
+    }
     final saved = await CentralSchoolCloud.saved();
     if (origin != activeProfileId) throw StateError('School changed during storage resolution.');
     final identity = activeProfileIdentity;
