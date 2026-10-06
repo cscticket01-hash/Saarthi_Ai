@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'platform/managed_developer_service.dart';
+import 'platform/firebase_metric_samples.dart';
 
 class FirebaseMonitorPanel extends StatefulWidget {
   const FirebaseMonitorPanel({super.key});
@@ -45,8 +46,8 @@ class _FirebaseMonitorPanelState extends State<FirebaseMonitorPanel> {
     }
   }
 
-  String format(dynamic sample, {bool bits = false}) {
-    if (sample is! Map) return missingMetricStatus();
+  String format(dynamic sample, {bool bits = false, String key = ''}) {
+    if (sample is! Map) return missingMetricStatus(key);
     final value = sample['value'];
     if (value is! num || !value.toDouble().isFinite)
       return 'Invalid metric sample';
@@ -64,28 +65,20 @@ class _FirebaseMonitorPanelState extends State<FirebaseMonitorPanel> {
     return '${n.toStringAsFixed(2)} ${sample['unit'] == '1' ? 'ops/s' : sample['unit'] ?? ''}';
   }
 
-  String missingMetricStatus() {
-    if (data == null)
-      return error != null
-          ? 'API error'
-          : busy
-          ? 'Loading…'
-          : 'Waiting for sample';
+  String missingMetricStatus(String key) {
     final metrics = data?['metrics'];
-    if (metrics is! Map) return 'Metric not reported';
-    if (metrics['available'] != true) {
-      final reason = '${metrics['reason'] ?? ''}';
-      return reason.contains('403')
-          ? 'Permission unavailable'
-          : 'Monitoring unavailable';
-    }
-    return 'Metric not reported';
+    return firebaseMetricMissingStatus(
+      metrics is Map ? metrics : null,
+      key,
+      loading: busy,
+      apiError: error != null,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final metrics = data?['metrics'];
-    final cards = metrics is Map ? metrics['cards'] : null;
+    final cards = metrics is Map ? firebaseMetricCards(metrics) : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -134,7 +127,11 @@ class _FirebaseMonitorPanelState extends State<FirebaseMonitorPanel> {
                         Text(e.$1),
                         const SizedBox(height: 12),
                         Text(
-                          format(cards is Map ? cards[e.$2] : null, bits: e.$3),
+                          format(
+                            cards is Map ? cards[e.$2] : null,
+                            bits: e.$3,
+                            key: e.$2,
+                          ),
                           style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,

@@ -1,7 +1,11 @@
+import 'promotion_session_policy.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
+
 import 'dart:convert';
+
 import 'package:flutter/material.dart' hide Text, InputDecoration;
+
 import 'windows_local_firestore.dart';
 import 'windows_local_auth.dart';
 import 'windows_backend_bridge.dart';
@@ -48,7 +52,8 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
           _records = records.docs
               .map((d) => {'id': d.id, ...d.data()})
               .where(
-                  (d) => d['date'] == schoolDateKey(_day) && d['role'] == _role)
+                (d) => d['date'] == schoolDateKey(_day) && d['role'] == _role,
+              )
               .toList();
           _calendar = calendar.data() ?? {};
           _error = null;
@@ -64,8 +69,8 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
     final n = t is Timestamp
         ? t.millisecondsSinceEpoch
         : t is num
-            ? t.toInt()
-            : 0;
+        ? t.toInt()
+        : 0;
     if (n == 0) return '—';
     final d = DateTime.fromMillisecondsSinceEpoch(n);
     return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
@@ -75,48 +80,60 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
     bool open = _calendar['isOpen'] is bool
         ? _calendar['isOpen']
         : _day.weekday != DateTime.sunday;
-    final reason =
-        TextEditingController(text: _calendar['reason']?.toString() ?? '');
+    final reason = TextEditingController(
+      text: _calendar['reason']?.toString() ?? '',
+    );
     final saved = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-            builder: (ctx, setD) => AlertDialog(
-                    title: Text('School calendar • ${schoolDateKey(_day)}'),
-                    content: SizedBox(
-                        width: 400,
-                        child:
-                            Column(mainAxisSize: MainAxisSize.min, children: [
-                          SwitchListTile(
-                              value: open,
-                              onChanged: (v) => setD(() => open = v),
-                              title:
-                                  Text(open ? 'School open' : 'School closed'),
-                              subtitle: const Text(
-                                  'Closed days block attendance for students and teachers.')),
-                          TextField(
-                              controller: reason,
-                              decoration: const InputDecoration(
-                                  labelText: 'Reason / holiday name'))
-                        ])),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: const Text('Cancel')),
-                      FilledButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: const Text('Save date'))
-                    ])));
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: Text('School calendar • ${schoolDateKey(_day)}'),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SwitchListTile(
+                  value: open,
+                  onChanged: (v) => setD(() => open = v),
+                  title: Text(open ? 'School open' : 'School closed'),
+                  subtitle: const Text(
+                    'Closed days block attendance for students and teachers.',
+                  ),
+                ),
+                TextField(
+                  controller: reason,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason / holiday name',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save date'),
+            ),
+          ],
+        ),
+      ),
+    );
     if (saved == true) {
       await FirebaseFirestore.instance
           .collection('school_calendar')
           .doc(schoolDateKey(_day))
           .set({
-        'date': schoolDateKey(_day),
-        'isOpen': open,
-        'reason': reason.text.trim(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin'
-      });
+            'date': schoolDateKey(_day),
+            'isOpen': open,
+            'reason': reason.text.trim(),
+            'updatedAt': FieldValue.serverTimestamp(),
+            'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+          });
       await WindowsConnectionCenter.refreshProfileAndSync();
       if (mounted) _load();
     }
@@ -125,111 +142,142 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(
-          title: const Text('Attendance & school calendar'),
-          actions: [
-            IconButton(onPressed: _load, icon: const Icon(Icons.refresh))
-          ]),
-      body: LayoutBuilder(builder: (ctx, c) {
+    appBar: AppBar(
+      title: const Text('Attendance & school calendar'),
+      actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
+    ),
+    body: LayoutBuilder(
+      builder: (ctx, c) {
         final cal = Card(
-            child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Text('School calendar',
-                          style: TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.w700)),
-                      CalendarDatePicker(
-                          initialDate: _day,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2100),
-                          onDateChanged: (d) {
-                            setState(() => _day = d);
-                            _load();
-                          }),
-                      Text(
-                          (_calendar['isOpen'] is bool
-                                  ? _calendar['isOpen']
-                                  : _day.weekday != DateTime.sunday)
-                              ? 'School open'
-                              : 'School closed',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      if ((_calendar['reason']?.toString() ?? '').isNotEmpty)
-                        Text(_calendar['reason'].toString()),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                          onPressed: _calendarEdit,
-                          icon: const Icon(Icons.edit_calendar),
-                          label: const Text('Set open / closed'))
-                    ])));
-        final table =
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Wrap(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'School calendar',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+                CalendarDatePicker(
+                  initialDate: _day,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2100),
+                  onDateChanged: (d) {
+                    setState(() => _day = d);
+                    _load();
+                  },
+                ),
+                Text(
+                  (_calendar['isOpen'] is bool
+                          ? _calendar['isOpen']
+                          : _day.weekday != DateTime.sunday)
+                      ? 'School open'
+                      : 'School closed',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                if ((_calendar['reason']?.toString() ?? '').isNotEmpty)
+                  Text(_calendar['reason'].toString()),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _calendarEdit,
+                  icon: const Icon(Icons.edit_calendar),
+                  label: const Text('Set open / closed'),
+                ),
+              ],
+            ),
+          ),
+        );
+        final table = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
               alignment: WrapAlignment.spaceBetween,
               runSpacing: 10,
               children: [
-                Text(schoolDateKey(_day),
-                    style: const TextStyle(
-                        fontSize: 24, fontWeight: FontWeight.bold)),
+                Text(
+                  schoolDateKey(_day),
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(value: 'student', label: Text('Students')),
-                      ButtonSegment(value: 'teacher', label: Text('Teachers'))
-                    ],
-                    selected: {
-                      _role
-                    },
-                    onSelectionChanged: (v) {
-                      setState(() => _role = v.first);
-                      _load();
-                    })
-              ]),
-          const SizedBox(height: 18),
-          Text(
+                  segments: const [
+                    ButtonSegment(value: 'student', label: Text('Students')),
+                    ButtonSegment(value: 'teacher', label: Text('Teachers')),
+                  ],
+                  selected: {_role},
+                  onSelectionChanged: (v) {
+                    setState(() => _role = v.first);
+                    _load();
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Text(
               '${_records.length} check-ins • ${_records.where((r) => r['checkOut'] != null).length} check-outs',
-              style: const TextStyle(color: Colors.white54)),
-          const SizedBox(height: 16),
-          if (_loading) const LinearProgressIndicator(),
-          if (_error != null)
-            Text(_error!, style: const TextStyle(color: Colors.redAccent)),
-          if (!_loading && _records.isEmpty)
-            const Padding(
+              style: const TextStyle(color: Colors.white54),
+            ),
+            const SizedBox(height: 16),
+            if (_loading) const LinearProgressIndicator(),
+            if (_error != null)
+              Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+            if (!_loading && _records.isEmpty)
+              const Padding(
                 padding: EdgeInsets.symmetric(vertical: 35),
-                child: Text('No attendance records for this date.')),
-          SingleChildScrollView(
+                child: Text('No attendance records for this date.'),
+              ),
+            SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
-                  columns: const [
-                    DataColumn(label: Text('Name')),
-                    DataColumn(label: Text('Class / ID')),
-                    DataColumn(label: Text('Check-in')),
-                    DataColumn(label: Text('Check-out')),
-                    DataColumn(label: Text('Date'))
-                  ],
-                  rows: _records
-                      .map((r) => DataRow(cells: [
-                            DataCell(Text(r['name']?.toString() ?? '')),
-                            DataCell(Text(_role == 'student'
-                                ? '${r['studentClass']} • ${r['rollNo']}'
-                                : r['personId']?.toString() ?? '')),
-                            DataCell(Text(_time(r['checkIn']))),
-                            DataCell(Text(_time(r['checkOut']))),
-                            DataCell(Text(r['date'].toString()))
-                          ]))
-                      .toList()))
-        ]);
+                columns: const [
+                  DataColumn(label: Text('Name')),
+                  DataColumn(label: Text('Class / ID')),
+                  DataColumn(label: Text('Check-in')),
+                  DataColumn(label: Text('Check-out')),
+                  DataColumn(label: Text('Date')),
+                ],
+                rows: _records
+                    .map(
+                      (r) => DataRow(
+                        cells: [
+                          DataCell(Text(r['name']?.toString() ?? '')),
+                          DataCell(
+                            Text(
+                              _role == 'student'
+                                  ? '${r['studentClass']} • ${r['rollNo']}'
+                                  : r['personId']?.toString() ?? '',
+                            ),
+                          ),
+                          DataCell(Text(_time(r['checkIn']))),
+                          DataCell(Text(_time(r['checkOut']))),
+                          DataCell(Text(r['date'].toString())),
+                        ],
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+          ],
+        );
         return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: c.maxWidth < 950
-                ? Column(children: [cal, const SizedBox(height: 20), table])
-                : Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          padding: const EdgeInsets.all(20),
+          child: c.maxWidth < 950
+              ? Column(children: [cal, const SizedBox(height: 20), table])
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     SizedBox(width: 350, child: cal),
                     const SizedBox(width: 24),
-                    Expanded(child: table)
-                  ]));
-      }));
+                    Expanded(child: table),
+                  ],
+                ),
+        );
+      },
+    ),
+  );
 }
 
 class WindowsSupportScreen extends StatefulWidget {
@@ -251,7 +299,8 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   Future<void> _send() async {
     if (_message.text.trim().length < 10) {
       setState(
-          () => _error = 'Describe the problem in at least 10 characters.');
+        () => _error = 'Describe the problem in at least 10 characters.',
+      );
       return;
     }
     setState(() {
@@ -263,7 +312,8 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
       _message.clear();
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Complaint sent to the developer.')));
+          const SnackBar(content: Text('Complaint sent to the developer.')),
+        );
     } catch (e) {
       if (mounted)
         setState(() => _error = e.toString().replaceFirst('Bad state: ', ''));
@@ -274,48 +324,58 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(title: const Text('Report app problem')),
-      body: SingleChildScrollView(
-          padding: const EdgeInsets.all(28),
-          child: Align(
-              alignment: Alignment.topLeft,
-              child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 620),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const Text('Contact the developer',
-                            style: TextStyle(
-                                fontSize: 25, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 12),
-                        const Text(
-                            'Tell us which screen had a problem and what happened.'),
-                        const SizedBox(height: 22),
-                        TextField(
-                            controller: _message,
-                            minLines: 7,
-                            maxLines: 12,
-                            maxLength: 3000,
-                            decoration: const InputDecoration(
-                                labelText: 'Your complaint',
-                                hintText:
-                                    'Describe the issue. Do not include passwords.')),
-                        if (_error != null)
-                          Text(_error!,
-                              style: const TextStyle(color: Colors.redAccent)),
-                        const SizedBox(height: 18),
-                        FilledButton.icon(
-                            onPressed: _busy ? null : _send,
-                            icon: const Icon(Icons.send_outlined),
-                            label: Text(_busy ? 'Sending…' : 'Send complaint'))
-                      ])))));
+    appBar: AppBar(title: const Text('Report app problem')),
+    body: SingleChildScrollView(
+      padding: const EdgeInsets.all(28),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Contact the developer',
+                style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Tell us which screen had a problem and what happened.',
+              ),
+              const SizedBox(height: 22),
+              TextField(
+                controller: _message,
+                minLines: 7,
+                maxLines: 12,
+                maxLength: 3000,
+                decoration: const InputDecoration(
+                  labelText: 'Your complaint',
+                  hintText: 'Describe the issue. Do not include passwords.',
+                ),
+              ),
+              if (_error != null)
+                Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: _busy ? null : _send,
+                icon: const Icon(Icons.send_outlined),
+                label: Text(_busy ? 'Sending…' : 'Send complaint'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class SchoolPromotionService {
   static int? nextClassNumber(int current) {
-    if (current < 1 || current > 12) throw ArgumentError('Invalid student class.');
+    if (current < 1 || current > 12)
+      throw ArgumentError('Invalid student class.');
     return current == 12 ? null : current + 1;
   }
+
   static Future<bool> forceEnabled() async =>
       (await FirebaseFirestore.instance
               .collection('school_settings')
@@ -323,54 +383,155 @@ class SchoolPromotionService {
               .get())
           .data()?['allowForcedPromotion'] ==
       true;
-  static Future<bool> isFinal(Map<String, dynamic> exam) async {
-    final db=FirebaseFirestore.instance,profile=FirebaseFirestore.instance.activeProfileId;
-    final id=exam['examId']?.toString()??'';
-    if(id.isEmpty)return false;
-    final definitions=await Future.wait([
+  static Future<bool> isFinal(
+    Map<String, dynamic> exam, {
+    DateTime? now,
+    int? rolloverMonth,
+    bool allowPreviousSession = false,
+  }) async {
+    final db = FirebaseFirestore.instance,
+        profile = FirebaseFirestore.instance.activeProfileId;
+    final id = exam['examId']?.toString() ?? '';
+    if (id.isEmpty) return false;
+    final definitions = await Future.wait([
       db.collection('_local_exam_center_exams').doc(id).get(),
       db.collection('exams').doc(id).get(),
       db.collection('school_settings').doc('exam_$id').get(),
     ]);
-    if(db.activeProfileId!=profile)throw StateError('School changed during final-exam verification.');
-    return definitions.any((d)=>d.data()?['isFinal']==true);
+    if (db.activeProfileId != profile)
+      throw StateError('School changed during final-exam verification.');
+    final month = rolloverMonth ?? await PromotionSessionPolicy.rolloverMonth();
+    final existing = definitions.where((d) => d.exists).toList();
+    final definition = existing.isEmpty ? null : existing.first.data();
+    return definition?['isFinal'] == true &&
+        PromotionSessionPolicy.matches(
+          definition!,
+          now ?? DateTime.now(),
+          month,
+          allowPreviousSession: allowPreviousSession,
+        );
   }
 
-  static Future<String> apply(
-      {required String studentId,
-      required Map<String, dynamic> student,
-      required Map<String, dynamic> exam,
-      required String result,
-      bool force = false, String reason=''}) async {
-    final profile=FirebaseFirestore.instance.activeProfileId;
-    void own(){if(FirebaseFirestore.instance.activeProfileId!=profile)throw StateError('School changed during promotion.');}
-    if (!await isFinal(exam))
+  static Future<String> apply({
+    required String studentId,
+    required Map<String, dynamic> student,
+    required Map<String, dynamic> exam,
+    required String result,
+    bool force = false,
+    String reason = '',
+  }) async {
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    void own() {
+      if (FirebaseFirestore.instance.activeProfileId != profile)
+        throw StateError('School changed during promotion.');
+    }
+
+    if (!await isFinal(exam, allowPreviousSession: force))
       throw StateError(
-          'Promotion or retention is available only after a final exam.');
+        'Promotion or retention is available only after a final exam.',
+      );
     own();
-    final verifiedResult=(await FirebaseFirestore.instance.collection('exam_results').doc('${exam['examId']}_$studentId').get()).data() ??
-      (await FirebaseFirestore.instance.collection('_local_exam_center_results').doc('${exam['examId']}_$studentId').get()).data();
+    final verifiedResult =
+        (await FirebaseFirestore.instance
+                .collection('exam_results')
+                .doc('${exam['examId']}_$studentId')
+                .get())
+            .data() ??
+        (await FirebaseFirestore.instance
+                .collection('_local_exam_center_results')
+                .doc('${exam['examId']}_$studentId')
+                .get())
+            .data();
     own();
-    if(verifiedResult==null || verifiedResult['result']!=result || (verifiedResult['studentId']!=null&&verifiedResult['studentId']!=studentId))throw StateError('Calculate and save this student final-exam result first.');
+    if (verifiedResult == null ||
+        verifiedResult['result'] != result ||
+        (verifiedResult['studentId'] != null &&
+            verifiedResult['studentId'] != studentId))
+      throw StateError(
+        'Calculate and save this student final-exam result first.',
+      );
+    final definition =
+        (await FirebaseFirestore.instance
+                .collection('_local_exam_center_exams')
+                .doc(exam['examId'])
+                .get())
+            .data() ??
+        (await FirebaseFirestore.instance
+                .collection('exams')
+                .doc(exam['examId'])
+                .get())
+            .data();
+    own();
+    final subjects = (definition?['subjects'] as List? ?? [])
+        .map((s) => s.toString())
+        .toList();
+    if (subjects.isNotEmpty) {
+      final marks = verifiedResult['marks'];
+      final maximum = definition?['fullMarks'] ?? verifiedResult['fullMarks'];
+      final pass = definition?['passMarks'] ?? verifiedResult['passMarks'];
+      if (marks is! Map ||
+          maximum is! num ||
+          pass is! num ||
+          !maximum.isFinite ||
+          maximum <= 0 ||
+          !pass.isFinite ||
+          pass < 0 ||
+          pass > maximum ||
+          subjects.any(
+            (s) =>
+                marks[s] is! num ||
+                !(marks[s] as num).isFinite ||
+                marks[s] < 0 ||
+                marks[s] > maximum,
+          ))
+        throw StateError(
+          'Complete and save every Final Exam subject before promotion.',
+        );
+      final computed = subjects.every((s) => marks[s] >= pass)
+          ? 'PASS'
+          : 'FAIL';
+      if (computed != result)
+        throw StateError(
+          'Final result does not match the saved subject marks.',
+        );
+    }
     if (result != 'PASS' && result != 'FAIL')
       throw StateError('Final PASS/FAIL result is missing.');
-    if (force && (reason.trim().isEmpty || reason.trim().length>500)) throw StateError('Enter an administrator override reason (maximum 500 characters).');
+    if (force && (reason.trim().isEmpty || reason.trim().length > 500))
+      throw StateError(
+        'Enter an administrator override reason (maximum 500 characters).',
+      );
     if (force && !await forceEnabled())
       throw StateError(
-          'Enable the administrator force-promotion switch first.');
+        'Enable the administrator force-promotion switch first.',
+      );
     final ref = FirebaseFirestore.instance
         .collection('students_directory')
         .doc(studentId);
-    final live = await SchoolPersonIdentity.ensure('students_directory',studentId);
+    final live = await SchoolPersonIdentity.ensure(
+      'students_directory',
+      studentId,
+    );
     own();
+    if (verifiedResult['personId'] != null &&
+        verifiedResult['personId'] != (live['mobileStableId'] ?? studentId))
+      throw StateError('Final result belongs to a previous pupil identity.');
     final examId = exam['examId']?.toString() ?? '';
     if (examId.isEmpty) throw StateError('Final exam ID missing.');
-    if(force && (result!='FAIL' || live['classMovement']!='RETAINED' || live['promotionExamId']!=examId))throw StateError('Admin override is only for this final-exam retained student.');
+    if (force &&
+        (result != 'FAIL' ||
+            live['classMovement'] != 'RETAINED' ||
+            live['promotionExamId'] != examId))
+      throw StateError(
+        'Admin override is only for this final-exam retained student.',
+      );
     if (live['promotionExamId'] == examId &&
-        live['classMovement'] != 'RETAINED') return 'Already processed';
-    final classNo = int.tryParse(
-            live['class']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ??
-                '') ??
+        live['classMovement'] != 'RETAINED')
+      return 'Already processed';
+    final classNo =
+        int.tryParse(
+          live['class']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '',
+        ) ??
         0;
     if (classNo < 1 || classNo > 12) throw StateError('Invalid student class.');
     final shared = {
@@ -381,56 +542,77 @@ class SchoolPromotionService {
       'classChangedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
       'promotionPending': false,
       'promotionError': '',
-      'classChangedAt': FieldValue.serverTimestamp()
+      'classChangedAt': FieldValue.serverTimestamp(),
     };
     if (result == 'FAIL' && !force) {
-      await ref.set(
-          {...shared, 'classMovement': 'RETAINED'}, SetOptions(merge: true));
+      await ref.set({
+        ...shared,
+        'classMovement': 'RETAINED',
+      }, SetOptions(merge: true));
       return 'Retained in ${live['class']}';
     }
     final nextClass = nextClassNumber(classNo);
     if (nextClass == null) {
-      await ref.set(
-          {...shared, 'classMovement': 'GRADUATED'}, SetOptions(merge: true));
+      await ref.set({
+        ...shared,
+        'classMovement': 'GRADUATED',
+      }, SetOptions(merge: true));
       return 'Completed Class 12';
     }
     final newClass = 'Class $nextClass';
     final roll = live['rollNo']?.toString() ?? '';
-    final directory = await FirebaseFirestore.instance.collection('students_directory').get();
-    final occupied = directory.docs.where((d)=>d.data()['class']==newClass)
-        .map((d)=>int.tryParse(d.data()['rollNo']?.toString() ?? '')).whereType<int>().toSet();
+    final directory = await FirebaseFirestore.instance
+        .collection('students_directory')
+        .get();
+    final occupied = directory.docs
+        .where((d) => d.data()['class'] == newClass)
+        .map((d) => int.tryParse(d.data()['rollNo']?.toString() ?? ''))
+        .whereType<int>()
+        .toSet();
     var nextRoll = int.tryParse(roll) ?? 1;
-    if(occupied.contains(nextRoll)){nextRoll=1;while(occupied.contains(nextRoll)){nextRoll++;}}
-    final target = FirebaseFirestore.instance.collection('students_directory')
+    if (occupied.contains(nextRoll)) {
+      nextRoll = 1;
+      while (occupied.contains(nextRoll)) {
+        nextRoll++;
+      }
+    }
+    final target = FirebaseFirestore.instance
+        .collection('students_directory')
         .doc('${newClass}_Roll_$nextRoll');
     final stableId = live['mobileStableId'] ?? studentId;
     own();
-    final connection=await CentralSchoolCloud.saved();
+    final connection = await CentralSchoolCloud.saved();
     own();
-    final url = connection['managed']==true ? await WindowsExternalConnections.googleScriptUrl() : await WindowsConnectionCenter.googleScriptUrl();
-    final response = await WindowsBackendBridge.post(Uri.parse(url),
-        headers: {'Content-Type': 'text/plain;charset=utf-8'},
-        body: jsonEncode({
-          'action': 'change_student_class',
-          'oldClass': live['class'],
-          'newClass': newClass,
-          'rollNo': roll,
-          'newRollNo': nextRoll.toString(),
-          'oldStudentId': studentId,
-          'newStudentId': target.id,
-          'studentName': live['name'],
-          'dob': live['dob'] ?? live['dateOfBirth'],
-          'movement': force ? 'FORCE_PROMOTED' : 'PROMOTED',
-          'examName': exam['examName'],
-          'result': result,
-          'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin'
-        }));
+    final url = connection['managed'] == true
+        ? await WindowsExternalConnections.googleScriptUrl()
+        : await WindowsConnectionCenter.googleScriptUrl();
+    final response = await WindowsBackendBridge.post(
+      Uri.parse(url),
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: jsonEncode({
+        'action': 'change_student_class',
+        'oldClass': live['class'],
+        'newClass': newClass,
+        'rollNo': roll,
+        'newRollNo': nextRoll.toString(),
+        'oldStudentId': studentId,
+        'newStudentId': target.id,
+        'studentName': live['name'],
+        'dob': live['dob'] ?? live['dateOfBirth'],
+        'movement': force ? 'FORCE_PROMOTED' : 'PROMOTED',
+        'examName': exam['examName'],
+        'result': result,
+        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      }),
+    );
     own();
     final data = jsonDecode(response.body);
     if (response.statusCode >= 400 || data is! Map || data['success'] != true)
-      throw StateError(data is Map
-          ? data['message']?.toString() ?? 'Class sync failed'
-          : 'Class sync failed');
+      throw StateError(
+        data is Map
+            ? data['message']?.toString() ?? 'Class sync failed'
+            : 'Class sync failed',
+      );
     final aliases = List<String>.from(live['previousStudentIds'] ?? []);
     if (!aliases.contains(studentId)) aliases.add(studentId);
     own();
@@ -443,22 +625,46 @@ class SchoolPromotionService {
       'previousClass': live['class'],
       'mobileStableId': stableId,
       'previousStudentIds': aliases,
-      'classMovement': force ? 'FORCE_PROMOTED' : 'PROMOTED'
+      'classMovement': force ? 'FORCE_PROMOTED' : 'PROMOTED',
     });
-    batch.set(FirebaseFirestore.instance.collection('school_settings').doc('promotion_audit_${examId}_$studentId'),{
-      'studentId':studentId,'name':live['name'],'fromClass':live['class'],'toClass':newClass,
-      'examId':examId,'at':DateTime.now().millisecondsSinceEpoch,'reason':reason.trim(),
-      'manualAdminOverride':force,'actor':FirebaseAuth.instance.currentUser?.email??'Admin',
-    });
+    batch.set(
+      FirebaseFirestore.instance
+          .collection('school_settings')
+          .doc('promotion_audit_${examId}_$studentId'),
+      {
+        'studentId': studentId,
+        'name': live['name'],
+        'fromClass': live['class'],
+        'toClass': newClass,
+        'examId': examId,
+        'at': DateTime.now().millisecondsSinceEpoch,
+        'reason': reason.trim(),
+        'manualAdminOverride': force,
+        'actor': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      },
+    );
     batch.delete(ref);
-    try { await batch.commit(); }
-    catch(error){
-      try { await WindowsBackendBridge.post(Uri.parse(url),
-        headers:{'Content-Type':'text/plain;charset=utf-8'},body:jsonEncode({
-          'action':'change_student_class','oldClass':newClass,'newClass':live['class'],
-          'rollNo':nextRoll.toString(),'newRollNo':roll,'oldStudentId':target.id,
-          'newStudentId':studentId,'studentName':live['name'],
-          'dob':live['dob'] ?? live['dateOfBirth'],'movement':'ROLLBACK'})); } catch(_) {}
+    try {
+      await batch.commit();
+    } catch (error) {
+      try {
+        await WindowsBackendBridge.post(
+          Uri.parse(url),
+          headers: {'Content-Type': 'text/plain;charset=utf-8'},
+          body: jsonEncode({
+            'action': 'change_student_class',
+            'oldClass': newClass,
+            'newClass': live['class'],
+            'rollNo': nextRoll.toString(),
+            'newRollNo': roll,
+            'oldStudentId': target.id,
+            'newStudentId': studentId,
+            'studentName': live['name'],
+            'dob': live['dob'] ?? live['dateOfBirth'],
+            'movement': 'ROLLBACK',
+          }),
+        );
+      } catch (_) {}
       rethrow;
     }
     return 'Promoted to $newClass • Roll $nextRoll';
@@ -483,19 +689,21 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
 
   @override
   Widget build(BuildContext context) => SwitchListTile(
-      value: _enabled,
-      title: const Text('Allow force promotion of retained students'),
-      subtitle: const Text(
-          'Final-exam FAIL normally keeps a student in the same class. This switch enables an administrator override.'),
-      onChanged: (v) async {
-        await FirebaseFirestore.instance
-            .collection('school_settings')
-            .doc('promotion_policy')
-            .set({
-          'allowForcedPromotion': v,
-          'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-          'updatedAt': FieldValue.serverTimestamp()
-        });
-        if (mounted) setState(() => _enabled = v);
-      });
+    value: _enabled,
+    title: const Text('Allow force promotion of retained students'),
+    subtitle: const Text(
+      'Final-exam FAIL normally keeps a student in the same class. This switch enables an administrator override.',
+    ),
+    onChanged: (v) async {
+      await FirebaseFirestore.instance
+          .collection('school_settings')
+          .doc('promotion_policy')
+          .set({
+            'allowForcedPromotion': v,
+            'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+      if (mounted) setState(() => _enabled = v);
+    },
+  );
 }

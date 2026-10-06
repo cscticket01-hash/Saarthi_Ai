@@ -5159,10 +5159,10 @@ void _handleLoginBack(bool didPop) {
       if (!mounted) return;
       _cancelNoticeEdit();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        backgroundColor: result.notificationSent ? const Color(0xFF00A884) : Colors.orange,
+        backgroundColor: result.notificationSent || result.schoolPublished ? const Color(0xFF00A884) : Colors.orange,
         content: Text(result.notificationSent
           ? 'Published to the school student app. Notification accepted for ${result.recipients} registered students.'
-          : result.schoolPublished ? 'Notice published to this school dashboard. ${result.error}' : 'Notice saved locally. ${result.error}')));
+          : result.schoolPublished ? 'Notice published to this school dashboard.\n${result.info}${result.error}' : 'Notice saved locally. ${result.error}')));
     } catch (e) {
       if (mounted) {
         setState(() => _isSavingNotice = false);

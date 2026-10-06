@@ -65,6 +65,51 @@ void main() {
       expect(result['height'], lessThan(800));
     },
   );
+  test('text projection straightens a confidently skewed scan without deleting its source', () {
+    final image = img.Image(width: 600, height: 800);
+    image.backgroundColor = img.ColorRgb8(255, 255, 255);
+    img.fill(image, color: img.ColorRgb8(255, 255, 255));
+    for (var y = 100; y < 700; y += 32)
+      img.drawLine(
+        image,
+        x1: 70,
+        y1: y,
+        x2: 520,
+        y2: y,
+        color: img.ColorRgb8(20, 20, 20),
+        thickness: 2,
+      );
+    final tilted = img.copyRotate(
+      image,
+      angle: 3,
+      interpolation: img.Interpolation.linear,
+    );
+    final bytes = Uint8List.fromList(img.encodePng(tilted));
+    final result = DocumentProcessingEngine.process({'bytes': bytes});
+    expect(result['deskewDegrees'], closeTo(3, 1));
+    expect(img.decodeJpg(result['optimized'] as Uint8List), isNotNull);
+  });
+  test(
+    'transparent PNG/PDF raster paper stays white with readable black text',
+    () {
+      final image = img.Image(width: 600, height: 800, numChannels: 4);
+      img.drawLine(
+        image,
+        x1: 40,
+        y1: 200,
+        x2: 540,
+        y2: 200,
+        color: img.ColorRgba8(0, 0, 0, 255),
+        thickness: 2,
+      );
+      final result = DocumentProcessingEngine.process({
+        'bytes': Uint8List.fromList(img.encodePng(image)),
+      });
+      final decoded = img.decodeJpg(result['optimized'] as Uint8List)!;
+      expect(decoded.getPixel(200, 210).r, greaterThan(230));
+      expect(decoded.getPixel(200, 200).r, lessThan(60));
+    },
+  );
   test(
     'invalid input is rejected rather than creating a pretend processed scan',
     () {

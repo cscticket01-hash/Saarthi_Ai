@@ -26,7 +26,19 @@ class DocumentProcessingEngine {
     final decoded = decoder!.decodeFrame(0);
     if (decoded == null)
       throw const FormatException('Image cannot be decoded.');
-    var image = img.bakeOrientation(decoded);
+    var image = img.bakeOrientation(
+      decoded.convert(format: img.Format.uint8, numChannels: 4),
+    );
+    // PNG/PDF raster transparency must become white paper, not black JPEG ink.
+    for (final pixel in image) {
+      final alpha = pixel.a / 255;
+      pixel.r = pixel.r * alpha + 255 * (1 - alpha);
+      pixel.g = pixel.g * alpha + 255 * (1 - alpha);
+      pixel.b = pixel.b * alpha + 255 * (1 - alpha);
+      pixel.a = 255;
+    }
+    image = image.convert(numChannels: 3);
+
     final longest = math.max(image.width, image.height);
     if (longest > 2200)
       image = img.copyResize(

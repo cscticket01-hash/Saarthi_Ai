@@ -46,6 +46,12 @@ jobs:
         shell: powershell
         run: flutter create --platforms=windows --no-pub .
 
+      - name: Prevent concurrent Windows local database instances
+        shell: powershell
+        run: |
+          python .github/scripts/test_windows_single_instance.py
+          python .github/scripts/configure_windows_single_instance.py
+
       - name: Verify Dedicated Windows Source
         shell: powershell
         run: |
@@ -360,4 +366,3 @@ jobs:
             school-backend/managed/SaarthiManagedAll.gs
             school-backend/managed/appsscript.json
             docs/manual-school-drive-setup.md
-

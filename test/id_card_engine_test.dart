@@ -79,7 +79,16 @@ void main() {
       final text = latin1.decode(bytes);
       expect(text.startsWith('%PDF'), true);
       expect(RegExp(r'/Type\s*/Page\b').allMatches(text).length, 1);
-      expect(text.contains('/MediaBox'), true);
+      final box = RegExp(
+        r'/MediaBox\s*\[\s*0(?:\.0+)?\s+0(?:\.0+)?\s+([\d.]+)\s+([\d.]+)',
+      ).firstMatch(text);
+      expect(box, isNotNull);
+      expect(double.parse(box!.group(1)!), closeTo(116 * 72 / 25.4, 0.02));
+      expect(double.parse(box.group(2)!), closeTo(85.6 * 72 / 25.4, 0.02));
+      final folder = Directory('build/reference-document-previews');
+      await folder.create(recursive: true);
+      await File('${folder.path}/manifest_${role.replaceAll(' ', '_')}.pdf')
+          .writeAsBytes(bytes);
     }
   });
 }
