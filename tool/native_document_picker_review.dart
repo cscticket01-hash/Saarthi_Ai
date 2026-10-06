@@ -218,8 +218,20 @@ Future<void> waitForAsync(Future<bool> Function() condition) async {
   final deadline = DateTime.now().add(const Duration(seconds: 45));
   while (!await condition()) {
     if (DateTime.now().isAfter(deadline))
-      throw StateError('Production Documents flow timed out');
+      throw StateError(
+          'Production Documents flow timed out; visible keys: ${visibleKeys()}');
     await Future<void>.delayed(const Duration(milliseconds: 50));
   }
   await Future<void>.delayed(const Duration(milliseconds: 100));
+}
+
+String visibleKeys() {
+  final keys = <String>[];
+  void visit(Element element) {
+    final key = element.widget.key;
+    if (key is ValueKey<String>) keys.add(key.value);
+    element.visitChildElements(visit);
+  }
+  WidgetsBinding.instance.rootElement?.visitChildElements(visit);
+  return keys.join(',');
 }
