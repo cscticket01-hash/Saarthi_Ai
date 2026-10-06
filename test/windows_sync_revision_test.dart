@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
@@ -57,7 +58,9 @@ void main(){
  test('retained school A references cannot read or derive queries after switching school',()async{
   final collection=db.collection('students_directory'),ref=collection.doc('own'),query=collection.where('name',isEqualTo:'A');
   await ref.set({'name':'A'});final origin=db.activeProfileId;
+  final stream=StreamIterator(query.snapshots());expect(await stream.moveNext(),true);
   await db.switchProfile('reference-school-B',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+  expect(await stream.moveNext(),false);await stream.cancel();
   await expectLater(ref.get(),throwsStateError);await expectLater(query.get(),throwsStateError);
   expect(()=>collection.doc('new'),throwsStateError);expect(()=>collection.where('name',isEqualTo:'B'),throwsStateError);
   await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});

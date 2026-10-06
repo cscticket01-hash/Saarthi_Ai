@@ -320,11 +320,18 @@ class Query<T> {
   }
 
   Stream<QuerySnapshot<T>> snapshots() async* {
-    yield await get();
-
-    await for (final _ in firestore._database
-        .changesFor(collectionPath)) {
+    try {
+      if(firestore.activeProfileId!=originProfile)return;
       yield await get();
+      if(firestore.activeProfileId!=originProfile)return;
+      await for (final _ in firestore._database.changesFor(collectionPath)) {
+        if(firestore.activeProfileId!=originProfile)return;
+        yield await get();
+      }
+    } on StateError {
+      // Retire subscriptions from the old tenant without delivering the new
+      // tenant's rows or raising an unhandled UI error during account switch.
+      if(firestore.activeProfileId==originProfile)rethrow;
     }
   }
 
@@ -415,11 +422,18 @@ class DocumentReference<T> {
   }
 
   Stream<DocumentSnapshot<T>> snapshots() async* {
-    yield await get();
-
-    await for (final _ in firestore._database
-        .changesFor(collectionPath)) {
+    try {
+      if(firestore.activeProfileId!=originProfile)return;
       yield await get();
+      if(firestore.activeProfileId!=originProfile)return;
+      await for (final _ in firestore._database.changesFor(collectionPath)) {
+        if(firestore.activeProfileId!=originProfile)return;
+        yield await get();
+      }
+    } on StateError {
+      // Retire subscriptions from the old tenant without delivering the new
+      // tenant's rows or raising an unhandled UI error during account switch.
+      if(firestore.activeProfileId==originProfile)rethrow;
     }
   }
 
