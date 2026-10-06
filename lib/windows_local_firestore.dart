@@ -126,7 +126,8 @@ class FirebaseFirestore {
     // Cache only the validated storage decision, never credentials. The
     // authoritative login/session notifier and immutable profile identity
     // invalidate it. Avoid native credential I/O inside every database read.
-    final binding = '$origin:${identity['schoolSyncId']}:${identity['schoolId']}:${identity['blocked']}:${ManagedSchoolSession.changed.value}';
+    final revision = ManagedSchoolSession.changed.value;
+    final binding = '$origin:${identity['schoolSyncId']}:${identity['schoolId']}:${identity['blocked']}:$revision';
     if (_persistenceBinding != binding || _persistenceResolution == null) {
       _persistenceBinding = binding;
       _persistenceResolution = _resolvePersistence(identity).catchError((Object error, StackTrace stack) {
@@ -138,7 +139,8 @@ class FirebaseFirestore {
       });
     }
     final mode = await _persistenceResolution!;
-    if (origin != activeProfileId || _persistenceBinding != binding) {
+    if (origin != activeProfileId || _persistenceBinding != binding ||
+        ManagedSchoolSession.changed.value != revision) {
       throw StateError('School changed during storage resolution.');
     }
     return mode == 1 || mode == 0 && await WindowsRuntimeFlags.localStorageEnabled();
