@@ -16,6 +16,8 @@ import '../lib/windows_local_settings.dart';
 import '../lib/windows_local_auth.dart' as local;
 import '../lib/windows_connect/managed_school_session.dart';
 void main(){
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => FlutterSecureStorage.setMockInitialValues({}));
   test('legacy branding cache without schoolId is recovered only from its immutable tenant profile', () async {
     final db = FirebaseFirestore.instance;
     final profile = 'registration-cache-${DateTime.now().microsecondsSinceEpoch}';

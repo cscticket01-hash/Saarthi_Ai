@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -93,6 +94,29 @@ void main() {
     expect(ready(), true, reason: 'Production document flow did not complete');
   }
 
+  // Keep pumping the UI zone while real disk I/O and the queued credential
+  // adapter complete. Awaiting disk inside runAsync alone can starve a queued
+  // callback owned by the widget's fake-async zone.
+  Future<T?> io<T>(WidgetTester t, Future<T> Function() action) async {
+    T? value;
+    Object? error;
+    StackTrace? stack;
+    var done = false;
+    await t.runAsync(() async {
+      unawaited(action().then<void>((result) {
+        value = result;
+        done = true;
+      }, onError: (Object e, StackTrace st) {
+        error = e;
+        stack = st;
+        done = true;
+      }));
+    });
+    await waitFor(t, () => done);
+    if (error != null) Error.throwWithStackTrace(error!, stack!);
+    return value;
+  }
+
   Future<void> open(WidgetTester t, {int existing = 0, bool cancelled = false}) async {
     final beforeCalls = picker.calls;
     t.view.physicalSize = const Size(1400, 1000);
@@ -123,7 +147,7 @@ void main() {
             .evaluate()
             .isNotEmpty || (cancelled && picker.calls > beforeCalls));
     expect(picker.calls, beforeCalls + 1);
-    expect(await t.runAsync(count), existing);
+    expect(await io(t, count), existing);
   }
 
   for (final pdf in [false, true]) {
@@ -131,7 +155,7 @@ void main() {
       'production Documents screen legacy toggle OFF: ${pdf ? "PDF" : "PNG"} offline preview/save, cancellation and failure preserve records/queue',
       (t) async {
     final document = pw.Document()..addPage(pw.Page(build: (_) => pw.Text('Real PDF document fixture')));
-    final source = pdf ? (await t.runAsync(document.save))! :
+    final source = pdf ? (await io(t, document.save))! :
         Uint8List.fromList(img.encodePng(img.Image(width: 100, height: 140)));
     final filename = pdf ? 'source.pdf' : 'source.png';
     picker.selection = XFile.fromData(source,
@@ -146,7 +170,7 @@ void main() {
                 .onPressed !=
             null);
     expect(picker.calls, 1);
-    expect(await t.runAsync(count), 0);
+    expect(await io(t, count), 0);
     expect(find.textContaining('optimized'), findsWidgets);
     await t.tap(find.byKey(const ValueKey('document-confirm-save')));
     await waitFor(
@@ -163,25 +187,24 @@ void main() {
                     .onPressed !=
                 null);
     final rows =
-        await t.runAsync(() => db.collection('_local_student_documents').get());
+        await io(t, () => db.collection('_local_student_documents').get());
     expect(rows!.docs.length, 1);
     final row = rows.docs.single.data();
     expect(row['syncState'], 'Pending');
     expect(row['schoolId'], school);
     expect(
-        await t
-            .runAsync(() => File(row['originalPath'] as String).readAsBytes()),
+        await io(t, () => File(row['originalPath'] as String).readAsBytes()),
         source);
     final queue =
-        await t.runAsync(() => db.collection('_windows_document_outbox').get());
+        await io(t, () => db.collection('_windows_document_outbox').get());
     expect(queue!.docs.length, 1);
-    expect(await t.runAsync(WindowsRuntimeFlags.localStorageEnabled), false);
-    expect(await t.runAsync(db.localPersistenceEnabled), true);
+    expect(await io(t, WindowsRuntimeFlags.localStorageEnabled), false);
+    expect(await io(t, db.localPersistenceEnabled), true);
     expect(row['optimizedPath'], isNotEmpty);
     expect(row['cleanupStatus'], contains(pdf ? 'pages processed' : ''));
-    final optimized = await t.runAsync(() => File(row['optimizedPath'] as String).readAsBytes());
+    final optimized = await io(t, () => File(row['optimizedPath'] as String).readAsBytes());
     expect(row['sizeBytes'], optimized!.length);
-    expect(await t.runAsync(() => File(row['processedPath'] as String).exists()), true);
+    expect(await io(t, () => File(row['processedPath'] as String).exists()), true);
     if (pdf) {
       expect(rasterizer.rasterCalls, greaterThanOrEqualTo(2));
       expect(String.fromCharCodes(optimized.take(5)), '%PDF-');
@@ -193,9 +216,9 @@ void main() {
     picker.selection = null;
     await open(t, existing: 1, cancelled: true);
     await t.pumpAndSettle();
-    expect(await t.runAsync(count), 1);
+    expect(await io(t, count), 1);
     final afterCancel =
-        await t.runAsync(() => db.collection('_windows_document_outbox').get());
+        await io(t, () => db.collection('_windows_document_outbox').get());
     expect(afterCancel!.docs.length, 1);
     expect(find.byKey(const ValueKey('document-select-file')), findsNothing);
 
@@ -210,7 +233,7 @@ void main() {
             .evaluate()
             .isNotEmpty);
     expect(corrupt, [1, 2, 3]);
-    expect(await t.runAsync(count), 1);
+    expect(await io(t, count), 1);
     expect(
         t
             .widget<ElevatedButton>(
@@ -220,11 +243,10 @@ void main() {
     await t.tap(find.byKey(const ValueKey('document-cancel')));
     await t.pumpAndSettle();
     final afterFailure =
-        await t.runAsync(() => db.collection('_windows_document_outbox').get());
+        await io(t, () => db.collection('_windows_document_outbox').get());
     expect(afterFailure!.docs.length, 1);
     expect(
-        await t
-            .runAsync(() => File(row['originalPath'] as String).readAsBytes()),
+        await io(t, () => File(row['originalPath'] as String).readAsBytes()),
         source);
     await t.pumpWidget(const SizedBox());
     await t.pumpAndSettle();
