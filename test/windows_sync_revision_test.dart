@@ -16,7 +16,7 @@ void main(){
  TestWidgetsFlutterBinding.ensureInitialized();
  const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';final db=FirebaseFirestore.instance;
  setUp(()async{
-  FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'managed':true,'schoolId':school,'uid':'A',
+  FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'managed':true,'schoolId':school,'uid':'A','folderId':'managed',
    'projectId':platformProjectId,'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseRefreshToken':'refresh','storageReady':false})});
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('revision-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});

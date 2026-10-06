@@ -218,7 +218,7 @@ void main() {
   });
   test('offline publish retains a pending notice without reporting delivery', () async {
     const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'managed':true,'schoolId':school,'uid':'A','projectId':platformProjectId,'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseRefreshToken':'refresh','storageReady':false})});
+    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'managed':true,'schoolId':school,'uid':'A','folderId':'managed','projectId':platformProjectId,'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseRefreshToken':'refresh','storageReady':false})});
     await local.FirebaseFirestore.instance.switchProfile('notice-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});
     final delivery=await WindowsPlatformClient.instance.publishNotice('unsent', {'title':'Example'});
     expect(delivery.notificationSent,false);expect(delivery.schoolPublished,false);
