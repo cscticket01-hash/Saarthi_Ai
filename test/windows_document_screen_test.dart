@@ -12,6 +12,12 @@ import 'package:printing/printing.dart';
 import 'package:printing/src/interface.dart';
 import 'package:printing/src/method_channel.dart';
 
+import '../lib/main_dashboard_screen_windows.dart' show StudentDocumentsScreen;
+import '../lib/windows_connect/central_school_cloud.dart';
+import '../lib/windows_local_firestore.dart';
+import '../lib/windows_runtime_flags.dart';
+import '../lib/platform/platform_config.dart';
+
 // Only the OS PDF raster boundary is simulated. The production pipeline still
 // processes raster pixels, builds both PDFs, previews and persists them.
 class ReviewPrinting extends MethodChannelPrinting {
@@ -27,12 +33,6 @@ class ReviewPrinting extends MethodChannelPrinting {
   }
 }
 
-
-import '../lib/main_dashboard_screen_windows.dart' show StudentDocumentsScreen;
-import '../lib/windows_connect/central_school_cloud.dart';
-import '../lib/windows_local_firestore.dart';
-import '../lib/windows_runtime_flags.dart';
-import '../lib/platform/platform_config.dart';
 
 class ReviewPicker extends FileSelectorPlatform {
   XFile? selection;
