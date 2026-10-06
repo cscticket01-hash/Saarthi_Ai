@@ -1,3 +1,4 @@
+import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'school_password_panel.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
