@@ -1158,10 +1158,11 @@ class _LocalJsonDatabase {
     try {
       if (!await file.exists() && await File('${file.path}.pending').exists()) {
         final recovered=jsonDecode(await File('${file.path}.pending').readAsString());
-        if(recovered is! Map)throw const FormatException('Pending database is invalid.');
+        if(recovered is! Map || (recovered['profiles'] is! Map && recovered['collections'] is! Map))throw const FormatException('Pending database is invalid.');
         final root=Map<String,dynamic>.from(recovered);_upgradeRootInMemory(root);return root;
       }
       if (!await file.exists()) {
+        if(await File('${file.path}.bak').exists())throw const FormatException('Recover previous database generation.');
         WindowsServiceStatus.instance.healthy(
           WindowsServiceType.localStorage,
           'Local database ready: ${file.path}',

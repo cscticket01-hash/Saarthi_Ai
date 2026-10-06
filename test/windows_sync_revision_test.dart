@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
+import '../lib/windows_local_storage.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_platform_client.dart';
@@ -66,4 +67,22 @@ void main(){
   expect((await ref.get()).data()?['name'],'Local');
   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['syncState'],'retry');
  });
+ test('crash generations recover without silently overwriting irrecoverable school data',()async{
+  await db.collection('students_directory').doc('retained').set({'name':'Retained'});
+  final file=await WindowsLocalStorage.databaseFile(),pending=File('${(await WindowsLocalStorage.databaseFile()).path}.pending'),backup=File('${(await WindowsLocalStorage.databaseFile()).path}.bak');
+  final original=await file.readAsString(),oldBackup=await backup.exists()?await backup.readAsString():null;
+  try{
+   await pending.writeAsString(original,flush:true);await file.delete();
+   expect((await db.collection('students_directory').doc('retained').get()).data()?['name'],'Retained');
+   await pending.delete();await backup.writeAsString(original,flush:true);
+   expect((await db.collection('students_directory').doc('retained').get()).data()?['name'],'Retained');
+   await file.writeAsString('{truncated',flush:true);await backup.writeAsString('{truncated',flush:true);
+   await expectLater(db.collection('students_directory').doc('unsafe').set({'name':'Must not write'}),throwsStateError);
+   expect(await file.readAsString(),'{truncated');
+  }finally{
+   await file.writeAsString(original,flush:true);if(await pending.exists())await pending.delete();
+   if(oldBackup!=null){await backup.writeAsString(oldBackup,flush:true);}else if(await backup.exists()){await backup.delete();}
+  }
+ });
+
 }
