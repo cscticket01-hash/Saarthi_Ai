@@ -40,9 +40,8 @@ int? windowsReferenceTermNumber(Map<String, dynamic> data) {
   if (data['isFinal'] == true) return null;
   final explicit = int.tryParse(data['quarter']?.toString() ?? '');
   if (explicit != null && explicit >= 1 && explicit <= 4) return explicit;
-  final name = (data['term'] ?? data['examName'] ?? '')
-      .toString()
-      .toLowerCase();
+  final name =
+      (data['term'] ?? data['examName'] ?? '').toString().toLowerCase();
   final match = RegExp(r'\b(?:term|quarter|semester|q)\s*[-:]?\s*([1-4])\b')
       .firstMatch(name);
   return match == null ? null : int.parse(match.group(1)!);
@@ -205,19 +204,23 @@ Future<Uint8List> renderWindowsReferenceDocument({
     theme: pw.ThemeData.withFont(base: regular, bold: bold),
   );
   final idRegions = <pw.Widget, List<double>>{};
-  pw.Widget at(double x, double y, double w, double h, pw.Widget child) {
+  final idDecorations = <pw.Widget>{};
+  pw.Widget at(double x, double y, double w, double h, pw.Widget child,
+      {bool decorative = false}) {
     final widget = pw.Positioned(
       left: x,
       top: y,
       child: pw.SizedBox(width: w, height: h, child: child),
     );
     if (kind == 'teacherId') idRegions[widget] = [x, y, w, h];
+    if (decorative) idDecorations.add(widget);
     return widget;
   }
 
   void validateIdSide(List<pw.Widget> widgets, double width, double height) {
     final regions = widgets
-        .where(idRegions.containsKey)
+        .where((widget) =>
+            idRegions.containsKey(widget) && !idDecorations.contains(widget))
         .map((w) => idRegions[w]!)
         .toList();
     for (var index = 0; index < regions.length; index++) {
@@ -248,51 +251,53 @@ Future<Uint8List> renderWindowsReferenceDocument({
     PdfColor color = PdfColors.black,
     bool heavy = false,
     pw.TextAlign align = pw.TextAlign.left,
-  }) => s.trim().isEmpty
-      ? pw.SizedBox(width: 1, height: 1)
-      : kind == 'teacherId'
-      ? IdCardLayout.text(
-          s,
-          font: heavy ? bold : regular,
-          fontSize: size,
-          color: color,
-          align: align,
-          wrap: s.contains('\n') || s.length > 60,
-          maxLines: s.contains('\n') || s.length > 60 ? 3 : 1,
-        )
-      : pw.FittedBox(
-          fit: pw.BoxFit.scaleDown,
-          alignment: align == pw.TextAlign.center
-              ? pw.Alignment.center
-              : pw.Alignment.centerLeft,
-          child: pw.Text(
-            s,
-            textAlign: align,
-            style: pw.TextStyle(
-              fontSize: size,
-              color: color,
-              fontWeight: heavy ? pw.FontWeight.bold : pw.FontWeight.normal,
-            ),
-          ),
-        );
+  }) =>
+      s.trim().isEmpty
+          ? pw.SizedBox(width: 1, height: 1)
+          : kind == 'teacherId'
+              ? IdCardLayout.text(
+                  s,
+                  font: heavy ? bold : regular,
+                  fontSize: size,
+                  color: color,
+                  align: align,
+                  wrap: s.contains('\n') || s.length > 60,
+                  maxLines: s.contains('\n') || s.length > 60 ? 3 : 1,
+                )
+              : pw.FittedBox(
+                  fit: pw.BoxFit.scaleDown,
+                  alignment: align == pw.TextAlign.center
+                      ? pw.Alignment.center
+                      : pw.Alignment.centerLeft,
+                  child: pw.Text(
+                    s,
+                    textAlign: align,
+                    style: pw.TextStyle(
+                      fontSize: size,
+                      color: color,
+                      fontWeight:
+                          heavy ? pw.FontWeight.bold : pw.FontWeight.normal,
+                    ),
+                  ),
+                );
   pw.Widget asset(Uint8List? bytes, String placeholder, {bool cover = false}) =>
       bytes == null
-      ? pw.Center(child: label(placeholder, size: 11, color: PdfColors.grey600))
-      : pw.ClipRect(
-          child: kind == 'teacherId'
-              ? IdCardLayout.image(bytes, cover: cover)
-              : pw.Image(
-                  pw.MemoryImage(bytes),
-                  fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
-                ),
-        );
+          ? pw.Center(
+              child: label(placeholder, size: 11, color: PdfColors.grey600))
+          : pw.ClipRect(
+              child: kind == 'teacherId'
+                  ? IdCardLayout.image(bytes, cover: cover)
+                  : pw.Image(
+                      pw.MemoryImage(bytes),
+                      fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
+                    ),
+            );
   pw.Widget qrCode(double size) => qr.isEmpty
       ? pw.SizedBox()
       : IdCardLayout.qr(
           qr,
-          millimetresPerUnit: kind == 'teacherId'
-              ? (i == 2 ? 85.6 / 480 : 54 / 306)
-              : null,
+          millimetresPerUnit:
+              kind == 'teacherId' ? (i == 2 ? 85.6 / 480 : 54 / 306) : null,
         );
   pw.Widget table(
     List<List<String>> rows, {
@@ -302,43 +307,44 @@ Future<Uint8List> renderWindowsReferenceDocument({
     double font = 10,
     double rowHeight = 22,
     bool firstHeader = true,
-  }) => pw.Table(
-    columnWidths: widths == null
-        ? null
-        : {
-            for (var c = 0; c < widths.length; c++)
-              c: pw.FlexColumnWidth(widths[c]),
-          },
-    border: pw.TableBorder.all(color: ink, width: .5),
-    children: [
-      for (var r = 0; r < rows.length; r++)
-        pw.TableRow(
-          decoration: pw.BoxDecoration(
-            color: r == 0 && firstHeader
-                ? header
-                : r.isEven
-                ? PdfColors.grey100
-                : PdfColors.white,
-          ),
-          children: [
-            for (final cell in rows[r])
-              pw.Container(
-                height: rowHeight,
-                padding: const pw.EdgeInsets.symmetric(
-                  horizontal: 4,
-                  vertical: 2,
-                ),
-                child: label(
-                  cell,
-                  size: font,
-                  color: r == 0 && firstHeader ? PdfColors.white : ink,
-                  heavy: r == 0 && firstHeader,
-                ),
+  }) =>
+      pw.Table(
+        columnWidths: widths == null
+            ? null
+            : {
+                for (var c = 0; c < widths.length; c++)
+                  c: pw.FlexColumnWidth(widths[c]),
+              },
+        border: pw.TableBorder.all(color: ink, width: .5),
+        children: [
+          for (var r = 0; r < rows.length; r++)
+            pw.TableRow(
+              decoration: pw.BoxDecoration(
+                color: r == 0 && firstHeader
+                    ? header
+                    : r.isEven
+                        ? PdfColors.grey100
+                        : PdfColors.white,
               ),
-          ],
-        ),
-    ],
-  );
+              children: [
+                for (final cell in rows[r])
+                  pw.Container(
+                    height: rowHeight,
+                    padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 2,
+                    ),
+                    child: label(
+                      cell,
+                      size: font,
+                      color: r == 0 && firstHeader ? PdfColors.white : ink,
+                      heavy: r == 0 && firstHeader,
+                    ),
+                  ),
+              ],
+            ),
+        ],
+      );
   void page(double w, double h, List<pw.Widget> layers, {bool card = false}) {
     final format = card
         ? PdfPageFormat(
@@ -370,10 +376,10 @@ Future<Uint8List> renderWindowsReferenceDocument({
       i == 0
           ? '#32464e'
           : i == 1
-          ? '#002c37'
-          : i == 2
-          ? '#302e30'
-          : '#0b1b37',
+              ? '#002c37'
+              : i == 2
+                  ? '#302e30'
+                  : '#0b1b37',
     );
     final white = PdfColors.white;
     final front = <pw.Widget>[
@@ -434,8 +440,10 @@ Future<Uint8List> renderWindowsReferenceDocument({
             172,
             192,
             pw.SvgImage(
-              svg: '<svg xmlns="http://www.w3.org/2000/svg" width="172" height="192"><path fill="white" d="M0 0H86L0 44Z M86 0H172V44Z M0 146L86 192H0Z M86 192L172 146V192Z"/><path fill="none" stroke="black" stroke-width="4" d="M86 3L166 45Q169 48 169 56V136Q169 144 163 149L93 187Q86 191 79 187L9 149Q3 144 3 136V56Q3 48 9 44Z"/></svg>',
+              svg:
+                  '<svg xmlns="http://www.w3.org/2000/svg" width="172" height="192"><path fill="white" d="M0 0H86L0 44Z M86 0H172V44Z M0 146L86 192H0Z M86 192L172 146V192Z"/><path fill="none" stroke="black" stroke-width="4" d="M86 3L166 45Q169 48 169 56V136Q169 144 163 149L93 187Q86 191 79 187L9 149Q3 144 3 136V56Q3 48 9 44Z"/></svg>',
             ),
+            decorative: true,
           ),
           at(
             42,
@@ -654,7 +662,11 @@ Future<Uint8List> renderWindowsReferenceDocument({
           414,
           37,
           label(
-            '${first(['schoolAddress', 'address'])}\n${first(['schoolContactNo', 'contact', 'phone'])} | ${first(['schoolEmail', 'email'])}',
+            '${first(['schoolAddress', 'address'])}\n${first([
+                  'schoolContactNo',
+                  'contact',
+                  'phone'
+                ])} | ${first(['schoolEmail', 'email'])}',
             size: 11,
           ),
         ),
@@ -915,8 +927,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
       i == 0
           ? '#29367b'
           : i == 3
-          ? '#743546'
-          : '#343a42',
+              ? '#743546'
+              : '#343a42',
     );
 
     final marks = data['marks'] is Map
@@ -1151,7 +1163,10 @@ Future<Uint8List> renderWindowsReferenceDocument({
             i == 1 ? 398 : 514,
             18,
             label(
-              'Name: $name   School Year: ${v('academicYear')}   Grade: ${first(['studentClass', 'class'])}',
+              'Name: $name   School Year: ${v('academicYear')}   Grade: ${first([
+                    'studentClass',
+                    'class'
+                  ])}',
               size: 10,
             ),
           ),
@@ -1161,7 +1176,13 @@ Future<Uint8List> renderWindowsReferenceDocument({
             i == 1 ? 398 : 514,
             18,
             label(
-              'Term: ${first(['term', 'examName'])}   Teacher: ${v('teacherName')}   Date: ${first(['dateText', 'date'])}',
+              'Term: ${first([
+                    'term',
+                    'examName'
+                  ])}   Teacher: ${v('teacherName')}   Date: ${first([
+                    'dateText',
+                    'date'
+                  ])}',
               size: 10,
             ),
           ),
@@ -1184,10 +1205,10 @@ Future<Uint8List> renderWindowsReferenceDocument({
             final saved = q is Map
                 ? q['q$quarter']
                 : quarter == 1
-                ? term1[s]
-                : quarter == 2
-                ? term2[s]
-                : null;
+                    ? term1[s]
+                    : quarter == 2
+                        ? term2[s]
+                        : null;
             grades.add(
               mark(saved ?? (quarter == (currentTerm ?? 1) ? marks[s] : null)),
             );
@@ -1339,8 +1360,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
             currentTerm != null && currentTerm > 2
                 ? 'Term $currentTerm\nGrade'
                 : data['isFinal'] == false && currentTerm == null
-                ? 'Exam\nGrade'
-                : 'Final\nGrade',
+                    ? 'Exam\nGrade'
+                    : 'Final\nGrade',
             'Comments',
           ],
         ];
@@ -1370,7 +1391,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
             68,
             71,
             pw.SvgImage(
-              svg: '<svg xmlns="http://www.w3.org/2000/svg" width="68" height="71"><path fill="none" stroke="#743546" stroke-width="2" d="M8 8H42Q56 8 56 17Q56 24 48 24H8V20H48Q51 20 51 17Q51 13 44 13H8Z M3 29H41Q56 29 56 38Q56 45 48 45H3V41H48Q51 41 51 38Q51 34 43 34H3Z M8 51H44Q56 51 56 60Q56 67 48 67H8V63H48Q51 63 51 60Q51 56 44 56H8Z M60 4L67 58 M55 4L62 58"/></svg>',
+              svg:
+                  '<svg xmlns="http://www.w3.org/2000/svg" width="68" height="71"><path fill="none" stroke="#743546" stroke-width="2" d="M8 8H42Q56 8 56 17Q56 24 48 24H8V20H48Q51 20 51 17Q51 13 44 13H8Z M3 29H41Q56 29 56 38Q56 45 48 45H3V41H48Q51 41 51 38Q51 34 43 34H3Z M8 51H44Q56 51 56 60Q56 67 48 67H8V63H48Q51 63 51 60Q51 56 44 56H8Z M60 4L67 58 M55 4L62 58"/></svg>',
             ),
           ),
           at(
@@ -1416,7 +1438,10 @@ Future<Uint8List> renderWindowsReferenceDocument({
             451,
             45,
             pw.Text(
-              'Remarks: ${first(['remarks', 'teacherComment'], 'No remarks recorded.')}',
+              'Remarks: ${first([
+                    'remarks',
+                    'teacherComment'
+                  ], 'No remarks recorded.')}',
               style: pw.TextStyle(fontSize: 11, color: ink),
             ),
           ),
@@ -1556,7 +1581,10 @@ Future<Uint8List> renderWindowsReferenceDocument({
               ['Name:', name],
               [
                 'Class / Roll:',
-                '${first(['studentClass', 'class'])} / ${first(['rollNo', 'roll'])}',
+                '${first(['studentClass', 'class'])} / ${first([
+                      'rollNo',
+                      'roll'
+                    ])}',
               ],
               [
                 'Phone:',

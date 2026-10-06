@@ -122,7 +122,9 @@ void main() {
       throwsFormatException,
     );
   });
-  test('QR has four module quiet space and rejects unscannably small payload region', () {
+  test(
+      'QR has four module quiet space and rejects unscannably small payload region',
+      () {
     expect(
       IdCardLayout.qrPadding('verified-person', 100, physicalSideMm: 20),
       greaterThan(0),
@@ -132,7 +134,9 @@ void main() {
       throwsFormatException,
     );
   });
-  test('manifest rejects dynamic collisions, too-small QR, wrong image fit and malformed rules', () {
+  test(
+      'manifest rejects dynamic collisions, too-small QR, wrong image fit and malformed rules',
+      () {
     final base = manifest();
     final rows = (base['regions'] as List).cast<Map>();
     for (final patch in [
@@ -220,4 +224,25 @@ void main() {
       },
     );
   }
+  test(
+      'real Windows managed authentication envelopes render without changing identity',
+      () async {
+    final fixtures = (jsonDecode(
+                File('test/fixtures/windows_person_qr.json').readAsStringSync())
+            as List)
+        .cast<Map>();
+    for (final fixture in fixtures) {
+      final raw = jsonEncode(fixture);
+      final bytes = await IdCardEngine.render(
+          IdCardManifest.fromJson(manifest()),
+          Map<String, dynamic>.from(fixture),
+          qr: raw);
+      final dir = Directory('build/reference-document-previews');
+      await dir.create(recursive: true);
+      await File('${dir.path}/manifest_auth_${fixture['type']}.pdf')
+          .writeAsBytes(bytes);
+      expect(jsonDecode(raw), fixture);
+      expect(bytes.length, greaterThan(500));
+    }
+  });
 }

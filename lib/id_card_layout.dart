@@ -108,52 +108,53 @@ class IdCardLayout {
     String overflow = 'ellipsis',
     PdfColor color = PdfColors.black,
     pw.TextAlign align = pw.TextAlign.left,
-  }) => pw.LayoutBuilder(
-    builder: (context, constraints) {
-      final pdfFont = font.getFont(context);
-      final width = constraints?.maxWidth ?? double.infinity,
-          height = constraints?.maxHeight ?? double.infinity;
-      // Compatibility labels in unconstrained table cells keep their normal
-      // style; every positioned ID field has finite template bounds.
-      if (!width.isFinite || !height.isFinite) {
-        return pw.Text(
-          value,
-          style: pw.TextStyle(font: font, fontSize: fontSize, color: color),
-          textAlign: align,
-        );
-      }
-      final fitted = fitText(
-        value,
-        width: width,
-        height: height,
-        measure: (s) {
-          final m = pdfFont.stringMetrics(s);
-          return math.max(m.width, m.advanceWidth);
+  }) =>
+      pw.LayoutBuilder(
+        builder: (context, constraints) {
+          final pdfFont = font.getFont(context);
+          final width = constraints?.maxWidth ?? double.infinity,
+              height = constraints?.maxHeight ?? double.infinity;
+          // Compatibility labels in unconstrained table cells keep their normal
+          // style; every positioned ID field has finite template bounds.
+          if (!width.isFinite || !height.isFinite) {
+            return pw.Text(
+              value,
+              style: pw.TextStyle(font: font, fontSize: fontSize, color: color),
+              textAlign: align,
+            );
+          }
+          final fitted = fitText(
+            value,
+            width: width,
+            height: height,
+            measure: (s) {
+              final m = pdfFont.stringMetrics(s);
+              return math.max(m.width, m.advanceWidth);
+            },
+            fontSize: fontSize,
+            minFontSize: math.min(minFontSize, fontSize),
+            wrap: wrap,
+            maxLines: maxLines,
+            overflow: overflow,
+          );
+          return pw.Align(
+            alignment: align == pw.TextAlign.center
+                ? pw.Alignment.center
+                : align == pw.TextAlign.right
+                    ? pw.Alignment.centerRight
+                    : pw.Alignment.centerLeft,
+            child: pw.Text(
+              fitted.text,
+              textAlign: align,
+              style: pw.TextStyle(
+                font: font,
+                fontSize: fitted.fontSize,
+                color: color,
+              ),
+            ),
+          );
         },
-        fontSize: fontSize,
-        minFontSize: math.min(minFontSize, fontSize),
-        wrap: wrap,
-        maxLines: maxLines,
-        overflow: overflow,
       );
-      return pw.Align(
-        alignment: align == pw.TextAlign.center
-            ? pw.Alignment.center
-            : align == pw.TextAlign.right
-            ? pw.Alignment.centerRight
-            : pw.Alignment.centerLeft,
-        child: pw.Text(
-          fitted.text,
-          textAlign: align,
-          style: pw.TextStyle(
-            font: font,
-            fontSize: fitted.fontSize,
-            color: color,
-          ),
-        ),
-      );
-    },
-  );
 
   static Uint8List prepareImage(
     Uint8List bytes, {
@@ -162,6 +163,8 @@ class IdCardLayout {
     double focusX = .5,
     double focusY = .35,
   }) {
+    if (bytes.length < 12 || bytes.length > 50 * 1024 * 1024)
+      throw const FormatException("ID image is empty, truncated or too large.");
     if (!aspect.isFinite ||
         aspect <= 0 ||
         !focusX.isFinite ||
@@ -219,28 +222,30 @@ class IdCardLayout {
     bool cover = false,
     double focusX = .5,
     double focusY = .35,
-  }) => pw.LayoutBuilder(
-    builder: (_, bounds) {
-      if (bounds == null)
-        throw const FormatException("ID image has no template bounds.");
-      if (!bounds.maxWidth.isFinite ||
-          !bounds.maxHeight.isFinite ||
-          bounds.maxWidth <= 0 ||
-          bounds.maxHeight <= 0) {
-        throw const FormatException('ID image region has invalid dimensions.');
-      }
-      final prepared = prepareImage(
-        bytes,
-        aspect: bounds.maxWidth / bounds.maxHeight,
-        cover: cover,
-        focusX: focusX,
-        focusY: focusY,
+  }) =>
+      pw.LayoutBuilder(
+        builder: (_, bounds) {
+          if (bounds == null)
+            throw const FormatException("ID image has no template bounds.");
+          if (!bounds.maxWidth.isFinite ||
+              !bounds.maxHeight.isFinite ||
+              bounds.maxWidth <= 0 ||
+              bounds.maxHeight <= 0) {
+            throw const FormatException(
+                'ID image region has invalid dimensions.');
+          }
+          final prepared = prepareImage(
+            bytes,
+            aspect: bounds.maxWidth / bounds.maxHeight,
+            cover: cover,
+            focusX: focusX,
+            focusY: focusY,
+          );
+          return pw.ClipRect(
+            child: pw.Image(pw.MemoryImage(prepared), fit: pw.BoxFit.contain),
+          );
+        },
       );
-      return pw.ClipRect(
-        child: pw.Image(pw.MemoryImage(prepared), fit: pw.BoxFit.contain),
-      );
-    },
-  );
 
   static double qrPadding(String value, double side, {double? physicalSideMm}) {
     final modules = QrCode.fromData(
@@ -268,9 +273,8 @@ class IdCardLayout {
           final padding = qrPadding(
             value,
             side,
-            physicalSideMm: millimetresPerUnit == null
-                ? null
-                : side * millimetresPerUnit,
+            physicalSideMm:
+                millimetresPerUnit == null ? null : side * millimetresPerUnit,
           );
           return pw.Center(
             child: pw.SizedBox(
