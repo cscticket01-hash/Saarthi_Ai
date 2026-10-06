@@ -238,8 +238,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
             o[0] < r[0] + r[2] &&
             r[1] < o[1] + o[3] &&
             o[1] < r[1] + r[3])
-          throw const FormatException(
-            'Staff ID dynamic regions overlap. Select a validated manifest template.',
+          throw FormatException(
+            'Staff ID dynamic regions overlap: $r / $o. Select a validated manifest template.',
           );
       }
     }

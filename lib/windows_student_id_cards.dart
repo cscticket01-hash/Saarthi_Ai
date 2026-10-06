@@ -58,8 +58,8 @@ Future<Uint8List> renderWindowsStudentId({
     i == 0
         ? '#0d4da7'
         : i == 1
-        ? '#201c4a'
-        : '#006b38',
+            ? '#201c4a'
+            : '#006b38',
   );
   String value(String key, [String fallback = '-']) {
     final s = data[key]?.toString().trim() ?? '';
@@ -125,8 +125,8 @@ Future<Uint8List> renderWindowsStudentId({
             o[0] < r[0] + r[2] &&
             r[1] < o[1] + o[3] &&
             o[1] < r[1] + r[3]) {
-          throw const FormatException(
-            'Compatibility ID dynamic regions overlap. Select a validated manifest template.',
+          throw FormatException(
+            'Compatibility ID dynamic regions overlap: $r / $o. Select a validated manifest template.',
           );
         }
       }
@@ -139,15 +139,16 @@ Future<Uint8List> renderWindowsStudentId({
     PdfColor? color,
     bool bold = false,
     pw.TextAlign align = pw.TextAlign.left,
-  }) => IdCardLayout.text(
-    s,
-    font: bold ? boldFont : normalFont,
-    fontSize: size,
-    wrap: s.contains('\n'),
-    maxLines: s.contains('\n') ? s.split('\n').length : 1,
-    color: color ?? PdfColors.black,
-    align: align,
-  );
+  }) =>
+      IdCardLayout.text(
+        s,
+        font: bold ? boldFont : normalFont,
+        fontSize: size,
+        wrap: s.contains('\n'),
+        maxLines: s.contains('\n') ? s.split('\n').length : 1,
+        color: color ?? PdfColors.black,
+        align: align,
+      );
   pw.Widget image(Uint8List? bytes, String placeholder, {bool cover = false}) =>
       pw.Container(
         decoration: pw.BoxDecoration(
@@ -175,28 +176,28 @@ Future<Uint8List> renderWindowsStudentId({
         ],
       );
   pw.Widget address(double w, {double size = 11}) => pw.Column(
-    crossAxisAlignment: pw.CrossAxisAlignment.start,
-    children: [
-      pw.Text(
-        'Address',
-        style: pw.TextStyle(
-          fontSize: size,
-          fontWeight: pw.FontWeight.bold,
-          color: ink,
-        ),
-      ),
-      pw.SizedBox(height: 3),
-      pw.Expanded(
-        child: IdCardLayout.text(
-          value('streetAddress', value('address')),
-          font: normalFont,
-          fontSize: size,
-          wrap: true,
-          maxLines: 6,
-        ),
-      ),
-    ],
-  );
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(
+            'Address',
+            style: pw.TextStyle(
+              fontSize: size,
+              fontWeight: pw.FontWeight.bold,
+              color: ink,
+            ),
+          ),
+          pw.SizedBox(height: 3),
+          pw.Expanded(
+            child: IdCardLayout.text(
+              value('streetAddress', value('address')),
+              font: normalFont,
+              fontSize: size,
+              wrap: true,
+              maxLines: 6,
+            ),
+          ),
+        ],
+      );
   pw.Widget qrWidget(double size) => qr.isEmpty
       ? pw.SizedBox()
       : IdCardLayout.qr(qr, millimetresPerUnit: (portrait ? 54 : 85.6) / width);
@@ -309,7 +310,8 @@ Future<Uint8List> renderWindowsStudentId({
         195,
         188,
         pw.SvgImage(
-          svg: '<svg xmlns="http://www.w3.org/2000/svg" width="195" height="188"><path d="M4 60L97 5L190 60L160 182H34Z" fill="white" stroke="#201c4a" stroke-width="8"/></svg>',
+          svg:
+              '<svg xmlns="http://www.w3.org/2000/svg" width="195" height="188"><path d="M4 60L97 5L190 60L160 182H34Z" fill="white" stroke="#201c4a" stroke-width="8"/></svg>',
         ),
         decorative: true,
       ),
@@ -322,7 +324,8 @@ Future<Uint8List> renderWindowsStudentId({
         pw.Stack(
           children: [
             pw.SvgImage(
-              svg: '<svg xmlns="http://www.w3.org/2000/svg" width="84" height="84"><polygon fill="#201c4a" points="84.00,42.00 79.82,45.72 83.19,50.19 78.36,53.03 80.80,58.07 75.51,59.91 76.92,65.33 71.37,66.11 71.70,71.70 66.11,71.37 65.33,76.92 59.91,75.51 58.07,80.80 53.03,78.36 50.19,83.19 45.72,79.82 42.00,84.00 38.28,79.82 33.81,83.19 30.97,78.36 25.93,80.80 24.09,75.51 18.67,76.92 17.89,71.37 12.30,71.70 12.63,66.11 7.08,65.33 8.49,59.91 3.20,58.07 5.64,53.03 0.81,50.19 4.18,45.72 0.00,42.00 4.18,38.28 0.81,33.81 5.64,30.97 3.20,25.93 8.49,24.09 7.08,18.67 12.63,17.89 12.30,12.30 17.89,12.63 18.67,7.08 24.09,8.49 25.93,3.20 30.97,5.64 33.81,0.81 38.28,4.18 42.00,0.00 45.72,4.18 50.19,0.81 53.03,5.64 58.07,3.20 59.91,8.49 65.33,7.08 66.11,12.63 71.70,12.30 71.37,17.89 76.92,18.67 75.51,24.09 80.80,25.93 78.36,30.97 83.19,33.81 79.82,38.28"/></svg>',
+              svg:
+                  '<svg xmlns="http://www.w3.org/2000/svg" width="84" height="84"><polygon fill="#201c4a" points="84.00,42.00 79.82,45.72 83.19,50.19 78.36,53.03 80.80,58.07 75.51,59.91 76.92,65.33 71.37,66.11 71.70,71.70 66.11,71.37 65.33,76.92 59.91,75.51 58.07,80.80 53.03,78.36 50.19,83.19 45.72,79.82 42.00,84.00 38.28,79.82 33.81,83.19 30.97,78.36 25.93,80.80 24.09,75.51 18.67,76.92 17.89,71.37 12.30,71.70 12.63,66.11 7.08,65.33 8.49,59.91 3.20,58.07 5.64,53.03 0.81,50.19 4.18,45.72 0.00,42.00 4.18,38.28 0.81,33.81 5.64,30.97 3.20,25.93 8.49,24.09 7.08,18.67 12.63,17.89 12.30,12.30 17.89,12.63 18.67,7.08 24.09,8.49 25.93,3.20 30.97,5.64 33.81,0.81 38.28,4.18 42.00,0.00 45.72,4.18 50.19,0.81 53.03,5.64 58.07,3.20 59.91,8.49 65.33,7.08 66.11,12.63 71.70,12.30 71.37,17.89 76.92,18.67 75.51,24.09 80.80,25.93 78.36,30.97 83.19,33.81 79.82,38.28"/></svg>',
             ),
             pw.Positioned(
               left: 10,
@@ -475,7 +478,7 @@ Future<Uint8List> renderWindowsStudentId({
       at(23, yellow ? 230 : 236, 84, 24, asset(signature, 'Not set')),
       at(
         19,
-        yellow ? 257 : 258,
+        yellow ? 257 : 260,
         94,
         14,
         text(
@@ -547,8 +550,8 @@ Future<Uint8List> renderWindowsStudentId({
         i == 0
             ? 356
             : portrait
-            ? 359
-            : 47,
+                ? 359
+                : 47,
         portrait ? 245 : 420,
         portrait ? 14 : 12,
         text('Student UID: ${value('studentUid')}', size: 9, color: ink),

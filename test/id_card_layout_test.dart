@@ -224,6 +224,20 @@ void main() {
       },
     );
   }
+  test('manifest rejects impossible tiny portrait region', () {
+    final base = manifest();
+    final rows = (base['regions'] as List).cast<Map>();
+    expect(
+        () => IdCardManifest.fromJson({
+              ...base,
+              'regions': [
+                ...rows.take(2),
+                {...rows[2], 'width': 1},
+                ...rows.skip(3)
+              ]
+            }),
+        throwsFormatException);
+  });
   test(
       'real Windows managed authentication envelopes render without changing identity',
       () async {

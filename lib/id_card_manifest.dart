@@ -11,15 +11,15 @@ class IdCardManifest {
     }
   }
   IdCardManifest._parse(Map<String, dynamic> data)
-    : id = data['id'] as String,
-      width = (data['canvasWidth'] as num).toDouble(),
-      height = (data['canvasHeight'] as num).toDouble(),
-      printWidth = (data['printWidthMm'] as num).toDouble(),
-      printHeight = (data['printHeightMm'] as num).toDouble(),
-      regions = [
-        for (final r in data['regions'] as List)
-          IdCardRegion.fromJson(Map<String, dynamic>.from(r as Map)),
-      ] {
+      : id = data['id'] as String,
+        width = (data['canvasWidth'] as num).toDouble(),
+        height = (data['canvasHeight'] as num).toDouble(),
+        printWidth = (data['printWidthMm'] as num).toDouble(),
+        printHeight = (data['printHeightMm'] as num).toDouble(),
+        regions = [
+          for (final r in data['regions'] as List)
+            IdCardRegion.fromJson(Map<String, dynamic>.from(r as Map)),
+        ] {
     if (data['version'] != 1 ||
         id.isEmpty ||
         [
@@ -67,9 +67,15 @@ class IdCardManifest {
                   12)) {
         throw const FormatException('ID QR region is too small.');
       }
+      if (r.kind == 'image' &&
+          r.key == 'photo' &&
+          (r.width * printWidth / width < 8 ||
+              r.height * printHeight / height < 10)) {
+        throw const FormatException(
+            "ID portrait region is too small for a usable photo.");
+      }
       for (final other in regions.skip(i + 1)) {
-        final overlaps =
-            r.side == other.side &&
+        final overlaps = r.side == other.side &&
             r.x < other.x + other.width &&
             other.x < r.x + r.width &&
             r.y < other.y + other.height &&
@@ -95,26 +101,26 @@ class IdCardManifest {
 
 class IdCardRegion {
   IdCardRegion.fromJson(Map<String, dynamic> data)
-    : key = data['key'] as String,
-      side = data['side'] as String,
-      kind = data['kind'] as String,
-      fit = data['fit']?.toString() ?? 'contain',
-      align = data['align']?.toString() ?? 'left',
-      label = data['label']?.toString() ?? '',
-      x = (data['x'] as num).toDouble(),
-      y = (data['y'] as num).toDouble(),
-      width = (data['width'] as num).toDouble(),
-      height = (data['height'] as num).toDouble(),
-      fontSize = (data['fontSize'] as num? ?? 12).toDouble(),
-      minFontSize = (data['minFontSize'] as num? ?? 8).toDouble(),
-      wrap = data['wrap'] == true,
-      maxLines = (data['maxLines'] as int? ?? 1),
-      overflow = data['overflow']?.toString() ?? 'ellipsis',
-      focusX = (data['focusX'] as num? ?? .5).toDouble(),
-      focusY = (data['focusY'] as num? ?? .35).toDouble(),
-      allowOverlapWith = List<String>.from(
-        data['allowOverlapWith'] as List? ?? const [],
-      ) {
+      : key = data['key'] as String,
+        side = data['side'] as String,
+        kind = data['kind'] as String,
+        fit = data['fit']?.toString() ?? 'contain',
+        align = data['align']?.toString() ?? 'left',
+        label = data['label']?.toString() ?? '',
+        x = (data['x'] as num).toDouble(),
+        y = (data['y'] as num).toDouble(),
+        width = (data['width'] as num).toDouble(),
+        height = (data['height'] as num).toDouble(),
+        fontSize = (data['fontSize'] as num? ?? 12).toDouble(),
+        minFontSize = (data['minFontSize'] as num? ?? 8).toDouble(),
+        wrap = data['wrap'] == true,
+        maxLines = (data['maxLines'] as int? ?? 1),
+        overflow = data['overflow']?.toString() ?? 'ellipsis',
+        focusX = (data['focusX'] as num? ?? .5).toDouble(),
+        focusY = (data['focusY'] as num? ?? .35).toDouble(),
+        allowOverlapWith = List<String>.from(
+          data['allowOverlapWith'] as List? ?? const [],
+        ) {
     if (key.isEmpty ||
         !{'front', 'back'}.contains(side) ||
         !{'text', 'image', 'qr'}.contains(kind) ||

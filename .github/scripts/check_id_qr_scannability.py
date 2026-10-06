@@ -1,6 +1,6 @@
 """Decode final printed QR pixels, independently of Dart's QR renderer."""
 from pathlib import Path
-import cv2
+import zxingcpp
 import fitz
 import numpy as np
 
@@ -13,8 +13,7 @@ for path, expected in samples:
         assert len(pdf) == 1, f'{path}: front and back must share one page'
         pixels = pdf[0].get_pixmap(dpi=300, alpha=False)
         image = np.frombuffer(pixels.samples, dtype=np.uint8).reshape(pixels.height, pixels.width, 3)
-        detector = cv2.QRCodeDetector()
-        detected, values, _, _ = detector.detectAndDecodeMulti(image)
-        assert detected and any(expected in value for value in values), f'{path}: final 300 DPI QR cannot be decoded: {values}'
+        values = [code.text for code in zxingcpp.read_barcodes(image) if code.format == zxingcpp.BarcodeFormat.QRCode]
+        assert any(expected in value for value in values), f'{path}: final 300 DPI QR cannot be decoded: {values}'
     print(f'PASS: final printed QR decodes at 300 DPI: {path.name}')
 print(f'{len(samples)} ID QR scan assertions passed.')
