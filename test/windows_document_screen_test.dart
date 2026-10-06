@@ -68,7 +68,8 @@ void main() {
     expect(ready(), true, reason: 'Production document flow did not complete');
   }
 
-  Future<void> open(WidgetTester t, {int existing = 0}) async {
+  Future<void> open(WidgetTester t, {int existing = 0, bool cancelled = false}) async {
+    final beforeCalls = picker.calls;
     t.view.physicalSize = const Size(1400, 1000);
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.resetPhysicalSize);
@@ -95,7 +96,8 @@ void main() {
         () => find
             .byKey(const ValueKey('document-select-file'))
             .evaluate()
-            .isNotEmpty);
+            .isNotEmpty || (cancelled && picker.calls > beforeCalls));
+    expect(picker.calls, beforeCalls + 1);
     expect(await t.runAsync(count), existing);
   }
 
@@ -107,7 +109,6 @@ void main() {
     picker.selection = XFile.fromData(source,
         path: 'source.png', name: 'source.png', mimeType: 'image/png');
     await open(t);
-    await t.tap(find.byKey(const ValueKey('document-select-file')));
     await waitFor(
         t,
         () =>
@@ -150,8 +151,7 @@ void main() {
     // Continue the real screen/session, including its existing document. This
     // also verifies cancellation/failure do not erase an earlier successful save.
     picker.selection = null;
-    await open(t, existing: 1);
-    await t.tap(find.byKey(const ValueKey('document-select-file')));
+    await open(t, existing: 1, cancelled: true);
     await t.pumpAndSettle();
     expect(await t.runAsync(count), 1);
     final afterCancel =
@@ -163,7 +163,6 @@ void main() {
     picker.selection = XFile.fromData(corrupt,
         path: 'broken.jpg', name: 'broken.jpg', mimeType: 'image/jpeg');
     await open(t, existing: 1);
-    await t.tap(find.byKey(const ValueKey('document-select-file')));
     await waitFor(
         t,
         () => find

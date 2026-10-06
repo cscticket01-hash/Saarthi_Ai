@@ -64,7 +64,8 @@ void main() {
       'Birth Certificate',
     );
     await t.tap(find.byKey(const ValueKey('document-name-continue')));
-    await t.pumpAndSettle();
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 300));
   }
 
   for (final ext in ['jpg', 'jpeg', 'png', 'pdf']) {
@@ -90,7 +91,7 @@ void main() {
           if (r != null) writes++;
         },
       );
-      expect(calls, 0);
+      expect(calls, 1);
       expect(writes, 0);
       expect(
         t
@@ -98,10 +99,8 @@ void main() {
               find.byKey(const ValueKey('document-confirm-save')),
             )
             .onPressed,
-        isNull,
+        isNotNull,
       );
-      await t.tap(find.byKey(const ValueKey('document-select-file')));
-      await t.pumpAndSettle();
       expect(calls, 1);
       expect(writes, 0);
       expect(find.textContaining('optimized'), findsOneWidget);
@@ -122,7 +121,6 @@ void main() {
         if (r != null) writes++;
       },
     );
-    await t.tap(find.byKey(const ValueKey('document-select-file')));
     await t.pumpAndSettle();
     expect(find.byType(DocumentUploadDialog), findsNothing);
     expect(writes, 0);
@@ -143,7 +141,6 @@ void main() {
           if (r != null) writes++;
         },
       );
-      await t.tap(find.byKey(const ValueKey('document-select-file')));
       await t.pumpAndSettle();
       expect(bytes, original);
       expect(find.textContaining('Original file is unchanged'), findsOneWidget);
@@ -176,7 +173,6 @@ void main() {
         if (r != null) writes++;
       },
     );
-    await t.tap(find.byKey(const ValueKey('document-select-file')));
     await t.pump();
     current = false;
     future.complete(await processed(bytes, 'image/jpeg'));
@@ -203,7 +199,6 @@ void main() {
         if (r != null) writes++;
       },
     );
-    await t.tap(find.byKey(const ValueKey('document-select-file')));
     await t.pump();
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
@@ -220,7 +215,6 @@ void main() {
         picker: () async => throw StateError('native picker unavailable'),
         result: (r) => fail('must not save'),
       );
-      await t.tap(find.byKey(const ValueKey('document-select-file')));
       await t.pumpAndSettle();
       expect(find.textContaining('native picker unavailable'), findsOneWidget);
       expect(

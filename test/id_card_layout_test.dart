@@ -72,6 +72,21 @@ void main() {
       );
     },
   );
+  test('truncated complete-header PNG/JPEG fails safely in ID fitting', () {
+    final image = img.Image(width: 20, height: 30);
+    for (final bytes in [img.encodePng(image), img.encodeJpg(image)]) {
+      final truncated = Uint8List.fromList(bytes.sublist(0, bytes.length - 4));
+      expect(() => IdCardLayout.prepareImage(truncated, aspect: .8), throwsFormatException);
+    }
+  });
+  test('exact manifest minimum is measured before readable text is truncated', () {
+    final fit = IdCardLayout.fitText('Long Name', width: 9 * .6 * 8.1,
+      height: 20, measure: (s) => s.length * .6,
+      fontSize: 12, minFontSize: 8.1);
+    expect(fit.fontSize, 8.1);
+    expect(fit.text, 'Long Name');
+    expect(fit.truncated, false);
+  });
   for (final shape in [
     [400, 600],
     [900, 300],

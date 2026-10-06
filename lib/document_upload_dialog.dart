@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
@@ -109,6 +110,15 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
   bool busy = false;
   String? error;
   int generation = 0;
+  @override
+  void initState() {
+    super.initState();
+    // Name confirmation opens this production dialog. Start the native picker
+    // once the route is mounted; the button remains available for retry.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(pick());
+    });
+  }
   Future<void> pick() async {
     if (busy) return;
     final current = ++generation;

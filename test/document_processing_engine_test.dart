@@ -6,6 +6,16 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('truncated real PNG/JPEG containers are rejected before decoding', () {
+    final image = img.Image(width: 20, height: 30);
+    for (final bytes in [img.encodePng(image), img.encodeJpg(image)]) {
+      final truncated = Uint8List.fromList(bytes.sublist(0, bytes.length - 4));
+      final original = List<int>.from(truncated);
+      expect(() => DocumentProcessingEngine.process({'bytes': truncated}), throwsFormatException);
+      expect(truncated, original);
+    }
+  });
+
   test('quality floor wins over an impossible byte target; original bytes remain unchanged', () {
     final image = img.Image(width: 600, height: 800);
     img.fill(image, color: img.ColorRgb8(255, 255, 255));

@@ -1,3 +1,4 @@
+import 'school_image_input.dart';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -71,7 +72,15 @@ class IdCardLayout {
       return result.isEmpty ? [''] : result;
     }
 
-    for (double size = fontSize; size >= minFontSize; size -= .25) {
+    // Include the exact manifest minimum even when it is not a quarter-point
+    // step below the preferred size. Otherwise readable text can be needlessly
+    // truncated despite fitting at the requested minimum.
+    final sizes = <double>[];
+    for (double size = fontSize; size > minFontSize; size -= .25) {
+      sizes.add(size);
+    }
+    sizes.add(minFontSize);
+    for (final size in sizes) {
       final parts = lines(size);
       if (parts.length <= maxLines &&
           parts.length * size * 1.25 <= height &&
@@ -162,6 +171,19 @@ class IdCardLayout {
     bool cover = false,
     double focusX = .5,
     double focusY = .35,
+  }) {
+    SchoolImageInput.validate(bytes);
+    try {
+      return _prepareImage(bytes, aspect: aspect, cover: cover, focusX: focusX, focusY: focusY);
+    } on FormatException {
+      rethrow;
+    } catch (_) {
+      throw const FormatException('ID image cannot be safely decoded.');
+    }
+  }
+
+  static Uint8List _prepareImage(Uint8List bytes, {
+    required double aspect, bool cover = false, double focusX = .5, double focusY = .35,
   }) {
     if (bytes.length < 12 || bytes.length > 50 * 1024 * 1024)
       throw const FormatException("ID image is empty, truncated or too large.");

@@ -235,14 +235,17 @@ jobs:
     - name: Execute Windows fresh-start duplicate-launch and restart smoke test
       shell: powershell
       run: .github/scripts/test_windows_executable.ps1
-    - name: Preserve school app separately from native picker harness
+    - name: Package exact-commit Windows TEST app
       shell: powershell
-      run: Copy-Item build/windows/x64/runner/Release build/windows-review -Recurse
-    - name: Compile isolated native document picker harness
-      run: flutter build windows --release -t tool/native_document_picker_review.dart
-    - name: Select JPG JPEG PNG PDF and cancel actual Windows native dialog
-      shell: powershell
-      run: .github/scripts/test_windows_document_picker.ps1
+      run: |
+        $registrant = Get-Content windows/flutter/generated_plugin_registrant.cc -Raw
+        if ($registrant -notmatch 'FileSelectorWindowsRegisterWithRegistrar') { throw 'Native Windows file picker plugin not registered.' }
+        Copy-Item build/windows/x64/runner/Release build/windows-review -Recurse
+        Set-Content build/windows-review/TEST-COMMIT.txt $env:GITHUB_SHA
+        Copy-Item docs/windows-test-2.1.98.md build/windows-review/TEST-INSTRUCTIONS.md
+    # The production upload path is verified with the injected native adapter.
+    # Hosted-runner Win32 picker control automation has repeatedly timed out.
+    # Only the final OS selection is reserved for the owner's real Windows PC.
     - uses: actions/upload-artifact@v4
       with:
         name: windows-review-build

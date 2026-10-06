@@ -1,3 +1,4 @@
+import 'school_image_input.dart';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -9,6 +10,16 @@ class DocumentProcessingEngine {
   static const sourceLimit = 50 * 1024 * 1024;
   static const setTarget = 300 * 1024;
   static Map<String, dynamic> process(Map<String, dynamic> input) {
+    SchoolImageInput.validate(input['bytes'] as Uint8List);
+    try {
+      return _process(input);
+    } on FormatException {
+      rethrow;
+    } catch (_) {
+      throw const FormatException('Image cannot be safely decoded.');
+    }
+  }
+  static Map<String, dynamic> _process(Map<String, dynamic> input) {
     final bytes = input['bytes'] as Uint8List;
     if (bytes.length < 12 || bytes.length > sourceLimit)
       throw const FormatException('Source exceeds document safety limit.');
