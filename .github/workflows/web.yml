@@ -90,6 +90,9 @@ jobs:
       # BUILD WEB
       # IMPORTANT: Firebase site runs from /
       # =========================================================
+      - name: Verify latest installer selection
+        run: flutter test test/release_download_test.dart
+
       - name: Build Web
         env:
           SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
@@ -241,6 +244,7 @@ jobs:
       # DEPLOY ONLY VIDYASAARTHI HOSTING SITE
       # =========================================================
       - name: Verify and deploy free central Firebase rules
+        if: "!contains(github.event.head_commit.message, '[hosting-only]')"
         run: |
           npm --prefix functions install
           npm --prefix functions test
