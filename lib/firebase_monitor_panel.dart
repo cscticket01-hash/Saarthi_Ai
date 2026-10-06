@@ -78,7 +78,7 @@ class _FirebaseMonitorPanelState extends State<FirebaseMonitorPanel> {
   @override
   Widget build(BuildContext context) {
     final metrics = data?['metrics'];
-    final cards = metrics is Map ? firebaseMetricCards(metrics) : null;
+    final cards = metrics is Map ? firebaseMetricCards(metrics) : <String, dynamic>{};
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
