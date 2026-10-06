@@ -84,7 +84,7 @@ class WindowsBackendBridge {
     if(local is String && await File(local).exists()) {
       final canonical=await File(local).resolveSymbolicLinks(),safeRoot=await schoolRoot.resolveSymbolicLinks();
       if(!canonical.startsWith('$safeRoot${Platform.pathSeparator}'))throw StateError('Foreign local document path blocked.');
-      own();return File(canonical).readAsBytes();
+      own();final bytes=await File(canonical).readAsBytes();own();return bytes;
     }
     final id=document['fileId']?.toString()??schoolDriveFileIdForDocument(document['fileUrl']?.toString()??'');
     if(!RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(id))throw StateError('Document cloud file is not available yet.');
@@ -105,7 +105,7 @@ class WindowsBackendBridge {
     if(bytes.isEmpty || bytes.length>20*1024*1024)throw StateError('Invalid restored document size.');
     if(document['contentHash'] is String && crypto.sha256.convert(bytes).toString()!=document['contentHash'])throw StateError('Document hash mismatch.');
     await directory.create(recursive:true);own();
-    final pending=File('${cached.path}.pending');await pending.writeAsBytes(bytes,flush:true);own();await pending.rename(cached.path);
+    final pending=File('${cached.path}.pending');await pending.writeAsBytes(bytes,flush:true);own();await pending.rename(cached.path);own();
     return bytes;
   }
   static String schoolDriveFileIdForDocument(String source) {

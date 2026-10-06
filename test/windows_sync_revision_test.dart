@@ -54,6 +54,15 @@ void main(){
   await db.switchProfile('B',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
   await expectLater(WindowsPendingSchoolSync.flush(profileId:origin,send:(a,b,c,d)async=>fail('No cross school send')),throwsStateError);
  });
+ test('retained school A references cannot read or derive queries after switching school',()async{
+  final collection=db.collection('students_directory'),ref=collection.doc('own'),query=collection.where('name',isEqualTo:'A');
+  await ref.set({'name':'A'});final origin=db.activeProfileId;
+  await db.switchProfile('reference-school-B',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+  await expectLater(ref.get(),throwsStateError);await expectLater(query.get(),throwsStateError);
+  expect(()=>collection.doc('new'),throwsStateError);expect(()=>collection.where('name',isEqualTo:'B'),throwsStateError);
+  await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+  expect((await ref.get()).data()?['name'],'A');
+ });
  test('lazy document cache survives restart and never fetches unchanged file twice',()async{
   var reads=0;final bytes=Uint8List.fromList(utf8.encode('%PDF-1.4\nrepresentative cached document\n%%EOF'));
   final record={'schoolId':school,'fileId':'drive-test-${DateTime.now().microsecondsSinceEpoch}','documentRevision':'revision'};

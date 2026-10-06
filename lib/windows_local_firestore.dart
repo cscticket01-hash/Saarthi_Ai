@@ -204,7 +204,7 @@ class Query<T> {
     this.orderField,
     this.orderDescending = false,
     this.limitCount,
-  });
+  }) : originProfile=firestore.activeProfileId;
 
   final FirebaseFirestore firestore;
   final String collectionPath;
@@ -212,11 +212,14 @@ class Query<T> {
   final String? orderField;
   final bool orderDescending;
   final int? limitCount;
+  final String originProfile;
+  void requireOriginProfile(){if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed; reopen this query.');}
 
   Query<T> where(
     String field, {
     Object? isEqualTo,
   }) {
+    requireOriginProfile();
     return Query<T>._(
       firestore: firestore,
       collectionPath: collectionPath,
@@ -237,6 +240,7 @@ class Query<T> {
     String field, {
     bool descending = false,
   }) {
+    requireOriginProfile();
     return Query<T>._(
       firestore: firestore,
       collectionPath: collectionPath,
@@ -248,6 +252,7 @@ class Query<T> {
   }
 
   Query<T> limit(int count) {
+    requireOriginProfile();
     return Query<T>._(
       firestore: firestore,
       collectionPath: collectionPath,
@@ -259,10 +264,12 @@ class Query<T> {
   }
 
   Future<QuerySnapshot<T>> get() async {
+    requireOriginProfile();
     final rawDocs =
         await firestore._database.readCollection(
       collectionPath,
     );
+    requireOriginProfile();
 
     final docs = <QueryDocumentSnapshot<T>>[];
 
@@ -346,6 +353,7 @@ class CollectionReference<T> extends Query<T> {
   DocumentReference<T> doc([
     String? path,
   ]) {
+    requireOriginProfile();
     final id = path == null || path.trim().isEmpty
         ? _autoDocumentId()
         : path.trim();
@@ -384,10 +392,12 @@ class DocumentReference<T> {
   String get id => documentId;
 
   Future<DocumentSnapshot<T>> get() async {
+    requireOriginProfile();
     final raw = await firestore._database.readDocument(
       collectionPath,
       documentId,
     );
+    requireOriginProfile();
 
     if (raw == null) {
       return DocumentSnapshot<T>._(

@@ -877,7 +877,9 @@ class WindowsSyncEngine {
       if(result['unchanged']==true)continue;
       final records=Map<String,dynamic>.from(result['records'] as Map);
       final pending=(await db.collection('_windows_firebase_outbox').get()).docs;
+      if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
       for(final entry in records.entries) {
+        if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
         final data=Map<String,dynamic>.from(entry.value as Map);
         if(data['schoolId']!=school)throw StateError('Foreign school manifest rejected.');
         if(collection=='school_config' && entry.key=='google_drive_account')continue;
@@ -894,6 +896,7 @@ class WindowsSyncEngine {
         await db.applySyncedDocument(db.collection(collection).doc(entry.key),data['_syncDeleted']==true?null:data);
       }
       // Missing IDs are not deletions: only explicit server tombstones delete.
+      if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
       await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>manifest.set({
         'revision':result['collectionRevision'],'collection':collection,'ids':records.keys.toList(),
         'deletedIds':records.entries.where((e)=>(e.value as Map)['_syncDeleted']==true).map((e)=>e.key).toList()}));
