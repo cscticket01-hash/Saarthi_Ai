@@ -114,7 +114,7 @@ class IdCardLayout {
     double minFontSize = 8,
     bool wrap = false,
     int maxLines = 1,
-    String overflow = 'ellipsis',
+    String overflow = 'error',
     PdfColor color = PdfColors.black,
     pw.TextAlign align = pw.TextAlign.left,
   }) =>

@@ -962,7 +962,7 @@ class _LocalJsonDatabase {
               }
               if(operation.data != null &&
                   (operation.acknowledgedRevision != null
-                    ? (docs[operation.documentId] as Map?)?['operationId'] != operation.data!['operationId']
+                    ? (docs[operation.documentId] is! Map || (docs[operation.documentId] as Map)['operationId'] != operation.data!['operationId'])
                     : jsonEncode(docs[operation.documentId]) != jsonEncode(_encodeMap(operation.data!)))) continue;
               docs.remove(operation.documentId);
               break;
@@ -1112,11 +1112,12 @@ class _LocalJsonDatabase {
 
     final previous = queue[key];
     final baseline = collections['_windows_sync_baselines'];
+    final baselineEntry = baseline is Map ? baseline[key] : null;
     queue[key] = <String, dynamic>{
       'operationId': base64Url.encode(List<int>.generate(24, (_) => Random.secure().nextInt(256))).replaceAll('=', ''),
       'schoolId': _activeIdentity['schoolSyncId'] ?? '',
       'baseCloudRevision': previous is Map ? previous['baseCloudRevision'] ?? '' :
-          baseline is Map ? (baseline[key] as Map?)?['revision'] ?? '' : '',
+          baselineEntry is Map ? baselineEntry['revision'] ?? '' : '',
       'syncState':'pending', 'retryCount':0,
       'collection': operation.collection,
       'documentId': operation.documentId,

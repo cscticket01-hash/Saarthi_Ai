@@ -781,7 +781,7 @@ class WindowsSyncEngine {
         metrics['storageChecks']=metrics['storageChecks']!+1;
         if(health['recordSyncVersion']!=2 || health['brokerRecordSyncVersion']!=2)
           throw StateError('School sync requires the version-safe broker and Script update. Pending data retained.');
-        await _pushManagedOutbox();
+        try {await _pushManagedOutbox();} catch(e){if(!e.toString().contains('conflict'))rethrow;}
         await WindowsBackendBridge.flushDocumentPending();
         if(_lastPull==null || DateTime.now().difference(_lastPull!)>=const Duration(minutes:15) || _manualSync) {
           await _pullManagedChanges();
@@ -876,10 +876,21 @@ class WindowsSyncEngine {
       if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
       if(result['unchanged']==true)continue;
       final records=Map<String,dynamic>.from(result['records'] as Map);
+      final pending=(await db.collection('_windows_firebase_outbox').get()).docs;
       for(final entry in records.entries) {
         final data=Map<String,dynamic>.from(entry.value as Map);
         if(data['schoolId']!=school)throw StateError('Foreign school manifest rejected.');
         if(collection=='school_config' && entry.key=='google_drive_account')continue;
+        final queued=pending.where((d)=>d.data()['collection']==collection&&d.data()['documentId']==entry.key).toList();
+        if(queued.isNotEmpty && (data['_syncRevision']??'')!=(queued.first.data()['baseCloudRevision']??'')) {
+          final ref=db.collection(collection).doc(entry.key);
+          final batch=db.batch();
+          batch.set(db.collection('_windows_sync_conflicts').doc(queued.first.id),{
+            'schoolId':school,'collection':collection,'documentId':entry.key,
+            'local':(await ref.get()).data(),'remote':data,'detectedAt':DateTime.now().millisecondsSinceEpoch});
+          batch.set(queued.first.reference,{'syncState':'conflict','lastError':'Record revision conflict'},const SetOptions(merge:true));
+          await batch.commit();
+        }
         await db.applySyncedDocument(db.collection(collection).doc(entry.key),data['_syncDeleted']==true?null:data);
       }
       // Missing IDs are not deletions: only explicit server tombstones delete.

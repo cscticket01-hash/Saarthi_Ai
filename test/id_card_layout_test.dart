@@ -215,10 +215,10 @@ void main() {
         final bytes = await IdCardEngine.render(
           IdCardManifest.fromJson(manifest()),
           {
-            'name': 'Long Person Name ' * 8,
-            'parentName': 'Long Guardian ' * 8,
-            'address': 'House Street Village District State PIN ' * 10,
-            'schoolName': 'Long School ' * 10,
+            'name': 'Mohit Kumar Das Choudhury',
+            'parentName': 'Arup Chandra Das Choudhury',
+            'address': 'House 123, School Road, Silchar, Cachar, Assam 788001',
+            'schoolName': 'Vivekananda Vidya Mandir Higher Secondary School',
             'designation': role,
           },
           images: {
@@ -240,6 +240,11 @@ void main() {
       },
     );
   }
+  test('required identity fields and impossible important text fail before accepting a card',()async {
+    final template=IdCardManifest.fromJson(manifest());
+    await expectLater(IdCardEngine.render(template,{'name':'Mohit Das'}),throwsFormatException);
+    await expectLater(IdCardEngine.render(template,{'name':'Very Long Name '*100,'schoolName':'Own School'}),throwsFormatException);
+  });
   test('manifest rejects impossible tiny portrait region', () {
     final base = manifest();
     final rows = (base['regions'] as List).cast<Map>();
@@ -265,7 +270,7 @@ void main() {
       final raw = SchoolLink.encodeCompact(Map<String,dynamic>.from(fixture));
       final bytes = await IdCardEngine.render(
           IdCardManifest.fromJson(manifest()),
-          Map<String, dynamic>.from(fixture),
+          {...Map<String, dynamic>.from(fixture),'schoolName':'Managed School'},
           qr: raw);
       final dir = Directory('build/reference-document-previews');
       await dir.create(recursive: true);

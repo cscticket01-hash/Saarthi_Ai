@@ -20643,9 +20643,10 @@ class _StudentDocumentsScreenState
                               color: Colors.white,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Text('${_documents.length} documents • ${_formatBytes(_totalBytes)} optimized • target ~300 KB • ${_totalBytes > 300*1024 ? 'Readability Protected' : 'Optimized'}',
+                      Expanded(child:Text('${_documents.length} documents • ${_formatBytes(_totalBytes)} optimized • target ~300 KB • ${_uploading ? 'Optimizing / pending' : _totalBytes > 300*1024 ? 'Readability Protected' : _documents.isEmpty ? 'Awaiting documents' : 'Optimized'}',
+                          textAlign:TextAlign.right,maxLines:3,
                           style: const TextStyle(
-                              color: Colors.white54, fontSize: 10.5)),
+                              color: Colors.white54, fontSize: 10.5))),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -20654,7 +20655,7 @@ class _StudentDocumentsScreenState
                     minHeight: 7,
                     backgroundColor: Colors.white10,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      _totalBytes > 300*1024 ? Colors.orangeAccent : const Color(0xFF00A884),
+                      _uploading ? Colors.amber : _totalBytes > 300*1024 ? Colors.orangeAccent : const Color(0xFF00A884),
                     ),
                   ),
                   const SizedBox(height: 7),
@@ -20725,8 +20726,7 @@ class _StudentDocumentsScreenState
                                     fontWeight: FontWeight.w800)),
                             Text(
                               'Original: ${document['sourceBytes'] is num ? _formatBytes((document['sourceBytes'] as num).toInt()) : 'Not recorded'} • Optimized: ${_formatBytes(size)} • Savings: ${document['sourceBytes'] is num && (document['sourceBytes'] as num)>0 ? (100*(1-size/(document['sourceBytes'] as num))).toStringAsFixed(1)+'%' : 'Not recorded'} • ${document['syncState']??'Cloud copy'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              maxLines: 3,
                               style: const TextStyle(
                                   color: Colors.white38, fontSize: 9.5),
                             ),

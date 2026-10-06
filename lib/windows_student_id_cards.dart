@@ -145,8 +145,8 @@ Future<Uint8List> renderWindowsStudentId({
         s,
         font: bold ? boldFont : normalFont,
         fontSize: size,
-        wrap: s.contains('\n'),
-        maxLines: s.contains('\n') ? s.split('\n').length : 1,
+        wrap: true,
+        maxLines: 3,
         color: color ?? PdfColors.black,
         align: align,
       );

@@ -52,17 +52,12 @@ void main() {
       expect(RegExp(r'/Type\s*/Page\b').allMatches(raw).length, 1);
       await File('${output.path}/student_reference_$i.pdf').writeAsBytes(bytes);
       // Very long fields and missing assets must also remain printable.
-      final longBytes = await renderWindowsStudentId(
-        template: i,
-        data: {
-          ...sample,
-          'schoolName': 'A Very Long School Name ' * 6,
-          'name': 'Student With A Very Long Name ' * 4,
-          'parentName': 'Father With A Very Long Name ' * 4,
-          'streetAddress': 'House 123, Long Street, Village, Post Office ' * 5,
-        },
-      );
-      expect(longBytes.length, greaterThan(500));
+      await expectLater(renderWindowsStudentId(template:i,data:{...sample,
+        'name':'Student With A Very Long Name '*100}),throwsFormatException);
+      final longBytes=await renderWindowsStudentId(template:i,data:{...sample,
+        'name':'Mohit Kumar Das Choudhury','parentName':'Arup Chandra Das Choudhury',
+        'schoolName':'Vivekananda Vidya Mandir Higher Secondary School'});
+      expect(longBytes.length,greaterThan(500));
       await File('${output.path}/student_long_$i.pdf').writeAsBytes(longBytes);
       final empty = await renderWindowsStudentId(template: i, data: {});
       expect(empty.length, greaterThan(500));
