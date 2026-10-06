@@ -62,9 +62,13 @@ try {
  }
  if(!$state -or $state.stage -ne 'done') { throw 'Native picker automation timed out; actual Windows picker is unverified.' }
  if(!$state.passed) { throw "Native picker failed: $($state.error)" }
- if($state.results.Count -ne 4 -or !$state.cancelledWithoutSelection) { throw 'Missing native file selection/cancellation results.' }
- foreach($result in $state.results) { Write-Host "PASS: native picker selected $($result.file), processed $($result.optimizedBytes) bytes, original retained" }
+ if($state.results.Count -ne 4 -or !$state.cancelledWithoutSelection -or !$state.processingFailureRetainedOriginal) { throw 'Missing native file selection/cancellation/failure results.' }
+ foreach($result in $state.results) {
+   if(!$result.previewBeforeSave -or !$result.localSaveAndPendingQueue -or !$result.originalRetained) { throw 'Incomplete production upload flow' }
+   Write-Host "PASS: production Documents name -> native picker -> $($result.file) -> preview -> Save -> local pending queue; optimized $($result.optimizedBytes) bytes, original retained"
+ }
  Write-Host 'PASS: actual native Windows picker cancellation returns no document'
+ Write-Host 'PASS: native truncated-file selection blocks Save and preserves original'
  Copy-Item (Join-Path $folder 'state.json') 'build/windows-review/native-picker-results.json'
 } finally {
  $process.Refresh()

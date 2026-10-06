@@ -72,7 +72,7 @@ jobs:
     - name: Verify durable document queue and retained originals
       env:
         APPDATA: ${{ runner.temp }}/document-queue-tests
-      run: flutter test --concurrency=1 test/windows_document_queue_test.dart
+      run: flutter test --concurrency=1 test/windows_document_screen_test.dart test/windows_document_queue_test.dart
     - name: Verify Windows portal regressions
       env:
         APPDATA: ${{ runner.temp }}/windows-portal-tests
@@ -206,9 +206,13 @@ jobs:
       run: flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
     - name: Verify manifest IDs on Windows
       run: flutter test test/id_card_engine_test.dart
+    - name: Verify production Documents screen and durable local queue on Windows
+      env:
+        APPDATA: ${{ runner.temp }}/windows-document-screen-tests
+      run: flutter test --concurrency=1 test/windows_document_screen_test.dart test/windows_document_queue_test.dart
     - name: Verify reference PDF contents and continuation pages
       run: |
-        python -m pip install "pypdf>=6,<7" "pymupdf>=1.26,<2" "zxing-cpp>=2.3,<4"
+        python -m pip install "pypdf>=6,<7" "pymupdf>=1.26,<2" "zxing-cpp>=2.3,<4" "numpy>=2,<3"
         python .github/scripts/check_reference_document_previews.py
         python .github/scripts/check_id_qr_scannability.py
     - name: Analyze Windows ID card changes

@@ -20318,7 +20318,7 @@ class _DriveUnlinkSecurityDialogState
 
 // ============================================================
 // STUDENT ALL DOCUMENTS
-// PDF/JPG/JPEG only. Combined per-student limit = 2 MB.
+// JPG/JPEG/PNG/PDF; original retained, optimized copies queued locally.
 // ============================================================
 class StudentDocumentsScreen extends StatefulWidget {
   final String studentId;
@@ -20370,6 +20370,15 @@ class _StudentDocumentsScreenState
   void dispose(){_refreshTimer?.cancel();super.dispose();}
 
   Future<String> _scriptUrl() async {
+    final saved = await CentralSchoolCloud.saved();
+    if (saved['managed'] == true) {
+      if (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != saved['schoolId']) {
+        throw StateError('School changed. Reopen documents.');
+      }
+      // Managed document operations are routed locally by the bridge. Do not
+      // require a verified Drive URL before reaching that local-first path.
+      return '';
+    }
     return _windowsGoogleScriptUrl();
   }
 
@@ -20551,6 +20560,7 @@ class _StudentDocumentsScreenState
         title: const Text('Student All Documents'),
       ),
       floatingActionButton: FloatingActionButton.extended(
+        key: const ValueKey('student-document-upload'),
         onPressed: _uploading ? null : () => _upload(),
         backgroundColor: const Color(0xFF00A884),
         foregroundColor: Colors.white,

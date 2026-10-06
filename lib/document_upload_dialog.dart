@@ -58,30 +58,31 @@ class _DocumentNameDialogState extends State<DocumentNameDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Document Name'),
-    content: TextField(
-      key: const ValueKey('document-name'),
-      controller: controller,
-      autofocus: true,
-      decoration: const InputDecoration(
-        hintText: 'Aadhaar Card / Birth Certificate / Marksheet',
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
-      ),
-      ElevatedButton(
-        key: const ValueKey('document-name-continue'),
-        onPressed: () {
-          final name = controller.text.trim();
-          if (name.isNotEmpty) Navigator.pop(context, name);
-        },
-        child: const Text('Continue'),
-      ),
-    ],
-  );
+        title: const Text('Document Name'),
+        content: TextField(
+          key: const ValueKey('document-name'),
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Aadhaar Card / Birth Certificate / Marksheet',
+          ),
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('document-name-cancel'),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            key: const ValueKey('document-name-continue'),
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isNotEmpty) Navigator.pop(context, name);
+            },
+            child: const Text('Continue'),
+          ),
+        ],
+      );
 }
 
 class DocumentUploadDialog extends StatefulWidget {
@@ -97,7 +98,7 @@ class DocumentUploadDialog extends StatefulWidget {
   final bool Function() isCurrent;
   final Future<SelectedDocument?> Function() picker;
   final Future<Map<String, dynamic>> Function(Uint8List, String, {String scope})
-  processor;
+      processor;
   @override
   State<DocumentUploadDialog> createState() => _DocumentUploadDialogState();
 }
@@ -159,70 +160,71 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text('Preview: ${widget.name}'),
-    content: SizedBox(
-      width: 700,
-      height: 520,
-      child: Column(
-        children: [
-          OutlinedButton.icon(
-            key: const ValueKey('document-select-file'),
-            onPressed: busy ? null : pick,
-            icon: const Icon(Icons.file_open),
-            label: const Text('Select file — JPG / JPEG / PNG / PDF'),
-          ),
-          if (busy) const LinearProgressIndicator(),
-          if (error != null)
-            Text(error!, style: const TextStyle(color: Colors.red)),
-          if (processed != null) ...[
-            Text(
-              '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
-            ),
-            const Text(
-              'About 300 KB for 7–8 documents is a target; readability takes priority.',
-            ),
-            Expanded(
-              child: processed!['mimeType'] == 'application/pdf'
-                  ? FittedDocumentPreview(
-                      bytes: processed!['optimized'] as Uint8List,
-                    )
-                  : Image.memory(
-                      processed!['optimized'] as Uint8List,
-                      fit: BoxFit.contain,
-                    ),
-            ),
-          ] else
-            const Expanded(
-              child: Center(
-                child: Text(
-                  'Select a file to process and preview before saving.',
-                ),
+        title: Text('Preview: ${widget.name}'),
+        content: SizedBox(
+          width: 700,
+          height: 520,
+          child: Column(
+            children: [
+              OutlinedButton.icon(
+                key: const ValueKey('document-select-file'),
+                onPressed: busy ? null : pick,
+                icon: const Icon(Icons.file_open),
+                label: const Text('Select file — JPG / JPEG / PNG / PDF'),
               ),
-            ),
+              if (busy) const LinearProgressIndicator(),
+              if (error != null)
+                Text(error!, style: const TextStyle(color: Colors.red)),
+              if (processed != null) ...[
+                Text(
+                  '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
+                ),
+                const Text(
+                  'About 300 KB for 7–8 documents is a target; readability takes priority.',
+                ),
+                Expanded(
+                  child: processed!['mimeType'] == 'application/pdf'
+                      ? FittedDocumentPreview(
+                          bytes: processed!['optimized'] as Uint8List,
+                        )
+                      : Image.memory(
+                          processed!['optimized'] as Uint8List,
+                          fit: BoxFit.contain,
+                        ),
+                ),
+              ] else
+                const Expanded(
+                  child: Center(
+                    child: Text(
+                      'Select a file to process and preview before saving.',
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('document-cancel'),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            key: const ValueKey('document-confirm-save'),
+            onPressed: busy || processed == null
+                ? null
+                : () {
+                    if (!widget.isCurrent()) {
+                      setState(() {
+                        processed = null;
+                        error = 'School changed. Reopen documents.';
+                      });
+                      return;
+                    }
+                    Navigator.pop(context, selected);
+                  },
+            child: const Text('Save'),
+          ),
         ],
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
-      ),
-      ElevatedButton(
-        key: const ValueKey('document-confirm-save'),
-        onPressed: busy || processed == null
-            ? null
-            : () {
-                if (!widget.isCurrent()) {
-                  setState(() {
-                    processed = null;
-                    error = 'School changed. Reopen documents.';
-                  });
-                  return;
-                }
-                Navigator.pop(context, selected);
-              },
-        child: const Text('Save'),
-      ),
-    ],
-  );
+      );
 }
