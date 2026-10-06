@@ -24,11 +24,18 @@ $info.FileName = $app
 $info.WorkingDirectory = Split-Path $app
 $info.UseShellExecute = $false
 $info.EnvironmentVariables['SAARTHI_PICKER_REVIEW'] = $folder
-foreach ($key in @('APPDATA','LOCALAPPDATA','USERPROFILE')) {
- $profile = Join-Path $folder $key
- New-Item -ItemType Directory -Path $profile -Force | Out-Null
- $info.EnvironmentVariables[$key] = $profile
-}
+# Keep the Windows profile shape that path_provider_windows expects.  Pointing
+# USERPROFILE at a directory literally named `USERPROFILE` leaves the known
+# AppData folders unresolved on hosted runners and fails before the picker can
+# open.
+$profileRoot = Join-Path $folder 'profile'
+$roaming = Join-Path $profileRoot 'AppData\Roaming'
+$local = Join-Path $profileRoot 'AppData\Local'
+New-Item -ItemType Directory -Path $roaming -Force | Out-Null
+New-Item -ItemType Directory -Path $local -Force | Out-Null
+$info.EnvironmentVariables['USERPROFILE'] = $profileRoot
+$info.EnvironmentVariables['APPDATA'] = $roaming
+$info.EnvironmentVariables['LOCALAPPDATA'] = $local
 $process = [System.Diagnostics.Process]::Start($info)
 $shell = New-Object -ComObject WScript.Shell
 $handled = ''
