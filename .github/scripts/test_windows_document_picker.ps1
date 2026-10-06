@@ -12,6 +12,16 @@ public static class PickerWindows {
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
  [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hwnd, StringBuilder name, int size);
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+ [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SetWindowText(IntPtr hwnd, string text);
+ [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int size);
+ [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hwnd, Callback cb, IntPtr param);
+ [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+ public static bool Choose(IntPtr dialog, string path) {
+   IntPtr edit=IntPtr.Zero, open=IntPtr.Zero;
+   EnumChildWindows(dialog,(h,p)=>{var cls=new StringBuilder(128); GetClassName(h,cls,128); if(cls.ToString()=="Edit" && edit==IntPtr.Zero) edit=h;
+     var title=new StringBuilder(128); GetWindowText(h,title,128); if(cls.ToString()=="Button" && title.ToString().IndexOf("Open",StringComparison.OrdinalIgnoreCase)>=0) open=h; return true;},IntPtr.Zero);
+   if(edit==IntPtr.Zero) return false; SetWindowText(edit,path); if(open!=IntPtr.Zero) SendMessage(open,0x00F5,IntPtr.Zero,IntPtr.Zero); return true;
+ }
  public static IntPtr Dialog(int processId) {
    IntPtr result = IntPtr.Zero;
    EnumWindows((h,p) => { uint id; GetWindowThreadProcessId(h,out id); var name=new StringBuilder(256); GetClassName(h,name,256);
@@ -57,8 +67,10 @@ try {
          Start-Sleep -Milliseconds 300
          if($state.stage -eq 'cancel') { $shell.SendKeys('{ESC}') }
          elseif($state.stage -eq 'select') {
-           $shell.SendKeys('%n'); Start-Sleep -Milliseconds 100
-           $shell.SendKeys('^a'); $shell.SendKeys($state.file); $shell.SendKeys('{ENTER}')
+           if(-not [PickerWindows]::Choose($dialog,$state.file)) {
+             $shell.SendKeys('%n'); Start-Sleep -Milliseconds 100
+             $shell.SendKeys('^a'); $shell.SendKeys($state.file); $shell.SendKeys('{ENTER}')
+           }
          }
          $handled = $key
          Start-Sleep -Milliseconds 500
