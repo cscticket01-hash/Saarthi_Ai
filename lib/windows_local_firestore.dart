@@ -6,6 +6,7 @@ import 'dart:math';
 import 'windows_local_storage.dart';
 import 'windows_runtime_flags.dart';
 import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'windows_service_status.dart';
 
 
@@ -113,23 +114,45 @@ class FirebaseFirestore {
   /// Managed schools use durable, tenant-scoped storage regardless of the
   /// legacy standalone RAM-only preference. Authentication/licensing stay in
   /// the startup gate; this validates its saved identity against the live store.
+  String? _persistenceBinding;
+  Future<int>? _persistenceResolution;
+
   Future<bool> localPersistenceEnabled() async {
     final origin = activeProfileId;
-    if (!validSchoolId(activeProfileIdentity['schoolSyncId']?.toString() ?? '')) {
+    final identity = activeProfileIdentity;
+    if (!validSchoolId(identity['schoolSyncId']?.toString() ?? '')) {
       return WindowsRuntimeFlags.localStorageEnabled();
     }
-    final saved = await CentralSchoolCloud.saved();
-    if (origin != activeProfileId) throw StateError('School changed during storage resolution.');
-    final identity = activeProfileIdentity;
-    if (saved['managed'] == true) {
-      return saved['uid'] is String && (saved['uid'] as String).isNotEmpty &&
-          (saved['firebaseRefreshToken']?.toString() ?? '').isNotEmpty &&
-          validSchoolId(saved['schoolId']?.toString() ?? '') &&
-          identity['schoolSyncId'] == saved['schoolId'] &&
-          (identity['schoolId'] == null || identity['schoolId'] == saved['schoolId']) &&
-          identity['blocked'] != true;
+    // Cache only the validated storage decision, never credentials. The
+    // authoritative login/session notifier and immutable profile identity
+    // invalidate it. Avoid native credential I/O inside every database read.
+    final binding = '$origin:${identity['schoolSyncId']}:${identity['schoolId']}:${identity['blocked']}:${ManagedSchoolSession.changed.value}';
+    if (_persistenceBinding != binding || _persistenceResolution == null) {
+      _persistenceBinding = binding;
+      _persistenceResolution = _resolvePersistence(identity).catchError((Object error, StackTrace stack) {
+        if (_persistenceBinding == binding) {
+          _persistenceBinding = null;
+          _persistenceResolution = null;
+        }
+        Error.throwWithStackTrace(error, stack);
+      });
     }
-    return WindowsRuntimeFlags.localStorageEnabled();
+    final mode = await _persistenceResolution!;
+    if (origin != activeProfileId || _persistenceBinding != binding) {
+      throw StateError('School changed during storage resolution.');
+    }
+    return mode == 1 || mode == 0 && await WindowsRuntimeFlags.localStorageEnabled();
+  }
+
+  Future<int> _resolvePersistence(Map<String, dynamic> identity) async {
+    final saved = await CentralSchoolCloud.saved();
+    if (saved['managed'] != true) return 0; // Legacy standalone preference.
+    return saved['uid'] is String && (saved['uid'] as String).isNotEmpty &&
+        (saved['firebaseRefreshToken']?.toString() ?? '').isNotEmpty &&
+        validSchoolId(saved['schoolId']?.toString() ?? '') &&
+        identity['schoolSyncId'] == saved['schoolId'] &&
+        (identity['schoolId'] == null || identity['schoolId'] == saved['schoolId']) &&
+        identity['blocked'] != true ? 1 : -1;
   }
 
   Future<void> resetVolatileSession() => _database.resetVolatileSession();

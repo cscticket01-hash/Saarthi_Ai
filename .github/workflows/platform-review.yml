@@ -70,6 +70,7 @@ jobs:
     - name: Verify documents and mobile school boundaries
       run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart
     - name: Verify durable document queue and retained originals
+      timeout-minutes: 3
       env:
         APPDATA: ${{ runner.temp }}/document-queue-tests
       run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart
@@ -207,6 +208,7 @@ jobs:
     - name: Verify manifest IDs on Windows
       run: flutter test test/id_card_engine_test.dart
     - name: Verify production Documents screen and durable local queue on Windows
+      timeout-minutes: 3
       env:
         APPDATA: ${{ runner.temp }}/windows-document-screen-tests
       run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart

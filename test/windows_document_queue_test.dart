@@ -10,6 +10,7 @@ import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_local_storage.dart';
+import '../lib/windows_connect/managed_school_session.dart';
 import '../lib/platform/platform_config.dart';
 
 void main() {
@@ -195,6 +196,14 @@ void main() {
     expect((disk['profiles'] as Map).containsKey(profile), false);
     await db.resetVolatileSession();
     expect((await db.collection('notices').get()).docs, isEmpty);
+  });
+
+  test('managed logout/session change invalidates the storage binding without changing legacy preference', () async {
+    expect(await db.localPersistenceEnabled(), true);
+    FlutterSecureStorage.setMockInitialValues({});
+    ManagedSchoolSession.changed.value++;
+    expect(await db.localPersistenceEnabled(), false);
+    expect(await WindowsRuntimeFlags.localStorageEnabled(), false);
   });
 
 }
