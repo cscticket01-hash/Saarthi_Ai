@@ -68,6 +68,8 @@ class SchoolCloudEngine extends ChangeNotifier {
   bool get localReady => _localReady;
   int _generation = 0;
   Timer? _retry;
+  DateTime? _lastVerifyAttempt;
+  int _failures = 0;
   bool get hasIdentity => identity != null;
   bool get canOpen => _localReady && _leaseUsable;
   bool get _leaseUsable =>
@@ -76,6 +78,7 @@ class SchoolCloudEngine extends ChangeNotifier {
       access!['allowed'] == true &&
       (access!['status'] == 'trial' || access!['activated'] == true) &&
       (access!['expiresAt'] as num? ?? 0) > _clock().millisecondsSinceEpoch &&
+      _clock().millisecondsSinceEpoch - (access!['serverTime'] as num? ?? 0) < const Duration(hours:72).inMilliseconds &&
       (access!['serverTime'] as num? ?? 0) <=
           _clock().millisecondsSinceEpoch + 300000 &&
       (identity!['lastLocalSeenAt'] as num? ?? 0) <=
@@ -158,7 +161,8 @@ class SchoolCloudEngine extends ChangeNotifier {
       unawaited(verify());
       _retry = Timer.periodic(const Duration(seconds: 60), (_) {
         _notify();
-        unawaited(verify());
+        final due = Duration(minutes: _failures == 0 ? 15 : (1 << _failures.clamp(0,5)));
+        if (_lastVerifyAttempt == null || _clock().difference(_lastVerifyAttempt!) >= due) unawaited(verify());
       });
     }
   }
@@ -174,6 +178,7 @@ class SchoolCloudEngine extends ChangeNotifier {
   Future<void> verify() async {
     if (_verifying || identity == null || _disposed) return;
     _verifying = true;
+    _lastVerifyAttempt = _clock();
     final origin = Map<String, dynamic>.from(identity!),
         generation = _generation;
     bool current() => generation == _generation && !_disposed;
@@ -200,11 +205,13 @@ class SchoolCloudEngine extends ChangeNotifier {
                   (snapshot['serverTime'] as num? ?? 0)
           ? Map<String, dynamic>.from(storedAccess)
           : snapshot;
+      _failures = 0;
       error = null;
       state = canOpen
           ? SchoolCloudState.localReady
           : SchoolCloudState.authRequired;
     } catch (e) {
+      _failures++;
       if (!current()) return;
       if (e is CentralCloudException && e.authoritativeAccessDenial) {
         final denied = {

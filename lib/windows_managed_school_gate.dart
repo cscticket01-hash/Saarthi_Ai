@@ -184,44 +184,9 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
         ),
       );
     }
-    final s = engine.access!, status = engine.displayState;
-    final pending =
-        status == SchoolCloudState.offline ||
-        status == SchoolCloudState.syncError ||
-        status == SchoolCloudState.driveDisconnected;
+    final s = engine.access!;
     return Column(
       children: [
-        if (pending)
-          Material(
-            color: Colors.orange.shade900,
-            child: SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 5,
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.cloud_off, size: 16),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        'Offline / Sync pending • Local data remains available',
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        unawaited(engine.verify());
-                        WindowsSyncEngine.instance.scheduleSoon();
-                      },
-                      child: const Text('Retry'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
         if (s['status'] == 'trial')
           Material(
             color: Colors.red.shade900,

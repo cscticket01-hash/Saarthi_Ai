@@ -17,7 +17,37 @@ class SchoolLink {
     parse(raw);
     return raw;
   }
+  /// Compact managed identity only; DOB/password and server lease verification
+  /// remain mandatory. No names, location, Drive URL or Firebase config in QR.
+  static String encodeCompact(Map<String, dynamic> fields) {
+    final checked = parse(jsonEncode({...fields, 'app':'VIDYA_SAARTHI','v':2}));
+    if (!checked.managed) return encode(fields);
+    final person = base64Url.encode(utf8.encode(checked.personId)).replaceAll('=', '');
+    if (!RegExp(r'^[A-Za-z0-9_-]{32,128}$').hasMatch(checked.linkToken)) {
+      throw const FormatException('Invalid issued QR token.');
+    }
+    return 'VS3|${checked.schoolId.substring(3)}|${checked.role == 'student' ? 's' : 't'}|$person|${checked.linkToken}';
+  }
   static SchoolLink parse(String raw) {
+    if (raw.length > 8192) throw const FormatException('QR payload exceeds safety limit.');
+    if (raw.startsWith('VS3|')) {
+      final parts = raw.split('|');
+      if (parts.length != 5 || !{'s','t'}.contains(parts[2]) ||
+          !RegExp(r'^[a-f0-9]{32}$').hasMatch(parts[1]) ||
+          !RegExp(r'^[A-Za-z0-9_-]{32,128}$').hasMatch(parts[4])) {
+        throw const FormatException('Invalid compact school ID.');
+      }
+      String person;
+      try { person = utf8.decode(base64Url.decode(base64Url.normalize(parts[3])), allowMalformed:false); }
+      catch (_) { throw const FormatException('Invalid compact person ID.'); }
+      const endpoint = String.fromEnvironment('SAARTHI_SCHOOL_CLOUD_URL', defaultValue:'https://saarthi-oauth-staging.onrender.com/school-cloud');
+      final validated = parse(jsonEncode({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+        'schoolId':'vs-${parts[1]}','centralEndpoint':endpoint,'type':parts[2]=='s'?'student':'teacher',
+        'personId':person,'linkToken':parts[4]}));
+      return SchoolLink(projectId:validated.projectId,scriptUrl:'',role:validated.role,
+        personId:person,linkToken:validated.linkToken,rawQr:raw,managed:true,
+        schoolId:validated.schoolId,endpoint:validated.endpoint);
+    }
     final d = jsonDecode(raw);
     if (d is! Map || d['app'] != 'VIDYA_SAARTHI' || d['v'] != 2)
       throw const FormatException(

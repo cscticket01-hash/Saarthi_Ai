@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +8,23 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('eight encoded text scans produce measurable optimized bytes without forcing unreadable target',()async {
+    final measurements=<Map<String,dynamic>>[];
+    for(var n=0;n<8;n++) {
+      final image=img.Image(width:1000,height:1400);img.fill(image,color:img.ColorRgb8(255,255,255));
+      for(var row=60;row<1300;row+=42) img.drawString(image,'School record ${n+1} - Name, date and marks 0123456789',font:img.arial24,x:35,y:row,color:img.ColorRgb8(20,20,20));
+      final source=Uint8List.fromList(n.isEven?img.encodePng(image):img.encodeJpg(image,quality:98));
+      final result=DocumentProcessingEngine.process({'bytes':source});final optimized=result['optimized'] as Uint8List;
+      expect(result['actualBytes'],optimized.length);expect(img.decodeJpg(optimized),isNotNull);
+      expect((result['quality'] as int),greaterThanOrEqualTo(78));
+      measurements.add({'sourceBytes':source.length,'optimizedBytes':optimized.length,'savingsPercent':100*(1-optimized.length/source.length),'targetMet':result['targetMet']});
+    }
+    final total=measurements.fold<int>(0,(sum,row)=>sum+(row['optimizedBytes'] as int));
+    final report={'documents':measurements,'optimizedTotal':total,'targetBytes':DocumentProcessingEngine.setTarget,
+      'status':total<=DocumentProcessingEngine.setTarget?'Optimized':'Readability Protected','representativeInput':'Generated text scan containers, not a real school upload'};
+    final output=File('build/document-measurements.json');await output.parent.create(recursive:true);await output.writeAsString(jsonEncode(report));
+    print('MEASURE document set '+jsonEncode(report));
+  });
   test('truncated real PNG/JPEG containers are rejected before decoding', () {
     final image = img.Image(width: 20, height: 30);
     for (final bytes in [img.encodePng(image), img.encodeJpg(image)]) {

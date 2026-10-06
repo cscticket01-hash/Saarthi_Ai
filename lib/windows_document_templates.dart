@@ -86,7 +86,15 @@ class WindowsDocumentTemplates {
     );
   }
 
-  static Future<Uint8List?> selected(
+  static Future<Uint8List?> selected(String kind,Map<String,dynamic> data,{String qr=''}) async {
+    qr=IdCardEngine.compactQr(qr);
+    final bytes=await _selected(kind,data,qr:qr);
+    if(bytes!=null && {'studentId','teacherId','otherStaffId'}.contains(kind) && qr.isNotEmpty)
+      await IdCardEngine.verifyExport(bytes,qr);
+    return bytes;
+  }
+
+  static Future<Uint8List?> _selected(
     String kind,
     Map<String, dynamic> data, {
     String qr = '',

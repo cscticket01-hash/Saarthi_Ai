@@ -170,11 +170,11 @@ class FirebaseFirestore {
 
   WriteBatch batch() => WriteBatch._(this);
 
-  Future<void> acknowledgeOutbox(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic> expected) {
+  Future<void> acknowledgeOutbox(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic> expected, {String? revision}) {
     ref.requireOriginProfile();
     if(ref.collectionPath!='_windows_firebase_outbox') throw ArgumentError('Outbox reference required');
     return _database.applyOperations([_WriteOperation._(type:_WriteType.delete,
-      collection:ref.collectionPath, documentId:ref.id, data:expected)]);
+      collection:ref.collectionPath, documentId:ref.id, data:expected, acknowledgedRevision:revision)]);
   }
 
   /// Check the live outbox inside the serialized disk write, not a stale pull snapshot.
@@ -649,6 +649,7 @@ class _WriteOperation {
     this.data,
     this.merge = false,
     this.preservePending = false,
+    this.acknowledgedRevision,
   });
 
   factory _WriteOperation.set(
@@ -696,6 +697,7 @@ class _WriteOperation {
   final Map<String, dynamic>? data;
   final bool merge;
   final bool preservePending;
+  final String? acknowledgedRevision;
 }
 
 class _LocalJsonDatabase {
@@ -924,6 +926,11 @@ class _LocalJsonDatabase {
             if(pending is Map && pending.values.any((item)=>item is Map &&
                 item['collection']==operation.collection && item['documentId']==operation.documentId)) continue;
           }
+          if(operation.preservePending && operation.data?['_syncRevision'] is String) {
+            final baselines = collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
+            final key = base64Url.encode(utf8.encode('${operation.collection}\\n${operation.documentId}')).replaceAll('=', '');
+            baselines[key] = {'revision':operation.data!['_syncRevision']};
+          }
           touched.add(operation.collection);
 
           final rawCollection =
@@ -943,7 +950,20 @@ class _LocalJsonDatabase {
             case _WriteType.delete:
               // Compare and remove under the same serialized disk write. A save
               // made while the cloud request was in flight must remain queued.
-              if(operation.data != null && jsonEncode(docs[operation.documentId]) != jsonEncode(_encodeMap(operation.data!))) continue;
+              if (operation.acknowledgedRevision != null && operation.data != null) {
+                final sent = operation.data!, revision = operation.acknowledgedRevision!;
+                final baselines = collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
+                baselines[operation.documentId] = {'revision':revision};
+                final queued = docs[operation.documentId];
+                if (queued is Map && queued['operationId'] != sent['operationId'] &&
+                    queued['baseCloudRevision'] == sent['baseCloudRevision']) {
+                  queued['baseCloudRevision'] = revision;
+                }
+              }
+              if(operation.data != null &&
+                  (operation.acknowledgedRevision != null
+                    ? (docs[operation.documentId] as Map?)?['operationId'] != operation.data!['operationId']
+                    : jsonEncode(docs[operation.documentId]) != jsonEncode(_encodeMap(operation.data!)))) continue;
               docs.remove(operation.documentId);
               break;
 
@@ -1090,7 +1110,14 @@ class _LocalJsonDatabase {
     final isDelete =
         operation.type == _WriteType.delete;
 
+    final previous = queue[key];
+    final baseline = collections['_windows_sync_baselines'];
     queue[key] = <String, dynamic>{
+      'operationId': base64Url.encode(List<int>.generate(24, (_) => Random.secure().nextInt(256))).replaceAll('=', ''),
+      'schoolId': _activeIdentity['schoolSyncId'] ?? '',
+      'baseCloudRevision': previous is Map ? previous['baseCloudRevision'] ?? '' :
+          baseline is Map ? (baseline[key] as Map?)?['revision'] ?? '' : '',
+      'syncState':'pending', 'retryCount':0,
       'collection': operation.collection,
       'documentId': operation.documentId,
       'operation': isDelete ? 'delete' : 'set',
@@ -1128,6 +1155,11 @@ class _LocalJsonDatabase {
 
     final file = await _file();
     try {
+      if (!await file.exists() && await File('${file.path}.pending').exists()) {
+        final recovered=jsonDecode(await File('${file.path}.pending').readAsString());
+        if(recovered is! Map)throw const FormatException('Pending database is invalid.');
+        final root=Map<String,dynamic>.from(recovered);_upgradeRootInMemory(root);return root;
+      }
       if (!await file.exists()) {
         WindowsServiceStatus.instance.healthy(
           WindowsServiceType.localStorage,
@@ -1159,6 +1191,11 @@ class _LocalJsonDatabase {
         'Local database read problem: $primaryError',
       );
 
+      final pending=File('${file.path}.pending');
+      try {if(await pending.exists()){
+        final decoded=jsonDecode(await pending.readAsString());
+        if(decoded is Map){final root=Map<String,dynamic>.from(decoded);_upgradeRootInMemory(root);return root;}
+      }}catch(_){}
       final backup = File('${file.path}.bak');
       try {
         if (await backup.exists()) {
@@ -1173,10 +1210,7 @@ class _LocalJsonDatabase {
         }
       } catch (_) {}
 
-      return <String, dynamic>{
-        'version': 2,
-        'profiles': <String, dynamic>{},
-      };
+      throw StateError('Local database recovery required. Original and backup retained; writes blocked.');
     }
   }
 

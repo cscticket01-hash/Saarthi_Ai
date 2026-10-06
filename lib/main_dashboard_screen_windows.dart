@@ -1,3 +1,4 @@
+import 'fitted_document_preview.dart';
 import 'document_upload_dialog.dart';
 import 'qr_authentication_engine.dart';
 import 'windows_admin_avatar.dart';
@@ -167,7 +168,7 @@ Future<String> _windowsBuildPersonQrPayload({
     'schoolLng': location['longitude'],
     'attendanceRadiusMeters': location['radiusMeters'] ?? 200,
   };
-  return QrAuthenticationEngine.encode(payload);
+  return SchoolLink.encodeCompact(payload);
 }
 
 Map<String, dynamic>? _windowsParsePersonQr(String raw) {
@@ -180,6 +181,11 @@ Map<String, dynamic>? _windowsParsePersonQr(String raw) {
     }
   } catch (_) {}
 
+  if (clean.startsWith('VS3|')) {
+    final link = SchoolLink.parse(clean);
+    return {'app':'VIDYA_SAARTHI','v':2,'managed':true,'schoolId':link.schoolId,
+      'type':link.role,'personId':link.personId,'linkToken':link.linkToken};
+  }
   // Legacy Student ID card fallback.
   if (clean.contains('SVN_STUDENT_CARD') ||
       clean.contains('VIDYA_SAARTHI_STUDENT_CARD')) {
@@ -5150,20 +5156,20 @@ void _handleLoginBack(bool didPop) {
     try {
 
       final now = DateTime.now().millisecondsSinceEpoch;
-      final id = 'NOTICE-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
+      final id = _editingNoticeId ?? 'NOTICE-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
       // An edited announcement is a new notification, avoiding old FCM-job dedupe.
       final result = await WindowsPlatformClient.instance.publishNotice(id, {
         'title': title, 'description': description, 'category': _noticeCategory,
         'timestamp': now, 'lastEdited': now,
       });
-      if (_editingNoticeId != null && (result.schoolPublished || result.notificationSent)) await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).delete();
+
       if (!mounted) return;
       _cancelNoticeEdit();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         backgroundColor: result.notificationSent || result.schoolPublished ? const Color(0xFF00A884) : Colors.orange,
         content: Text(result.notificationSent
           ? 'Published to the school student app. Notification accepted for ${result.recipients} registered students.'
-          : result.schoolPublished ? 'Notice published to this school dashboard.\n${result.info}${result.error}' : 'Notice saved locally. ${result.error}')));
+          : result.schoolPublished ? 'Notice published to this school dashboard.\n${result.info}${result.error}' : 'Notice saved locally. Background sync queued. ${result.error}')));
     } catch (e) {
       if (mounted) {
         setState(() => _isSavingNotice = false);
@@ -9852,7 +9858,7 @@ class SettingsScreen extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 920),
-            child: const WindowsAppUpdateCard(),
+            child: const Column(children: [WindowsAppUpdateCard(), SizedBox(height:16), WindowsSyncStatusCard()]),
           ),
         ),
       ),
@@ -20338,7 +20344,7 @@ class StudentDocumentsScreen extends StatefulWidget {
 class _StudentDocumentsScreenState
     extends State<StudentDocumentsScreen> {
   late final String _schoolProfile;
-  Timer? _refreshTimer;
+  final List<StreamSubscription> _localSubscriptions=[];
   int _loadGeneration=0;
   bool _loading = true;
   bool _uploading = false;
@@ -20363,11 +20369,15 @@ class _StudentDocumentsScreenState
     super.initState();
     _schoolProfile=FirebaseFirestore.instance.activeProfileId;
     _load();
-    _refreshTimer=Timer.periodic(const Duration(seconds:15),(_){if(mounted&&!_uploading&&!_loading)_load();});
+    for(final collection in ['documents','_local_student_documents']) {
+      _localSubscriptions.add(FirebaseFirestore.instance.collection(collection).snapshots().listen((_){
+        if(mounted&&!_uploading&&!_loading)unawaited(_load());
+      }));
+    }
   }
 
   @override
-  void dispose(){_refreshTimer?.cancel();super.dispose();}
+  void dispose(){for(final subscription in _localSubscriptions)subscription.cancel();super.dispose();}
 
   Future<String> _scriptUrl() async {
     final saved = await CentralSchoolCloud.saved();
@@ -20412,11 +20422,6 @@ class _StudentDocumentsScreenState
       _error = null;
     });
     try {
-      final remote=await FirebaseFirestore.instance.collection('documents').where('studentId',isEqualTo:widget.studentId).get();
-      final local=await FirebaseFirestore.instance.collection('_local_student_documents').where('studentId',isEqualTo:widget.studentId).get();
-      if(!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
-      final cached=<String,Map<String,dynamic>>{for(final d in remote.docs)d.id:{...d.data(),'documentId':d.id},for(final d in local.docs)d.id:d.data()};
-      setState((){_documents=cached.values.where((d)=>d['deleted']!=true).toList();_loading=false;});
       final result = await _post({
         'action': 'list_student_documents',
         'studentId': widget.studentId,
@@ -20542,6 +20547,18 @@ class _StudentDocumentsScreenState
     }
   }
 
+  Future<void> _view(Map<String,dynamic> document) async {
+    try {
+      final bytes=await WindowsBackendBridge.documentBytes(document);
+      if(!mounted || FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
+      final mime=(document['optimizedMimeType']??document['mimeType']??'').toString();
+      await showDialog<void>(context:context,builder:(ctx)=>Dialog(child:SizedBox(
+        width:900,height:650,child:Column(children:[
+          Expanded(child:mime.contains('pdf')?FittedDocumentPreview(bytes:bytes):Image.memory(bytes,fit:BoxFit.contain)),
+          TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]))));
+    } catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Document preview unavailable: $e')));}
+  }
+
   String _formatBytes(int bytes) {
     if (bytes >= 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
@@ -20626,7 +20643,7 @@ class _StudentDocumentsScreenState
                               color: Colors.white,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Text('${_formatBytes(_totalBytes)} optimized • target 300 KB',
+                      Text('${_documents.length} documents • ${_formatBytes(_totalBytes)} optimized • target ~300 KB • ${_totalBytes > 300*1024 ? 'Readability Protected' : 'Optimized'}',
                           style: const TextStyle(
                               color: Colors.white54, fontSize: 10.5)),
                     ],
@@ -20637,11 +20654,7 @@ class _StudentDocumentsScreenState
                     minHeight: 7,
                     backgroundColor: Colors.white10,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      ratio >= .9
-                          ? Colors.redAccent
-                          : ratio >= .7
-                              ? Colors.orangeAccent
-                              : const Color(0xFF00A884),
+                      _totalBytes > 300*1024 ? Colors.orangeAccent : const Color(0xFF00A884),
                     ),
                   ),
                   const SizedBox(height: 7),
@@ -20711,7 +20724,7 @@ class _StudentDocumentsScreenState
                                     color: Colors.white,
                                     fontWeight: FontWeight.w800)),
                             Text(
-                              '${document['fileName'] ?? ''} • ${_formatBytes(size)} • ${document['syncState']??'Cloud copy'}',
+                              'Original: ${document['sourceBytes'] is num ? _formatBytes((document['sourceBytes'] as num).toInt()) : 'Not recorded'} • Optimized: ${_formatBytes(size)} • Savings: ${document['sourceBytes'] is num && (document['sourceBytes'] as num)>0 ? (100*(1-size/(document['sourceBytes'] as num))).toStringAsFixed(1)+'%' : 'Not recorded'} • ${document['syncState']??'Cloud copy'}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -20722,9 +20735,7 @@ class _StudentDocumentsScreenState
                         ),
                       ),
                       TextButton.icon(
-                        onPressed: url.isEmpty
-                            ? null
-                            : () => html.window.open(url, '_blank'),
+                        onPressed: () => _view(document),
                         icon: const Icon(Icons.visibility_rounded, size: 16),
                         label: const Text('View'),
                       ),

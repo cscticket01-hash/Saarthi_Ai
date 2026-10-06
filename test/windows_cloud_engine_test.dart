@@ -125,6 +125,10 @@ void main() {
       }
     },
   );
+  test('cached paid licence cannot remain offline indefinitely',()async {
+    final lease={...access(),'serverTime':now.subtract(const Duration(hours:73)).millisecondsSinceEpoch};
+    final e=engine(identity(lease));await e.restore();expect(e.canOpen,false);e.dispose();
+  });
   test('real central denial persists while network failures preserve last verified access', () async {
     for (final status in [401, 403]) {
       Map<String, dynamic>? persisted;
@@ -276,7 +280,7 @@ void main() {
       await tester.pump();
       expect(find.text('Local School Console'), findsOneWidget);
       expect(find.text('School Login'), findsNothing);
-      expect(find.textContaining('Offline / Sync pending'), findsOneWidget);
+      expect(find.textContaining('Offline / Sync pending'), findsNothing);
       await tester.pumpWidget(const SizedBox());
     },
   );

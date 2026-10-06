@@ -89,7 +89,7 @@ jobs:
     - name: Verify Windows startup and skip regression
       env:
         APPDATA: ${{ runner.temp }}/windows-startup-tests
-      run: flutter test --concurrency=1 test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/school_qr_login_test.dart
+      run: flutter test --concurrency=1 test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/school_qr_login_test.dart
     - name: Verify central school cloud and paths
       run: flutter test test/central_school_cloud_test.dart
     - name: Verify school connection automation
@@ -204,7 +204,7 @@ jobs:
     - name: Format Windows reference document source
       run: dart format lib/windows_reference_documents.dart test/windows_reference_documents_test.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/managed_developer_panel.dart lib/platform/managed_developer_service.dart
     - name: Verify Windows ID cards, licence date and startup
-      run: flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
+      run: flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
     - name: Verify manifest IDs on Windows
       run: flutter test test/id_card_engine_test.dart
     - name: Verify production Documents screen and durable local queue on Windows
@@ -217,6 +217,7 @@ jobs:
         python -m pip install "pypdf>=6,<7" "pymupdf>=1.26,<2" "zxing-cpp>=2.3,<4" "numpy>=2,<3"
         python .github/scripts/check_reference_document_previews.py
         python .github/scripts/check_id_qr_scannability.py
+        flutter test test/id_export_decode_test.dart
     - name: Analyze Windows ID card changes
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart lib/windows_school_map.dart lib/windows_school_map_dialog.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/windows_reference_documents.dart
     - uses: actions/upload-artifact@v4
@@ -233,7 +234,7 @@ jobs:
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
         SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
-      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.98 --build-number=98 --dart-define=APP_VERSION=2.1.98-review --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.101 --build-number=101 --dart-define=APP_VERSION=2.1.101-review --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
     - name: Execute Windows fresh-start duplicate-launch and restart smoke test
       shell: powershell
       run: .github/scripts/test_windows_executable.ps1
@@ -244,7 +245,7 @@ jobs:
         if ($registrant -notmatch 'FileSelectorWindowsRegisterWithRegistrar') { throw 'Native Windows file picker plugin not registered.' }
         Copy-Item build/windows/x64/runner/Release build/windows-review -Recurse
         Set-Content build/windows-review/TEST-COMMIT.txt $env:GITHUB_SHA
-        Copy-Item docs/windows-test-2.1.98.md build/windows-review/TEST-INSTRUCTIONS.md
+        Copy-Item docs/windows-test-2.1.101.md build/windows-review/TEST-INSTRUCTIONS.md
     # The production upload path is verified with the injected native adapter.
     # Hosted-runner Win32 picker control automation has repeatedly timed out.
     # Only the final OS selection is reserved for the owner's real Windows PC.
@@ -332,6 +333,7 @@ jobs:
     - fix/school-workflows-15
     - fix/windows-local-startup-engine
     - fix/document-id-qr-engines
+    - fix/local-first-template-engine
   pull_request:
     branches:
     - main

@@ -1,3 +1,4 @@
+import 'id_card_engine.dart';
 import 'id_card_layout.dart';
 import 'windows_id_pair.dart';
 
@@ -295,7 +296,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
   pw.Widget qrCode(double size) => qr.isEmpty
       ? pw.SizedBox()
       : IdCardLayout.qr(
-          qr,
+          IdCardEngine.compactQr(qr),
           millimetresPerUnit:
               kind == 'teacherId' ? (i == 2 ? 85.6 / 480 : 54 / 306) : null,
         );

@@ -43,6 +43,19 @@ void main() {
       expect(restored.link!.schoolId,fixture['schoolId']);expect(restored.link!.role,fixture['type']);expect(restored.loggedIn,true);
     });
   }
+  for(final fixture in fixtures) {
+    test('compact managed QR retains verified identity without private metadata',() async {
+      final raw=SchoolLink.encodeCompact({...fixture,'googleScriptUrl':'https://script.google.com/private','name':'Sensitive name'});
+      expect(raw.length,lessThan(150));expect(raw,startsWith('VS3|'));expect(raw, isNot(contains('Sensitive name')));
+      final link=SchoolLink.parse(raw);
+      expect(link.personId,fixture['personId']);expect(link.linkToken,fixture['linkToken']);
+      final session=await QrAuthenticationEngine.authenticate(link,(body)async {
+        expect(body['linkToken'],fixture['linkToken']);
+        return {...reply(fixture['schoolId'] as String),'person':{'personId':fixture['personId']}};
+      });expect(session['schoolId'],fixture['schoolId']);
+      expect(()=>SchoolLink.parse(raw.replaceFirst('|s|','|x|').replaceFirst('|t|','|x|')),throwsFormatException);
+    });
+  }
   test('scanner accepts one shared QR, pauses duplicates and requires retry after invalid QR', () {
     final capture=SchoolQrCapture();
     expect(() => capture.capture('not-a-school-qr'), throwsFormatException);

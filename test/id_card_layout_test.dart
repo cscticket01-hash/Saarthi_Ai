@@ -1,3 +1,4 @@
+import '../lib/school_qr_link.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -261,7 +262,7 @@ void main() {
             as List)
         .cast<Map>();
     for (final fixture in fixtures) {
-      final raw = jsonEncode(fixture);
+      final raw = SchoolLink.encodeCompact(Map<String,dynamic>.from(fixture));
       final bytes = await IdCardEngine.render(
           IdCardManifest.fromJson(manifest()),
           Map<String, dynamic>.from(fixture),
@@ -270,7 +271,7 @@ void main() {
       await dir.create(recursive: true);
       await File('${dir.path}/manifest_auth_${fixture['type']}.pdf')
           .writeAsBytes(bytes);
-      expect(jsonDecode(raw), fixture);
+      expect(SchoolLink.parse(raw).schoolId, fixture['schoolId']);
       expect(bytes.length, greaterThan(500));
     }
   });

@@ -314,6 +314,31 @@ class WindowsFirebaseRemote {
     }
   }
 
+  static Future<Map<String,dynamic>> syncManagedRecord(Map<String,dynamic> item, String school) async {
+    if(item['schoolId'] != school) throw StateError('Pending record belongs to another school.');
+    final collection=item['collection'].toString(), id=item['documentId'].toString();
+    final data=item['operation']=='delete'?null:await prepareManagedRecord(
+      Map<String,dynamic>.from(item['data'] as Map), school,
+      (action, body)=>ManagedSchoolSession.callForSchool(school,action,body));
+    final result=await ManagedSchoolSession.callForSchool(school,'managed/records',{
+      'operation':item['operation']=='delete'?'delete':'write','collection':collection,'id':id,
+      'syncProtocol':2,'operationId':item['operationId'],
+      'expectedRecordRevision':item['baseCloudRevision']??'',if(data!=null)'data':migrationJsonValue(data),
+    });
+    if(result['schoolId'] != school || result['syncProtocol']!=2 || result['recordRevision'] is! String)
+      throw StateError('Version-safe acknowledgement missing. Pending operation retained.');
+    return result;
+  }
+
+  static Future<Map<String,dynamic>> readManagedChanges(String school,String collection,String revision) async {
+    final result=await ManagedSchoolSession.callForSchool(school,'managed/records',{
+      'operation':'read','collection':collection,'syncProtocol':2,'knownRevision':revision});
+    if(result['schoolId']!=school || result['syncProtocol']!=2 || result['collectionRevision'] is! String)
+      throw StateError('Version-safe school manifest unavailable.');
+    return {...result,'records':(result['records'] as Map).map((k,v)=>MapEntry(k.toString(),
+      Map<String,dynamic>.from(_restoreManagedValue(v) as Map)))};
+  }
+
   static Future<Map<String, Map<String, dynamic>>> readCollection({
     required String projectId,
     required String idToken,
