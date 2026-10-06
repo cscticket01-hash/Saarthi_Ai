@@ -21,6 +21,17 @@ import '../lib/platform/platform_config.dart';
 
 // Only the OS PDF raster boundary is simulated. The production pipeline still
 // processes raster pixels, builds both PDFs, previews and persists them.
+class ReviewRaster extends PdfRaster {
+  ReviewRaster(img.Image image)
+      : png = Uint8List.fromList(img.encodePng(image)),
+        super(image.width, image.height, image.getBytes(order: img.ChannelOrder.rgba));
+  final Uint8List png;
+  // Native raster-to-PNG conversion belongs to the simulated platform boundary,
+  // not Flutter's fake-async test GPU. The real document engine consumes this PNG.
+  @override
+  Future<Uint8List> toPng() async => png;
+}
+
 class ReviewPrinting extends MethodChannelPrinting {
   int rasterCalls = 0;
   @override
@@ -30,7 +41,7 @@ class ReviewPrinting extends MethodChannelPrinting {
     img.fill(paper, color: img.ColorRgba8(255, 255, 255, 255));
     img.fillRect(paper, x1: 15, y1: 20, x2: 95, y2: 25,
       color: img.ColorRgba8(0, 0, 0, 255));
-    yield PdfRaster(120, 160, paper.getBytes(order: img.ChannelOrder.rgba));
+    yield ReviewRaster(paper);
   }
 }
 
@@ -157,10 +168,12 @@ void main() {
     final document = pw.Document()..addPage(pw.Page(build: (_) => pw.Text('Real PDF document fixture')));
     final source = pdf ? (await io(t, document.save))! :
         Uint8List.fromList(img.encodePng(img.Image(width: 100, height: 140)));
+    if (pdf) debugPrint('PDF regression: real PDF fixture generated');
     final filename = pdf ? 'source.pdf' : 'source.png';
     picker.selection = XFile.fromData(source,
         path: filename, name: filename, mimeType: pdf ? 'application/pdf' : 'image/png');
     await open(t);
+    if (pdf) debugPrint('PDF regression: picker returned; awaiting processing');
     await waitFor(
         t,
         () =>
@@ -169,6 +182,7 @@ void main() {
                     find.byKey(const ValueKey('document-confirm-save')))
                 .onPressed !=
             null);
+    if (pdf) debugPrint('PDF regression: processed preview ready');
     expect(picker.calls, 1);
     expect(await io(t, count), 0);
     expect(find.textContaining('optimized'), findsWidgets);
@@ -186,6 +200,7 @@ void main() {
                         find.byKey(const ValueKey('student-document-upload')))
                     .onPressed !=
                 null);
+    if (pdf) debugPrint('PDF regression: saved and listed locally');
     final rows =
         await io(t, () => db.collection('_local_student_documents').get());
     expect(rows!.docs.length, 1);
