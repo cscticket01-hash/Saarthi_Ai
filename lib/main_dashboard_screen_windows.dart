@@ -20549,6 +20549,13 @@ class _StudentDocumentsScreenState
 
   Future<void> _view(Map<String,dynamic> document) async {
     try {
+      final saved=await CentralSchoolCloud.saved();
+      if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile)throw StateError('School changed. Reopen documents.');
+      if(saved['managed']!=true){
+        final url=document['fileUrl']?.toString()??'';
+        if(url.isEmpty)throw StateError('Document file is not available.');
+        html.window.open(url,'_blank');return;
+      }
       final bytes=await WindowsBackendBridge.documentBytes(document);
       if(!mounted || FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
       final mime=(document['optimizedMimeType']??document['mimeType']??'').toString();
