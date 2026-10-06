@@ -262,8 +262,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
                   fontSize: size,
                   color: color,
                   align: align,
-                  wrap: s.contains('\n') || s.length > 60,
-                  maxLines: s.contains('\n') || s.length > 60 ? 3 : 1,
+                  wrap: true,
+                  maxLines: 3,
                 )
               : pw.FittedBox(
                   fit: pw.BoxFit.scaleDown,

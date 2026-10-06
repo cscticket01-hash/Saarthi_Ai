@@ -501,7 +501,7 @@ class WindowsSyncEngine {
     _ResolvedSyncProfile profile, {
     required bool seedGoogleConfig,
   }) async {
-    if(_activeProfileId!=profile.profileId){_lastPull=null;_failures=0;_nextRetry=null;lastSuccessfulSync=null;}
+    if(_activeProfileId!=profile.profileId){_lastPull=null;_failures=0;_nextRetry=null;lastSuccessfulSync=null;metrics.clear();metrics.addAll({'recordReadRequests':0,'recordWriteRequests':0,'storageChecks':0,'reconciliationMicros':0});}
     _syncBlocked = profile.blocked;
     _activeProfileId = profile.profileId;
     _activeSchoolSyncId = profile.schoolSyncId;
