@@ -161,10 +161,14 @@ void main() {
     expect(await io(t, count), existing);
   }
 
-  for (final pdf in [false, true]) {
   testWidgets(
-      'production Documents screen legacy toggle OFF: ${pdf ? "PDF" : "PNG"} offline preview/save, cancellation and failure preserve records/queue',
+      'production Documents screen legacy toggle OFF: PNG and PDF offline save, cancellation and failure preserve records/queue',
       (t) async {
+    // Keep both real-screen cases in one widget clock. Singleton I/O queues
+    // must not inherit a discarded fake-async zone between test callbacks.
+    for (final pdf in [false, true]) {
+    await io(t, () => db.switchProfile('screen-case-${pdf}-${DateTime.now().microsecondsSinceEpoch}',
+      identity: {'schoolSyncId': school, 'schoolId': school}));
     final document = pw.Document()..addPage(pw.Page(build: (_) => pw.Text('Real PDF document fixture')));
     final source = pdf ? (await io(t, document.save))! :
         Uint8List.fromList(img.encodePng(img.Image(width: 100, height: 140)));
@@ -265,6 +269,6 @@ void main() {
         source);
     await t.pumpWidget(const SizedBox());
     await t.pumpAndSettle();
+    }
   });
-  }
 }
