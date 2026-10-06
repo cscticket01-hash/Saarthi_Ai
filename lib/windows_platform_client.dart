@@ -7,7 +7,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'windows_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'platform/spark_client.dart';
 import 'school_backend_transport.dart';
@@ -34,7 +34,7 @@ class WindowsLicenseState {
 class WindowsPlatformClient {
   WindowsPlatformClient._();
   static final instance = WindowsPlatformClient._();
-  static const _secure = FlutterSecureStorage();
+  static const _secure = WindowsSecureStorage();
   final state = ValueNotifier<WindowsLicenseState>(WindowsLicenseState(
       allowed: true, status: 'checking', expiresAt: DateTime.now()));
   String _id = '',
@@ -113,6 +113,13 @@ class WindowsPlatformClient {
 
   Future<void> initialize() async {
     if (_id.isNotEmpty) return;
+    final managed = await CentralSchoolCloud.saved();
+    if (managed['managed'] == true) {
+      _id = 'managed_${managed['uid']}';
+      // The cloud engine owns managed background verification; do not create
+      // a second trial or replace verified access because a network call fails.
+      return;
+    }
     _id = await _secure.read(key: 'vs_installation_id') ?? _random();
     await _secure.write(key: 'vs_installation_id', value: _id);
     _secret = await _secure.read(key: 'vs_installation_secret') ?? '';
@@ -233,7 +240,7 @@ class WindowsPlatformClient {
     state.value = WindowsLicenseState(
         allowed: data['allowed'] == true && end.isAfter(now),
         status: data['status']?.toString() ?? 'expired',
-        expiresAt: end);
+        expiresAt: end, activated:data['activated']==true);
     if (verified) {
       _verifiedAt = now;
       await _secure.write(
@@ -246,11 +253,7 @@ class WindowsPlatformClient {
     if (_running || _paused || _activating) return;
     _running = true;
     try {
-      if((await CentralSchoolCloud.saved())['managed']==true){
-        try{final result=await ManagedSchoolSession.call('managed/session');state.value=WindowsLicenseState(allowed:result['allowed']==true&&(result['status']=='trial'||result['activated']==true),status:result['status'],expiresAt:DateTime.fromMillisecondsSinceEpoch((result['expiresAt'] as num).toInt()));}
-        catch(e){state.value=WindowsLicenseState(allowed:false,status:'blocked',expiresAt:DateTime.now(),error:'Online school verification required');}
-        return;
-      }
+      if((await CentralSchoolCloud.saved())['managed']==true)return;
       if (!_registered) {
         if (_secret.isEmpty) {
           _secret = _random();
@@ -351,9 +354,8 @@ class WindowsPlatformClient {
     } finally {
       final now = DateTime.now().toUtc();
       if (_lastSeen == null || now.isAfter(_lastSeen!)) _lastSeen = now;
-      await _secure.write(
-          key: 'vs_license_last_seen', value: _lastSeen!.toIso8601String());
-      _running = false;
+      try {await _secure.write(key: 'vs_license_last_seen', value: _lastSeen!.toIso8601String());}
+      finally {_running = false;}
     }
   }
 

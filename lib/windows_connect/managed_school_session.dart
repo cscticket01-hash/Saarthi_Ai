@@ -1,7 +1,7 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../windows_secure_storage.dart';
 import '../platform/platform_config.dart';
 import 'central_school_cloud.dart';
 class ManagedSchoolSession {
@@ -20,7 +20,7 @@ class ManagedSchoolSession {
       }
       if (action == 'managed/session') {
         await CentralSchoolCloud.updateSession(saved['schoolId'],
-          managedSessionConfiguration(result, saved['schoolId'], saved['uid']),
+          {...managedSessionConfiguration(result, saved['schoolId'], saved['uid']), 'verifiedAccess':result},
           expectedUid: saved['uid']);
       }
       if (action == 'managed/storage/check' || action == 'managed/storage/connect') {
@@ -66,9 +66,9 @@ class ManagedSchoolSession {
         }
       }catch(_){}
       final old=await CentralSchoolCloud.saved();
-      if(old.isNotEmpty&&old['managed']!=true)await const FlutterSecureStorage().write(key:'vidya_saarthi_legacy_cloud_preserved',value:jsonEncode(old));
-      await const FlutterSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration,...googleProfile}));
-      await const FlutterSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
+      if(old.isNotEmpty&&old['managed']!=true)await const WindowsSecureStorage().write(key:'vidya_saarthi_legacy_cloud_preserved',value:jsonEncode(old));
+      await const WindowsSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration,...googleProfile,'verifiedAccess':session}));
+      await const WindowsSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
       changed.value++;return session;
     }finally{cloud.close();}
   }
@@ -99,7 +99,7 @@ class ManagedSchoolSession {
     CentralSchoolCloud.clearFirebaseToken();
     try {await call('managed/disconnect').timeout(const Duration(seconds:5));}catch(_){}
 
-    await const FlutterSecureStorage().delete(key:CentralSchoolCloud.key);
+    await const WindowsSecureStorage().delete(key:CentralSchoolCloud.key);
     CentralSchoolCloud.clearFirebaseToken();changed.value++;
   }
 }

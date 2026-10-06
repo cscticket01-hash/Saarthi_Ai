@@ -26,20 +26,20 @@ final _schoolNavigatorKey=GlobalKey<NavigatorState>();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await WindowsLocalSecurity.initialize();
+  try {await WindowsLocalSecurity.initialize();}catch(_){debugPrint('App Lock storage will be retried by the startup lock.');}
   await WindowsLocalStorage.initialize();
   try {
     await WindowsUpdateManager.cleanupOldInstallers();
   } catch (_) {}
   await WindowsLocalSession.initialize();
-  await FirebaseAuth.instance.bootstrapLocalUser();
+  try {await FirebaseAuth.instance.bootstrapLocalUser();}catch(_){debugPrint('Saved identity will be retried by the school startup gate.');}
 
   if (WindowsLocalSession.loggedOut) {
     await FirebaseAuth.instance.signOut();
   }
 
   windows_html.setSchoolStorageNamespace('local');
-  await WindowsPlatformClient.instance.initialize();
+  unawaited(WindowsPlatformClient.instance.initialize().catchError((Object e) {debugPrint('Platform startup verification deferred.');}));
   runApp(const VidyaSaarthiWindowsApp());
 
 }
@@ -195,9 +195,11 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
 /// Requires the existing local password before showing a saved dashboard.
 /// Central authentication and licensing are enforced by the outer startup gate.
 class WindowsStartupGate extends StatefulWidget {
-  const WindowsStartupGate({super.key, required this.child});
+  const WindowsStartupGate({super.key, required this.child, this.prepareLock, this.completeUnlock});
 
   final Widget child;
+  final Future<bool> Function()? prepareLock;
+  final Future<void> Function()? completeUnlock;
 
   @override
   State<WindowsStartupGate> createState() => _WindowsStartupGateState();
@@ -225,6 +227,11 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
 
   Future<void> _prepare() async {
     try {
+      if(widget.prepareLock!=null) {
+        final locked=await widget.prepareLock!();
+        if(mounted)setState((){_locked=locked;_loading=false;});
+        return;
+      }
       await WindowsLocalSecurity.initialize();
       final shouldLock = WindowsLocalSecurity.configured;
       _schoolName=WindowsAdminSetup.schoolName;
@@ -258,9 +265,12 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
       void own() {if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed. Reopen the app.');}
       try {
         own();
-        await WindowsLocalSession.markLoggedIn();
-        own();
-        await FirebaseAuth.instance.bootstrapLocalUser();
+        if(widget.completeUnlock!=null)await widget.completeUnlock!();
+        else {
+          await WindowsLocalSession.markLoggedIn();
+          own();
+          await FirebaseAuth.instance.bootstrapLocalUser();
+        }
         own();
         if (!mounted) return;
         setState(() { _success = true; _error = null; });
@@ -455,17 +465,8 @@ class WindowsLocalDashboardGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Central enrollment and the independent App Lock guard normal access.
-    return Scaffold(
-      appBar: AppBar(title: const Text('Vidya Saarthi')),
-      body: Center(child: FilledButton.icon(
-        icon: const Icon(Icons.admin_panel_settings),
-        label: const Text('Open Admin Panel'),
-        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => const WindowsAdminAccessGate(child: WindowsAdminSessionDashboard()),
-        )),
-      )),
-    );
+    // The startup App Lock already protects entry. No intermediate button.
+    return const WindowsAdminAccessGate(child: WindowsAdminSessionDashboard());
   }
 }
 

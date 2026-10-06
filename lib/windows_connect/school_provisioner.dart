@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../windows_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import '../school_backend_transport.dart';
 import 'google_authorization.dart';
@@ -187,7 +187,7 @@ abstract class SetupCheckpoint {
 }
 class SecureSetupCheckpoint implements SetupCheckpoint {
   static const key = 'vidya_saarthi_windows_easy_connect_v1';
-  final FlutterSecureStorage storage = const FlutterSecureStorage();
+  final WindowsSecureStorage storage = const WindowsSecureStorage();
   @override
   Future<Map<String, dynamic>> read() async {
     final raw = await storage.read(key: key);
