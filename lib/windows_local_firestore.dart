@@ -5,6 +5,8 @@ import 'dart:math';
 
 import 'windows_local_storage.dart';
 import 'windows_runtime_flags.dart';
+import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'windows_service_status.dart';
 
 
@@ -107,6 +109,52 @@ class FirebaseFirestore {
       profileId,
       identity: identity,
     );
+  }
+
+  /// Managed schools use durable, tenant-scoped storage regardless of the
+  /// legacy standalone RAM-only preference. Authentication/licensing stay in
+  /// the startup gate; this validates its saved identity against the live store.
+  String? _persistenceBinding;
+  Future<int>? _persistenceResolution;
+
+  Future<bool> localPersistenceEnabled() async {
+    final origin = activeProfileId;
+    final identity = activeProfileIdentity;
+    if (!validSchoolId(identity['schoolSyncId']?.toString() ?? '')) {
+      return WindowsRuntimeFlags.localStorageEnabled();
+    }
+    // Cache only the validated storage decision, never credentials. The
+    // authoritative login/session notifier and immutable profile identity
+    // invalidate it. Avoid native credential I/O inside every database read.
+    final revision = ManagedSchoolSession.changed.value;
+    final binding = '$origin:${identity['schoolSyncId']}:${identity['schoolId']}:${identity['blocked']}:$revision';
+    if (_persistenceBinding != binding || _persistenceResolution == null) {
+      _persistenceBinding = binding;
+      _persistenceResolution = _resolvePersistence(identity).catchError((Object error, StackTrace stack) {
+        if (_persistenceBinding == binding) {
+          _persistenceBinding = null;
+          _persistenceResolution = null;
+        }
+        Error.throwWithStackTrace(error, stack);
+      });
+    }
+    final mode = await _persistenceResolution!;
+    if (origin != activeProfileId || _persistenceBinding != binding ||
+        ManagedSchoolSession.changed.value != revision) {
+      throw StateError('School changed during storage resolution.');
+    }
+    return mode == 1 || mode == 0 && await WindowsRuntimeFlags.localStorageEnabled();
+  }
+
+  Future<int> _resolvePersistence(Map<String, dynamic> identity) async {
+    final saved = await CentralSchoolCloud.saved();
+    if (saved['managed'] != true) return 0; // Legacy standalone preference.
+    return saved['uid'] is String && (saved['uid'] as String).isNotEmpty &&
+        (saved['firebaseRefreshToken']?.toString() ?? '').isNotEmpty &&
+        validSchoolId(saved['schoolId']?.toString() ?? '') &&
+        identity['schoolSyncId'] == saved['schoolId'] &&
+        (identity['schoolId'] == null || identity['schoolId'] == saved['schoolId']) &&
+        identity['blocked'] != true ? 1 : -1;
   }
 
   Future<void> resetVolatileSession() => _database.resetVolatileSession();
@@ -661,7 +709,8 @@ class _LocalJsonDatabase {
   String _activeProfileId = 'unbound';
   Map<String, dynamic> _activeIdentity = const <String, dynamic>{};
 
-  // Local Storage OFF = no school database is read from or written to disk.
+  // Legacy standalone Local Storage OFF uses RAM only. Verified managed
+  // school contexts use durable local-first storage independent of that flag.
   // Remote data can still be mirrored into this in-memory root for the
   // current app session, so Firebase + Google features remain usable without
   // leaving a local database behind on the PC.
@@ -1073,7 +1122,7 @@ class _LocalJsonDatabase {
   }
 
   Future<Map<String, dynamic>> _readRoot() async {
-    if (!await WindowsRuntimeFlags.localStorageEnabled()) {
+    if (!await FirebaseFirestore.instance.localPersistenceEnabled()) {
       return _cloneRoot(_memoryRoot);
     }
 
@@ -1256,7 +1305,7 @@ class _LocalJsonDatabase {
   Future<void> _writeRoot(
     Map<String, dynamic> root,
   ) async {
-    if (!await WindowsRuntimeFlags.localStorageEnabled()) {
+    if (!await FirebaseFirestore.instance.localPersistenceEnabled()) {
       _memoryRoot = _cloneRoot(root);
       return;
     }

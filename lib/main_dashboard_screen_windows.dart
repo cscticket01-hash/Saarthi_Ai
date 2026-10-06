@@ -1,3 +1,5 @@
+import 'document_upload_dialog.dart';
+import 'qr_authentication_engine.dart';
 import 'windows_admin_avatar.dart';
 import 'windows_other_staff.dart';
 import 'windows_school_image_cache.dart';
@@ -165,7 +167,7 @@ Future<String> _windowsBuildPersonQrPayload({
     'schoolLng': location['longitude'],
     'attendanceRadiusMeters': location['radiusMeters'] ?? 200,
   };
-  return SchoolLink.encode(payload);
+  return QrAuthenticationEngine.encode(payload);
 }
 
 Map<String, dynamic>? _windowsParsePersonQr(String raw) {
@@ -5158,10 +5160,10 @@ void _handleLoginBack(bool didPop) {
       if (!mounted) return;
       _cancelNoticeEdit();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        backgroundColor: result.notificationSent ? const Color(0xFF00A884) : Colors.orange,
+        backgroundColor: result.notificationSent || result.schoolPublished ? const Color(0xFF00A884) : Colors.orange,
         content: Text(result.notificationSent
           ? 'Published to the school student app. Notification accepted for ${result.recipients} registered students.'
-          : result.schoolPublished ? 'Notice published to this school dashboard. ${result.error}' : 'Notice saved locally. ${result.error}')));
+          : result.schoolPublished ? 'Notice published to this school dashboard.\n${result.info}${result.error}' : 'Notice saved locally. ${result.error}')));
     } catch (e) {
       if (mounted) {
         setState(() => _isSavingNotice = false);
@@ -20316,7 +20318,7 @@ class _DriveUnlinkSecurityDialogState
 
 // ============================================================
 // STUDENT ALL DOCUMENTS
-// PDF/JPG/JPEG only. Combined per-student limit = 2 MB.
+// JPG/JPEG/PNG/PDF; original retained, optimized copies queued locally.
 // ============================================================
 class StudentDocumentsScreen extends StatefulWidget {
   final String studentId;
@@ -20335,7 +20337,9 @@ class StudentDocumentsScreen extends StatefulWidget {
 
 class _StudentDocumentsScreenState
     extends State<StudentDocumentsScreen> {
-  static const int _maxBytes = 2 * 1024 * 1024;
+  late final String _schoolProfile;
+  Timer? _refreshTimer;
+  int _loadGeneration=0;
   bool _loading = true;
   bool _uploading = false;
   String? _error;
@@ -20357,19 +20361,35 @@ class _StudentDocumentsScreenState
   @override
   void initState() {
     super.initState();
+    _schoolProfile=FirebaseFirestore.instance.activeProfileId;
     _load();
+    _refreshTimer=Timer.periodic(const Duration(seconds:15),(_){if(mounted&&!_uploading&&!_loading)_load();});
   }
 
+  @override
+  void dispose(){_refreshTimer?.cancel();super.dispose();}
+
   Future<String> _scriptUrl() async {
+    final saved = await CentralSchoolCloud.saved();
+    if (saved['managed'] == true) {
+      if (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != saved['schoolId']) {
+        throw StateError('School changed. Reopen documents.');
+      }
+      // Managed document operations are routed locally by the bridge. Do not
+      // require a verified Drive URL before reaching that local-first path.
+      return '';
+    }
     return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
+    if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile) throw StateError('School changed. Reopen documents.');
     final response = await WindowsBackendBridge.post(
       Uri.parse(await _scriptUrl()),
       headers: {'Content-Type': 'text/plain;charset=utf-8'},
       body: jsonEncode(body),
     );
+    if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile) throw StateError('School changed while loading documents.');
     if (response.statusCode != 200) {
       throw Exception('Google backend error: ${response.statusCode}');
     }
@@ -20385,11 +20405,18 @@ class _StudentDocumentsScreenState
   }
 
   Future<void> _load() async {
+    if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile){if(mounted)setState((){_documents=[];_loading=false;_error='School changed. Reopen documents.';});return;}
+    final generation=++_loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
+      final remote=await FirebaseFirestore.instance.collection('documents').where('studentId',isEqualTo:widget.studentId).get();
+      final local=await FirebaseFirestore.instance.collection('_local_student_documents').where('studentId',isEqualTo:widget.studentId).get();
+      if(!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
+      final cached=<String,Map<String,dynamic>>{for(final d in remote.docs)d.id:{...d.data(),'documentId':d.id},for(final d in local.docs)d.id:d.data()};
+      setState((){_documents=cached.values.where((d)=>d['deleted']!=true).toList();_loading=false;});
       final result = await _post({
         'action': 'list_student_documents',
         'studentId': widget.studentId,
@@ -20404,124 +20431,39 @@ class _StudentDocumentsScreenState
               .map((e) => Map<String, dynamic>.from(e))
               .toList()
           : <Map<String, dynamic>>[];
-      if (!mounted) return;
+      if (!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_schoolProfile) return;
       setState(() {
         _documents = docs;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
+        if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) _documents = [];
         _loading = false;
         _error = e.toString();
       });
     }
   }
 
-  Future<String?> _askName(String? current) async {
-    final controller = TextEditingController(text: current ?? '');
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF172229),
-        title: const Text('Document Name',
-            style: TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            hintText: 'Aadhaar Card / Birth Certificate / Marksheet',
-            hintStyle: const TextStyle(color: Colors.white30),
-            filled: true,
-            fillColor: const Color(0xFF0F191F),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final value = controller.text.trim();
-              if (value.isNotEmpty) Navigator.pop(ctx, value);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00A884),
-            ),
-            child: const Text('Continue',
-                style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    return result;
-  }
+  Future<String?> _askName(String? current) => showDialog<String>(
+    context: context, builder: (_) => DocumentNameDialog(current: current ?? ''));
 
   Future<void> _upload({Map<String, dynamic>? replace}) async {
     if (_uploading) return;
     final docName = await _askName(replace?['documentName']?.toString());
     if (docName == null || !mounted) return;
 
-    final input = html.FileUploadInputElement()
-      ..accept = '.pdf,.jpg,.jpeg,application/pdf,image/jpeg';
-    input.click();
-    await input.onChange.first;
-
-    final files = input.files;
-    if (files == null || files.isEmpty || !mounted) return;
-
-    final file = files.first;
-    var mime = file.type.toLowerCase().trim();
-    final lower = file.name.toLowerCase();
-
-    if (mime.isEmpty) {
-      if (lower.endsWith('.pdf')) {
-        mime = 'application/pdf';
-      } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-        mime = 'image/jpeg';
-      }
-    }
-
-    if (mime != 'application/pdf' &&
-        mime != 'image/jpeg' &&
-        mime != 'image/jpg') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Sirf PDF/JPG/JPEG document allowed hai.'),
-        ),
-      );
-      return;
-    }
-
-    final oldSize = (replace?['sizeBytes'] as num?)?.toInt() ?? 0;
-    if (_totalBytes - oldSize + file.size > _maxBytes) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text(
-              '2 MB total limit exceed hoga. Used ${_formatBytes(_totalBytes)}.'),
-        ),
-      );
-      return;
-    }
-
     setState(() => _uploading = true);
     try {
-      final reader = html.FileReader();
-      reader.readAsDataUrl(file);
-      await reader.onLoad.first;
-      final dataUrl = reader.result?.toString() ?? '';
-      if (dataUrl.isEmpty) throw Exception('File read nahi ho paya.');
-
-      await _post({
+      final file = await showDialog<SelectedDocument>(context: context,
+        builder: (_) => DocumentUploadDialog(name: docName, scope: _schoolProfile,
+          isCurrent: () => FirebaseFirestore.instance.activeProfileId == _schoolProfile));
+      if (file == null || !mounted) return;
+      if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) throw StateError('School changed. Reopen documents.');
+      final mime = file.mime;
+      final dataUrl = 'data:$mime;base64,${base64Encode(file.bytes)}';
+      final saved = await _post({
         'action': 'upload_student_document',
         'studentId': widget.studentId,
         'studentName': _name,
@@ -20540,9 +20482,7 @@ class _StudentDocumentsScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF00A884),
-          content: Text(replace == null
-              ? 'Document Google Drive me upload ho gaya.'
-              : 'Document Google Drive me replace ho gaya.'),
+          content: Text(saved['cloudSyncPending']==true ? 'Saved locally • Sync pending. Original preserved.' : saved['windowsLocalFallback']==true ? 'Saved locally • Cloud upload not confirmed.' : 'Document upload confirmed.'),
         ),
       );
     } catch (e) {
@@ -20566,7 +20506,7 @@ class _StudentDocumentsScreenState
         title: const Text('Delete Document?',
             style: TextStyle(color: Colors.white)),
         content: Text(
-          '${document['documentName'] ?? 'Document'} Google Drive se delete hoga.',
+          'Remove ${document['documentName'] ?? 'Document'} from the document list? Original files are retained for recovery.',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -20612,7 +20552,7 @@ class _StudentDocumentsScreenState
 
   @override
   Widget build(BuildContext context) {
-    final ratio = (_totalBytes / _maxBytes).clamp(0.0, 1.0).toDouble();
+    final ratio = (_totalBytes / (300*1024)).clamp(0.0, 1.0).toDouble();
     return Scaffold(
       backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(
@@ -20620,6 +20560,7 @@ class _StudentDocumentsScreenState
         title: const Text('Student All Documents'),
       ),
       floatingActionButton: FloatingActionButton.extended(
+        key: const ValueKey('student-document-upload'),
         onPressed: _uploading ? null : () => _upload(),
         backgroundColor: const Color(0xFF00A884),
         foregroundColor: Colors.white,
@@ -20685,7 +20626,7 @@ class _StudentDocumentsScreenState
                               color: Colors.white,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Text('${_formatBytes(_totalBytes)} / 2.00 MB',
+                      Text('${_formatBytes(_totalBytes)} optimized • target 300 KB',
                           style: const TextStyle(
                               color: Colors.white54, fontSize: 10.5)),
                     ],
@@ -20707,7 +20648,7 @@ class _StudentDocumentsScreenState
                   const Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'PDF/JPG/JPEG only • sab documents mila kar maximum 2 MB.',
+                      'PDF/JPG/JPEG/PNG • source up to 50 MB. Target: about 300 KB for 7–8 normal scans; quality takes priority. Preview uses original. Actual optimized sizes shown.',
                       style: TextStyle(color: Colors.white38, fontSize: 10),
                     ),
                   ),
@@ -20715,13 +20656,12 @@ class _StudentDocumentsScreenState
               ),
             ),
             const SizedBox(height: 12),
+            if (_error != null)
+              Text(_documents.isEmpty ? _error! : 'Offline / Sync pending. Showing saved documents.', style: const TextStyle(color: Colors.orange)),
             if (_loading)
               const Center(
                   child:
                       CircularProgressIndicator(color: Color(0xFF00A884)))
-            else if (_error != null)
-              Text(_error!,
-                  style: const TextStyle(color: Colors.redAccent))
             else if (_documents.isEmpty)
               Container(
                 padding: const EdgeInsets.all(28),
@@ -20771,12 +20711,13 @@ class _StudentDocumentsScreenState
                                     color: Colors.white,
                                     fontWeight: FontWeight.w800)),
                             Text(
-                              '${document['fileName'] ?? ''} • ${_formatBytes(size)}',
+                              '${document['fileName'] ?? ''} • ${_formatBytes(size)} • ${document['syncState']??'Cloud copy'}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                   color: Colors.white38, fontSize: 9.5),
                             ),
+                            if(document['cleanupStatus']!=null) Text('${document['cleanupStatus']} • ${document['targetMet']==true?'Within per-document target':'Quality preserved; target may be exceeded'}',style:const TextStyle(color:Colors.white54,fontSize:10)),
                           ],
                         ),
                       ),

@@ -43,7 +43,10 @@ class WindowsSecureStorage {
   }
 
   static Future<T> _withLock<T>(Future<T> Function() operation) async {
-    for (var attempt = 0; ; attempt++) {
+    // Windows can keep a just-closed handle visible for several scheduler
+    // ticks. Keep retrying the same lock (never delete/reset secure storage)
+    // for a bounded 12 seconds so a genuine sharing violation can recover.
+    for (var attempt = 0;; attempt++) {
       RandomAccessFile? guard;
       var locked = false;
       try {
@@ -52,8 +55,7 @@ class WindowsSecureStorage {
             (forceCrossProcessLock ??
                 !(kDebugMode &&
                     Platform.environment['FLUTTER_TEST'] == 'true'))) {
-          final base =
-              Platform.environment['APPDATA'] ??
+          final base = Platform.environment['APPDATA'] ??
               Platform.environment['LOCALAPPDATA'];
           if (base == null)
             throw StateError('Windows credential directory unavailable.');
@@ -69,12 +71,14 @@ class WindowsSecureStorage {
         }
         return await operation();
       } catch (e) {
-        if (!sharingViolation(e) || attempt >= 8) rethrow;
+        if (!sharingViolation(e) || attempt >= 48) rethrow;
       } finally {
         if (locked) await guard?.unlock();
         await guard?.close();
       }
-      await Future<void>.delayed(Duration(milliseconds: 100 * (attempt + 1)));
+      await Future<void>.delayed(
+        Duration(milliseconds: 100 + (attempt.clamp(0, 9) * 50)),
+      );
     }
   }
 

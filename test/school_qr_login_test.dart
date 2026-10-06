@@ -6,12 +6,21 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import '../lib/school_qr_link.dart';
+import '../lib/qr_authentication_engine.dart';
 import '../lib/mobile/school_session.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final fixtures = (jsonDecode(File('test/fixtures/windows_person_qr.json').readAsStringSync()) as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
   setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
+  test('QR engine rejects foreign person, expired cache and wrong expected school',(){
+    final link=QrAuthenticationEngine.decode(SchoolLink.encode(fixtures.first));
+    expect(()=>QrAuthenticationEngine.decode(link.rawQr,expectedSchool:'foreign'),throwsStateError);
+    final trusted={'expiresAt':2000,'schoolToken':'verified','person':{'personId':link.personId}};
+    QrAuthenticationEngine.validateSession(link,trusted,now:1000,restored:true);
+    expect(()=>QrAuthenticationEngine.validateSession(link,trusted,now:2000,restored:true),throwsStateError);
+    expect(()=>QrAuthenticationEngine.validateSession(link,{...trusted,'person':{'personId':'foreign'}},now:1000,restored:true),throwsStateError);
+  });
   Map<String,dynamic> reply(String school) => {'success':true,'schoolId':school,'projectId':school,'sessionToken':'verified-session',
     'expiresAt':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch,'person':{'name':'Own person'},'schoolName':'Own school'};
   for(final fixture in fixtures) {

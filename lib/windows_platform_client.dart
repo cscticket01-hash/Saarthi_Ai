@@ -414,7 +414,7 @@ class WindowsPlatformClient {
         ref.requireOriginProfile();
         await WindowsFirebaseRemote.writeDocument(projectId:remote.projectId,idToken:await WindowsFirebaseRemote.freshIdToken(),collection:'school_notices',documentId:id,data:payload);
         ref.requireOriginProfile();
-        return const WindowsNoticeDelivery(notificationSent:false,schoolPublished:true,recipients:0,error:'Available in this school student/teacher dashboard after refresh. Push delivery is not configured for managed school storage.');
+        return const WindowsNoticeDelivery(notificationSent:false,schoolPublished:true,recipients:0,info:'Available in this school student/teacher dashboard after refresh. Optional push: not configured; no push delivery claimed.');
       } catch(e) {return WindowsNoticeDelivery(notificationSent:false,recipients:0,error:'Saved locally; sync can retry. $e');}
     }
     await ref.set({...data,'deliveryStatus':'sync_pending'});

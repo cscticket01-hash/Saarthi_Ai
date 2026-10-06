@@ -1,11 +1,10 @@
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
-import 'windows_runtime_flags.dart';
 
 /// Commit profile, images, location and the durable sync outbox together.
 class WindowsSchoolProfileStore {
   static Future<Map<String,dynamic>> saveLocal(Map<String,dynamic> payload) async {
-    if (!await WindowsRuntimeFlags.localStorageEnabled()) {
+    if (!await FirebaseFirestore.instance.localPersistenceEnabled()) {
       throw StateError('Enable Local Data in Advanced Settings before saving on this PC.');
     }
     final db = FirebaseFirestore.instance;

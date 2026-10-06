@@ -668,8 +668,9 @@ class CentralSchoolCloud {
   Future<Map<String, dynamic>> upload(
     String name,
     String mime,
-    String raw,
-  ) async {
+    String raw, {
+    String? uploadKey,
+  }) async {
     final data = await saved();
     if (data.isEmpty) throw StateError('School Drive is not connected.');
     if (expectedSchoolId != null && data['schoolId'] != expectedSchoolId)
@@ -677,6 +678,7 @@ class CentralSchoolCloud {
     if (data['managed'] == true)
       return api({
         'action': 'managed/file/upload',
+        if (uploadKey != null) 'uploadKey': uploadKey,
         'schoolId': data['schoolId'],
         'name': name,
         'mime': mime,

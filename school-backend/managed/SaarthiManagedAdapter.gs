@@ -85,6 +85,15 @@ function VS_managedRecord(b) {
   if(!/^[^/]{1,200}$/.test(b.id||'')||b.id==='.'||b.id==='..')throw new Error('Invalid record ID');
   const name=Utilities.base64EncodeWebSafe(b.id)+'.json', matches=folder.getFilesByName(name);let file=matches.hasNext()?matches.next():null;if(matches.hasNext())throw new Error('Duplicate record; operator review required');
   if(file&&b.createOnly===true)return {skipped:true};
+  if(b.collection==='documents' && (b.expectedRevision!==undefined || file)) {
+    const current=file?JSON.parse(file.getBlob().getDataAsString()):null;
+    if(current&&(current.schoolId!==school||current.id!==b.id))throw new Error('Foreign document record');
+    const revision=current&&current.data.documentRevision||'';
+    if(b.expectedRevision!==undefined) {
+      if(typeof b.expectedRevision!=='string'||b.expectedRevision!==revision ||
+         (!revision&&current&&b.expectedUploadedAt!==undefined&&b.expectedUploadedAt!==current.data.uploadedAt))throw new Error('Newer cloud document retained; resolve version conflict');
+    } else if(revision) throw new Error('Versioned document requires a matching revision');
+  }
   if(b.operation==='delete'){if(file)file.setTrashed(true);return {};}
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
   const text=JSON.stringify({id:b.id,schoolId:school,data:b.data});if(text.length>512*1024)throw new Error('Record too large; upload files separately');
@@ -112,13 +121,26 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
+    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
     else if(b.action==='managed_records'){const lock=LockService.getScriptLock();lock.waitLock(30000);try{result=VS_managedRecord(b);}finally{lock.releaseLock();}}
     else if(b.action==='managed_upload'){
       if(!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)throw new Error('Invalid file');const bytes=Utilities.base64Decode(b.base64);if(!bytes.length||bytes.length>20*1024*1024)throw new Error('File limit exceeded');
-      const file=VS_managedRoot().createFile(Utilities.newBlob(bytes,b.mime,b.name));result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
+      const lock=LockService.getScriptLock();lock.waitLock(30000);
+      try {
+        const root=VS_managedRoot();let file=null,marker='';
+        if(b.uploadKey!==undefined) {
+          if(!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))throw new Error('Invalid upload key');
+          const digest=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,bytes).map(v=>('0'+((v+256)%256).toString(16)).slice(-2)).join('');
+          marker='VIDYA_UPLOAD:'+school+':'+b.uploadKey+':'+digest;
+          const matches=root.getFilesByName(b.name);
+          if(matches.hasNext()){file=matches.next();if(matches.hasNext()||file.getDescription()!==marker)throw new Error('Upload key collision; existing file retained');}
+        }
+        if(!file){file=root.createFile(Utilities.newBlob(bytes,b.mime,b.name));if(marker)file.setDescription(marker);}
+        result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
+      } finally {lock.releaseLock();}
+
     }else if(b.action==='managed_file'){
       const blob=VS_managedFile(b.fileId).getBlob();if(blob.getBytes().length>20*1024*1024)throw new Error('File limit exceeded');result={mime:blob.getContentType(),base64:Utilities.base64Encode(blob.getBytes())};
     }else if(b.action==='managed_backup'){

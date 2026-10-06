@@ -1,3 +1,4 @@
+import 'qr_authentication_engine.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -71,7 +72,7 @@ class _QrScanner extends StatefulWidget {
 }
 
 class _QrScannerState extends State<_QrScanner> {
-  final _capture = SchoolQrCapture();
+  final _capture = QrAuthenticationEngine();
   final _scanner = MobileScannerController();
   String? _error;
   @override

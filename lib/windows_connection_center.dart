@@ -5,7 +5,6 @@ import 'windows_firebase_sync.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_sync_engine.dart';
-import 'windows_runtime_flags.dart';
 
 class WindowsConnectionSnapshot {
   const WindowsConnectionSnapshot({
@@ -108,7 +107,7 @@ class WindowsConnectionCenter {
     final saved = await WindowsExternalConnections.load();
     final central = await CentralSchoolCloud.saved();
     final firebaseStatus = await WindowsFirebaseRemote.status();
-    final localEnabled = await WindowsRuntimeFlags.localStorageEnabled();
+    final localEnabled = await FirebaseFirestore.instance.localPersistenceEnabled();
 
     final snapshot = WindowsConnectionSnapshot(
       firebaseLink: central.isNotEmpty ? 'central:${central['schoolId']}' : saved['firebaseLink']?.toString().trim() ?? '',
