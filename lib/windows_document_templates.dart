@@ -1,3 +1,9 @@
+import 'dart:convert';
+
+import 'package:flutter/services.dart' show rootBundle;
+
+import 'id_card_manifest.dart';
+import 'id_card_engine.dart';
 import 'fitted_document_preview.dart';
 import 'windows_connect/school_drive_images.dart';
 import 'windows_ui_localization.dart';
@@ -12,6 +18,35 @@ import 'windows_reference_documents.dart';
 import 'windows_student_id_cards.dart';
 
 class WindowsDocumentTemplates {
+  static const manifestName = 'School ID • Manifest Front + Back';
+  static Future<Uint8List> manifestId(
+    Map<String, dynamic> data, {
+    String qr = '',
+    Uint8List? photo,
+    Uint8List? logo,
+    Uint8List? signature,
+    Uint8List? seal,
+  }) async {
+    final manifest = IdCardManifest.fromJson(
+      Map<String, dynamic>.from(
+        jsonDecode(
+          await rootBundle.loadString('assets/school_id_manifest_v1.json'),
+        ),
+      ),
+    );
+    return IdCardEngine.render(
+      manifest,
+      data,
+      qr: qr,
+      images: {
+        if (photo != null) 'photo': photo,
+        if (logo != null) 'logo': logo,
+        if (signature != null) 'signature': signature,
+        if (seal != null) 'seal': seal,
+      },
+    );
+  }
+
   static Future<Map<String, dynamic>> selections() async =>
       (await FirebaseFirestore.instance
               .collection('school_settings')
@@ -86,6 +121,28 @@ class WindowsDocumentTemplates {
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
+    if (v == 'manifest:school-id-v1' || kind == 'otherStaffId') {
+      return manifestId(
+        {
+          ...profile,
+          ...data,
+          'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
+          'schoolAddress': profile['address'] ?? '',
+          'designation':
+              data['designation'] ??
+              data['role'] ??
+              (kind == 'studentId' ? 'Student' : 'Teacher'),
+          'rollNo':
+              data['rollNo'] ?? data['employeeId'] ?? data['teacherId'] ?? '',
+          'parentName': data['parentName'] ?? data['fatherName'] ?? '',
+        },
+        qr: qr,
+        photo: assets[0],
+        logo: assets[1],
+        signature: assets[2],
+        seal: assets[3],
+      );
+    }
     if (kind == 'studentId') {
       return renderWindowsStudentId(
         template: windowsStudentIdIndex(v),
@@ -153,6 +210,17 @@ class WindowsDocumentTemplates {
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during template preview.');
+    if (kind == 'otherStaffId' ||
+        (kind == 'studentId' && index == windowsStudentIdNames.length) ||
+        (kind == 'teacherId' &&
+            index == windowsReferenceDocumentNames['teacherId']!.length)) {
+      return manifestId(
+        branding,
+        logo: images[0],
+        signature: images[1],
+        seal: images[2],
+      );
+    }
     if (kind == 'studentId')
       return renderWindowsStudentId(
         template: index,
@@ -249,7 +317,15 @@ class _SchoolDocumentTemplatesScreenState
     extends State<SchoolDocumentTemplatesScreen> {
   static final _names = <String, List<String>>{
     ...windowsReferenceDocumentNames,
-    'studentId': windowsStudentIdNames,
+    'studentId': [
+      ...windowsStudentIdNames,
+      WindowsDocumentTemplates.manifestName,
+    ],
+    'teacherId': [
+      ...windowsReferenceDocumentNames['teacherId']!,
+      WindowsDocumentTemplates.manifestName,
+    ],
+    'otherStaffId': [WindowsDocumentTemplates.manifestName],
   };
   String _kind = 'studentId';
   Map<String, dynamic> _selected = {};
@@ -329,10 +405,25 @@ class _SchoolDocumentTemplatesScreenState
         .collection('school_settings')
         .doc('document_templates')
         .set({
-          _kind: index,
+          _kind:
+              _kind == 'otherStaffId' ||
+                  (_kind == 'studentId' &&
+                      index == windowsStudentIdNames.length) ||
+                  (_kind == 'teacherId' &&
+                      index ==
+                          windowsReferenceDocumentNames['teacherId']!.length)
+              ? 'manifest:school-id-v1'
+              : index,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
-    if (mounted) setState(() => _selected[_kind] = index);
+    if (mounted)
+      setState(
+        () => _selected[_kind] =
+            index == _names[_kind]!.length - 1 &&
+                {'studentId', 'teacherId', 'otherStaffId'}.contains(_kind)
+            ? 'manifest:school-id-v1'
+            : index,
+      );
   }
 
   @override
@@ -353,6 +444,7 @@ class _SchoolDocumentTemplatesScreenState
                       {
                         'studentId': 'Student ID',
                         'teacherId': 'Teacher ID',
+                        'otherStaffId': 'Other Staff ID',
                         'reportCard': 'Report card',
                         'receipt': 'Fee receipt',
                       }[k]!,
@@ -381,7 +473,9 @@ class _SchoolDocumentTemplatesScreenState
               itemCount: _names[_kind]!.length,
               itemBuilder: (ctx, n) {
                 final i = n;
-                final chosen = _kind == 'studentId'
+                final chosen = _selected[_kind] == 'manifest:school-id-v1'
+                    ? _names[_kind]!.length - 1
+                    : _kind == 'studentId'
                     ? windowsStudentIdIndex(_selected[_kind])
                     : windowsReferenceDocumentIndex(_kind, _selected[_kind]);
                 final active = i == chosen;

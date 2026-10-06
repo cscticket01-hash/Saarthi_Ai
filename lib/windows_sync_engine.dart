@@ -1,11 +1,17 @@
 import 'windows_pending_school_sync.dart';
 import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
+
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+
 import 'school_cloud_state.dart';
+
 import 'dart:convert';
+
 import 'school_backend_transport.dart';
+
 import 'dart:math';
 
 import 'package:http/http.dart' as http;
@@ -21,11 +27,9 @@ import 'windows_platform_client.dart';
 class WindowsSyncEngine {
   WindowsSyncEngine._();
 
-  static final WindowsSyncEngine instance =
-      WindowsSyncEngine._();
+  static final WindowsSyncEngine instance = WindowsSyncEngine._();
 
-  static const List<String> _firebaseCollections =
-      <String>[
+  static const List<String> _firebaseCollections = <String>[
     'students_directory',
     'school_notices',
     'teachers_directory',
@@ -85,14 +89,10 @@ class WindowsSyncEngine {
     };
 
     WindowsBackendBridge.onRemoteAvailable = () async {
-      scheduleSoon(
-        delay: const Duration(seconds: 2),
-      );
+      scheduleSoon(delay: const Duration(seconds: 2));
     };
 
-    await activateCurrentConnections(
-      allowPairing: false,
-    );
+    await activateCurrentConnections(allowPairing: false);
 
     if (_resetPaused) return;
 
@@ -101,16 +101,12 @@ class WindowsSyncEngine {
       (_) => scheduleSoon(),
     );
 
-    scheduleSoon(
-      delay: const Duration(milliseconds: 800),
-    );
+    scheduleSoon(delay: const Duration(milliseconds: 800));
   }
 
   Future<void> _handleFirebaseConnectionChanged() async {
     final status = await WindowsFirebaseRemote.status();
-    final nextProject = status.authenticated
-        ? status.projectId.trim()
-        : '';
+    final nextProject = status.authenticated ? status.projectId.trim() : '';
 
     final previousProject = _activeFirebaseProject.trim();
     final selectedDrive = await WindowsExternalConnections.googleScriptUrl();
@@ -129,13 +125,12 @@ class WindowsSyncEngine {
       );
     }
 
-    final mayPairFirstFirebase = previousProject.isEmpty &&
+    final mayPairFirstFirebase =
+        previousProject.isEmpty &&
         nextProject.isNotEmpty &&
         selectedDrive.isNotEmpty;
 
-    await activateCurrentConnections(
-      allowPairing: mayPairFirstFirebase,
-    );
+    await activateCurrentConnections(allowPairing: mayPairFirstFirebase);
   }
 
   Future<void> localStorageModeChanged() async {
@@ -151,19 +146,14 @@ class WindowsSyncEngine {
     }
   }
 
-  void scheduleSoon({
-    Duration delay = const Duration(seconds: 2),
-  }) {
+  void scheduleSoon({Duration delay = const Duration(seconds: 2)}) {
     if (!_initialized || _syncBlocked || _resetPaused) return;
 
     state.value = SchoolCloudState.syncPending;
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(
-      delay,
-      () {
-        unawaited(syncNow());
-      },
-    );
+    _debounceTimer = Timer(delay, () {
+      unawaited(syncNow());
+    });
   }
 
   Future<void> changeGoogleConnection({
@@ -175,16 +165,12 @@ class WindowsSyncEngine {
 
     if (cleanEmail.isEmpty ||
         !cleanEmail.toLowerCase().endsWith('@gmail.com')) {
-      throw const FormatException(
-        'Valid School Gmail ID daalein.',
-      );
+      throw const FormatException('Valid School Gmail ID daalein.');
     }
 
     WindowsExternalConnections.validateGoogleScriptUrl(cleanUrl);
 
-    final healthy = await WindowsBackendBridge.testRemote(
-      Uri.parse(cleanUrl),
-    );
+    final healthy = await WindowsBackendBridge.testRemote(Uri.parse(cleanUrl));
     if (!healthy) {
       throw StateError(
         'Google Drive / Apps Script actual health check fail hua.',
@@ -192,7 +178,8 @@ class WindowsSyncEngine {
     }
 
     final firebaseStatus = await WindowsFirebaseRemote.status();
-    final firebaseReady = firebaseStatus.authenticated &&
+    final firebaseReady =
+        firebaseStatus.authenticated &&
         firebaseStatus.projectId.trim().isNotEmpty;
 
     // User may enter Google first. Save it as a pending connection, but do
@@ -224,9 +211,7 @@ class WindowsSyncEngine {
     );
 
     await _applyProfile(
-      profile.copyWith(
-        googleEmail: cleanEmail,
-      ),
+      profile.copyWith(googleEmail: cleanEmail),
       seedGoogleConfig: false,
     );
 
@@ -236,30 +221,20 @@ class WindowsSyncEngine {
     await FirebaseFirestore.instance
         .collection('school_config')
         .doc('google_drive_account')
-        .set(
-      <String, dynamic>{
-        'email': cleanEmail,
-        'scriptUrl': cleanUrl,
-        'status': 'connected',
-        'linkedAt': FieldValue.serverTimestamp(),
-      },
-      const SetOptions(merge: true),
-    );
+        .set(<String, dynamic>{
+          'email': cleanEmail,
+          'scriptUrl': cleanUrl,
+          'status': 'connected',
+          'linkedAt': FieldValue.serverTimestamp(),
+        }, const SetOptions(merge: true));
 
-    scheduleSoon(
-      delay: const Duration(milliseconds: 250),
-    );
+    scheduleSoon(delay: const Duration(milliseconds: 250));
   }
 
   Future<void> disconnectGoogle() async {
-    await WindowsExternalConnections.save(
-      googleScriptUrl: '',
-      googleEmail: '',
-    );
+    await WindowsExternalConnections.save(googleScriptUrl: '', googleEmail: '');
 
-    await activateCurrentConnections(
-      allowPairing: false,
-    );
+    await activateCurrentConnections(allowPairing: false);
 
     // Delete only in the newly active Firebase-only/unbound profile. The old
     // Drive profile remains preserved so reconnecting its link restores its
@@ -272,34 +247,27 @@ class WindowsSyncEngine {
       await ref.delete();
     }
 
-    scheduleSoon(
-      delay: const Duration(milliseconds: 250),
-    );
+    scheduleSoon(delay: const Duration(milliseconds: 250));
   }
 
-  Future<void> activateCurrentConnections({
-    required bool allowPairing,
-  }) async {
+  Future<void> activateCurrentConnections({required bool allowPairing}) async {
     if (_resetPaused) return;
     _activating++;
     try {
-    while (_syncing) { await Future<void>.delayed(const Duration(milliseconds:50)); }
-    final profile = await _resolveProfile(
-      allowPairing: allowPairing,
-    );
-    if (_resetPaused) return;
+      while (_syncing) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      final profile = await _resolveProfile(allowPairing: allowPairing);
+      if (_resetPaused) return;
 
-    await _applyProfile(
-      profile,
-      seedGoogleConfig: !profile.blocked,
-    );
+      await _applyProfile(profile, seedGoogleConfig: !profile.blocked);
 
-    if (!profile.blocked) {
-      scheduleSoon(
-        delay: const Duration(milliseconds: 350),
-      );
+      if (!profile.blocked) {
+        scheduleSoon(delay: const Duration(milliseconds: 350));
+      }
+    } finally {
+      _activating--;
     }
-    } finally { _activating--; }
   }
 
   Future<void> pauseForAppReset() async {
@@ -310,7 +278,9 @@ class WindowsSyncEngine {
     while (_syncing || _activating > 0) {
       if (DateTime.now().isAfter(deadline)) {
         _resetPaused = false;
-        throw StateError('School sync is still finishing. Retry reset shortly.');
+        throw StateError(
+          'School sync is still finishing. Retry reset shortly.',
+        );
       }
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
@@ -330,10 +300,16 @@ class WindowsSyncEngine {
   }) async {
     final central = await CentralSchoolCloud.saved();
     if (central.isNotEmpty) {
-      return _ResolvedSyncProfile(profileId:'central_${central['schoolId']}',
-        schoolSyncId:central['schoolId'], firebaseProjectId:central['projectId'],
-        googleUrl:await WindowsExternalConnections.googleScriptUrl(), googleEmail:central['email'],
-        googleBackendId:central['folderId'], blocked:false, message:'');
+      return _ResolvedSyncProfile(
+        profileId: 'central_${central['schoolId']}',
+        schoolSyncId: central['schoolId'],
+        firebaseProjectId: central['projectId'],
+        googleUrl: await WindowsExternalConnections.googleScriptUrl(),
+        googleEmail: central['email'],
+        googleBackendId: central['folderId'],
+        blocked: false,
+        message: '',
+      );
     }
     final firebaseStatus = await WindowsFirebaseRemote.status();
     final projectId = firebaseStatus.authenticated
@@ -341,9 +317,11 @@ class WindowsSyncEngine {
         : '';
 
     final savedConnections = await WindowsExternalConnections.load();
-    final googleUrl = (googleUrlOverride ??
-            savedConnections['googleScriptUrl']?.toString() ?? '')
-        .trim();
+    final googleUrl =
+        (googleUrlOverride ??
+                savedConnections['googleScriptUrl']?.toString() ??
+                '')
+            .trim();
     final googleEmail =
         savedConnections['googleEmail']?.toString().trim() ?? '';
 
@@ -396,19 +374,16 @@ class WindowsSyncEngine {
           projectId: projectId,
           googleUrl: googleUrl,
           googleEmail: googleEmail,
-          message:
-              'School isolation BLOCKED: Firebase aur Google Drive alag school identity ke hain. Koi data sync nahi hua.',
+          message: 'School isolation BLOCKED: Firebase aur Google Drive alag school identity ke hain. Koi data sync nahi hua.',
         );
       }
 
-      if (!allowPairing &&
-          (firebaseSyncId.isEmpty || driveSyncId.isEmpty)) {
+      if (!allowPairing && (firebaseSyncId.isEmpty || driveSyncId.isEmpty)) {
         return _blockedProfile(
           projectId: projectId,
           googleUrl: googleUrl,
           googleEmail: googleEmail,
-          message:
-              'School isolation pending: current Firebase + Drive pair verify/claim nahi hua. Advanced Settings me correct Drive link Save karein.',
+          message: 'School isolation pending: current Firebase + Drive pair verify/claim nahi hua. Advanced Settings me correct Drive link Save karein.',
         );
       }
 
@@ -420,18 +395,12 @@ class WindowsSyncEngine {
             idToken: idToken,
             schoolSyncId: schoolSyncId,
           );
-          googleIdentity = await _claimGoogleSyncId(
-            googleUrl,
-            schoolSyncId,
-          );
+          googleIdentity = await _claimGoogleSyncId(googleUrl, schoolSyncId);
           firebaseSyncId = schoolSyncId;
           driveSyncId = schoolSyncId;
         } else if (firebaseSyncId.isNotEmpty && driveSyncId.isEmpty) {
           schoolSyncId = firebaseSyncId;
-          googleIdentity = await _claimGoogleSyncId(
-            googleUrl,
-            schoolSyncId,
-          );
+          googleIdentity = await _claimGoogleSyncId(googleUrl, schoolSyncId);
           driveSyncId = schoolSyncId;
         } else if (firebaseSyncId.isEmpty && driveSyncId.isNotEmpty) {
           schoolSyncId = driveSyncId;
@@ -453,8 +422,7 @@ class WindowsSyncEngine {
           projectId: projectId,
           googleUrl: googleUrl,
           googleEmail: googleEmail,
-          message:
-              'School isolation verify nahi hua. Koi cross-source sync nahi hua.',
+          message: 'School isolation verify nahi hua. Koi cross-source sync nahi hua.',
         );
       }
     } else if (projectId.isNotEmpty) {
@@ -523,30 +491,26 @@ class WindowsSyncEngine {
       identity: <String, dynamic>{
         'schoolSyncId': profile.schoolSyncId,
         'firebaseProjectId': profile.firebaseProjectId,
-        if (profile.profileId.startsWith('central_')) 'schoolId':profile.schoolSyncId,
+        if (profile.profileId.startsWith('central_'))
+          'schoolId': profile.schoolSyncId,
         'googleScriptUrl': profile.googleUrl,
         'googleBackendId': profile.googleBackendId,
         'blocked': profile.blocked,
       },
     );
 
-    windows_html.setSchoolStorageNamespace(
-      profile.profileId,
-    );
+    windows_html.setSchoolStorageNamespace(profile.profileId);
 
     if (seedGoogleConfig && profile.googleUrl.isNotEmpty) {
       await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
         () => FirebaseFirestore.instance
             .collection('school_config')
             .doc('google_drive_account')
-            .set(
-          <String, dynamic>{
-            'email': profile.googleEmail,
-            'scriptUrl': profile.googleUrl,
-            'status': 'connected',
-          },
-          const SetOptions(merge: true),
-        ),
+            .set(<String, dynamic>{
+              'email': profile.googleEmail,
+              'scriptUrl': profile.googleUrl,
+              'status': 'connected',
+            }, const SetOptions(merge: true)),
       );
     }
   }
@@ -578,9 +542,7 @@ class WindowsSyncEngine {
     );
 
     if (current.isNotEmpty && current != schoolSyncId) {
-      throw StateError(
-        'Firebase already dusre School Sync ID se locked hai.',
-      );
+      throw StateError('Firebase already dusre School Sync ID se locked hai.');
     }
 
     if (current == schoolSyncId) return;
@@ -598,21 +560,14 @@ class WindowsSyncEngine {
     );
   }
 
-  Future<_GoogleIdentity> _googleIdentity(
-    String scriptUrl,
-  ) async {
-    final result = await _googleDirectPost(
-      scriptUrl,
-      const <String, dynamic>{
-        'action': 'sync_identity_get',
-      },
-    );
+  Future<_GoogleIdentity> _googleIdentity(String scriptUrl) async {
+    final result = await _googleDirectPost(scriptUrl, const <String, dynamic>{
+      'action': 'sync_identity_get',
+    });
 
     return _GoogleIdentity(
-      schoolSyncId:
-          result['schoolSyncId']?.toString().trim() ?? '',
-      backendInstanceId:
-          result['backendInstanceId']?.toString().trim() ?? '',
+      schoolSyncId: result['schoolSyncId']?.toString().trim() ?? '',
+      backendInstanceId: result['backendInstanceId']?.toString().trim() ?? '',
     );
   }
 
@@ -620,26 +575,19 @@ class WindowsSyncEngine {
     String scriptUrl,
     String schoolSyncId,
   ) async {
-    final result = await _googleDirectPost(
-      scriptUrl,
-      <String, dynamic>{
-        'action': 'sync_identity_claim',
-        'schoolSyncId': schoolSyncId,
-      },
-    );
+    final result = await _googleDirectPost(scriptUrl, <String, dynamic>{
+      'action': 'sync_identity_claim',
+      'schoolSyncId': schoolSyncId,
+    });
 
-    final claimed =
-        result['schoolSyncId']?.toString().trim() ?? '';
+    final claimed = result['schoolSyncId']?.toString().trim() ?? '';
     if (claimed != schoolSyncId) {
-      throw StateError(
-        'Google Drive School Sync ID claim verify nahi hua.',
-      );
+      throw StateError('Google Drive School Sync ID claim verify nahi hua.');
     }
 
     return _GoogleIdentity(
       schoolSyncId: claimed,
-      backendInstanceId:
-          result['backendInstanceId']?.toString().trim() ?? '',
+      backendInstanceId: result['backendInstanceId']?.toString().trim() ?? '',
     );
   }
 
@@ -687,11 +635,10 @@ class WindowsSyncEngine {
       var response = await sendPost(current)
           .timeout(const Duration(seconds: 30));
 
-      for (var redirectCount = 0;
-          redirectCount < 8;
-          redirectCount++) {
+      for (var redirectCount = 0; redirectCount < 8; redirectCount++) {
         final code = response.statusCode;
-        final isRedirect = code == 301 ||
+        final isRedirect =
+            code == 301 ||
             code == 302 ||
             code == 303 ||
             code == 307 ||
@@ -708,9 +655,7 @@ class WindowsSyncEngine {
       }
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw StateError(
-          'Google sync identity HTTP ${response.statusCode}.',
-        );
+        throw StateError('Google sync identity HTTP ${response.statusCode}.');
       }
 
       final decoded = jsonDecode(response.body);
@@ -728,7 +673,9 @@ class WindowsSyncEngine {
       }
 
       if (result['projectId'] != status.projectId) {
-        throw StateError('Google backend belongs to another school or needs the secure backend update.');
+        throw StateError(
+          'Google backend belongs to another school or needs the secure backend update.',
+        );
       }
       return result;
     } finally {
@@ -738,10 +685,7 @@ class WindowsSyncEngine {
 
   String _newSchoolSyncId() {
     final random = Random.secure();
-    final bytes = List<int>.generate(
-      12,
-      (_) => random.nextInt(256),
-    );
+    final bytes = List<int>.generate(12, (_) => random.nextInt(256));
     final token = base64Url.encode(bytes).replaceAll('=', '');
     return 'VS-${DateTime.now().toUtc().millisecondsSinceEpoch}-$token';
   }
@@ -753,7 +697,10 @@ class WindowsSyncEngine {
   }) {
     final raw = '$schoolSyncId\n$projectId\n$googleIdentity';
     final a = _fnv32(raw, 0x811C9DC5);
-    final b = _fnv32(String.fromCharCodes(raw.runes.toList().reversed), 0x9E3779B9);
+    final b = _fnv32(
+      String.fromCharCodes(raw.runes.toList().reversed),
+      0x9E3779B9,
+    );
     return 'p_${a.toRadixString(16).padLeft(8, '0')}'
         '${b.toRadixString(16).padLeft(8, '0')}';
   }
@@ -768,12 +715,21 @@ class WindowsSyncEngine {
   }
 
   Future<void> prepareDriveBackup() async {
-    final profile=FirebaseFirestore.instance.activeProfileId;
-    final until=DateTime.now().add(const Duration(seconds:90));
-    while(_syncing||_activating>0){if(DateTime.now().isAfter(until))throw StateError('School sync is busy; retry Drive backup.');await Future<void>.delayed(const Duration(milliseconds:50));}
-    if(_syncBlocked||_resetPaused||FirebaseFirestore.instance.activeProfileId!=profile)throw StateError('Resolve school sync before creating a Drive backup.');
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    final until = DateTime.now().add(const Duration(seconds: 90));
+    while (_syncing || _activating > 0) {
+      if (DateTime.now().isAfter(until))
+        throw StateError('School sync is busy; retry Drive backup.');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    if (_syncBlocked ||
+        _resetPaused ||
+        FirebaseFirestore.instance.activeProfileId != profile)
+      throw StateError('Resolve school sync before creating a Drive backup.');
     await syncNow();
-    if(lastError!=null||FirebaseFirestore.instance.activeProfileId!=profile)throw StateError('School sync did not complete; retry Drive backup.');
+    if (lastError != null ||
+        FirebaseFirestore.instance.activeProfileId != profile)
+      throw StateError('School sync did not complete; retry Drive backup.');
   }
 
   Future<void> syncNow() async {
@@ -787,7 +743,8 @@ class WindowsSyncEngine {
     try {
       final central = await CentralSchoolCloud.saved();
       if (central.isNotEmpty && central['schoolId'] != _activeSchoolSyncId) {
-        unawaited(activateCurrentConnections(allowPairing:false)); return;
+        unawaited(activateCurrentConnections(allowPairing: false));
+        return;
       }
       final firebaseStatus = await WindowsFirebaseRemote.status();
 
@@ -807,16 +764,12 @@ class WindowsSyncEngine {
           return;
         }
 
-        await _pushFirebaseOutbox(projectId:projectId,idToken:idToken);
-        await _pullFirebase(
-          projectId: projectId,
-          idToken: idToken,
-        );
+        await _pushFirebaseOutbox(projectId: projectId, idToken: idToken);
+        await _pullFirebase(projectId: projectId, idToken: idToken);
       }
 
       final scriptUrl = await _googleScriptUrl();
-      if (_activeGoogleUrl.isNotEmpty &&
-          scriptUrl != _activeGoogleUrl) {
+      if (_activeGoogleUrl.isNotEmpty && scriptUrl != _activeGoogleUrl) {
         unawaited(activateCurrentConnections(allowPairing: false));
         return;
       }
@@ -829,11 +782,15 @@ class WindowsSyncEngine {
         await WindowsBackendBridge.flushPending();
       }
 
+      if (central['managed'] == true)
+        await WindowsBackendBridge.flushDocumentPending();
+
       lastSuccessfulSync = DateTime.now();
       if (_activeProfileId == syncOrigin) state.value = SchoolCloudState.synced;
     } catch (e) {
       lastError = e.toString();
-      if (_activeProfileId == syncOrigin) state.value = SchoolCloudState.syncError;
+      if (_activeProfileId == syncOrigin)
+        state.value = SchoolCloudState.syncError;
     } finally {
       _syncing = false;
     }
@@ -844,60 +801,44 @@ class WindowsSyncEngine {
     required String idToken,
   }) async {
     final pullProfile = FirebaseFirestore.instance.activeProfileId;
-    final pending =
-        await _firebasePendingKeys();
+    final pending = await _firebasePendingKeys();
 
-    for (final collection
-        in _firebaseCollections) {
-      if (projectId != platformProjectId && _firebaseCollections.indexOf(collection) >= 12) continue;
-      if (FirebaseFirestore.instance.activeProfileId != pullProfile) throw StateError('School profile changed during sync.');
-      final remote =
-          await WindowsFirebaseRemote
-              .readCollection(
+    for (final collection in _firebaseCollections) {
+      if (projectId != platformProjectId &&
+          _firebaseCollections.indexOf(collection) >= 12)
+        continue;
+      if (FirebaseFirestore.instance.activeProfileId != pullProfile)
+        throw StateError('School profile changed during sync.');
+      final remote = await WindowsFirebaseRemote.readCollection(
         projectId: projectId,
         idToken: idToken,
         collection: collection,
       );
 
-      if (FirebaseFirestore.instance.activeProfileId != pullProfile) throw StateError('School profile changed during sync.');
-      final localSnapshot =
-          await FirebaseFirestore.instance
-              .collection(collection)
-              .get();
+      if (FirebaseFirestore.instance.activeProfileId != pullProfile)
+        throw StateError('School profile changed during sync.');
+      final localSnapshot = await FirebaseFirestore.instance
+          .collection(collection)
+          .get();
 
-      final local = <String,
-          Map<String, dynamic>>{
+      final local = <String, Map<String, dynamic>>{
         for (final doc in localSnapshot.docs)
-          doc.id: Map<String, dynamic>.from(
-            doc.data(),
-          ),
+          doc.id: Map<String, dynamic>.from(doc.data()),
       };
 
-      final manifestRef =
-          FirebaseFirestore.instance
-              .collection(
-                '_windows_sync_manifest',
-              )
-              .doc(
-                _manifestId(
-                  'firebase',
-                  collection,
-                ),
-              );
+      final manifestRef = FirebaseFirestore.instance
+          .collection('_windows_sync_manifest')
+          .doc(_manifestId('firebase', collection));
 
-      final manifest =
-          await manifestRef.get();
+      final manifest = await manifestRef.get();
 
-      final oldIds = _stringSet(
-        manifest.data()?['ids'],
-      );
+      final oldIds = _stringSet(manifest.data()?['ids']);
 
-      final remoteIds =
-          remote.keys.toSet();
+      final remoteIds = remote.keys.toSet();
 
-      for (final entry
-          in remote.entries) {
-        if (FirebaseFirestore.instance.activeProfileId != pullProfile) throw StateError('School profile changed during sync.');
+      for (final entry in remote.entries) {
+        if (FirebaseFirestore.instance.activeProfileId != pullProfile)
+          throw StateError('School profile changed during sync.');
         // Windows connection selector is authoritative for its own Drive URL.
         // A stale Firestore copy must never switch the active backend behind
         // the user's back or revive another school's Drive link.
@@ -906,13 +847,9 @@ class WindowsSyncEngine {
           continue;
         }
 
-        final key = _pendingKey(
-          collection,
-          entry.key,
-        );
+        final key = _pendingKey(collection, entry.key);
 
-        final localData =
-            local[entry.key];
+        final localData = local[entry.key];
 
         if (pending.contains(key)) {
           // Local unsynced change wins until its
@@ -921,22 +858,14 @@ class WindowsSyncEngine {
         }
 
         if (localData == null) {
-          await _remoteSetLocal(
-            collection,
-            entry.key,
-            entry.value,
-          );
+          await _remoteSetLocal(collection, entry.key, entry.value);
           continue;
         }
 
-        final localMs =
-            _modifiedMillis(localData);
-        final remoteMs =
-            _modifiedMillis(entry.value);
+        final localMs = _modifiedMillis(localData);
+        final remoteMs = _modifiedMillis(entry.value);
 
-        if (localMs > 0 &&
-            remoteMs > 0 &&
-            localMs > remoteMs) {
+        if (localMs > 0 && remoteMs > 0 && localMs > remoteMs) {
           // Local is clearly newer. Re-writing the
           // same document records it in the outbox.
           await FirebaseFirestore.instance
@@ -947,56 +876,38 @@ class WindowsSyncEngine {
           continue;
         }
 
-        final merged =
-            <String, dynamic>{
-          ...localData,
-          ...entry.value,
-        };
+        final merged = <String, dynamic>{...localData, ...entry.value};
 
-        await _remoteSetLocal(
-          collection,
-          entry.key,
-          merged,
-        );
+        await _remoteSetLocal(collection, entry.key, merged);
       }
 
       // A document that existed on Firebase in an
       // earlier successful snapshot but is absent now
       // is a confirmed remote deletion.
-      final deletedRemote =
-          oldIds.difference(remoteIds);
+      final deletedRemote = oldIds.difference(remoteIds);
 
       for (final id in deletedRemote) {
-        if (collection == 'school_config' &&
-            id == 'google_drive_account') {
+        if (collection == 'school_config' && id == 'google_drive_account') {
           continue;
         }
 
-        final key =
-            _pendingKey(collection, id);
+        final key = _pendingKey(collection, id);
 
         if (pending.contains(key)) {
           continue;
         }
 
-        await _remoteDeleteLocal(
-          collection,
-          id,
-        );
+        await _remoteDeleteLocal(collection, id);
       }
 
       // Existing local-only documents on the first
       // sync must not be lost. Queue them to Firebase.
       for (final entry in local.entries) {
-        if (remoteIds.contains(entry.key) ||
-            oldIds.contains(entry.key)) {
+        if (remoteIds.contains(entry.key) || oldIds.contains(entry.key)) {
           continue;
         }
 
-        final key = _pendingKey(
-          collection,
-          entry.key,
-        );
+        final key = _pendingKey(collection, entry.key);
 
         if (pending.contains(key)) {
           continue;
@@ -1010,90 +921,89 @@ class WindowsSyncEngine {
         pending.add(key);
       }
 
-      await WindowsLocalFirestoreSyncControl
-          .runWithoutSyncTracking(
-        () => manifestRef.set(
-          <String, dynamic>{
-            'source': 'firebase',
-            'collection': collection,
-            'ids': remoteIds.toList()
-              ..sort(),
-            'updatedAt':
-                FieldValue.serverTimestamp(),
-          },
-        ),
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+        () => manifestRef.set(<String, dynamic>{
+          'source': 'firebase',
+          'collection': collection,
+          'ids': remoteIds.toList()..sort(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }),
       );
     }
   }
 
-  Future<Set<String>>
-      _firebasePendingKeys() async {
-    final snapshot =
-        await FirebaseFirestore.instance
-            .collection(
-              '_windows_firebase_outbox',
-            )
-            .get();
+  Future<Set<String>> _firebasePendingKeys() async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('_windows_firebase_outbox')
+        .get();
 
-    return snapshot.docs.map((doc) {
-      final data = doc.data();
-      return _pendingKey(
-        data['collection']?.toString() ?? '',
-        data['documentId']?.toString() ?? '',
-      );
-    }).where((value) {
-      return !value.startsWith('\u0000');
-    }).toSet();
+    return snapshot.docs
+        .map((doc) {
+          final data = doc.data();
+          return _pendingKey(
+            data['collection']?.toString() ?? '',
+            data['documentId']?.toString() ?? '',
+          );
+        })
+        .where((value) {
+          return !value.startsWith('\u0000');
+        })
+        .toSet();
   }
 
-  Future<void> _pushFirebaseOutbox({required String projectId, required String idToken}) =>
-      WindowsPendingSchoolSync.flush(profileId:FirebaseFirestore.instance.activeProfileId,
-        send:(collection,id,operation,data) async {
-          if(operation=='delete') {
-            await WindowsFirebaseRemote.deleteDocument(projectId:projectId,idToken:idToken,collection:collection,documentId:id);
-          } else {
-            await WindowsFirebaseRemote.writeDocument(projectId:projectId,idToken:idToken,collection:collection,documentId:id,data:data!);
-          }
-        });
+  Future<void> _pushFirebaseOutbox({
+    required String projectId,
+    required String idToken,
+  }) => WindowsPendingSchoolSync.flush(
+    profileId: FirebaseFirestore.instance.activeProfileId,
+    send: (collection, id, operation, data) async {
+      if (operation == 'delete') {
+        await WindowsFirebaseRemote.deleteDocument(
+          projectId: projectId,
+          idToken: idToken,
+          collection: collection,
+          documentId: id,
+        );
+      } else {
+        await WindowsFirebaseRemote.writeDocument(
+          projectId: projectId,
+          idToken: idToken,
+          collection: collection,
+          documentId: id,
+          data: data!,
+        );
+      }
+    },
+  );
 
   Future<String> _googleScriptUrl() {
     return WindowsExternalConnections.googleScriptUrl();
   }
 
-  Future<void> _pullGoogleSnapshot(
-    String scriptUrl,
-  ) async {
-    final response =
-        await WindowsBackendBridge.post(
+  Future<void> _pullGoogleSnapshot(String scriptUrl) async {
+    final response = await WindowsBackendBridge.post(
       Uri.parse(scriptUrl),
       headers: const <String, String>{
-        'Content-Type':
-            'text/plain;charset=utf-8',
+        'Content-Type': 'text/plain;charset=utf-8',
       },
-      body: jsonEncode(
-        const <String, dynamic>{
-          'action': 'windows_sync_snapshot',
-        },
-      ),
+      body: jsonEncode(const <String, dynamic>{
+        'action': 'windows_sync_snapshot',
+      }),
     );
 
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       return;
     }
 
-    final decoded =
-        jsonDecode(response.body);
+    final decoded = jsonDecode(response.body);
 
     if (decoded is! Map) {
       return;
     }
 
-    final result =
-        Map<String, dynamic>.from(decoded);
+    final result = Map<String, dynamic>.from(decoded);
 
-    if (result['success'] != true ||
-        result['windowsLocalFallback'] == true) {
+    if (result['success'] != true || result['windowsLocalFallback'] == true) {
       return;
     }
 
@@ -1109,11 +1019,7 @@ class WindowsSyncEngine {
       sourceName: 'teachers',
       collection: 'teachers_directory',
       rawList: result['teachers'],
-      idFor: (item) =>
-          item['teacherId']
-              ?.toString()
-              .trim() ??
-          '',
+      idFor: (item) => item['teacherId']?.toString().trim() ?? '',
       coreFirebaseCollection: true,
     );
 
@@ -1121,87 +1027,51 @@ class WindowsSyncEngine {
       sourceName: 'feePayments',
       collection: 'fee_payments',
       rawList: result['feePayments'],
-      idFor: (item) =>
-          item['paymentId']
-              ?.toString()
-              .trim() ??
-          '',
+      idFor: (item) => item['paymentId']?.toString().trim() ?? '',
       coreFirebaseCollection: true,
     );
 
     await _importGoogleList(
       sourceName: 'documents',
-      collection:
-          '_local_student_documents',
+      collection: '_local_student_documents',
       rawList: result['documents'],
-      idFor: (item) =>
-          item['documentId']
-              ?.toString()
-              .trim() ??
-          '',
+      idFor: (item) => item['documentId']?.toString().trim() ?? '',
       deleteMissing: true,
     );
 
     await _importGoogleList(
       sourceName: 'studentAttendance',
-      collection:
-          '_local_student_attendance',
-      rawList:
-          result['studentAttendance'],
-      idFor: (item) =>
-          item['attendanceId']
-              ?.toString()
-              .trim() ??
-          '',
+      collection: '_local_student_attendance',
+      rawList: result['studentAttendance'],
+      idFor: (item) => item['attendanceId']?.toString().trim() ?? '',
       deleteMissing: true,
     );
 
     await _importGoogleList(
       sourceName: 'teacherAttendance',
-      collection:
-          '_local_teacher_attendance',
-      rawList:
-          result['teacherAttendance'],
-      idFor: (item) =>
-          item['attendanceId']
-              ?.toString()
-              .trim() ??
-          '',
+      collection: '_local_teacher_attendance',
+      rawList: result['teacherAttendance'],
+      idFor: (item) => item['attendanceId']?.toString().trim() ?? '',
       deleteMissing: true,
     );
 
     await _importGoogleList(
       sourceName: 'exams',
-      collection:
-          '_local_exam_center_exams',
+      collection: '_local_exam_center_exams',
       rawList: result['exams'],
-      idFor: (item) =>
-          item['examId']
-              ?.toString()
-              .trim() ??
-          '',
+      idFor: (item) => item['examId']?.toString().trim() ?? '',
       deleteMissing: true,
     );
 
     await _importGoogleList(
       sourceName: 'results',
-      collection:
-          '_local_exam_center_results',
+      collection: '_local_exam_center_results',
       rawList: result['results'],
       idFor: (item) {
-        final examId =
-            item['examId']
-                    ?.toString()
-                    .trim() ??
-                '';
-        final studentId =
-            item['studentId']
-                    ?.toString()
-                    .trim() ??
-                '';
+        final examId = item['examId']?.toString().trim() ?? '';
+        final studentId = item['studentId']?.toString().trim() ?? '';
 
-        if (examId.isEmpty ||
-            studentId.isEmpty) {
+        if (examId.isEmpty || studentId.isEmpty) {
           return '';
         }
 
@@ -1215,12 +1085,8 @@ class WindowsSyncEngine {
     if (profile is Map) {
       await _mergeGoogleDocument(
         collection: 'school_config',
-        documentId:
-            'school_profile_cache',
-        remote:
-            Map<String, dynamic>.from(
-          profile,
-        ),
+        documentId: 'school_profile_cache',
+        remote: Map<String, dynamic>.from(profile),
         coreFirebaseCollection: true,
       );
     }
@@ -1230,9 +1096,7 @@ class WindowsSyncEngine {
     required String sourceName,
     required String collection,
     required dynamic rawList,
-    required String Function(
-      Map<String, dynamic> item,
-    ) idFor,
+    required String Function(Map<String, dynamic> item) idFor,
     bool coreFirebaseCollection = false,
     bool deleteMissing = false,
   }) async {
@@ -1243,8 +1107,7 @@ class WindowsSyncEngine {
     for (final raw in rawList) {
       if (raw is! Map) continue;
 
-      final item =
-          Map<String, dynamic>.from(raw);
+      final item = Map<String, dynamic>.from(raw);
 
       final id = idFor(item);
 
@@ -1256,8 +1119,7 @@ class WindowsSyncEngine {
         collection: collection,
         documentId: id,
         remote: item,
-        coreFirebaseCollection:
-            coreFirebaseCollection,
+        coreFirebaseCollection: coreFirebaseCollection,
       );
     }
 
@@ -1269,45 +1131,25 @@ class WindowsSyncEngine {
       return;
     }
 
-    final manifestRef =
-        FirebaseFirestore.instance
-            .collection(
-              '_windows_sync_manifest',
-            )
-            .doc(
-              _manifestId(
-                'google',
-                sourceName,
-              ),
-            );
+    final manifestRef = FirebaseFirestore.instance
+        .collection('_windows_sync_manifest')
+        .doc(_manifestId('google', sourceName));
 
-    final manifest =
-        await manifestRef.get();
+    final manifest = await manifestRef.get();
 
-    final oldIds = _stringSet(
-      manifest.data()?['ids'],
-    );
+    final oldIds = _stringSet(manifest.data()?['ids']);
 
-    for (final id
-        in oldIds.difference(remoteIds)) {
-      await _remoteDeleteLocal(
-        collection,
-        id,
-      );
+    for (final id in oldIds.difference(remoteIds)) {
+      await _remoteDeleteLocal(collection, id);
     }
 
-    await WindowsLocalFirestoreSyncControl
-        .runWithoutSyncTracking(
-      () => manifestRef.set(
-        <String, dynamic>{
-          'source': 'google',
-          'collection': collection,
-          'ids': remoteIds.toList()
-            ..sort(),
-          'updatedAt':
-              FieldValue.serverTimestamp(),
-        },
-      ),
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+      () => manifestRef.set(<String, dynamic>{
+        'source': 'google',
+        'collection': collection,
+        'ids': remoteIds.toList()..sort(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }),
     );
   }
 
@@ -1380,81 +1222,63 @@ class WindowsSyncEngine {
       if (coreFirebaseCollection) {
         await ref.set(remote);
       } else {
-        await _remoteSetLocal(
-          collection,
-          documentId,
-          remote,
-        );
+        await _remoteSetLocal(collection, documentId, remote);
       }
       return;
     }
 
-    final localMs =
-        _modifiedMillis(local);
-    final remoteMs =
-        _modifiedMillis(remote);
+    final localMs = _modifiedMillis(local);
+    final remoteMs = _modifiedMillis(remote);
 
-    if (remoteMs > 0 &&
-        localMs > 0 &&
-        remoteMs < localMs) {
+    if (remoteMs > 0 && localMs > 0 && remoteMs < localMs) {
       return;
     }
 
-    final merged =
-        <String, dynamic>{
-      ...local,
-      ...remote,
-    };
+    final merged = <String, dynamic>{...local, ...remote};
 
     if (coreFirebaseCollection) {
       // Only create a Firebase outbox entry when
       // Google is actually newer or fills a missing
       // record/field set.
-      if (_jsonStable(local) !=
-          _jsonStable(merged)) {
+      if (_jsonStable(local) != _jsonStable(merged)) {
         await ref.set(merged);
       }
     } else {
-      await _remoteSetLocal(
-        collection,
-        documentId,
-        merged,
-      );
+      await _remoteSetLocal(collection, documentId, merged);
     }
   }
 
-  Future<void> _remoteSetLocal(String collection,String documentId,Map<String,dynamic> data) {
-    final db=FirebaseFirestore.instance;
-    return db.applySyncedDocument(db.collection(collection).doc(documentId),data);
-  }
-  Future<void> _remoteDeleteLocal(String collection,String documentId) {
-    final db=FirebaseFirestore.instance;
-    return db.applySyncedDocument(db.collection(collection).doc(documentId),null);
-  }
-
-  String _pendingKey(
+  Future<void> _remoteSetLocal(
     String collection,
     String documentId,
+    Map<String, dynamic> data,
   ) {
+    final db = FirebaseFirestore.instance;
+    return db.applySyncedDocument(
+      db.collection(collection).doc(documentId),
+      data,
+    );
+  }
+
+  Future<void> _remoteDeleteLocal(String collection, String documentId) {
+    final db = FirebaseFirestore.instance;
+    return db.applySyncedDocument(
+      db.collection(collection).doc(documentId),
+      null,
+    );
+  }
+
+  String _pendingKey(String collection, String documentId) {
     return '$collection\u0000$documentId';
   }
 
-  String _manifestId(
-    String source,
-    String collection,
-  ) {
+  String _manifestId(String source, String collection) {
     return base64Url
-        .encode(
-          utf8.encode(
-            '$source\n$collection',
-          ),
-        )
+        .encode(utf8.encode('$source\n$collection'))
         .replaceAll('=', '');
   }
 
-  Set<String> _stringSet(
-    dynamic value,
-  ) {
+  Set<String> _stringSet(dynamic value) {
     if (value is! Iterable) {
       return <String>{};
     }
@@ -1465,9 +1289,7 @@ class WindowsSyncEngine {
         .toSet();
   }
 
-  int _modifiedMillis(
-    Map<String, dynamic> data,
-  ) {
+  int _modifiedMillis(Map<String, dynamic> data) {
     const keys = <String>[
       'updatedAt',
       'lastEdited',
@@ -1494,17 +1316,14 @@ class WindowsSyncEngine {
       }
 
       if (value is String) {
-        final asInt =
-            int.tryParse(value);
+        final asInt = int.tryParse(value);
         if (asInt != null) {
           return asInt;
         }
 
-        final parsed =
-            DateTime.tryParse(value);
+        final parsed = DateTime.tryParse(value);
         if (parsed != null) {
-          return parsed
-              .millisecondsSinceEpoch;
+          return parsed.millisecondsSinceEpoch;
         }
       }
     }
@@ -1512,36 +1331,26 @@ class WindowsSyncEngine {
     return 0;
   }
 
-  String _jsonStable(
-    Map<String, dynamic> value,
-  ) {
+  String _jsonStable(Map<String, dynamic> value) {
     dynamic clean(dynamic input) {
       if (input is Timestamp) {
-        return input
-            .millisecondsSinceEpoch;
+        return input.millisecondsSinceEpoch;
       }
 
       if (input is DateTime) {
-        return input
-            .millisecondsSinceEpoch;
+        return input.millisecondsSinceEpoch;
       }
 
       if (input is Map) {
-        final keys = input.keys
-            .map((key) => key.toString())
-            .toList()
-          ..sort();
+        final keys = input.keys.map((key) => key.toString()).toList()..sort();
 
         return <String, dynamic>{
-          for (final key in keys)
-            key: clean(input[key]),
+          for (final key in keys) key: clean(input[key]),
         };
       }
 
       if (input is Iterable) {
-        return input
-            .map(clean)
-            .toList();
+        return input.map(clean).toList();
       }
 
       return input;
@@ -1556,7 +1365,6 @@ class WindowsSyncEngine {
     _initialized = false;
   }
 }
-
 
 class _GoogleIdentity {
   const _GoogleIdentity({
@@ -1589,9 +1397,7 @@ class _ResolvedSyncProfile {
   final bool blocked;
   final String message;
 
-  _ResolvedSyncProfile copyWith({
-    String? googleEmail,
-  }) {
+  _ResolvedSyncProfile copyWith({String? googleEmail}) {
     return _ResolvedSyncProfile(
       profileId: profileId,
       schoolSyncId: schoolSyncId,

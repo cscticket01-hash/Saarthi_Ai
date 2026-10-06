@@ -1,7 +1,7 @@
 'use strict';
 // Read-only. No API activation, IAM mutation, billing or fallback estimates.
 function createMonitor({credential,projectId,fetchImpl=fetch,now=Date.now}){
- let cached;return async()=>{
+ let cached,inflight;async function read(){
   if(cached&&now()-cached.at<60000)return {...cached.value,cached:true};
   try{
    const token=(await credential.getAccessToken()).access_token;
@@ -17,6 +17,11 @@ function createMonitor({credential,projectId,fetchImpl=fetch,now=Date.now}){
    const metrics=[];for(const d of chosen){const u=new URL(base+'/timeSeries');u.searchParams.set('filter','metric.type="'+d.type+'"');u.searchParams.set('interval.startTime',new Date(now()-86400000).toISOString());u.searchParams.set('interval.endTime',new Date(now()).toISOString());u.searchParams.set('pageSize','100');const r=await fetchImpl(u.href,{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(10000)});const data=r.ok?await r.json():null;metrics.push({type:d.type,unit:d.unit,kind:d.metricKind,description:d.description,available:r.ok,status:r.status,...(r.ok?{series:data.timeSeries||[],partial:!!data.nextPageToken}:{reason:'Metric access unavailable (HTTP '+r.status+')'})});}
    const value={available:true,cards:summarize(metrics),metrics,quotas,window:'last 24 hours',sampledAt:now(),partial:!!descriptorData.nextPageToken};cached={at:now(),value};return value;
   }catch{return {available:false,reason:'Monitoring unavailable; usage and capacity are not estimated'};}
+ }
+ return async()=>{
+  if(cached&&now()-cached.at<60000)return {...cached.value,cached:true};
+  if(!inflight)inflight=read().then(value=>{cached={at:now(),value};return value;}).finally(()=>{inflight=null;});
+  return inflight;
  };
 }
 module.exports={createMonitor,summarize};

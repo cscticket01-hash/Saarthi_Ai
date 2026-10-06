@@ -1,12 +1,17 @@
+import 'developer_login_shell.dart';
 import 'managed_developer_panel.dart';
 import 'developer_account_widgets.dart';
 import 'firebase_monitor_panel.dart';
 import 'platform/monitor_summary.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+
 import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'platform/developer_service.dart';
 
 const _ink = Color(0xFF101B24),
@@ -17,15 +22,15 @@ class DeveloperPortal extends StatelessWidget {
   const DeveloperPortal({super.key});
   @override
   Widget build(BuildContext context) => StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, s) {
-        if (s.connectionState == ConnectionState.waiting)
-          return const Scaffold(
-              body: Center(child: CircularProgressIndicator()));
-        return s.data == null
-            ? const _DeveloperLogin()
-            : _DeveloperAccess(user: s.data!);
-      });
+    stream: FirebaseAuth.instance.authStateChanges(),
+    builder: (context, s) {
+      if (s.connectionState == ConnectionState.waiting)
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return s.data == null
+          ? const _DeveloperLogin()
+          : _DeveloperAccess(user: s.data!);
+    },
+  );
 }
 
 class _DeveloperAccess extends StatelessWidget {
@@ -33,28 +38,43 @@ class _DeveloperAccess extends StatelessWidget {
   final User user;
   @override
   Widget build(BuildContext context) => FutureBuilder<IdTokenResult>(
-      future: user.getIdTokenResult(true),
-      builder: (context, s) {
-        if(s.hasError) return Scaffold(body:Center(child:TextButton(
-          onPressed:()=>FirebaseAuth.instance.signOut(),child:const Text('Sign in again to verify developer access'))));
-        if (!s.hasData)
-          return const Scaffold(
-              body: Center(child: CircularProgressIndicator()));
-        if (s.data!.claims?['admin'] != true &&
-            s.data!.claims?['developer'] != true)
-          return Scaffold(
-              body: Center(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.lock_outline, size: 48),
-            const SizedBox(height: 16),
-            const Text('Developer access required'),
-            const Text('School accounts do not have access to this website.'),
-            TextButton(
-                onPressed: () => FirebaseAuth.instance.signOut(),
-                child: const Text('Sign out'))
-          ])));
-        return const _DeveloperDashboard();
-      });
+    future: user.getIdTokenResult(true),
+    builder: (context, s) {
+      if (s.hasError)
+        return Scaffold(
+          body: Center(
+            child: TextButton(
+              onPressed: () => FirebaseAuth.instance.signOut(),
+              child: const Text('Sign in again to verify developer access'),
+            ),
+          ),
+        );
+      if (!s.hasData)
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      if (s.data!.claims?['admin'] != true &&
+          s.data!.claims?['developer'] != true)
+        return Scaffold(
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.lock_outline, size: 48),
+                const SizedBox(height: 16),
+                const Text('Developer access required'),
+                const Text(
+                  'School accounts do not have access to this website.',
+                ),
+                TextButton(
+                  onPressed: () => FirebaseAuth.instance.signOut(),
+                  child: const Text('Sign out'),
+                ),
+              ],
+            ),
+          ),
+        );
+      return const _DeveloperDashboard();
+    },
+  );
 }
 
 class _DeveloperLogin extends StatefulWidget {
@@ -75,6 +95,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
   }
 
   Future<void> _login() async {
+    if (_busy) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -82,86 +103,97 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
     try {
       await FirebaseAuth.instance.setPersistence(Persistence.SESSION);
       await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: _email.text.trim(), password: _password.text);
+        email: _email.text.trim(),
+        password: _password.text,
+      );
     } on FirebaseAuthException catch (e) {
       if (mounted)
-        setState(() => _error = e.code == 'invalid-credential'
-            ? 'Check your ID and password.'
-            : 'Sign-in unavailable. Please try again.');
+        setState(
+          () => _error = e.code == 'invalid-credential'
+              ? 'Check your ID and password.'
+              : 'Sign-in unavailable. Please try again.',
+        );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-      backgroundColor: _ink,
-      body: SingleChildScrollView(child: Center(
-          child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const AppDownloadButtons(),
-                        const SizedBox(height:24),
-                        const Align(
-                            alignment: Alignment.centerLeft,
-                            child: Icon(Icons.hub_rounded,
-                                size: 44, color: _mint)),
-                        const SizedBox(height: 28),
-                        const Text('Vidya Saarthi',
-                            style: TextStyle(
-                                fontSize: 31,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -1)),
-                        const SizedBox(height: 8),
-                        const Text('Developer control centre',
-                            style:
-                                TextStyle(color: Colors.white54, fontSize: 17)),
-                        const SizedBox(height: 36),
-                        TextField(
-                            controller: _email,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration: const InputDecoration(
-                                labelText: 'Developer ID / Email',
-                                prefixIcon: Icon(Icons.person_outline))),
-                        const SizedBox(height: 16),
-                        TextField(
-                            controller: _password,
-                            obscureText: !_show,
-                            onSubmitted: (_) => _login(),
-                            decoration: InputDecoration(
-                                labelText: 'Password',
-                                prefixIcon: const Icon(Icons.lock_outline),
-                                suffixIcon: IconButton(
-                                    onPressed: () =>
-                                        setState(() => _show = !_show),
-                                    icon: Icon(_show
-                                        ? Icons.visibility_off
-                                        : Icons.visibility)))),
-                        if (_error != null)
-                          Padding(
-                              padding: const EdgeInsets.only(top: 12),
-                              child: Text(_error!,
-                                  style: const TextStyle(
-                                      color: Colors.redAccent))),
-                        const SizedBox(height: 24),
-                        FilledButton(
-                            onPressed: _busy ? null : _login,
-                            child: Padding(
-                                padding: const EdgeInsets.all(10),
-                                child: Text(_busy
-                                    ? 'Signing in…'
-                                    : 'Open control centre'))),
-                        const SizedBox(height: 24),
-                        const Text(
-                            'Licensing, school activity and app support in one place.',
-                            style:
-                                TextStyle(color: Colors.white38, fontSize: 12))
-                      ]))))));
+  Widget build(BuildContext context) => DeveloperLoginShell(
+    form: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const AppDownloadButtons(),
+        const SizedBox(height: 24),
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: Icon(Icons.hub_rounded, size: 44, color: _mint),
+        ),
+        const SizedBox(height: 28),
+        const Text(
+          'Vidya Saarthi',
+          style: TextStyle(
+            fontSize: 31,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -1,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Developer control centre',
+          style: TextStyle(color: Colors.white54, fontSize: 17),
+        ),
+        const SizedBox(height: 36),
+        TextField(
+          controller: _email,
+          keyboardType: TextInputType.emailAddress,
+          decoration: const InputDecoration(
+            labelText: 'Developer ID / Email',
+            prefixIcon: Icon(Icons.person_outline),
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _password,
+          obscureText: !_show,
+          onSubmitted: (_) {
+            if (!_busy) _login();
+          },
+          decoration: InputDecoration(
+            labelText: 'Password',
+            prefixIcon: const Icon(Icons.lock_outline),
+            suffixIcon: IconButton(
+              tooltip: _show ? 'Hide password' : 'Show password',
+              onPressed: () => setState(() => _show = !_show),
+              icon: Icon(_show ? Icons.visibility_off : Icons.visibility),
+            ),
+          ),
+        ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+              _error!,
+              style: const TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        const SizedBox(height: 24),
+        FilledButton(
+          onPressed: _busy ? null : _login,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Text(_busy ? 'Signing in…' : 'Open control centre'),
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Licensing, school activity and app support in one place.',
+          style: TextStyle(color: Colors.white38, fontSize: 12),
+        ),
+      ],
+    ),
+  );
 }
 
 class _DeveloperDashboard extends StatefulWidget {
@@ -178,16 +210,17 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   String? _error;
   Map<String, dynamic> _data = {};
   Timer? _timer;
-  StreamSubscription? _schoolsWatch,_licencesWatch;
-  bool _refreshing=false;
+  StreamSubscription? _schoolsWatch, _licencesWatch;
+  bool _refreshing = false;
   List<Map<String, dynamic>> get _schools => _maps(_data['schools']);
   List<Map<String, dynamic>> get _licenses => _maps(_data['licenses']);
   List<Map<String, dynamic>> get _complaints => _maps(_data['complaints']);
   List<Map<String, dynamic>> _maps(dynamic raw) => raw is List
       ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
       : [];
-  Map<String, dynamic> get _stats =>
-      Map<String, dynamic>.from(monitorSummary(_schools,DateTime.now().millisecondsSinceEpoch));
+  Map<String, dynamic> get _stats => Map<String, dynamic>.from(
+    monitorSummary(_schools, DateTime.now().millisecondsSinceEpoch),
+  );
   int get _now =>
       (_data['serverTime'] as num?)?.toInt() ??
       DateTime.now().millisecondsSinceEpoch;
@@ -195,28 +228,74 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   void initState() {
     super.initState();
     _load();
-    _timer =
-        Timer.periodic(const Duration(seconds:15), (_){if(mounted)setState((){});});
-    _schoolsWatch=FirebaseFirestore.instance.collection('platform_schools').snapshots().listen((snapshot){if(mounted)setState((){_data['schools']=snapshot.docs.where((d)=>d.data()['deletedAt']==null).map((d)=><String,dynamic>{...d.data().map((k,v)=>MapEntry(k,v is Timestamp?v.millisecondsSinceEpoch:v)),'id':d.id}).toList();_data['summary']=monitorSummary(_schools,DateTime.now().millisecondsSinceEpoch);});},onError:(Object e){if(mounted)setState(()=>_error='Live school updates unavailable: $e');});
-    _licencesWatch=FirebaseFirestore.instance.collection('platform_licenses').snapshots().listen((_)=>_load(silent:true),onError:(Object e){if(mounted)setState(()=>_error='Live licence updates unavailable: $e');});
+    _timer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted) setState(() {});
+    });
+    _schoolsWatch = FirebaseFirestore.instance
+        .collection('platform_schools')
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (mounted)
+              setState(() {
+                _data['schools'] = snapshot.docs
+                    .where((d) => d.data()['deletedAt'] == null)
+                    .map(
+                      (d) => <String, dynamic>{
+                        ...d.data().map(
+                          (k, v) => MapEntry(
+                            k,
+                            v is Timestamp ? v.millisecondsSinceEpoch : v,
+                          ),
+                        ),
+                        'id': d.id,
+                      },
+                    )
+                    .toList();
+                _data['summary'] = monitorSummary(
+                  _schools,
+                  DateTime.now().millisecondsSinceEpoch,
+                );
+              });
+          },
+          onError: (Object e) {
+            if (mounted)
+              setState(() => _error = 'Live school updates unavailable: $e');
+          },
+        );
+    _licencesWatch = FirebaseFirestore.instance
+        .collection('platform_licenses')
+        .snapshots()
+        .listen(
+          (_) => _load(silent: true),
+          onError: (Object e) {
+            if (mounted)
+              setState(() => _error = 'Live licence updates unavailable: $e');
+          },
+        );
   }
 
   @override
   void dispose() {
-    _timer?.cancel();_schoolsWatch?.cancel();_licencesWatch?.cancel();
+    _timer?.cancel();
+    _schoolsWatch?.cancel();
+    _licencesWatch?.cancel();
     super.dispose();
   }
 
   Future<Map<String, dynamic>> _call(
-      String action, Map<String, dynamic> body) async {
+    String action,
+    Map<String, dynamic> body,
+  ) async {
     return _service.call(action, body);
   }
 
   Future<void> _load({bool silent = false}) async {
-    if(_refreshing)return;_refreshing=true;
+    if (_refreshing) return;
+    _refreshing = true;
     if (!silent) setState(() => _loading = true);
     try {
-      final d = await _call('developer/dashboard', {'refresh':true});
+      final d = await _call('developer/dashboard', {'refresh': true});
       if (mounted)
         setState(() {
           _data = d;
@@ -226,7 +305,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       if (mounted)
         setState(() => _error = e.toString().replaceFirst('Bad state: ', ''));
     } finally {
-      _refreshing=false;if (mounted) setState(() => _loading = false);
+      _refreshing = false;
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -234,46 +314,42 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     final v = (n as num?)?.toInt() ?? 0;
     if (v <= 0) return '—';
     final d = DateTime.fromMillisecondsSinceEpoch(v);
-    return '${d.day.toString().padLeft(2, '0')} ${const [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
-    ][d.month - 1]} ${d.year}';
+    return '${d.day.toString().padLeft(2, '0')} ${const ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.month - 1]} ${d.year}';
   }
 
-  bool _active(Map s) => schoolOnline(s,DateTime.now().millisecondsSinceEpoch);
+  bool _active(Map s) => schoolOnline(s, DateTime.now().millisecondsSinceEpoch);
   bool _expiring(Map s) =>
       (s['licenseExpiresAt'] as num? ?? 0) > _now &&
       (s['licenseExpiresAt'] as num? ?? 0) <= _now + 14 * 86400000;
   Widget _chip(String text, Color color) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-          color: color.withOpacity(.12),
-          borderRadius: BorderRadius.circular(20)),
-      child: Text(text,
-          style: TextStyle(
-              color: color, fontSize: 11, fontWeight: FontWeight.w700)));
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+    decoration: BoxDecoration(
+      color: color.withOpacity(.12),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(
+      text,
+      style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
+    ),
+  );
   Widget _panel(Widget child) => Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-          color: _surface,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.white.withOpacity(.06))),
-      child: child);
+    width: double.infinity,
+    padding: const EdgeInsets.all(22),
+    decoration: BoxDecoration(
+      color: _surface,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: Colors.white.withOpacity(.06)),
+    ),
+    child: child,
+  );
   Future<void> _issue([String? selected]) async {
     if (_schools.isEmpty) {
-      setState(()=>_page=1);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Create the school account from Schools first.')));
+      setState(() => _page = 1);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Create the school account from Schools first.'),
+        ),
+      );
       return;
     }
     String school = selected ?? _schools.first['id'].toString();
@@ -282,278 +358,353 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     final days = TextEditingController(text: '365'),
         amount = TextEditingController(text: '0');
     final result = await showDialog<Map<String, dynamic>>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => StatefulBuilder(
-            builder: (ctx, setDialog) => AlertDialog(
-                    title: const Text('Create a school licence'),
-                    content: SizedBox(
-                        width: 420,
-                        child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              DropdownButtonFormField<String>(
-                                  initialValue: school,
-                                  decoration: const InputDecoration(
-                                      labelText: 'School'),
-                                  items: _schools
-                                      .map((s) => DropdownMenuItem(
-                                          value: s['id'].toString(),
-                                          child: Text(s['name']?.toString() ??
-                                              s['id'].toString())))
-                                      .toList(),
-                                  onChanged: busy
-                                      ? null
-                                      : (v) => setDialog(() => school = v!)),
-                              const SizedBox(height: 16),
-                              TextField(
-                                  controller: days,
-                                  keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Validity in days')),
-                              const SizedBox(height: 16),
-                              TextField(
-                                  controller: amount,
-                                  keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Purchase amount (INR)')),
-                              CheckboxListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  value: paid,
-                                  onChanged: busy
-                                      ? null
-                                      : (v) => setDialog(() => paid = v!),
-                                  title: const Text('Payment received')),
-                              const Text(
-                                  'The key will work only for this school. Share it manually after creation.',
-                                  style: TextStyle(
-                                      color: Colors.white54, fontSize: 12)),
-                              if (error != null)
-                                Text(error!,
-                                    style: const TextStyle(
-                                        color: Colors.redAccent))
-                            ])),
-                    actions: [
-                      TextButton(
-                          onPressed: busy ? null : () => Navigator.pop(ctx),
-                          child: const Text('Cancel')),
-                      FilledButton(
-                          onPressed: busy
-                              ? null
-                              : () async {
-                                  setDialog(() {
-                                    busy = true;
-                                    error = null;
-                                  });
-                                  try {
-                                    final r = await _call('license/issue', {
-                                      'schoolId': school,
-                                      'days': int.tryParse(days.text),
-                                      'paid': paid,
-                                      'amount':
-                                          double.tryParse(amount.text) ?? 0
-                                    });
-                                    if (ctx.mounted) Navigator.pop(ctx, r);
-                                  } catch (e) {
-                                    setDialog(() {
-                                      busy = false;
-                                      error = e.toString();
-                                    });
-                                  }
-                                },
-                          child: Text(busy ? 'Creating…' : 'Generate key'))
-                    ])));
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: const Text('Create a school licence'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: school,
+                  decoration: const InputDecoration(labelText: 'School'),
+                  items: _schools
+                      .map(
+                        (s) => DropdownMenuItem(
+                          value: s['id'].toString(),
+                          child: Text(
+                            s['name']?.toString() ?? s['id'].toString(),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: busy ? null : (v) => setDialog(() => school = v!),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: days,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Validity in days',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: amount,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Purchase amount (INR)',
+                  ),
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: paid,
+                  onChanged: busy ? null : (v) => setDialog(() => paid = v!),
+                  title: const Text('Payment received'),
+                ),
+                const Text(
+                  'The key will work only for this school. Share it manually after creation.',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+                if (error != null)
+                  Text(error!, style: const TextStyle(color: Colors.redAccent)),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: busy ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: busy
+                  ? null
+                  : () async {
+                      setDialog(() {
+                        busy = true;
+                        error = null;
+                      });
+                      try {
+                        final r = await _call('license/issue', {
+                          'schoolId': school,
+                          'days': int.tryParse(days.text),
+                          'paid': paid,
+                          'amount': double.tryParse(amount.text) ?? 0,
+                        });
+                        if (ctx.mounted) Navigator.pop(ctx, r);
+                      } catch (e) {
+                        setDialog(() {
+                          busy = false;
+                          error = e.toString();
+                        });
+                      }
+                    },
+              child: Text(busy ? 'Creating…' : 'Generate key'),
+            ),
+          ],
+        ),
+      ),
+    );
     days.dispose();
     amount.dispose();
     if (result == null || !mounted) return;
     await showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-                title: const Text('Licence ready'),
-                content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Copy this key now. It is shown only once.'),
-                      const SizedBox(height: 18),
-                      SelectableText(result['key'].toString(),
-                          style: const TextStyle(
-                              color: _mint,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 12),
-                      Text('Valid until ${_date(result['expiresAt'])}'),
-                      if (result['setup'] != null) ...[
-                        const SizedBox(height: 12),
-                        const Text('Copy the school setup too. Paste it into this school’s Google Script only.'),
-                      ],
-                    ]),
-                actions: [
-                  TextButton(
-                      onPressed: () => Clipboard.setData(
-                          ClipboardData(text: result['key'].toString())),
-                      child: const Text('Copy key')),
-                  if (result['setup'] != null) TextButton(
-                    onPressed: () => _copySetup(result['setup']),
-                    child: const Text('Copy school setup')),
-                  FilledButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('Done'))
-                ]));
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Licence ready'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Copy this key now. It is shown only once.'),
+            const SizedBox(height: 18),
+            SelectableText(
+              result['key'].toString(),
+              style: const TextStyle(
+                color: _mint,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text('Valid until ${_date(result['expiresAt'])}'),
+            if (result['setup'] != null) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Copy the school setup too. Paste it into this school’s Google Script only.',
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Clipboard.setData(
+              ClipboardData(text: result['key'].toString()),
+            ),
+            child: const Text('Copy key'),
+          ),
+          if (result['setup'] != null)
+            TextButton(
+              onPressed: () => _copySetup(result['setup']),
+              child: const Text('Copy school setup'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
     _load(silent: true);
   }
 
   Future<void> _copySetup(dynamic setup) async {
     // All values are generated alphanumeric strings or a validated project ID.
-    final s = Map<String,dynamic>.from(setup);
+    final s = Map<String, dynamic>.from(setup);
     final fields = s.entries.map((e) => "${e.key}: '${e.value}'").join(',\n  ');
-    await Clipboard.setData(ClipboardData(text: "function setupSchoolMonitoring() {\n  return VS_setupPlatform({\n  $fields\n  });\n}"));
+    await Clipboard.setData(
+      ClipboardData(
+        text:
+            "function setupSchoolMonitoring() {\n  return VS_setupPlatform({\n  $fields\n  });\n}",
+      ),
+    );
   }
 
   Future<void> _complaint(Map<String, dynamic> c) async {
     String status = c['status']?.toString() ?? 'open';
-    final note =
-        TextEditingController(text: c['developerNote']?.toString() ?? '');
+    final note = TextEditingController(
+      text: c['developerNote']?.toString() ?? '',
+    );
     await showDialog(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-            builder: (ctx, setD) => AlertDialog(
-                    title: Text('Support • ${c['schoolId']}'),
-                    content: SizedBox(
-                        width: 500,
-                        child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              SelectableText(c['message']?.toString() ?? ''),
-                              const SizedBox(height: 20),
-                              DropdownButtonFormField<String>(
-                                  initialValue: status,
-                                  items: const [
-                                    DropdownMenuItem(
-                                        value: 'open', child: Text('Open')),
-                                    DropdownMenuItem(
-                                        value: 'in_progress',
-                                        child: Text('In progress')),
-                                    DropdownMenuItem(
-                                        value: 'resolved',
-                                        child: Text('Resolved'))
-                                  ],
-                                  onChanged: (v) => setD(() => status = v!)),
-                              const SizedBox(height: 16),
-                              TextField(
-                                  controller: note,
-                                  maxLines: 3,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Developer note'))
-                            ])),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('Close')),
-                      FilledButton(
-                          onPressed: () async {
-                            try {
-                              await _call('complaint/update', {
-                                'complaintId': c['id'],
-                                'status': status,
-                                'note': note.text
-                              });
-                              if (ctx.mounted) Navigator.pop(ctx);
-                              _load(silent: true);
-                            } catch (e) {
-                              if (ctx.mounted)
-                                ScaffoldMessenger.of(ctx).showSnackBar(
-                                    SnackBar(content: Text('$e')));
-                            }
-                          },
-                          child: const Text('Save'))
-                    ])));
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: Text('Support • ${c['schoolId']}'),
+          content: SizedBox(
+            width: 500,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SelectableText(c['message']?.toString() ?? ''),
+                const SizedBox(height: 20),
+                DropdownButtonFormField<String>(
+                  initialValue: status,
+                  items: const [
+                    DropdownMenuItem(value: 'open', child: Text('Open')),
+                    DropdownMenuItem(
+                      value: 'in_progress',
+                      child: Text('In progress'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'resolved',
+                      child: Text('Resolved'),
+                    ),
+                  ],
+                  onChanged: (v) => setD(() => status = v!),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: note,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Developer note',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                try {
+                  await _call('complaint/update', {
+                    'complaintId': c['id'],
+                    'status': status,
+                    'note': note.text,
+                  });
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  _load(silent: true);
+                } catch (e) {
+                  if (ctx.mounted)
+                    ScaffoldMessenger.of(ctx)
+                        .showSnackBar(SnackBar(content: Text('$e')));
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
     note.dispose();
   }
 
-  Widget _overview() =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        LayoutBuilder(builder: (ctx, c) {
-          final width =
-              c.maxWidth > 1000 ? (c.maxWidth - 48) / 4 : (c.maxWidth - 16) / 2;
+  Widget _overview() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      LayoutBuilder(
+        builder: (ctx, c) {
+          final width = c.maxWidth > 1000
+              ? (c.maxWidth - 48) / 4
+              : (c.maxWidth - 16) / 2;
           final stats = [
             ('Active schools', 'activeSchools', Icons.school_outlined, _mint),
             (
               'Inactive schools',
               'inactiveSchools',
               Icons.pause_circle_outline,
-              Colors.orangeAccent
+              Colors.orangeAccent,
             ),
             (
               'Student app users',
               'studentAppUsers',
               Icons.people_outline,
-              Colors.lightBlueAccent
+              Colors.lightBlueAccent,
             ),
             (
               'Students online now',
               'studentsOnline',
               Icons.sensors,
-              Colors.purpleAccent
+              Colors.purpleAccent,
             ),
             ('Total schools', 'totalSchools', Icons.apartment, Colors.white70),
             (
               'Purchased licences',
               'purchasedSchools',
               Icons.verified_outlined,
-              _mint
+              _mint,
             ),
             (
               'Expiry in 14 days',
               'expiringSchools',
               Icons.event_busy,
-              Colors.orangeAccent
-            )
+              Colors.orangeAccent,
+            ),
           ];
           return Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              children: stats
-                  .map((v) => SizedBox(
-                      width: width,
-                      child: _panel(Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(v.$3, color: v.$4, size: 24),
-                            const SizedBox(height: 22),
-                            Text('${_stats[v.$2] ?? '—'}',
-                                style: const TextStyle(
-                                    fontSize: 33, fontWeight: FontWeight.w800)),
-                            const SizedBox(height: 5),
-                            Text(v.$1,
-                                style: const TextStyle(
-                                    color: Colors.white54, fontSize: 12))
-                          ]))))
-                  .toList());
-        }),
-        const SizedBox(height: 26),
-        _panel(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Licences approaching expiry',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 16),
-          if (_schools.where(_expiring).isEmpty)
-            const Text('No licences expire in the next 14 days.',
-                style: TextStyle(color: Colors.white54)),
-          ..._schools.where(_expiring).map((s) => ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(s['name']?.toString() ?? s['id'].toString()),
-              subtitle: Text(_date(s['licenseExpiresAt'])),
-              trailing: TextButton(
-                  onPressed: () => _issue(s['id'].toString()),
-                  child: const Text('Renew'))))
-        ])),
-        const SizedBox(height: 16),
-        const Text(
-            'Managed school online status uses a 90-second Windows heartbeat timeout. Student totals and data usage show the last school Drive summary; unavailable totals are not estimated.',
-            style: TextStyle(color: Colors.white38, fontSize: 11))
-      ]);
+            spacing: 16,
+            runSpacing: 16,
+            children: stats
+                .map(
+                  (v) => SizedBox(
+                    width: width,
+                    child: _panel(
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(v.$3, color: v.$4, size: 24),
+                          const SizedBox(height: 22),
+                          Text(
+                            '${_stats[v.$2] ?? '—'}',
+                            style: const TextStyle(
+                              fontSize: 33,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            v.$1,
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          );
+        },
+      ),
+      const SizedBox(height: 26),
+      _panel(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Licences approaching expiry',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 16),
+            if (_schools.where(_expiring).isEmpty)
+              const Text(
+                'No licences expire in the next 14 days.',
+                style: TextStyle(color: Colors.white54),
+              ),
+            ..._schools
+                .where(_expiring)
+                .map(
+                  (s) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(s['name']?.toString() ?? s['id'].toString()),
+                    subtitle: Text(_date(s['licenseExpiresAt'])),
+                    trailing: TextButton(
+                      onPressed: () => _issue(s['id'].toString()),
+                      child: const Text('Renew'),
+                    ),
+                  ),
+                ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 16),
+      const Text(
+        'Managed school online status uses a 90-second Windows heartbeat timeout. Student totals and data usage show the last school Drive summary; unavailable totals are not estimated.',
+        style: TextStyle(color: Colors.white38, fontSize: 11),
+      ),
+    ],
+  );
   Future<bool> _confirm(String title, String message, String action) async =>
       await showDialog<bool>(
         context: context,
@@ -561,11 +712,18 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
           title: Text(title),
           content: Text(message),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(action)),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(action),
+            ),
           ],
         ),
-      ) ?? false;
+      ) ??
+      false;
 
   Future<void> _deleteLicence(Map<String, dynamic> licence) async {
     final yes = await _confirm(
@@ -578,7 +736,9 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       await _call('license/delete', {'licenseId': licence['id']});
       await _load(silent: true);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -593,10 +753,15 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     );
     if (!yes) return;
     try {
-      await _call('school/block', {'schoolId': school['id'], 'blocked': !blocked});
+      await _call('school/block', {
+        'schoolId': school['id'],
+        'blocked': !blocked,
+      });
       await _load(silent: true);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -611,218 +776,339 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       await _call('school/delete', {'schoolId': school['id']});
       await _load(silent: true);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
-  Widget _schoolTable()=>_panel(ManagedDeveloperPanel(schools:_schools,refresh:()=>_load(silent:true),legacyDelete:_deleteSchool));
+  Widget _schoolTable() => _panel(
+    ManagedDeveloperPanel(
+      schools: _schools,
+      refresh: () => _load(silent: true),
+      legacyDelete: _deleteSchool,
+    ),
+  );
 
-  Widget _licenceTable() =>
-      _panel(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Expanded(
-              child: Text('School licences',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700))),
-          FilledButton.icon(
+  Widget _licenceTable() => _panel(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'School licences',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              ),
+            ),
+            FilledButton.icon(
               onPressed: _issue,
               icon: const Icon(Icons.add),
-              label: const Text('Generate licence'))
-        ]),
+              label: const Text('Generate licence'),
+            ),
+          ],
+        ),
         const SizedBox(height: 18),
         if (_licenses.isEmpty) const Text('No licences generated yet.'),
         SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-                columns: const [
-                  DataColumn(label: Text('SCHOOL')),
-                  DataColumn(label: Text('KEY')),
-                  DataColumn(label: Text('STATUS')),
-                  DataColumn(label: Text('EXPIRES')),
-                  DataColumn(label: Text('PURCHASE')),
-                  DataColumn(label: Text(''))
-                ],
-                rows: _licenses
-                    .map((l) => DataRow(cells: [
-                          DataCell(Text(l['schoolId'].toString())),
-                          DataCell(Text('•••• ${l['keyHint'] ?? l['keySuffix'] ?? '—'}')),
-                          DataCell(_chip(
-                              l['revoked'] != true &&
-                                      (l['expiresAt'] as num) > _now
-                                  ? 'Active'
-                                  : 'Expired / revoked',
-                              l['revoked'] != true &&
-                                      (l['expiresAt'] as num) > _now
-                                  ? _mint
-                                  : Colors.orangeAccent)),
-                          DataCell(Text(_date(l['expiresAt']))),
-                          DataCell(Text(l['paid'] == true
-                              ? 'INR ${l['amount']}'
-                              : 'Unpaid')),
-                          DataCell(Wrap(spacing: 4, children: [
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            columns: const [
+              DataColumn(label: Text('SCHOOL')),
+              DataColumn(label: Text('KEY')),
+              DataColumn(label: Text('STATUS')),
+              DataColumn(label: Text('EXPIRES')),
+              DataColumn(label: Text('PURCHASE')),
+              DataColumn(label: Text('')),
+            ],
+            rows: _licenses
+                .map(
+                  (l) => DataRow(
+                    cells: [
+                      DataCell(Text(l['schoolId'].toString())),
+                      DataCell(
+                        Text('•••• ${l['keyHint'] ?? l['keySuffix'] ?? '—'}'),
+                      ),
+                      DataCell(
+                        _chip(
+                          l['revoked'] != true && (l['expiresAt'] as num) > _now
+                              ? 'Active'
+                              : 'Expired / revoked',
+                          l['revoked'] != true && (l['expiresAt'] as num) > _now
+                              ? _mint
+                              : Colors.orangeAccent,
+                        ),
+                      ),
+                      DataCell(Text(_date(l['expiresAt']))),
+                      DataCell(
+                        Text(
+                          l['paid'] == true ? 'INR ${l['amount']}' : 'Unpaid',
+                        ),
+                      ),
+                      DataCell(
+                        Wrap(
+                          spacing: 4,
+                          children: [
                             TextButton(
-                                onPressed: l['revoked'] == true
-                                    ? null
-                                    : () async {
-                                        final yes = await _confirm(
-                                          'Revoke this licence?',
-                                          'This school will lose paid access. Its records will remain intact.',
-                                          'Revoke',
-                                        );
-                                        if (yes) {
-                                          try {
-                                            await _call('license/revoke', {'licenseId': l['id']});
-                                            await _load(silent: true);
-                                          } catch (e) {
-                                            if (mounted) ScaffoldMessenger.of(context)
-                                                .showSnackBar(SnackBar(content: Text('$e')));
-                                          }
+                              onPressed: l['revoked'] == true
+                                  ? null
+                                  : () async {
+                                      final yes = await _confirm(
+                                        'Revoke this licence?',
+                                        'This school will lose paid access. Its records will remain intact.',
+                                        'Revoke',
+                                      );
+                                      if (yes) {
+                                        try {
+                                          await _call('license/revoke', {
+                                            'licenseId': l['id'],
+                                          });
+                                          await _load(silent: true);
+                                        } catch (e) {
+                                          if (mounted)
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                                  SnackBar(content: Text('$e')),
+                                                );
                                         }
-                                      },
-                                child: const Text('Revoke')),
+                                      }
+                                    },
+                              child: const Text('Revoke'),
+                            ),
                             TextButton(
-                                onPressed: () => _deleteLicence(l),
-                                child: const Text('Delete',
-                                    style: TextStyle(color: Colors.redAccent))),
-                          ]))
-                        ]))
-                    .toList()))
-      ]));
-  Widget _support() =>
-      _panel(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('App complaints',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                              onPressed: () => _deleteLicence(l),
+                              child: const Text(
+                                'Delete',
+                                style: TextStyle(color: Colors.redAccent),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+      ],
+    ),
+  );
+  Widget _support() => _panel(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'App complaints',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
         const SizedBox(height: 18),
         if (_complaints.isEmpty)
-          const Text('No complaints received yet.',
-              style: TextStyle(color: Colors.white54)),
-        ..._complaints.map((c) => ListTile(
+          const Text(
+            'No complaints received yet.',
+            style: TextStyle(color: Colors.white54),
+          ),
+        ..._complaints.map(
+          (c) => ListTile(
             contentPadding: const EdgeInsets.symmetric(vertical: 8),
             leading: Icon(
-                c['source'] == 'windows'
-                    ? Icons.desktop_windows
-                    : Icons.phone_android,
-                color: _mint),
-            title: Text(c['message'].toString(),
-                maxLines: 2, overflow: TextOverflow.ellipsis),
+              c['source'] == 'windows'
+                  ? Icons.desktop_windows
+                  : Icons.phone_android,
+              color: _mint,
+            ),
+            title: Text(
+              c['message'].toString(),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             subtitle: Text(
-                '${c['schoolId']} • ${c['role']} • ${_date(c['createdAt'])}'),
-            trailing: _chip(c['status'].toString(),
-                c['status'] == 'resolved' ? _mint : Colors.orangeAccent),
-            onTap: () => _complaint(c)))
-      ]));
+              '${c['schoolId']} • ${c['role']} • ${_date(c['createdAt'])}',
+            ),
+            trailing: _chip(
+              c['status'].toString(),
+              c['status'] == 'resolved' ? _mint : Colors.orangeAccent,
+            ),
+            onTap: () => _complaint(c),
+          ),
+        ),
+      ],
+    ),
+  );
   @override
   Widget build(BuildContext context) {
-    final titles = ['Overview', 'Schools', 'Licences', 'Support','Firebase','Admin Profile'];
-    return DeveloperIdleSession(child:Scaffold(
+    final titles = [
+      'Overview',
+      'Schools',
+      'Licences',
+      'Support',
+      'Firebase',
+      'Admin Profile',
+    ];
+    return DeveloperIdleSession(
+      child: Scaffold(
         backgroundColor: _ink,
-        body: LayoutBuilder(builder: (ctx, c) {
-          final narrow = c.maxWidth < 850;
-          final nav = Container(
+        body: LayoutBuilder(
+          builder: (ctx, c) {
+            final narrow = c.maxWidth < 850;
+            final nav = Container(
               width: 230,
               color: const Color(0xFF0C161E),
               padding: const EdgeInsets.all(18),
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 18),
-                    const Row(children: [
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 18),
+                  const Row(
+                    children: [
                       Icon(Icons.hub_rounded, color: _mint),
                       SizedBox(width: 10),
-                      Text('Vidya Saarthi',
-                          style: TextStyle(
-                              fontWeight: FontWeight.w800, fontSize: 18))
-                    ]),
-                    const Padding(
-                        padding: EdgeInsets.only(top: 7, bottom: 35),
-                        child: Text('DEVELOPER PLATFORM',
-                            style: TextStyle(
-                                color: Colors.white38,
-                                fontSize: 9,
-                                letterSpacing: 1.8))),
-                    ...List.generate(
-                        titles.length,
-                        (i) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: ListTile(
-                                selected: _page == i,
-                                selectedColor: _mint,
-                                selectedTileColor: _mint.withOpacity(.1),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12)),
-                                leading: Icon([
-                                  Icons.grid_view_rounded,
-                                  Icons.school_outlined,
-                                  Icons.vpn_key_outlined,
-                                  Icons.support_agent_rounded,Icons.cloud_outlined,Icons.manage_accounts_outlined
-                                ][i]),
-                                title: Text(titles[i]),
-                                onTap: () => setState(() => _page = i)))),
-                    const Spacer(),
-                    Text(FirebaseAuth.instance.currentUser?.email ?? '',
-                        style: const TextStyle(
-                            color: Colors.white38, fontSize: 11)),
-                    TextButton.icon(
-                        onPressed: () => FirebaseAuth.instance.signOut(),
-                        icon: const Icon(Icons.logout, size: 16),
-                        label: const Text('Sign out'))
-                  ]));
-          final main = Expanded(
+                      Text(
+                        'Vidya Saarthi',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 7, bottom: 35),
+                    child: Text(
+                      'DEVELOPER PLATFORM',
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 9,
+                        letterSpacing: 1.8,
+                      ),
+                    ),
+                  ),
+                  ...List.generate(
+                    titles.length,
+                    (i) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        selected: _page == i,
+                        selectedColor: _mint,
+                        selectedTileColor: _mint.withOpacity(.1),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        leading: Icon(
+                          [
+                            Icons.grid_view_rounded,
+                            Icons.school_outlined,
+                            Icons.vpn_key_outlined,
+                            Icons.support_agent_rounded,
+                            Icons.cloud_outlined,
+                            Icons.manage_accounts_outlined,
+                          ][i],
+                        ),
+                        title: Text(titles[i]),
+                        onTap: () => setState(() => _page = i),
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    FirebaseAuth.instance.currentUser?.email ?? '',
+                    style: const TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => FirebaseAuth.instance.signOut(),
+                    icon: const Icon(Icons.logout, size: 16),
+                    label: const Text('Sign out'),
+                  ),
+                ],
+              ),
+            );
+            final main = Expanded(
               child: ListView(
-                  padding: EdgeInsets.all(narrow ? 20 : 36),
-                  children: [
-                if (narrow)
-                  Wrap(
+                padding: EdgeInsets.all(narrow ? 20 : 36),
+                children: [
+                  if (narrow)
+                    Wrap(
                       spacing: 8,
                       children: List.generate(
-                          titles.length,
-                          (i) => ChoiceChip(
-                              label: Text(titles[i]),
-                              selected: _page == i,
-                              onSelected: (_) => setState(() => _page = i)))),
-                const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(
-                      child: Column(
+                        titles.length,
+                        (i) => ChoiceChip(
+                          label: Text(titles[i]),
+                          selected: _page == i,
+                          onSelected: (_) => setState(() => _page = i),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                        Text(titles[_page],
-                            style: const TextStyle(
+                            Text(
+                              titles[_page],
+                              style: const TextStyle(
                                 fontSize: 30,
                                 fontWeight: FontWeight.w800,
-                                letterSpacing: -.5)),
-                        const SizedBox(height: 7),
-                        const Text(
-                            'Your schools. Their activity. One control centre.',
-                            style:
-                                TextStyle(color: Colors.white54, fontSize: 13))
-                      ])),
-                  IconButton(
-                      onPressed: () => _load(),
-                      icon: const Icon(Icons.refresh),
-                      tooltip: 'Refresh')
-                ]),
-                const SizedBox(height: 30),
-                if (_error != null)
-                  Padding(
+                                letterSpacing: -.5,
+                              ),
+                            ),
+                            const SizedBox(height: 7),
+                            const Text(
+                              'Your schools. Their activity. One control centre.',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => _load(),
+                        icon: const Icon(Icons.refresh),
+                        tooltip: 'Refresh',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 30),
+                  if (_error != null)
+                    Padding(
                       padding: const EdgeInsets.only(bottom: 20),
-                      child: _panel(Text(_error!,
-                          style: const TextStyle(color: Colors.orangeAccent)))),
-                if (_loading) const LinearProgressIndicator(),
-                if (!_loading) ...[
-                  _page == 0
-                      ? _overview()
-                      : _page == 1
-                          ? _schoolTable()
-                          : _page == 2
-                              ? _licenceTable()
-                              : _page==3 ? _support() : _page==4 ? const FirebaseMonitorPanel() : const DeveloperAccountProfile()
-                ],
-                if (narrow)
-                  TextButton(
+                      child: _panel(
+                        Text(
+                          _error!,
+                          style: const TextStyle(color: Colors.orangeAccent),
+                        ),
+                      ),
+                    ),
+                  if (_loading) const LinearProgressIndicator(),
+                  if (!_loading) ...[
+                    _page == 0
+                        ? _overview()
+                        : _page == 1
+                        ? _schoolTable()
+                        : _page == 2
+                        ? _licenceTable()
+                        : _page == 3
+                        ? _support()
+                        : _page == 4
+                        ? const FirebaseMonitorPanel()
+                        : const DeveloperAccountProfile(),
+                  ],
+                  if (narrow)
+                    TextButton(
                       onPressed: () => FirebaseAuth.instance.signOut(),
-                      child: const Text('Sign out'))
-              ]));
-          return Row(children: [if (!narrow) nav, main]);
-        })));
+                      child: const Text('Sign out'),
+                    ),
+                ],
+              ),
+            );
+            return Row(children: [if (!narrow) nav, main]);
+          },
+        ),
+      ),
+    );
   }
 }

@@ -20336,7 +20336,7 @@ class StudentDocumentsScreen extends StatefulWidget {
 
 class _StudentDocumentsScreenState
     extends State<StudentDocumentsScreen> {
-  static const int _maxBytes = 2 * 1024 * 1024;
+  static const int _maxBytes = 50 * 1024 * 1024;
   bool _loading = true;
   bool _uploading = false;
   String? _error;
@@ -20502,13 +20502,12 @@ class _StudentDocumentsScreenState
       return;
     }
 
-    final oldSize = (replace?['sizeBytes'] as num?)?.toInt() ?? 0;
-    if (_totalBytes - oldSize + file.size > _maxBytes) {
+    if (file.size > _maxBytes) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: Colors.redAccent,
           content: Text(
-              '2 MB total limit exceed hoga. Used ${_formatBytes(_totalBytes)}.'),
+              'Source file exceeds the 50 MB safety limit.'),
         ),
       );
       return;
@@ -20522,7 +20521,7 @@ class _StudentDocumentsScreenState
       final dataUrl = reader.result?.toString() ?? '';
       if (dataUrl.isEmpty) throw Exception('File read nahi ho paya.');
 
-      await _post({
+      final saved = await _post({
         'action': 'upload_student_document',
         'studentId': widget.studentId,
         'studentName': _name,
@@ -20541,9 +20540,7 @@ class _StudentDocumentsScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF00A884),
-          content: Text(replace == null
-              ? 'Document Google Drive me upload ho gaya.'
-              : 'Document Google Drive me replace ho gaya.'),
+          content: Text(saved['cloudSyncPending']==true ? 'Saved locally • Sync pending. Original preserved.' : saved['windowsLocalFallback']==true ? 'Saved locally • Cloud upload not confirmed.' : 'Document upload confirmed.'),
         ),
       );
     } catch (e) {
@@ -20567,7 +20564,7 @@ class _StudentDocumentsScreenState
         title: const Text('Delete Document?',
             style: TextStyle(color: Colors.white)),
         content: Text(
-          '${document['documentName'] ?? 'Document'} Google Drive se delete hoga.',
+          'Remove ${document['documentName'] ?? 'Document'} from the document list? Original files are retained for recovery.',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -20686,7 +20683,7 @@ class _StudentDocumentsScreenState
                               color: Colors.white,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Text('${_formatBytes(_totalBytes)} / 2.00 MB',
+                      Text('${_formatBytes(_totalBytes)} actual stored size',
                           style: const TextStyle(
                               color: Colors.white54, fontSize: 10.5)),
                     ],
@@ -20708,7 +20705,7 @@ class _StudentDocumentsScreenState
                   const Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'PDF/JPG/JPEG only • sab documents mila kar maximum 2 MB.',
+                      'PDF/JPG/JPEG • up to 50 MB per source. Originals preserved; cloud failures remain pending.',
                       style: TextStyle(color: Colors.white38, fontSize: 10),
                     ),
                   ),
@@ -20772,7 +20769,7 @@ class _StudentDocumentsScreenState
                                     color: Colors.white,
                                     fontWeight: FontWeight.w800)),
                             Text(
-                              '${document['fileName'] ?? ''} • ${_formatBytes(size)}',
+                              '${document['fileName'] ?? ''} • ${_formatBytes(size)} • ${document['syncState']??'Cloud copy'}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(

@@ -1,6 +1,14 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {createMonitor}=require('../managed-monitor');
+test('concurrent refreshes share a read and permission failures are cached for one sampling interval',async()=>{
+ let calls=0,time=0;
+ const monitor=createMonitor({projectId:'own',now:()=>time,credential:{getAccessToken:async()=>({access_token:'private'})},fetchImpl:async()=>{calls++;return {ok:false,status:403};}});
+ const [a,b]=await Promise.all([monitor(),monitor()]);
+ assert.equal(a.available,false);assert.equal(b.available,false);assert.equal(calls,2);
+ await monitor();assert.equal(calls,2);
+ time=60001;await monitor();assert.equal(calls,4);
+});
 test('cumulative counters use adjacent observations, not lifetime averages',()=>{
  const {summarize}=require('../managed-monitor');
  const point=(value,end,start='2026-10-01T00:00:00Z')=>({value:{int64Value:String(value)},interval:{startTime:start,endTime:end}});

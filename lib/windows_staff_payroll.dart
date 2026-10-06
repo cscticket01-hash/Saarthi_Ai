@@ -319,7 +319,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
               ChoiceChip(selectedColor:const Color(0xff6252ee),labelStyle:const TextStyle(color:Colors.white),label:Text('$role (${role=='All staff'?_staff.length:_staff.where((s)=>s['role']==role).length})'),selected:_role==role,onSelected:(_)=>setState(()=>_role=role)),
             SizedBox(width:320,child:TextField(onChanged:(v)=>setState(()=>_search=v),decoration:const InputDecoration(hintText:'Search by name, ID or department...',prefixIcon:Icon(Icons.search)))),
           ]),const SizedBox(height:16),
-          if(people.isEmpty) const Padding(padding:EdgeInsets.all(30),child:Text('No staff found. Add a teacher in Teachers, or add a staff member here.')),
+          if(people.isEmpty) const Padding(padding:EdgeInsets.all(30),child:Text('No staff found. Add teachers in Teachers and non-teaching staff in Other Staff.')),
           Row(crossAxisAlignment:CrossAxisAlignment.start,children:[Expanded(child:Card(child:SingleChildScrollView(scrollDirection:Axis.horizontal,child:DataTable(
             headingRowColor:WidgetStateProperty.all(const Color(0xff172c42)),columnSpacing:14,dataRowMinHeight:64,dataRowMaxHeight:76,
             columns:[for(final label in ['Name / Employee ID','Role / Department','Attendance','Basic Pay','Allowances','Deductions','Net Salary','Status','Action'])DataColumn(label:Text(label))],
