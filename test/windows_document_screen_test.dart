@@ -7,6 +7,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:printing/src/interface.dart';
+import 'package:printing/src/method_channel.dart';
+
+// Only the OS PDF raster boundary is simulated. The production pipeline still
+// processes raster pixels, builds both PDFs, previews and persists them.
+class ReviewPrinting extends MethodChannelPrinting {
+  int rasterCalls = 0;
+  @override
+  Stream<PdfRaster> raster(Uint8List document, List<int>? pages, double dpi) async* {
+    rasterCalls++;
+    final paper = img.Image(width: 120, height: 160, numChannels: 4);
+    img.fill(paper, color: img.ColorRgba8(255, 255, 255, 255));
+    img.fillRect(paper, x1: 15, y1: 20, x2: 95, y2: 25,
+      color: img.ColorRgba8(0, 0, 0, 255));
+    yield PdfRaster(120, 160, paper.getBytes(order: img.ChannelOrder.rgba));
+  }
+}
+
 
 import '../lib/main_dashboard_screen_windows.dart' show StudentDocumentsScreen;
 import '../lib/windows_connect/central_school_cloud.dart';
@@ -35,8 +55,12 @@ void main() {
   final db = FirebaseFirestore.instance;
   const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   late ReviewPicker picker;
+  final printing = PrintingPlatform.instance;
+  late ReviewPrinting rasterizer;
   setUp(() async {
     picker = ReviewPicker();
+    rasterizer = ReviewPrinting();
+    PrintingPlatform.instance = rasterizer;
     FileSelectorPlatform.instance = picker;
     FlutterSecureStorage.setMockInitialValues({
       CentralSchoolCloud.key: jsonEncode({
@@ -50,12 +74,13 @@ void main() {
         'storageReady': false,
       })
     });
-    await WindowsRuntimeFlags.setLocalStorageEnabled(true);
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     await db.switchProfile('screen-${DateTime.now().microsecondsSinceEpoch}',
         identity: {'schoolSyncId': school, 'schoolId': school});
   });
   tearDown(() {
     FileSelectorPlatform.instance = platform;
+    PrintingPlatform.instance = printing;
   });
   Future<int> count() async =>
       (await db.collection('_local_student_documents').get()).docs.length;
@@ -101,13 +126,16 @@ void main() {
     expect(await t.runAsync(count), existing);
   }
 
+  for (final pdf in [false, true]) {
   testWidgets(
-      'production Documents screen: offline preview/save, cancellation and processing failure preserve records and queue',
+      'production Documents screen legacy toggle OFF: ${pdf ? "PDF" : "PNG"} offline preview/save, cancellation and failure preserve records/queue',
       (t) async {
-    final source =
+    final document = pw.Document()..addPage(pw.Page(build: (_) => pw.Text('Real PDF document fixture')));
+    final source = pdf ? (await t.runAsync(document.save))! :
         Uint8List.fromList(img.encodePng(img.Image(width: 100, height: 140)));
+    final filename = pdf ? 'source.pdf' : 'source.png';
     picker.selection = XFile.fromData(source,
-        path: 'source.png', name: 'source.png', mimeType: 'image/png');
+        path: filename, name: filename, mimeType: pdf ? 'application/pdf' : 'image/png');
     await open(t);
     await waitFor(
         t,
@@ -147,6 +175,18 @@ void main() {
     final queue =
         await t.runAsync(() => db.collection('_windows_document_outbox').get());
     expect(queue!.docs.length, 1);
+    expect(await t.runAsync(WindowsRuntimeFlags.localStorageEnabled), false);
+    expect(await t.runAsync(db.localPersistenceEnabled), true);
+    expect(row['optimizedPath'], isNotEmpty);
+    expect(row['cleanupStatus'], contains(pdf ? 'pages processed' : ''));
+    final optimized = await t.runAsync(() => File(row['optimizedPath'] as String).readAsBytes());
+    expect(row['sizeBytes'], optimized!.length);
+    expect(await t.runAsync(() => File(row['processedPath'] as String).exists()), true);
+    if (pdf) {
+      expect(rasterizer.rasterCalls, greaterThanOrEqualTo(2));
+      expect(String.fromCharCodes(optimized.take(5)), '%PDF-');
+      expect(optimized, isNot(source));
+    }
 
     // Continue the real screen/session, including its existing document. This
     // also verifies cancellation/failure do not erase an earlier successful save.
@@ -189,4 +229,5 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await t.pumpAndSettle();
   });
+  }
 }

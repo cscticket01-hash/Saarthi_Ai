@@ -10,7 +10,6 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_ui_localization.dart';
 import 'windows_local_firestore.dart';
-import 'windows_runtime_flags.dart';
 
 /// Integer paise throughout calculations; rupee fields remain compatible with
 /// the school-owned mobile backend's existing teacher_salary response.
@@ -143,7 +142,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       final people = await StaffPayroll.staff(_profile);
       final salary = await FirebaseFirestore.instance.collection('teacher_salary').get();
       final branding=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data();
-      final local = await WindowsRuntimeFlags.localStorageEnabled();
+      final local = await FirebaseFirestore.instance.localPersistenceEnabled();
       StaffPayroll._sameSchool(_profile);
       if (mounted && generation == _loadGeneration) setState(() {
         _schoolName=branding?['schoolName']?.toString()??'';

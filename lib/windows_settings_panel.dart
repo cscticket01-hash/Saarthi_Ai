@@ -1,3 +1,4 @@
+import 'windows_connect/central_school_cloud.dart';
 import 'school_password_panel.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -651,6 +652,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
   String _path = '';
   bool _busy = true;
   bool _localStorageEnabled = true;
+  bool _managedLocalFirst = false;
 
   @override
   void initState() {
@@ -660,7 +662,8 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
 
   Future<void> _refresh() async {
     final path = await WindowsLocalStorage.currentPath();
-    final localEnabled = await WindowsRuntimeFlags.localStorageEnabled();
+    final localEnabled = await FirebaseFirestore.instance.localPersistenceEnabled();
+    final managed = (await CentralSchoolCloud.saved())['managed'] == true;
     if (localEnabled) {
       await WindowsLocalStorage.healthCheck();
     }
@@ -668,6 +671,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
       setState(() {
         _path = path;
         _localStorageEnabled = localEnabled;
+        _managedLocalFirst = managed;
         _busy = false;
       });
     }
@@ -783,12 +787,14 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
             value: _localStorageEnabled,
             title: const Text('Local Data', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
             subtitle: Text(
-              _localStorageEnabled
+              _managedLocalFirst
+                  ? 'School Local-First storage is required. Saves remain available offline.'
+                  : _localStorageEnabled
                   ? 'ON: device local data show/save hoga; active school profile se isolated rahega.'
                   : 'OFF: local school data disk par read/save nahi hoga; remote Firebase + Google mode chalega.',
               style: const TextStyle(color: Colors.white38, fontSize: 10),
             ),
-            onChanged: _busy
+            onChanged: _busy || _managedLocalFirst
                 ? null
                 : (value) async {
                     setState(() => _busy = true);

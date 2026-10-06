@@ -19,7 +19,6 @@ import 'package:http/http.dart' as http;
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
-import 'windows_runtime_flags.dart';
 import 'windows_service_status.dart';
 import 'windows_firebase_sync.dart';
 import 'school_backend_transport.dart';
@@ -42,7 +41,7 @@ class WindowsBackendBridge {
     return {
       ...await _handleLocal(action, body),
       'windowsLocalFallback': true,
-      'sessionOnly': !await WindowsRuntimeFlags.localStorageEnabled(),
+      'sessionOnly': !await FirebaseFirestore.instance.localPersistenceEnabled(),
     };
   }
 
@@ -215,7 +214,8 @@ class WindowsBackendBridge {
           'upload_student_document',
           'delete_student_document',
         }.contains(localAction['action'])) {
-      if (FirebaseFirestore.instance.activeProfileId != originProfile ||
+      if (FirebaseFirestore.instance.activeProfileIdentity['blocked'] == true ||
+          FirebaseFirestore.instance.activeProfileId != originProfile ||
           FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] !=
               savedIdentity['schoolId'])
         throw StateError('School changed. Reopen documents.');
@@ -245,8 +245,8 @@ class WindowsBackendBridge {
           200,
         );
       }
-      if (!await WindowsRuntimeFlags.localStorageEnabled())
-        throw StateError('Enable Local Data before saving documents offline.');
+      if (!await FirebaseFirestore.instance.localPersistenceEnabled())
+        throw StateError('Current school durable document storage is unavailable.');
       if (localAction['action'] == 'delete_student_document') {
         final result = await _documentWrite(() async {
           if (FirebaseFirestore.instance.activeProfileId != originProfile)
@@ -322,8 +322,8 @@ class WindowsBackendBridge {
           savedIdentity['schoolId']) {
         throw StateError('School changed. Reopen the directory.');
       }
-      if (!await WindowsRuntimeFlags.localStorageEnabled())
-        throw StateError('Enable Local Data before saving offline.');
+      if (!await FirebaseFirestore.instance.localPersistenceEnabled())
+        throw StateError('Current school durable storage is unavailable.');
       final currentIdentity = await CentralSchoolCloud.saved();
       if (FirebaseFirestore.instance.activeProfileId != originProfile ||
           currentIdentity['schoolId'] != savedIdentity['schoolId'] ||
@@ -858,7 +858,7 @@ class WindowsBackendBridge {
     required String remoteError,
   }) async {
     try {
-      if (!await WindowsRuntimeFlags.localStorageEnabled()) {
+      if (!await FirebaseFirestore.instance.localPersistenceEnabled()) {
         return http.Response(
           jsonEncode({
             'success': false,
@@ -1504,7 +1504,6 @@ class WindowsBackendBridge {
     final file = File(
       '${studentFolder.path}${Platform.pathSeparator}${_safeFileName(documentId)}_${secureSetupToken(12)}_$safeName',
     );
-    await file.writeAsBytes(bytes, flush: true);
     Uint8List? optimized;
     Uint8List? highQuality;
     Map<String, dynamic> processing = {};
@@ -1518,9 +1517,20 @@ class WindowsBackendBridge {
       optimized = processing['optimized'] as Uint8List;
       highQuality = processing['highQuality'] as Uint8List;
     } catch (e) {
+      if (body['_queueCloud'] == true) rethrow;
       processingWarning =
           'Processing unavailable; original retained. ${e.runtimeType}';
     }
+    if (body['_queueCloud'] == true) {
+      final current = await CentralSchoolCloud.saved();
+      if (current['managed'] != true ||
+          current['schoolId'] != FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] ||
+          FirebaseFirestore.instance.activeProfileId != originProfile ||
+          !await FirebaseFirestore.instance.localPersistenceEnabled()) {
+        throw StateError('School changed before durable document save.');
+      }
+    }
+    await file.writeAsBytes(bytes, flush: true);
     final optimizedFile = File(
       '${file.path}.optimized.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
     );

@@ -9,6 +9,7 @@ import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
+import '../lib/windows_local_storage.dart';
 import '../lib/platform/platform_config.dart';
 
 void main() {
@@ -29,7 +30,7 @@ void main() {
         'storageReady': false,
       }),
     });
-    await WindowsRuntimeFlags.setLocalStorageEnabled(true);
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     await db.switchProfile(
       'documents-${DateTime.now().microsecondsSinceEpoch}',
       identity: {'schoolSyncId': school, 'schoolId': school},
@@ -68,14 +69,16 @@ void main() {
     expect(queue.length, 1);
     expect(queue.single.data()['localPath'], current);
     final origin = db.activeProfileId;
+    // Read the persisted file, then discard session RAM and reopen the tenant.
+    final disk = jsonDecode(await (await WindowsLocalStorage.databaseFile()).readAsString());
+    expect(disk['profiles'][origin]['collections']['_windows_document_outbox'], isNotEmpty);
+    await db.resetVolatileSession();
     await db.switchProfile(
       'foreign-documents',
       identity: {'schoolSyncId': 'other'},
     );
-    expect(
-      (await db.collection('_local_student_documents').get()).docs,
-      isEmpty,
-    );
+    expect((await db.collection('_local_student_documents').get()).docs, isEmpty);
+    await expectLater(save(), throwsStateError);
     await db.switchProfile(
       origin,
       identity: {'schoolSyncId': school, 'schoolId': school},
@@ -90,12 +93,11 @@ void main() {
           .data()?['syncState'],
       'Pending',
     );
-    await expectLater(
-      WindowsBackendBridge.flushDocumentPending(
-        send: (_) async => throw StateError('offline'),
-      ),
-      throwsStateError,
-    );
+    for (final outage in ['offline', 'Firebase unavailable', 'Google Drive unavailable']) {
+      await expectLater(WindowsBackendBridge.flushDocumentPending(
+        send: (_) async => throw StateError(outage)), throwsStateError);
+      expect((await db.collection('_windows_document_outbox').get()).docs, hasLength(1));
+    }
     expect(
       (await db.collection('_windows_document_outbox').get()).docs.length,
       1,
@@ -154,4 +156,32 @@ void main() {
       true,
     );
   });
+  test('malformed image and truncated PDF cannot create managed documents or outbox records', () async {
+    for (final item in [
+      {'mime': 'image/jpeg', 'bytes': [1, 2, 3]},
+      {'mime': 'application/pdf', 'bytes': utf8.encode('%PDF-1.7 incomplete body')},
+    ]) {
+      await expectLater(WindowsBackendBridge.post(Uri.parse('https://unreachable.example'),
+        body: jsonEncode({'action': 'upload_student_document', 'studentId': 'S-1',
+          'documentName': 'Bad', 'fileName': 'bad', 'mimeType': item['mime'],
+          'fileBase64': base64Encode(item['bytes'] as List<int>)})), throwsFormatException);
+      expect((await db.collection('_local_student_documents').get()).docs, isEmpty);
+      expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+    }
+  });
+
+  test('blocked and foreign school context cannot persist or save documents', () async {
+    for (final identity in [
+      {'schoolSyncId': school, 'schoolId': school, 'blocked': true},
+      {'schoolSyncId': school, 'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
+    ]) {
+      await db.switchProfile('invalid-document-context', identity: identity);
+      expect(await db.localPersistenceEnabled(), false);
+      await expectLater(WindowsBackendBridge.post(Uri.parse('https://unreachable.example'),
+        body: jsonEncode({'action': 'upload_student_document', 'studentId': 'S-1',
+          'fileBase64': base64Encode([1, 2, 3])})), throwsStateError);
+      expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+    }
+  });
+
 }

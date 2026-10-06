@@ -28,7 +28,7 @@ void main() {
       'endpoint':'https://school.example/school-cloud','folderId':'managed',
       'firebaseRefreshToken':'saved-refresh','email':'a@example.com','storageReady':false,
     })});
-    await WindowsRuntimeFlags.setLocalStorageEnabled(true);
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     await db.switchProfile('local-first-${DateTime.now().microsecondsSinceEpoch}',
       identity:{'schoolId':school,'schoolSyncId':school});
   });

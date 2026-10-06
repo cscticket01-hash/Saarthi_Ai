@@ -46,6 +46,11 @@ class DocumentPipeline {
     }
     if (bytes.length > DocumentProcessingEngine.sourceLimit)
       throw const FormatException('PDF exceeds source safety limit.');
+    if (bytes.length < 12 ||
+        String.fromCharCodes(bytes.take(5)) != '%PDF-' ||
+        !String.fromCharCodes(bytes.skip(bytes.length > 2048 ? bytes.length - 2048 : 0)).contains('%%EOF')) {
+      throw const FormatException('PDF is malformed or truncated.');
+    }
     final pages = <Map<String, dynamic>>[];
     var pixels = 0;
     await for (final page in Printing.raster(bytes, dpi: 150)) {
