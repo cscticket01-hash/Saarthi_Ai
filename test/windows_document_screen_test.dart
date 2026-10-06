@@ -167,6 +167,8 @@ void main() {
     // Keep both real-screen cases in one widget clock. Singleton I/O queues
     // must not inherit a discarded fake-async zone between test callbacks.
     for (final pdf in [false, true]) {
+    picker.calls = 0;
+    rasterizer.rasterCalls = 0;
     await io(t, () => db.switchProfile('screen-case-${pdf}-${DateTime.now().microsecondsSinceEpoch}',
       identity: {'schoolSyncId': school, 'schoolId': school}));
     final document = pw.Document()..addPage(pw.Page(build: (_) => pw.Text('Real PDF document fixture')));
