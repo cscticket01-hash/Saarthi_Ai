@@ -1,7 +1,16 @@
 /// Coordinates are design units. Print dimensions are millimetres, independent
 /// of preview size. Unknown schema versions and overflowing regions fail closed.
 class IdCardManifest {
-  IdCardManifest.fromJson(Map<String, dynamic> data)
+  factory IdCardManifest.fromJson(Map<String, dynamic> data) {
+    try {
+      return IdCardManifest._parse(data);
+    } on FormatException {
+      rethrow;
+    } catch (_) {
+      throw const FormatException('Malformed ID manifest.');
+    }
+  }
+  IdCardManifest._parse(Map<String, dynamic> data)
     : id = data['id'] as String,
       width = (data['canvasWidth'] as num).toDouble(),
       height = (data['canvasHeight'] as num).toDouble(),
@@ -40,6 +49,40 @@ class IdCardManifest {
         );
       }
     }
+    for (final r in regions) {
+      if (r.allowOverlapWith.any(
+        (key) =>
+            key == r.key ||
+            !regions.any((other) => other.side == r.side && other.key == key),
+      )) {
+        throw const FormatException("Invalid overlap exception reference.");
+      }
+    }
+    for (var i = 0; i < regions.length; i++) {
+      final r = regions[i];
+      if (r.kind == 'qr' &&
+          (r.width < 8 ||
+              r.height < 8 ||
+              (r.width < r.height ? r.width : r.height) * printWidth / width <
+                  12)) {
+        throw const FormatException('ID QR region is too small.');
+      }
+      for (final other in regions.skip(i + 1)) {
+        final overlaps =
+            r.side == other.side &&
+            r.x < other.x + other.width &&
+            other.x < r.x + r.width &&
+            r.y < other.y + other.height &&
+            other.y < r.y + r.height;
+        if (overlaps &&
+            !(r.allowOverlapWith.contains(other.key) &&
+                other.allowOverlapWith.contains(r.key))) {
+          throw FormatException(
+            'Overlapping ID regions: ${r.key} / ${other.key}',
+          );
+        }
+      }
+    }
     if (!regions.any((r) => r.side == 'front') ||
         !regions.any((r) => r.side == 'back')) {
       throw const FormatException('ID template must expose front and back.');
@@ -62,7 +105,16 @@ class IdCardRegion {
       y = (data['y'] as num).toDouble(),
       width = (data['width'] as num).toDouble(),
       height = (data['height'] as num).toDouble(),
-      fontSize = (data['fontSize'] as num? ?? 12).toDouble() {
+      fontSize = (data['fontSize'] as num? ?? 12).toDouble(),
+      minFontSize = (data['minFontSize'] as num? ?? 8).toDouble(),
+      wrap = data['wrap'] == true,
+      maxLines = (data['maxLines'] as int? ?? 1),
+      overflow = data['overflow']?.toString() ?? 'ellipsis',
+      focusX = (data['focusX'] as num? ?? .5).toDouble(),
+      focusY = (data['focusY'] as num? ?? .35).toDouble(),
+      allowOverlapWith = List<String>.from(
+        data['allowOverlapWith'] as List? ?? const [],
+      ) {
     if (key.isEmpty ||
         !{'front', 'back'}.contains(side) ||
         !{'text', 'image', 'qr'}.contains(kind) ||
@@ -73,11 +125,29 @@ class IdCardRegion {
         y < 0 ||
         width <= 0 ||
         height <= 0 ||
+        !minFontSize.isFinite ||
+        minFontSize < 6 ||
+        minFontSize > fontSize ||
+        maxLines < 1 ||
+        maxLines > 12 ||
+        (!wrap && maxLines != 1) ||
+        !{'ellipsis', 'error'}.contains(overflow) ||
+        !focusX.isFinite ||
+        !focusY.isFinite ||
+        focusX < 0 ||
+        focusX > 1 ||
+        focusY < 0 ||
+        focusY > 1 ||
+        ({'logo', 'seal', 'signature'}.contains(key) && fit != 'contain') ||
         fontSize < 4 ||
         fontSize > 72) {
       throw const FormatException('Invalid ID region.');
     }
   }
   final String key, side, kind, fit, align, label;
-  final double x, y, width, height, fontSize;
+  final double x, y, width, height, fontSize, minFontSize, focusX, focusY;
+  final bool wrap;
+  final int maxLines;
+  final String overflow;
+  final List<String> allowOverlapWith;
 }

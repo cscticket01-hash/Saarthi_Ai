@@ -5,6 +5,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import 'id_card_manifest.dart';
+import 'id_card_layout.dart';
 
 /// Template metadata is the only source of placement/fit instructions.
 class IdCardEngine {
@@ -43,30 +44,33 @@ class IdCardEngine {
                   child: r.kind == 'image'
                       ? images[r.key] == null
                             ? pw.SizedBox()
-                            : pw.Image(
-                                pw.MemoryImage(images[r.key]!),
-                                fit: r.fit == 'cover'
-                                    ? pw.BoxFit.cover
-                                    : pw.BoxFit.contain,
+                            : IdCardLayout.image(
+                                images[r.key]!,
+                                cover: r.fit == 'cover',
+                                focusX: r.focusX,
+                                focusY: r.focusY,
                               )
                       : r.kind == 'qr'
                       ? qr.isEmpty
                             ? pw.SizedBox()
-                            : pw.BarcodeWidget(
-                                barcode: pw.Barcode.qrCode(),
-                                data: qr,
+                            : IdCardLayout.qr(
+                                qr,
+                                millimetresPerUnit:
+                                    template.printWidth / template.width,
                               )
-                      : pw.FittedBox(
-                          fit: pw.BoxFit.scaleDown,
-                          alignment: r.align == 'center'
-                              ? pw.Alignment.center
+                      : IdCardLayout.text(
+                          '${r.label}${data[r.key] ?? ''}',
+                          font: regular,
+                          fontSize: r.fontSize,
+                          minFontSize: r.minFontSize,
+                          wrap: r.wrap,
+                          maxLines: r.maxLines,
+                          overflow: r.overflow,
+                          align: r.align == 'center'
+                              ? pw.TextAlign.center
                               : r.align == 'right'
-                              ? pw.Alignment.centerRight
-                              : pw.Alignment.centerLeft,
-                          child: pw.Text(
-                            '${r.label}${data[r.key] ?? ''}',
-                            style: pw.TextStyle(fontSize: r.fontSize),
-                          ),
+                              ? pw.TextAlign.right
+                              : pw.TextAlign.left,
                         ),
                 ),
               ),

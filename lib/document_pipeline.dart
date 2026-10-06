@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
@@ -8,7 +10,31 @@ import 'package:pdf/widgets.dart' as pw;
 import 'document_processing_engine.dart';
 
 class DocumentPipeline {
+  static String? _key;
+  static Future<Map<String, dynamic>>? _prepared;
   static Future<Map<String, dynamic>> process(
+    Uint8List bytes,
+    String mime, {
+    String scope = '',
+  }) {
+    final key = '$scope:$mime:${sha256.convert(bytes)}';
+    if (_key == key && _prepared != null) return _prepared!;
+    _key = key;
+    final future = _process(bytes, mime).catchError((
+      Object error,
+      StackTrace stack,
+    ) {
+      if (_key == key) {
+        _key = null;
+        _prepared = null;
+      }
+      Error.throwWithStackTrace(error, stack);
+    });
+    _prepared = future;
+    return future;
+  }
+
+  static Future<Map<String, dynamic>> _process(
     Uint8List bytes,
     String mime,
   ) async {

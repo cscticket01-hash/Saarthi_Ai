@@ -1,3 +1,4 @@
+import 'id_card_layout.dart';
 import 'windows_id_pair.dart';
 
 import 'dart:typed_data';
@@ -79,32 +80,73 @@ Future<Uint8List> renderWindowsStudentId({
   final pdf = pw.Document(
     theme: pw.ThemeData.withFont(base: normalFont, bold: boldFont),
   );
-  pw.Widget at(double x, double y, double w, double h, pw.Widget child) =>
-      pw.Positioned(
-        left: x,
-        top: y,
-        child: pw.SizedBox(width: w, height: h, child: child),
+  final positionedRegions = <pw.Widget, List<double>>{};
+  final decorations = <pw.Widget>{};
+  pw.Widget at(
+    double x,
+    double y,
+    double w,
+    double h,
+    pw.Widget child, {
+    bool decorative = false,
+  }) {
+    if ([x, y, w, h].any((v) => !v.isFinite) ||
+        x < 0 ||
+        y < 0 ||
+        w <= 0 ||
+        h <= 0 ||
+        x + w > width ||
+        y + h > height) {
+      throw const FormatException(
+        'Compatibility ID element lies outside its canvas.',
       );
+    }
+    final widget = pw.Positioned(
+      left: x,
+      top: y,
+      child: pw.SizedBox(width: w, height: h, child: child),
+    );
+    positionedRegions[widget] = [x, y, w, h];
+    if (decorative) decorations.add(widget);
+    return widget;
+  }
+
+  void validateSide(List<pw.Widget> widgets) {
+    final dynamic = widgets
+        .where(
+          (w) => positionedRegions.containsKey(w) && !decorations.contains(w),
+        )
+        .toList();
+    for (var a = 0; a < dynamic.length; a++) {
+      final r = positionedRegions[dynamic[a]]!;
+      for (final widget in dynamic.skip(a + 1)) {
+        final o = positionedRegions[widget]!;
+        if (r[0] < o[0] + o[2] &&
+            o[0] < r[0] + r[2] &&
+            r[1] < o[1] + o[3] &&
+            o[1] < r[1] + r[3]) {
+          throw const FormatException(
+            'Compatibility ID dynamic regions overlap. Select a validated manifest template.',
+          );
+        }
+      }
+    }
+  }
+
   pw.Widget text(
     String s, {
     double size = 12,
     PdfColor? color,
     bool bold = false,
     pw.TextAlign align = pw.TextAlign.left,
-  }) => pw.FittedBox(
-    fit: pw.BoxFit.scaleDown,
-    alignment: align == pw.TextAlign.center
-        ? pw.Alignment.center
-        : pw.Alignment.centerLeft,
-    child: pw.Text(
-      s,
-      textAlign: align,
-      style: pw.TextStyle(
-        fontSize: size,
-        color: color ?? PdfColors.black,
-        fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
-      ),
-    ),
+  }) => IdCardLayout.text(
+    s,
+    font: bold ? boldFont : normalFont,
+    fontSize: size,
+    wrap: s.contains('\n'),
+    maxLines: s.contains('\n') ? s.split('\n').length : 1,
+    color: color ?? PdfColors.black,
+    align: align,
   );
   pw.Widget image(Uint8List? bytes, String placeholder, {bool cover = false}) =>
       pw.Container(
@@ -115,15 +157,12 @@ Future<Uint8List> renderWindowsStudentId({
         child: pw.ClipRect(
           child: bytes == null
               ? pw.Center(child: text(placeholder, size: 9, color: ink))
-              : pw.Image(
-                  pw.MemoryImage(bytes),
-                  fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
-                ),
+              : IdCardLayout.image(bytes, cover: cover),
         ),
       );
   pw.Widget asset(Uint8List? bytes, String placeholder) => bytes == null
       ? pw.Center(child: text(placeholder, size: 9, color: ink))
-      : pw.Image(pw.MemoryImage(bytes), fit: pw.BoxFit.contain);
+      : IdCardLayout.image(bytes);
   pw.Widget field(String label, String content, double w, {double size = 11}) =>
       pw.Row(
         children: [
@@ -148,32 +187,19 @@ Future<Uint8List> renderWindowsStudentId({
       ),
       pw.SizedBox(height: 3),
       pw.Expanded(
-        child: pw.FittedBox(
-          fit: pw.BoxFit.scaleDown,
-          alignment: pw.Alignment.topLeft,
-          child: pw.SizedBox(
-            width: w,
-            child: pw.Text(
-              value('streetAddress', value('address')),
-              style: pw.TextStyle(fontSize: size),
-            ),
-          ),
+        child: IdCardLayout.text(
+          value('streetAddress', value('address')),
+          font: normalFont,
+          fontSize: size,
+          wrap: true,
+          maxLines: 6,
         ),
       ),
     ],
   );
   pw.Widget qrWidget(double size) => qr.isEmpty
       ? pw.SizedBox()
-      : pw.Container(
-          color: PdfColors.white,
-          padding: const pw.EdgeInsets.all(4),
-          child: pw.BarcodeWidget(
-            barcode: pw.Barcode.qrCode(),
-            data: qr,
-            width: size - 8,
-            height: size - 8,
-          ),
-        );
+      : IdCardLayout.qr(qr, millimetresPerUnit: (portrait ? 54 : 85.6) / width);
   final front = <pw.Widget>[
     pw.SvgImage(svg: _background(i, false), width: width, height: height),
   ];
@@ -285,8 +311,9 @@ Future<Uint8List> renderWindowsStudentId({
         pw.SvgImage(
           svg: '<svg xmlns="http://www.w3.org/2000/svg" width="195" height="188"><path d="M4 60L97 5L190 60L160 182H34Z" fill="white" stroke="#201c4a" stroke-width="8"/></svg>',
         ),
+        decorative: true,
       ),
-      at(81, 139, 130, 127, image(photo, 'PHOTO', cover: true)),
+      at(81, 139, 122, 127, image(photo, 'PHOTO', cover: true)),
       at(
         203,
         192,
@@ -480,7 +507,7 @@ Future<Uint8List> renderWindowsStudentId({
         24,
         text('STUDENT ADDRESS & DETAILS', size: 16, bold: true, color: ink),
       ),
-      at(24, 61, 424, 63, address(424, size: 13)),
+      at(24, 61, 330, 63, address(330, size: 13)),
       at(24, 128, 330, 20, field('District', value('district'), 330, size: 12)),
       at(24, 153, 330, 20, field('State', value('state'), 330, size: 12)),
       at(24, 178, 330, 20, field('PIN', value('pinCode'), 330, size: 12)),
@@ -518,15 +545,17 @@ Future<Uint8List> renderWindowsStudentId({
       at(
         28,
         i == 0
-            ? 260
+            ? 356
             : portrait
             ? 359
-            : 48,
+            : 47,
         portrait ? 245 : 420,
-        14,
+        portrait ? 14 : 12,
         text('Student UID: ${value('studentUid')}', size: 9, color: ink),
       ),
     );
+  validateSide(front);
+  validateSide(back);
   addIdCardPair(pdf, front, back, width, height, landscape: !portrait);
   return pdf.save();
 }

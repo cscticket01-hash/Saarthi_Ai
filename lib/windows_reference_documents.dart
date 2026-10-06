@@ -1,3 +1,4 @@
+import 'id_card_layout.dart';
 import 'windows_id_pair.dart';
 
 import 'dart:typed_data';
@@ -203,12 +204,44 @@ Future<Uint8List> renderWindowsReferenceDocument({
   final pdf = pw.Document(
     theme: pw.ThemeData.withFont(base: regular, bold: bold),
   );
-  pw.Widget at(double x, double y, double w, double h, pw.Widget child) =>
-      pw.Positioned(
-        left: x,
-        top: y,
-        child: pw.SizedBox(width: w, height: h, child: child),
-      );
+  final idRegions = <pw.Widget, List<double>>{};
+  pw.Widget at(double x, double y, double w, double h, pw.Widget child) {
+    final widget = pw.Positioned(
+      left: x,
+      top: y,
+      child: pw.SizedBox(width: w, height: h, child: child),
+    );
+    if (kind == 'teacherId') idRegions[widget] = [x, y, w, h];
+    return widget;
+  }
+
+  void validateIdSide(List<pw.Widget> widgets, double width, double height) {
+    final regions = widgets
+        .where(idRegions.containsKey)
+        .map((w) => idRegions[w]!)
+        .toList();
+    for (var index = 0; index < regions.length; index++) {
+      final r = regions[index];
+      if ([r[0], r[1], r[2], r[3]].any((v) => !v.isFinite) ||
+          r[0] < 0 ||
+          r[1] < 0 ||
+          r[2] <= 0 ||
+          r[3] <= 0 ||
+          r[0] + r[2] > width ||
+          r[1] + r[3] > height)
+        throw const FormatException('Staff ID region outside canvas.');
+      for (final o in regions.skip(index + 1)) {
+        if (r[0] < o[0] + o[2] &&
+            o[0] < r[0] + r[2] &&
+            r[1] < o[1] + o[3] &&
+            o[1] < r[1] + r[3])
+          throw const FormatException(
+            'Staff ID dynamic regions overlap. Select a validated manifest template.',
+          );
+      }
+    }
+  }
+
   pw.Widget label(
     String s, {
     double size = 11,
@@ -217,6 +250,16 @@ Future<Uint8List> renderWindowsReferenceDocument({
     pw.TextAlign align = pw.TextAlign.left,
   }) => s.trim().isEmpty
       ? pw.SizedBox(width: 1, height: 1)
+      : kind == 'teacherId'
+      ? IdCardLayout.text(
+          s,
+          font: heavy ? bold : regular,
+          fontSize: size,
+          color: color,
+          align: align,
+          wrap: s.contains('\n') || s.length > 60,
+          maxLines: s.contains('\n') || s.length > 60 ? 3 : 1,
+        )
       : pw.FittedBox(
           fit: pw.BoxFit.scaleDown,
           alignment: align == pw.TextAlign.center
@@ -236,22 +279,20 @@ Future<Uint8List> renderWindowsReferenceDocument({
       bytes == null
       ? pw.Center(child: label(placeholder, size: 11, color: PdfColors.grey600))
       : pw.ClipRect(
-          child: pw.Image(
-            pw.MemoryImage(bytes),
-            fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
-          ),
+          child: kind == 'teacherId'
+              ? IdCardLayout.image(bytes, cover: cover)
+              : pw.Image(
+                  pw.MemoryImage(bytes),
+                  fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
+                ),
         );
   pw.Widget qrCode(double size) => qr.isEmpty
       ? pw.SizedBox()
-      : pw.Container(
-          color: PdfColors.white,
-          padding: const pw.EdgeInsets.all(4),
-          child: pw.BarcodeWidget(
-            barcode: pw.Barcode.qrCode(),
-            data: qr,
-            width: size,
-            height: size,
-          ),
+      : IdCardLayout.qr(
+          qr,
+          millimetresPerUnit: kind == 'teacherId'
+              ? (i == 2 ? 85.6 / 480 : 54 / 306)
+              : null,
         );
   pw.Widget table(
     List<List<String>> rows, {
@@ -462,13 +503,17 @@ Future<Uint8List> renderWindowsReferenceDocument({
           30,
           i == 0 ? 137 : 198,
           i == 0 ? 150 : 202,
-          90,
-          pw.Text(
+          i == 0 ? 90 : 76,
+          IdCardLayout.text(
             first(
               ['idCardTerms'],
               'This card identifies a member of the school staff. Carry it while on duty. Return it to the school office if found. This card is not transferable.',
             ),
-            style: pw.TextStyle(fontSize: i == 0 ? 8 : 10, color: ink),
+            font: regular,
+            fontSize: i == 0 ? 8 : 10,
+            color: ink,
+            wrap: true,
+            maxLines: 8,
           ),
         ),
         at(
@@ -617,7 +662,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
           181,
           124,
           264,
-          51,
+          48,
           pw.BarcodeWidget(
             barcode: pw.Barcode.code128(),
             data: id == '-' ? 'TEACHER' : id,
@@ -630,12 +675,15 @@ Future<Uint8List> renderWindowsReferenceDocument({
           202,
           381,
           41,
-          pw.Text(
+          IdCardLayout.text(
             first(
               ['idCardTerms'],
               'Carry this school ID while on duty. If found, return it to the school office. It is not transferable.',
             ),
-            style: const pw.TextStyle(fontSize: 10),
+            font: regular,
+            fontSize: 10,
+            wrap: true,
+            maxLines: 3,
           ),
         ),
         at(35, 251, 143, 20, label('Principal signature', size: 10)),
@@ -644,7 +692,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
     } else {
       front.addAll([
         at(17, 19, 40, 40, asset(logo, 'LOGO')),
-        at(63, 26, 155, 24, label(school, size: 15, color: white, heavy: true)),
+        at(63, 26, 155, 22, label(school, size: 15, color: white, heavy: true)),
         at(
           63,
           48,
@@ -820,12 +868,15 @@ Future<Uint8List> renderWindowsReferenceDocument({
           281,
           251,
           66,
-          pw.Text(
+          IdCardLayout.text(
             first(
               ['idCardTerms'],
               'This card is the property of the school and identifies its staff member. Wear it while on duty. It is not transferable. If found, return it to the school office.',
             ),
-            style: const pw.TextStyle(fontSize: 11),
+            font: regular,
+            fontSize: 11,
+            wrap: true,
+            maxLines: 6,
           ),
         ),
         at(28, 353, 110, 31, label('Holder signature: __________', size: 9)),
@@ -856,6 +907,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
         ),
       ]);
     }
+    validateIdSide(front, w, h);
+    validateIdSide(back, w, h);
     addIdCardPair(pdf, front, back, w, h, landscape: landscape);
   } else if (kind == 'reportCard') {
     final ink = PdfColor.fromHex(

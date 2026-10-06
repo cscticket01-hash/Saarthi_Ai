@@ -1,3 +1,4 @@
+import 'document_upload_dialog.dart';
 import 'qr_authentication_engine.dart';
 import 'windows_admin_avatar.dart';
 import 'windows_other_staff.dart';
@@ -20336,7 +20337,6 @@ class StudentDocumentsScreen extends StatefulWidget {
 
 class _StudentDocumentsScreenState
     extends State<StudentDocumentsScreen> {
-  static const int _maxBytes = 50 * 1024 * 1024;
   late final String _schoolProfile;
   Timer? _refreshTimer;
   int _loadGeneration=0;
@@ -20437,108 +20437,23 @@ class _StudentDocumentsScreenState
     }
   }
 
-  Future<String?> _askName(String? current) async {
-    final controller = TextEditingController(text: current ?? '');
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF172229),
-        title: const Text('Document Name',
-            style: TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            hintText: 'Aadhaar Card / Birth Certificate / Marksheet',
-            hintStyle: const TextStyle(color: Colors.white30),
-            filled: true,
-            fillColor: const Color(0xFF0F191F),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final value = controller.text.trim();
-              if (value.isNotEmpty) Navigator.pop(ctx, value);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00A884),
-            ),
-            child: const Text('Continue',
-                style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    return result;
-  }
+  Future<String?> _askName(String? current) => showDialog<String>(
+    context: context, builder: (_) => DocumentNameDialog(current: current ?? ''));
 
   Future<void> _upload({Map<String, dynamic>? replace}) async {
     if (_uploading) return;
     final docName = await _askName(replace?['documentName']?.toString());
     if (docName == null || !mounted) return;
 
-    final input = html.FileUploadInputElement()
-      ..accept = '.pdf,.jpg,.jpeg,application/pdf,image/jpeg';
-    input.click();
-    await input.onChange.first;
-
-    final files = input.files;
-    if (files == null || files.isEmpty || !mounted) return;
-
-    final file = files.first;
-    var mime = file.type.toLowerCase().trim();
-    final lower = file.name.toLowerCase();
-
-    if (mime.isEmpty) {
-      if (lower.endsWith('.pdf')) {
-        mime = 'application/pdf';
-      } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-        mime = 'image/jpeg';
-      }
-    }
-
-    if (mime != 'application/pdf' &&
-        mime != 'image/jpeg' &&
-        mime != 'image/jpg') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Sirf PDF/JPG/JPEG document allowed hai.'),
-        ),
-      );
-      return;
-    }
-
-    if (file.size > _maxBytes) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text(
-              'Source file exceeds the 50 MB safety limit.'),
-        ),
-      );
-      return;
-    }
-
     setState(() => _uploading = true);
     try {
-      final reader = html.FileReader();
-      reader.readAsDataUrl(file);
-      await reader.onLoad.first;
-      final dataUrl = reader.result?.toString() ?? '';
-      if (dataUrl.isEmpty) throw Exception('File read nahi ho paya.');
-
+      final file = await showDialog<SelectedDocument>(context: context,
+        builder: (_) => DocumentUploadDialog(name: docName, scope: _schoolProfile,
+          isCurrent: () => FirebaseFirestore.instance.activeProfileId == _schoolProfile));
+      if (file == null || !mounted) return;
+      if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) throw StateError('School changed. Reopen documents.');
+      final mime = file.mime;
+      final dataUrl = 'data:$mime;base64,${base64Encode(file.bytes)}';
       final saved = await _post({
         'action': 'upload_student_document',
         'studentId': widget.studentId,
@@ -20723,7 +20638,7 @@ class _StudentDocumentsScreenState
                   const Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'PDF/JPG/JPEG • source up to 50 MB. Target: about 300 KB for 7–8 normal scans; quality takes priority. Preview uses original. Actual optimized sizes shown.',
+                      'PDF/JPG/JPEG/PNG • source up to 50 MB. Target: about 300 KB for 7–8 normal scans; quality takes priority. Preview uses original. Actual optimized sizes shown.',
                       style: TextStyle(color: Colors.white38, fontSize: 10),
                     ),
                   ),

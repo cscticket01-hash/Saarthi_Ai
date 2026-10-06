@@ -1513,6 +1513,7 @@ class WindowsBackendBridge {
       processing = await DocumentPipeline.process(
         Uint8List.fromList(bytes),
         body['mimeType']?.toString() ?? '',
+        scope: originProfile,
       );
       optimized = processing['optimized'] as Uint8List;
       highQuality = processing['highQuality'] as Uint8List;

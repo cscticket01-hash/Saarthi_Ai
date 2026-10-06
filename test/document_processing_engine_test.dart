@@ -110,6 +110,76 @@ void main() {
       expect(decoded.getPixel(200, 200).r, lessThan(60));
     },
   );
+  test('EXIF rotated JPEG is oriented before optimization', () {
+    final image = img.Image(width: 320, height: 480);
+    img.fill(image, color: img.ColorRgb8(255, 255, 255));
+    image.exif.imageIfd.orientation = 6;
+    final result = DocumentProcessingEngine.process({
+      'bytes': Uint8List.fromList(img.encodeJpg(image)),
+    });
+    expect(result['width'], 480);
+    expect(result['height'], 320);
+  });
+  test(
+    'angled document with surrounding background is rectified conservatively',
+    () {
+      final image = img.Image(width: 600, height: 800);
+      img.fill(image, color: img.ColorRgb8(45, 45, 45));
+      img.fillPolygon(
+        image,
+        vertices: [
+          img.Point(80, 70),
+          img.Point(550, 115),
+          img.Point(515, 735),
+          img.Point(45, 690),
+        ],
+        color: img.ColorRgb8(255, 255, 255),
+      );
+      final result = DocumentProcessingEngine.process({
+        'bytes': Uint8List.fromList(img.encodePng(image)),
+      });
+      expect(result['perspectiveCorrected'], true);
+      expect(img.decodeJpg(result['optimized'] as Uint8List), isNotNull);
+    },
+  );
+  test('eight normal text scans optimize near total target without losing original/high copy', () {
+    var total = 0;
+    for (var n = 0; n < 8; n++) {
+      final image = img.Image(width: 600, height: 800);
+      img.fill(image, color: img.ColorRgb8(255, 255, 255));
+      for (var y = 80; y < 720; y += 24)
+        img.drawLine(
+          image,
+          x1: 40,
+          y1: y,
+          x2: 550 - n * 10,
+          y2: y,
+          color: img.ColorRgb8(20, 20, 20),
+          thickness: 2,
+        );
+      final bytes = Uint8List.fromList(img.encodePng(image));
+      final original = List<int>.from(bytes);
+      final result = DocumentProcessingEngine.process({'bytes': bytes});
+      total += (result['optimized'] as Uint8List).length;
+      expect(bytes, original);
+      expect((result['highQuality'] as Uint8List).length, greaterThan(0));
+      expect(result['quality'], greaterThanOrEqualTo(78));
+    }
+    expect(total, lessThanOrEqualTo(DocumentProcessingEngine.setTarget));
+  });
+  test(
+    'large scan retains readable resolution and obeys decoded safety limit',
+    () {
+      final image = img.Image(width: 2300, height: 3000);
+      img.fill(image, color: img.ColorRgb8(255, 255, 255));
+      final result = DocumentProcessingEngine.process({
+        'bytes': Uint8List.fromList(img.encodeJpg(image)),
+      });
+      final optimized = img.decodeJpg(result['optimized'] as Uint8List)!;
+      expect(optimized.height, inInclusiveRange(1600, 2200));
+      expect(result['height'], 2200);
+    },
+  );
   test(
     'invalid input is rejected rather than creating a pretend processed scan',
     () {
