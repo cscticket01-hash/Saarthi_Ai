@@ -121,3 +121,13 @@ test('incremental manifest rejects foreign data even for versioned writes',()=>{
  assert.equal(result.success,false);assert.deepEqual(f.call({action:'managed_records',operation:'read',collection:'school_notices'}).records,{});
  assert.equal(f.call({action:'managed_health'}).recordSyncVersion,2);
 });
+
+test('document deletion retains explicit tombstone across PCs and blocks stale resurrection',()=>{
+ const f=storage(),base={action:'managed_records',collection:'documents',id:'gone'};
+ assert.equal(f.call({...base,operation:'write',expectedRevision:'',data:{schoolId:A,documentRevision:'r1'}}).success,true);
+ assert.equal(f.call({...base,operation:'delete',expectedRevision:'r1'}).success,true);
+ assert.equal(f.call({...base,operation:'delete',expectedRevision:'r1'}).success,true);
+ assert.equal(f.call({...base,operation:'read'}).records.gone,undefined);
+ assert.equal(f.call({...base,operation:'read',syncProtocol:2}).records.gone._syncDeleted,true);
+ assert.equal(f.call({...base,operation:'write',expectedRevision:'r1',data:{schoolId:A,documentRevision:'stale'}}).success,false);
+});

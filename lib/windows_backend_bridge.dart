@@ -59,7 +59,17 @@ class WindowsBackendBridge {
 
   /// Lazy authenticated asset restore. Stable revision/hash filename avoids
   /// repeatedly downloading unchanged files; originals on this PC remain intact.
+  static final Map<String, Future<Uint8List>> _documentRestores = {};
   static Future<Uint8List> documentBytes(Map<String,dynamic> document, {
+    Future<Map<String,dynamic>> Function(String school,String fileId)? fetch,
+  }) async {
+    final profile=FirebaseFirestore.instance.activeProfileId;
+    final key=jsonEncode([profile,document['schoolId'],document['fileId'],document['fileUrl'],document['documentRevision'],document['uploadedAt'],document['contentHash'],document['originalPath'],document['localPath']]);
+    final existing=_documentRestores[key];if(existing!=null)return existing;
+    final pending=_restoreDocumentBytes(document,fetch:fetch);_documentRestores[key]=pending;
+    try{return await pending;}finally{if(identical(_documentRestores[key],pending))_documentRestores.remove(key);}
+  }
+  static Future<Uint8List> _restoreDocumentBytes(Map<String,dynamic> document, {
     Future<Map<String,dynamic>> Function(String school,String fileId)? fetch,
   }) async {
     final db=FirebaseFirestore.instance,origin=FirebaseFirestore.instance.activeProfileId;
@@ -81,7 +91,13 @@ class WindowsBackendBridge {
     final key=crypto.sha256.convert(utf8.encode('$school:$id:${document['documentRevision']??document['uploadedAt']}')).toString();
     final directory=Directory('${root.path}${Platform.pathSeparator}${_safeFileName(origin)}${Platform.pathSeparator}restored_documents');
     final cached=File('${directory.path}${Platform.pathSeparator}$key');
-    if(await cached.exists()){own();return cached.readAsBytes();}
+    if(await cached.exists()){
+      own();final bytes=await cached.readAsBytes();
+      final hash=document['contentHash'];
+      if(bytes.isNotEmpty && bytes.length<=20*1024*1024 &&
+          (hash is! String || crypto.sha256.convert(bytes).toString()==hash)){own();return bytes;}
+      // Retain a corrupt cache for diagnosis; replace it only after a valid download.
+    }
     final result=await (fetch??((s,id)=>ManagedSchoolSession.callForSchool(s,'managed/file/read',{'fileId':id})))(school,id);
     own();
     if(result['success']!=true || result['schoolId']!=school || result['base64'] is! String)throw StateError('School document restore failed.');

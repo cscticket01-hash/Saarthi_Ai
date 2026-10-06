@@ -54,7 +54,7 @@ void main(){
   var reads=0;final bytes=Uint8List.fromList(utf8.encode('%PDF-1.4\nrepresentative cached document\n%%EOF'));
   final record={'schoolId':school,'fileId':'drive-test-${DateTime.now().microsecondsSinceEpoch}','documentRevision':'revision'};
   Future<Map<String,dynamic>> fetch(String s,String id)async{reads++;expect(s,school);return {'success':true,'schoolId':school,'mime':'application/pdf','base64':base64Encode(bytes)};}
-  expect(await WindowsBackendBridge.documentBytes(record,fetch:fetch),bytes);expect(reads,1);
+  final simultaneous=await Future.wait([WindowsBackendBridge.documentBytes(record,fetch:fetch),WindowsBackendBridge.documentBytes(record,fetch:fetch)]);expect(simultaneous.every((b)=>base64Encode(b)==base64Encode(bytes)),true);expect(reads,1);
   final origin=db.activeProfileId;await db.switchProfile('away');await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
   expect(await WindowsBackendBridge.documentBytes(record,fetch:fetch),bytes);expect(reads,1);
   await expectLater(WindowsBackendBridge.documentBytes({...record,'schoolId':'foreign'},fetch:fetch),throwsStateError);expect(reads,1);

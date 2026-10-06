@@ -105,9 +105,12 @@ function VS_managedRecord(b) {
          (!revision&&current&&b.expectedUploadedAt!==undefined&&b.expectedUploadedAt!==current.data.uploadedAt))throw new Error('Newer cloud document retained; resolve version conflict');
     } else if(revision) throw new Error('Versioned document requires a matching revision');
   }
+  if(b.operation==='write' && existing && existing.data._syncDeleted)throw new Error('Record revision conflict');
   if(b.operation==='delete'){
-    if(b.syncProtocol===2){
-      const revision=Utilities.getUuid(),data={schoolId:school,_syncDeleted:true,_syncRevision:revision,_syncOperationId:b.operationId};
+    if(b.syncProtocol===2 || b.collection==='documents'){
+      const revision=Utilities.getUuid(),data={schoolId:school,_syncDeleted:true,_syncRevision:revision};
+      if(b.syncProtocol===2)data._syncOperationId=b.operationId;
+      if(b.collection==='documents' && existing)data.documentRevision=existing.data.documentRevision||'';
       const text=JSON.stringify({id:b.id,schoolId:school,data:data});
       if(file)file.setContent(text);else folder.createFile(name,text,'application/json');
       PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());
