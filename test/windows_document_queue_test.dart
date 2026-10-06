@@ -98,6 +98,8 @@ void main() {
       await expectLater(WindowsBackendBridge.flushDocumentPending(
         send: (_) async => throw StateError(outage)), throwsStateError);
       expect((await db.collection('_windows_document_outbox').get()).docs, hasLength(1));
+      final retry=(await db.collection('_windows_document_outbox').get()).docs.single.data();
+      expect(retry['syncState'],'retry');expect(retry['retryCount'],greaterThan(0));
     }
     expect(
       (await db.collection('_windows_document_outbox').get()).docs.length,

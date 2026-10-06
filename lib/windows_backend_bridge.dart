@@ -128,6 +128,8 @@ class WindowsBackendBridge {
         if (FirebaseFirestore.instance.activeProfileId != origin)
           throw StateError('School changed during document sync.');
         final record = queued.data();
+        if(record['syncState']=='conflict' || record['syncState']=='needsAttention')continue;
+        try {
         final identity = await CentralSchoolCloud.saved();
         if (record['schoolId'] != identity['schoolId'] ||
             FirebaseFirestore.instance.activeProfileId != origin)
@@ -228,6 +230,18 @@ class WindowsBackendBridge {
           );
           await batch.commit();
         });
+        } catch(error) {
+          if(FirebaseFirestore.instance.activeProfileId==origin)await _documentWrite(()async{
+            final current=(await queued.reference.get()).data();
+            if(current!=null && current['documentRevision']==record['documentRevision'] && current['localPath']==record['localPath']) {
+              final conflict=error.toString().toLowerCase().contains('conflict');
+              await queued.reference.set({'syncState':conflict?'conflict':'retry',
+                'retryCount':(current['retryCount'] as num? ?? 0).toInt()+1,
+                'lastError':conflict?'Document version conflict; local original retained.':'Document synchronization failed; local original retained.'},SetOptions(merge:true));
+            }
+          });
+          rethrow;
+        }
       }
     } finally {
       _documentDraining = false;

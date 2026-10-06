@@ -782,7 +782,7 @@ class WindowsSyncEngine {
         if(health['recordSyncVersion']!=2 || health['brokerRecordSyncVersion']!=2)
           throw StateError('School sync requires the version-safe broker and Script update. Pending data retained.');
         try {await _pushManagedOutbox();} catch(e){if(!e.toString().contains('conflict'))rethrow;}
-        await WindowsBackendBridge.flushDocumentPending();
+        try {await WindowsBackendBridge.flushDocumentPending();} catch(e){if(!e.toString().toLowerCase().contains('conflict'))rethrow;}
         if(_lastPull==null || DateTime.now().difference(_lastPull!)>=const Duration(minutes:15) || _manualSync) {
           await _pullManagedChanges();
           _lastPull=DateTime.now();
