@@ -20428,8 +20428,9 @@ class _StudentDocumentsScreenState
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
+        if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) _documents = [];
         _loading = false;
         _error = e.toString();
       });
@@ -20730,13 +20731,12 @@ class _StudentDocumentsScreenState
               ),
             ),
             const SizedBox(height: 12),
+            if (_error != null)
+              Text(_documents.isEmpty ? _error! : 'Offline / Sync pending. Showing saved documents.', style: const TextStyle(color: Colors.orange)),
             if (_loading)
               const Center(
                   child:
                       CircularProgressIndicator(color: Color(0xFF00A884)))
-            else if (_error != null)
-              Text(_error!,
-                  style: const TextStyle(color: Colors.redAccent))
             else if (_documents.isEmpty)
               Container(
                 padding: const EdgeInsets.all(28),
