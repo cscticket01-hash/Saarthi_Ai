@@ -1,3 +1,4 @@
+import 'qr_authentication_engine.dart';
 import 'windows_admin_avatar.dart';
 import 'windows_other_staff.dart';
 import 'windows_school_image_cache.dart';
@@ -165,7 +166,7 @@ Future<String> _windowsBuildPersonQrPayload({
     'schoolLng': location['longitude'],
     'attendanceRadiusMeters': location['radiusMeters'] ?? 200,
   };
-  return SchoolLink.encode(payload);
+  return QrAuthenticationEngine.encode(payload);
 }
 
 Map<String, dynamic>? _windowsParsePersonQr(String raw) {

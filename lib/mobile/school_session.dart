@@ -1,12 +1,15 @@
+import '../qr_authentication_engine.dart';
+
 import 'dart:convert';
 import 'dart:math';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+
 import '../platform/github_updates.dart';
 import '../school_qr_link.dart';
 export '../school_qr_link.dart';
 import '../school_backend_transport.dart';
-
 
 class SchoolSession {
   SchoolSession({http.Client? client}) : _client = client ?? http.Client();
@@ -16,14 +19,17 @@ class SchoolSession {
   static const _secure = FlutterSecureStorage();
   SchoolLink? link;
   String schoolToken = '', deviceId = '';
-  Map<String,dynamic>? messaging;
+  Map<String, dynamic>? messaging;
   Map<String, dynamic> person = {};
   String schoolName = '';
-  static const version =
-      String.fromEnvironment('APP_VERSION', defaultValue: '1.0.0');
+  static const version = String.fromEnvironment(
+    'APP_VERSION',
+    defaultValue: '1.0.0',
+  );
   bool get loggedIn => link != null && schoolToken.isNotEmpty;
   Future<void> restore() async {
-    deviceId = await _secure.read(key: 'vs_mobile_device') ??
+    deviceId =
+        await _secure.read(key: 'vs_mobile_device') ??
         base64UrlEncode(List.generate(32, (_) => Random.secure().nextInt(256)));
     await _secure.write(key: 'vs_mobile_device', value: deviceId);
     final raw = await _secure.read(key: 'vs_mobile_session');
@@ -34,9 +40,18 @@ class SchoolSession {
         await clear();
         return;
       }
-      link = SchoolLink.parse(d['qr']);
+      final restoredLink = QrAuthenticationEngine.decode(d['qr']);
+      QrAuthenticationEngine.validateSession(
+        restoredLink,
+        Map<String, dynamic>.from(d),
+        now: DateTime.now().millisecondsSinceEpoch,
+        restored: true,
+      );
+      link = restoredLink;
       schoolToken = d['schoolToken'];
-      messaging = d['messaging'] is Map ? Map<String,dynamic>.from(d['messaging']) : null;
+      messaging = d['messaging'] is Map
+          ? Map<String, dynamic>.from(d['messaging'])
+          : null;
       person = Map<String, dynamic>.from(d['person'] ?? {});
       schoolName = d['schoolName'] ?? link!.projectId;
     } catch (_) {
@@ -45,30 +60,57 @@ class SchoolSession {
   }
 
   Future<Map<String, dynamic>> schoolCall(
-      String action, Map<String, dynamic> body) async {
+    String action,
+    Map<String, dynamic> body,
+  ) async {
     final current = link;
     final generation = _generation;
     if (current == null) throw StateError('Scan your school ID first.');
     void unchanged() {
-      if (generation != _generation || !identical(current, link)) throw StateError('School session changed. Scan your ID again.');
+      if (generation != _generation || !identical(current, link))
+        throw StateError('School session changed. Scan your ID again.');
     }
-    if(current.managed){
-      final r=await _client.post(Uri.parse(current.endpoint),headers:{'Content-Type':'application/json'},body:jsonEncode({'action':'managed/mobile','schoolId':current.schoolId,'request':{...body,'action':action,'sessionToken':schoolToken}})).timeout(const Duration(seconds:25));
+
+    if (current.managed) {
+      final r = await _client
+          .post(
+            Uri.parse(current.endpoint),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'action': 'managed/mobile',
+              'schoolId': current.schoolId,
+              'request': {
+                ...body,
+                'action': action,
+                'sessionToken': schoolToken,
+              },
+            }),
+          )
+          .timeout(const Duration(seconds: 25));
       unchanged();
-      final d=jsonDecode(r.body);
-      if(r.statusCode!=200||d is! Map||d['success']!=true)throw StateError(d is Map?d['message']?.toString()??'Unable to connect':'Unable to connect');
-      if(d['schoolId']!=current.schoolId||d['projectId']!=current.schoolId)throw StateError('School identity mismatch');
-      return Map<String,dynamic>.from(d);
+      final d = jsonDecode(r.body);
+      if (r.statusCode != 200 || d is! Map || d['success'] != true)
+        throw StateError(
+          d is Map
+              ? d['message']?.toString() ?? 'Unable to connect'
+              : 'Unable to connect',
+        );
+      if (d['schoolId'] != current.schoolId ||
+          d['projectId'] != current.schoolId)
+        throw StateError('School identity mismatch');
+      return Map<String, dynamic>.from(d);
     }
     final r = await _client
-        .post(Uri.parse(current.scriptUrl),
-            headers: {'Content-Type': 'text/plain;charset=utf-8'},
-            body: jsonEncode({
-              ...body,
-              'action': action,
-              'projectId': current.projectId,
-              'sessionToken': schoolToken
-            }))
+        .post(
+          Uri.parse(current.scriptUrl),
+          headers: {'Content-Type': 'text/plain;charset=utf-8'},
+          body: jsonEncode({
+            ...body,
+            'action': action,
+            'projectId': current.projectId,
+            'sessionToken': schoolToken,
+          }),
+        )
         .timeout(const Duration(seconds: 30));
     // Google Apps Script redirects POST responses to a one-time content URL.
     final response = r.isRedirect && r.headers['location'] != null
@@ -77,70 +119,85 @@ class SchoolSession {
     unchanged();
     final d = jsonDecode(response.body);
     if (d is! Map || d['success'] != true)
-      throw StateError(d is Map
-          ? d['message']?.toString() ?? 'School service unavailable'
-          : 'School service unavailable');
+      throw StateError(
+        d is Map
+            ? d['message']?.toString() ?? 'School service unavailable'
+            : 'School service unavailable',
+      );
     if (d['projectId'] != current.projectId)
       throw StateError('School identity mismatch. Login blocked.');
     return Map<String, dynamic>.from(d);
   }
 
   Future<http.Response> _redirect(String location) async {
-    final uri=Uri.parse(location);requireSchoolBackendUri(uri);
-    return _client.get(uri).timeout(const Duration(seconds:20));
+    final uri = Uri.parse(location);
+    requireSchoolBackendUri(uri);
+    return _client.get(uri).timeout(const Duration(seconds: 20));
   }
 
   Future<Map<String, dynamic>> platformCall(
-      String action, Map<String, dynamic> body) async {
-    if(action=='updates/latest') return latestAndroidUpdate();
-    if(action=='mobile/heartbeat') return schoolCall('mobile_heartbeat',{'version':version});
-    if(action=='complaint/create') return schoolCall('mobile_complaint',body);
+    String action,
+    Map<String, dynamic> body,
+  ) async {
+    if (action == 'updates/latest') return latestAndroidUpdate();
+    if (action == 'mobile/heartbeat')
+      return schoolCall('mobile_heartbeat', {'version': version});
+    if (action == 'complaint/create')
+      return schoolCall('mobile_complaint', body);
     throw ArgumentError('Unknown mobile action');
   }
 
-  Future<void> login(SchoolLink newLink,
-      {String studentClass = '',
-      String roll = '',
-      String dob = '',
-      String fcmToken = ''}) async {
+  Future<void> login(
+    SchoolLink newLink, {
+    String studentClass = '',
+    String roll = '',
+    String dob = '',
+    String fcmToken = '',
+  }) async {
     await clear();
     link = newLink;
     final generation = _generation;
     late final Map<String, dynamic> login;
     try {
-      login = await schoolCall('mobile_login', {
-      'role': newLink.role,
-      'personId': newLink.personId,
-      'linkToken': newLink.linkToken,
-      'studentClass': studentClass,
-      'rollNo': roll,
-      'dob': dob
-      });
+      login = await QrAuthenticationEngine.authenticate(
+        newLink,
+        (body) => schoolCall('mobile_login', body),
+        studentClass: studentClass,
+        roll: roll,
+        dob: dob,
+      );
     } catch (_) {
       if (generation == _generation) await clear();
       rethrow;
     }
-    if (login['sessionToken'] is! String || (login['sessionToken'] as String).isEmpty || login['expiresAt'] is! num || (login['expiresAt'] as num) <= DateTime.now().millisecondsSinceEpoch) {
+    if (login['sessionToken'] is! String ||
+        (login['sessionToken'] as String).isEmpty ||
+        login['expiresAt'] is! num ||
+        (login['expiresAt'] as num) <= DateTime.now().millisecondsSinceEpoch) {
       await clear();
       throw StateError('School returned an invalid login session.');
     }
     schoolToken = login['sessionToken'] as String;
     person = Map<String, dynamic>.from(login['person'] ?? {});
-    schoolName=login['schoolName']?.toString() ?? newLink.projectId;
-    messaging=login['messaging'] is Map ? Map<String,dynamic>.from(login['messaging']) : null;
-    if(messaging!=null && messaging!['projectId']!=newLink.projectId) {
-      await clear();throw StateError('School messaging project mismatch');
+    schoolName = login['schoolName']?.toString() ?? newLink.projectId;
+    messaging = login['messaging'] is Map
+        ? Map<String, dynamic>.from(login['messaging'])
+        : null;
+    if (messaging != null && messaging!['projectId'] != newLink.projectId) {
+      await clear();
+      throw StateError('School messaging project mismatch');
     }
     await _secure.write(
-        key: 'vs_mobile_session',
-        value: jsonEncode({
-          'qr': newLink.rawQr,
-          'schoolToken': schoolToken,
-          'messaging': messaging,
-          'person': person,
-          'schoolName': schoolName,
-          'expiresAt': login['expiresAt']
-        }));
+      key: 'vs_mobile_session',
+      value: jsonEncode({
+        'qr': newLink.rawQr,
+        'schoolToken': schoolToken,
+        'messaging': messaging,
+        'person': person,
+        'schoolName': schoolName,
+        'expiresAt': login['expiresAt'],
+      }),
+    );
   }
 
   Future<void> logout() async {

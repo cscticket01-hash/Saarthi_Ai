@@ -1,8 +1,8 @@
+import 'fitted_document_preview.dart';
 import 'windows_connect/school_drive_images.dart';
 import 'windows_ui_localization.dart';
 
 import 'dart:typed_data';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'package:printing/printing.dart';
@@ -31,15 +31,21 @@ class WindowsDocumentTemplates {
     final u = Uri.tryParse(raw?.toString() ?? '');
     if (u == null || u.scheme != 'https') return null;
     try {
-      return await schoolImageBytes(u.toString()).timeout(const Duration(milliseconds: 600), onTimeout:()=>null);
+      return await schoolImageBytes(u.toString())
+          .timeout(const Duration(milliseconds: 600), onTimeout: () => null);
     } catch (_) {}
     return null;
   }
 
   static String _documentDate(dynamic timestamp) {
-    final date = timestamp is Timestamp ? timestamp.toDate()
-        : timestamp is num ? DateTime.fromMillisecondsSinceEpoch(timestamp.toInt()) : null;
-    return date == null ? '-' : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+    final date = timestamp is Timestamp
+        ? timestamp.toDate()
+        : timestamp is num
+        ? DateTime.fromMillisecondsSinceEpoch(timestamp.toInt())
+        : null;
+    return date == null
+        ? '-'
+        : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 
   static Future<Uint8List?> _personPhoto(Map<String, dynamic> data) async {
@@ -47,7 +53,9 @@ class WindowsDocumentTemplates {
     if (url.isNotEmpty) return _image(url);
     final raw = data['photoBase64']?.toString().trim() ?? '';
     if (raw.isEmpty) return null;
-    return _image(raw.startsWith('data:image/') ? raw : 'data:image/jpeg;base64,$raw');
+    return _image(
+      raw.startsWith('data:image/') ? raw : 'data:image/jpeg;base64,$raw',
+    );
   }
 
   static Future<Uint8List?> selected(
@@ -55,30 +63,37 @@ class WindowsDocumentTemplates {
     Map<String, dynamic> data, {
     String qr = '',
   }) async {
-    final origin=FirebaseFirestore.instance.activeProfileId;
-    if (data['schoolId']!=null && data['schoolId']!=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']) throw StateError('Another school document is not accessible.');
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    if (data['schoolId'] != null &&
+        data['schoolId'] !=
+            FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])
+      throw StateError('Another school document is not accessible.');
     final v = (await selections())[kind];
-    final profile = (await FirebaseFirestore.instance
+    final profile =
+        (await FirebaseFirestore.instance
                 .collection('school_config')
                 .doc('school_profile_cache')
                 .get())
             .data() ??
         {};
-    if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed during document preview.');
+    if (FirebaseFirestore.instance.activeProfileId != origin)
+      throw StateError('School changed during document preview.');
     final assets = await Future.wait<Uint8List?>([
       _personPhoto(data),
       _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
       _image(data['principalSignatureUrl'] ?? profile['principalSignatureUrl']),
       _image(profile['sealUrl']),
     ]);
-    if (FirebaseFirestore.instance.activeProfileId != origin) throw StateError('School changed during document preview.');
+    if (FirebaseFirestore.instance.activeProfileId != origin)
+      throw StateError('School changed during document preview.');
     if (kind == 'studentId') {
       return renderWindowsStudentId(
         template: windowsStudentIdIndex(v),
         data: {
           'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
           ...data,
-          if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty) 'schoolName': profile['schoolName'],
+          if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty)
+            'schoolName': profile['schoolName'],
         },
         qr: qr,
         photo: assets[0],
@@ -95,10 +110,12 @@ class WindowsDocumentTemplates {
         'schoolAddress': profile['address'] ?? '',
         'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
         ...data,
-        if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty) 'schoolName': profile['schoolName'],
+        if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty)
+          'schoolName': profile['schoolName'],
         'schoolAddress': profile['address'] ?? '',
         'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
-        if (kind == 'reportCard' && (data['dateText']?.toString().trim().isEmpty ?? true))
+        if (kind == 'reportCard' &&
+            (data['dateText']?.toString().trim().isEmpty ?? true))
           'dateText': _documentDate(data['timestamp']),
       },
       qr: qr,
@@ -109,14 +126,48 @@ class WindowsDocumentTemplates {
     );
   }
 
-  static Future<Uint8List?> renderTemplate(String kind, int index, Map<String,dynamic> data) async {
+  static Future<Uint8List?> renderTemplate(
+    String kind,
+    int index,
+    Map<String, dynamic> data,
+  ) async {
     final origin = FirebaseFirestore.instance.activeProfileId;
-    final profile=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data()??{};
-    final branding={...data,...profile,'schoolName':profile['schoolName']??'', 'schoolAddress':profile['address']??'', 'schoolEmail':profile['schoolEmail']??profile['email']??''};
-    final images=await Future.wait<Uint8List?>([_image(profile['logoUrl']),_image(profile['principalSignatureUrl']),_image(profile['sealUrl'])]);
-    if (FirebaseFirestore.instance.activeProfileId != origin) throw StateError('School changed during template preview.');
-    if(kind=='studentId') return renderWindowsStudentId(template:index,data:branding,logo:images[0],signature:images[1]);
-    return renderWindowsReferenceDocument(kind:kind,template:index,data:branding,logo:images[0],signature:images[1],seal:images[2]);
+    final profile =
+        (await FirebaseFirestore.instance
+                .collection('school_config')
+                .doc('school_profile_cache')
+                .get())
+            .data() ??
+        {};
+    final branding = {
+      ...data,
+      ...profile,
+      'schoolName': profile['schoolName'] ?? '',
+      'schoolAddress': profile['address'] ?? '',
+      'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
+    };
+    final images = await Future.wait<Uint8List?>([
+      _image(profile['logoUrl']),
+      _image(profile['principalSignatureUrl']),
+      _image(profile['sealUrl']),
+    ]);
+    if (FirebaseFirestore.instance.activeProfileId != origin)
+      throw StateError('School changed during template preview.');
+    if (kind == 'studentId')
+      return renderWindowsStudentId(
+        template: index,
+        data: branding,
+        logo: images[0],
+        signature: images[1],
+      );
+    return renderWindowsReferenceDocument(
+      kind: kind,
+      template: index,
+      data: branding,
+      logo: images[0],
+      signature: images[1],
+      seal: images[2],
+    );
   }
 
   static Future<void> preview(
@@ -126,56 +177,56 @@ class WindowsDocumentTemplates {
     String? notice,
     VoidCallback? onDownload,
     VoidCallback? onPrint,
-  }) =>
-      showDialog<void>(
-        context: context,
-        builder: (ctx) => Dialog(
-          child: SizedBox(
-            width: 900,
-            height: 680,
-            child: Column(
-              children: [
-                ListTile(
-                  title: Text(title),
-                  trailing: IconButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    icon: const Icon(Icons.close),
-                  ),
-                ),
-                if(notice!=null) Padding(padding:const EdgeInsets.symmetric(horizontal:16,vertical:8),child:Text(notice,textAlign:TextAlign.center)),
-                Expanded(
-                  child: LayoutBuilder(builder: (context, constraints) => PdfPreview(
-                    build: (_) => bytes,
-                    dpi: 200,
-                    canDebug: false,
-                    maxPageWidth: math.max(200, constraints.maxWidth - 36),
-                    allowPrinting: false,
-                    allowSharing: false,
-                    useActions: false,
-                    canChangePageFormat: false,
-                    canChangeOrientation: false,
-                  )),
-                ),
-                if (onDownload != null || onPrint != null)
-                  Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Wrap(spacing: 12, children: [
-                        if (onPrint != null)
-                          OutlinedButton.icon(
-                              onPressed: onPrint,
-                              icon: const Icon(Icons.print),
-                              label: const Text('Print ID Card')),
-                        if (onDownload != null)
-                          FilledButton.icon(
-                              onPressed: onDownload,
-                              icon: const Icon(Icons.download),
-                              label: const Text('Download PDF')),
-                      ])),
-              ],
+  }) => showDialog<void>(
+    context: context,
+    builder: (ctx) => Dialog(
+      child: SizedBox(
+        width: 900,
+        height: 680,
+        child: Column(
+          children: [
+            ListTile(
+              title: Text(title),
+              trailing: IconButton(
+                onPressed: () => Navigator.pop(ctx),
+                icon: const Icon(Icons.close),
+              ),
             ),
-          ),
+            if (notice != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Text(notice, textAlign: TextAlign.center),
+              ),
+            Expanded(child: FittedDocumentPreview(bytes: bytes)),
+            if (onDownload != null || onPrint != null)
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Wrap(
+                  spacing: 12,
+                  children: [
+                    if (onPrint != null)
+                      OutlinedButton.icon(
+                        onPressed: onPrint,
+                        icon: const Icon(Icons.print),
+                        label: const Text('Print ID Card'),
+                      ),
+                    if (onDownload != null)
+                      FilledButton.icon(
+                        onPressed: onDownload,
+                        icon: const Icon(Icons.download),
+                        label: const Text('Download PDF'),
+                      ),
+                  ],
+                ),
+              ),
+          ],
         ),
-      );
+      ),
+    ),
+  );
   static Future<bool> previewReport(
     BuildContext context,
     Map<String, dynamic> data,
@@ -209,11 +260,16 @@ class _SchoolDocumentTemplatesScreenState
     final kind = _kind;
     final sample = _sample;
     return _thumbnails.putIfAbsent('$kind:$index', () async {
-      final bytes = (await WindowsDocumentTemplates.renderTemplate(kind,index,sample))!;
+      final bytes = (await WindowsDocumentTemplates.renderTemplate(
+        kind,
+        index,
+        sample,
+      ))!;
       final page = await Printing.raster(bytes, pages: [0], dpi: 100).first;
       return page.toPng();
     });
   }
+
   @override
   void initState() {
     super.initState();
@@ -227,35 +283,39 @@ class _SchoolDocumentTemplatesScreenState
   }
 
   Map<String, dynamic> get _sample => {
-        'schoolName': '',
-        'name': _kind == 'teacherId' ? 'Ananya Sharma' : 'Arup Das',
-        'teacherId': 'T-0001',
-        'designation': 'Senior Teacher',
-        'subject': 'Mathematics',
-        'class': 'Class 5',
-        'studentClass': 'Class 5',
-        'rollNo': '12',
-        'parentName': 'Bikash Das',
-        'contact': '9876543210',
-        'address': '',
-        'district': 'Cachar',
-        'state': 'Assam',
-        'pinCode': '788001',
-        'dob': '15/03/2015',
-        'examName': 'Final Examination',
-        'marks': {'English': 84, 'Mathematics': 91, 'Science': 87},
-        'fullMarks': 100,
-        'totalMarks': 262,
-        'percentage': '87.3',
-        'result': 'PASS',
-        'receiptNo': 'VS-000124',
-        'dateText': '01/10/2026',
-        'feeItems': {'Tuition fee': 1000, 'Exam fee': 200},
-        'totalAmount': 1200,
-        'paymentMode': 'Cash',
-      };
+    'schoolName': '',
+    'name': _kind == 'teacherId' ? 'Ananya Sharma' : 'Arup Das',
+    'teacherId': 'T-0001',
+    'designation': 'Senior Teacher',
+    'subject': 'Mathematics',
+    'class': 'Class 5',
+    'studentClass': 'Class 5',
+    'rollNo': '12',
+    'parentName': 'Bikash Das',
+    'contact': '9876543210',
+    'address': '',
+    'district': 'Cachar',
+    'state': 'Assam',
+    'pinCode': '788001',
+    'dob': '15/03/2015',
+    'examName': 'Final Examination',
+    'marks': {'English': 84, 'Mathematics': 91, 'Science': 87},
+    'fullMarks': 100,
+    'totalMarks': 262,
+    'percentage': '87.3',
+    'result': 'PASS',
+    'receiptNo': 'VS-000124',
+    'dateText': '01/10/2026',
+    'feeItems': {'Tuition fee': 1000, 'Exam fee': 200},
+    'totalAmount': 1200,
+    'paymentMode': 'Cash',
+  };
   Future<void> _preview(int index) async {
-    final bytes = await WindowsDocumentTemplates.renderTemplate(_kind, index, _sample);
+    final bytes = await WindowsDocumentTemplates.renderTemplate(
+      _kind,
+      index,
+      _sample,
+    );
     if (mounted)
       await WindowsDocumentTemplates.preview(
         context,
@@ -269,163 +329,160 @@ class _SchoolDocumentTemplatesScreenState
         .collection('school_settings')
         .doc('document_templates')
         .set({
-      _kind: index,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+          _kind: index,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
     if (mounted) setState(() => _selected[_kind] = index);
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('School document templates')),
-        body: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _names.keys
-                    .map(
-                      (k) => ChoiceChip(
-                        label: Text(
-                          {
-                            'studentId': 'Student ID',
-                            'teacherId': 'Teacher ID',
-                            'reportCard': 'Report card',
-                            'receipt': 'Fee receipt',
-                          }[k]!,
-                        ),
-                        selected: _kind == k,
-                        onSelected: (_) => setState(() => _kind = k),
-                      ),
-                    )
-                    .toList(),
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Preview first, then select one layout for the whole school. Student and teacher ID layouts are stored separately.',
-                style: TextStyle(color: Colors.white54),
-              ),
-              const SizedBox(height: 20),
-              if (_loading) const LinearProgressIndicator(),
-              Expanded(
-                child: GridView.builder(
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 350,
-                    mainAxisExtent: 360,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
+    appBar: AppBar(title: const Text('School document templates')),
+    body: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _names.keys
+                .map(
+                  (k) => ChoiceChip(
+                    label: Text(
+                      {
+                        'studentId': 'Student ID',
+                        'teacherId': 'Teacher ID',
+                        'reportCard': 'Report card',
+                        'receipt': 'Fee receipt',
+                      }[k]!,
+                    ),
+                    selected: _kind == k,
+                    onSelected: (_) => setState(() => _kind = k),
                   ),
-                  itemCount: _names[_kind]!.length,
-                  itemBuilder: (ctx, n) {
-                    final i = n;
-                    final chosen = _kind == 'studentId'
-                        ? windowsStudentIdIndex(_selected[_kind])
-                        : windowsReferenceDocumentIndex(_kind, _selected[_kind]);
-                    final active = i == chosen;
-                    final portrait =
-                        (_kind == 'studentId' || _kind == 'teacherId') &&
-                            (_kind == 'studentId' ? i < 2 : i != 2);
-                    return Card(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        side: BorderSide(
-                          color:
-                              active ? const Color(0xFF00D9A5) : Colors.white12,
-                          width: active ? 2 : 1,
-                        ),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(18),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                )
+                .toList(),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'Preview first, then select one layout for the whole school. Student and teacher ID layouts are stored separately.',
+            style: TextStyle(color: Colors.white54),
+          ),
+          const SizedBox(height: 20),
+          if (_loading) const LinearProgressIndicator(),
+          Expanded(
+            child: GridView.builder(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 350,
+                mainAxisExtent: 360,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+              ),
+              itemCount: _names[_kind]!.length,
+              itemBuilder: (ctx, n) {
+                final i = n;
+                final chosen = _kind == 'studentId'
+                    ? windowsStudentIdIndex(_selected[_kind])
+                    : windowsReferenceDocumentIndex(_kind, _selected[_kind]);
+                final active = i == chosen;
+                final portrait =
+                    (_kind == 'studentId' || _kind == 'teacherId') &&
+                    (_kind == 'studentId' ? i < 2 : i != 2);
+                return Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(
+                      color: active ? const Color(0xFF00D9A5) : Colors.white12,
+                      width: active ? 2 : 1,
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
                           children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  _kind == 'teacherId'
-                                      ? Icons.school_outlined
-                                      : _kind == 'studentId'
-                                          ? Icons.badge_outlined
-                                          : Icons.description_outlined,
-                                  color: Colors.tealAccent,
-                                ),
-                                const Spacer(),
-                                if (active)
-                                  const Icon(
-                                    Icons.check_circle,
-                                    color: Colors.tealAccent,
-                                  ),
-                              ],
+                            Icon(
+                              _kind == 'teacherId'
+                                  ? Icons.school_outlined
+                                  : _kind == 'studentId'
+                                  ? Icons.badge_outlined
+                                  : Icons.description_outlined,
+                              color: Colors.tealAccent,
                             ),
-                            const SizedBox(height: 16),
-                            ...[
-                              Expanded(
-                                child: Center(
-                                  child: FutureBuilder<Uint8List>(
-                                    future: _thumbnail(i),
-                                    builder: (context, snapshot) => snapshot
-                                            .hasData
-                                        ? Image.memory(
-                                            snapshot.data!,
-                                            fit: BoxFit.contain,
-                                          )
-                                        : snapshot.hasError
-                                            ? const Text(
-                                                'Use Preview to view this design',
-                                              )
-                                            : const CircularProgressIndicator(),
-                                  ),
-                                ),
+                            const Spacer(),
+                            if (active)
+                              const Icon(
+                                Icons.check_circle,
+                                color: Colors.tealAccent,
                               ),
-                              const SizedBox(height: 12),
-                            ],
-                            Text(
-                              i < 0 ? 'Default' : _names[_kind]![i],
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              i < 0
-                                  ? 'Standard school layout'
-                                  : portrait
-                                      ? 'Front | Back • each 54 × 85.6 mm'
-                                      : _kind.endsWith('Id')
-                                          ? 'Front | Back • each 85.6 × 54 mm'
-                                          : 'Printable school document',
-                              style: const TextStyle(
-                                color: Colors.white54,
-                                fontSize: 12,
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        ...[
+                          Expanded(
+                            child: Center(
+                              child: FutureBuilder<Uint8List>(
+                                future: _thumbnail(i),
+                                builder: (context, snapshot) => snapshot.hasData
+                                    ? Image.memory(
+                                        snapshot.data!,
+                                        fit: BoxFit.contain,
+                                      )
+                                    : snapshot.hasError
+                                    ? const Text(
+                                        'Use Preview to view this design',
+                                      )
+                                    : const CircularProgressIndicator(),
                               ),
                             ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        Text(
+                          i < 0 ? 'Default' : _names[_kind]![i],
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          i < 0
+                              ? 'Standard school layout'
+                              : portrait
+                              ? 'Front | Back • each 54 × 85.6 mm'
+                              : _kind.endsWith('Id')
+                              ? 'Front | Back • each 85.6 × 54 mm'
+                              : 'Printable school document',
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
 
-                            Row(
-                              children: [
-                                OutlinedButton(
-                                  onPressed: () => _preview(i),
-                                  child: const Text('Preview'),
-                                ),
-                                const SizedBox(width: 10),
-                                FilledButton(
-                                  onPressed: active ? null : () => _select(i),
-                                  child: Text(
-                                    active ? 'Selected' : 'Use for school',
-                                  ),
-                                ),
-                              ],
+                        Row(
+                          children: [
+                            OutlinedButton(
+                              onPressed: () => _preview(i),
+                              child: const Text('Preview'),
+                            ),
+                            const SizedBox(width: 10),
+                            FilledButton(
+                              onPressed: active ? null : () => _select(i),
+                              child: Text(
+                                active ? 'Selected' : 'Use for school',
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 }
