@@ -90,20 +90,18 @@ void main(){
 
  testWidgets('Settings Sync reflects durable pending, conflict, running and acknowledged states',(tester)async{
   final engine=WindowsSyncEngine.instance;
-  await db.collection('teachers_directory').doc('status-teacher').set({'name':'Pending teacher'});
-  await engine.refreshDetails();engine.state.value=SchoolCloudState.localReady;
+  await tester.runAsync(()async{await db.collection('teachers_directory').doc('status-teacher').set({'name':'Pending teacher'});await engine.refreshDetails();});engine.state.value=SchoolCloudState.localReady;
   await tester.pumpWidget(const MaterialApp(home:Scaffold(body:SingleChildScrollView(child:WindowsSyncStatusCard()))));
   await tester.pump();expect(find.text('Pending: 1'),findsOneWidget);expect(find.textContaining('1 items pending'),findsOneWidget);
-  final item=(await db.collection('_windows_firebase_outbox').get()).docs.single;
-  await item.reference.set({'syncState':'conflict','lastError':'Record revision conflict'},const SetOptions(merge:true));
-  await engine.refreshDetails();await tester.pump();expect(find.textContaining('1 items need attention'),findsOneWidget);
+  final item=(await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get()))!.docs.single;
+  await tester.runAsync(()async{await item.reference.set({'syncState':'conflict','lastError':'Record revision conflict'},const SetOptions(merge:true));await engine.refreshDetails();});await tester.pump();expect(find.textContaining('1 items need attention'),findsOneWidget);
   await tester.tap(find.text('Details'));await tester.pumpAndSettle();expect(find.textContaining('status-teacher: conflict'),findsOneWidget);
   await tester.tap(find.text('Close'));await tester.pumpAndSettle();
   engine.state.value=SchoolCloudState.syncing;await tester.pump();
   expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Sync Now')).onPressed,isNull);
-  await item.reference.set({'syncState':'pending'},const SetOptions(merge:true));
+  await tester.runAsync(()async{await item.reference.set({'syncState':'pending'},const SetOptions(merge:true));
   await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},sendVersioned:(item)async=>'acknowledged-revision');
-  await engine.refreshDetails();engine.lastSuccessfulSync=DateTime(2026,10,6,10);engine.state.value=SchoolCloudState.synced;
+  await engine.refreshDetails();});engine.lastSuccessfulSync=DateTime(2026,10,6,10);engine.state.value=SchoolCloudState.synced;
   await tester.pump();expect(find.text('Pending: 0'),findsOneWidget);expect(find.textContaining('Sync Status • Synced'),findsOneWidget);
   expect(find.textContaining('2026-10-06'),findsOneWidget);
   await tester.pumpWidget(const SizedBox());engine.lastSuccessfulSync=null;engine.state.value=SchoolCloudState.localReady;
