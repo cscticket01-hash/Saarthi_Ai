@@ -1175,7 +1175,7 @@ class _LocalJsonDatabase {
         await file.readAsString(),
       );
 
-      if (decoded is Map) {
+      if (decoded is Map && (decoded['profiles'] is Map || decoded['collections'] is Map)) {
         final root = Map<String, dynamic>.from(decoded);
         _upgradeRootInMemory(root);
         WindowsServiceStatus.instance.healthy(
@@ -1194,7 +1194,7 @@ class _LocalJsonDatabase {
       final pending=File('${file.path}.pending');
       try {if(await pending.exists()){
         final decoded=jsonDecode(await pending.readAsString());
-        if(decoded is Map){final root=Map<String,dynamic>.from(decoded);_upgradeRootInMemory(root);return root;}
+        if(decoded is Map && (decoded['profiles'] is Map || decoded['collections'] is Map)){final root=Map<String,dynamic>.from(decoded);_upgradeRootInMemory(root);return root;}
       }}catch(_){}
       final backup = File('${file.path}.bak');
       try {
@@ -1202,7 +1202,7 @@ class _LocalJsonDatabase {
           final decoded = jsonDecode(
             await backup.readAsString(),
           );
-          if (decoded is Map) {
+          if (decoded is Map && (decoded['profiles'] is Map || decoded['collections'] is Map)) {
             final root = Map<String, dynamic>.from(decoded);
             _upgradeRootInMemory(root);
             return root;

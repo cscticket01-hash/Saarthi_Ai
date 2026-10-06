@@ -226,6 +226,8 @@ jobs:
         path: |
           build/windows-id-previews
           build/reference-document-previews
+          build/id-final-rasters
+          build/document-measurements.json
           lib/windows_reference_documents.dart
           test/windows_reference_documents_test.dart
     - name: Compile Windows school app
@@ -246,6 +248,7 @@ jobs:
         Copy-Item build/windows/x64/runner/Release build/windows-review -Recurse
         Set-Content build/windows-review/TEST-COMMIT.txt $env:GITHUB_SHA
         Copy-Item docs/windows-test-2.1.101.md build/windows-review/TEST-INSTRUCTIONS.md
+        Copy-Item school-backend/managed/SaarthiManagedAll.gs build/windows-review/REVIEW-SCHOOL-STORAGE.gs
     # The production upload path is verified with the injected native adapter.
     # Hosted-runner Win32 picker control automation has repeatedly timed out.
     # Only the final OS selection is reserved for the owner's real Windows PC.

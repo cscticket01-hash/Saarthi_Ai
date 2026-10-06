@@ -70,6 +70,8 @@ class SchoolCloudEngine extends ChangeNotifier {
   Timer? _retry;
   DateTime? _lastVerifyAttempt;
   int _failures = 0;
+  DateTime? _lastPresence;
+  bool _presenceRunning=false;
   bool get hasIdentity => identity != null;
   bool get canOpen => _localReady && _leaseUsable;
   bool get _leaseUsable =>
@@ -163,8 +165,21 @@ class SchoolCloudEngine extends ChangeNotifier {
         _notify();
         final due = Duration(minutes: _failures == 0 ? 15 : (1 << _failures.clamp(0,5)));
         if (_lastVerifyAttempt == null || _clock().difference(_lastVerifyAttempt!) >= due) unawaited(verify());
+        else if(canOpen && !_presenceRunning && (_lastPresence==null || _clock().difference(_lastPresence!)>=const Duration(seconds:60))) {
+          _presenceRunning=true;_lastPresence=_clock();
+          unawaited(_keepPresence().whenComplete(()=>_presenceRunning=false));
+        }
       });
     }
+  }
+
+  Future<void> _keepPresence() async {
+    final token=access?['presenceToken'];
+    if(token is! String || token.isEmpty){await verify();return;} // Older broker compatibility.
+    final origin=identity;
+    if(origin==null)return;
+    try {await ManagedSchoolSession.callForSchool(origin['schoolId'],'managed/presence',{'presenceToken':token});}
+    catch(_){await verify();}
   }
 
   Future<void> _checkpoint(int generation) async {
