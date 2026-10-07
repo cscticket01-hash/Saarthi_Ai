@@ -1,3 +1,4 @@
+import 'package:crypto/crypto.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -184,6 +185,13 @@ class WindowsLocalStorage {
       return;
     }
 
+    final normalizedCurrent=_normalize(current.absolute.path),normalizedTarget=_normalize(target.absolute.path);
+    if(normalizedCurrent.startsWith('$normalizedTarget\\')||normalizedTarget.startsWith('$normalizedCurrent\\'))
+      throw StateError('Select a separate folder outside the current school data folder.');
+    final targetDb=File('${target.path}${Platform.pathSeparator}$databaseName');
+    if(await targetDb.exists()) throw StateError('Selected folder already contains a school database. Existing data retained; choose an empty folder.');
+    final targetFiles=Directory('${target.path}${Platform.pathSeparator}LocalFiles');
+    if(await targetFiles.exists() && !await targetFiles.list().isEmpty) throw StateError('Selected folder already contains school files. Existing data retained; choose an empty folder.');
     await target.create(recursive: true);
 
     final probe = File(
@@ -203,6 +211,7 @@ class WindowsLocalStorage {
         await oldDb.copy(
           '${target.path}${Platform.pathSeparator}$databaseName',
         );
+        if(await oldDb.readAsString()!=await targetDb.readAsString()) throw StateError('Local database copy verification failed; current folder retained.');
       }
 
       final oldDbBackup = File('${oldDb.path}.bak');
@@ -222,6 +231,31 @@ class WindowsLocalStorage {
             '${target.path}${Platform.pathSeparator}LocalFiles',
           ),
         );
+      }
+    }
+
+    // Rebase absolute local file references only after every file was copied.
+    // Old DB/files remain unchanged as the rollback generation.
+    dynamic rebase(dynamic value) {
+      if(value is Map)return value.map((k,v)=>MapEntry(k,rebase(v)));
+      if(value is List)return value.map(rebase).toList();
+      if(value is String) {
+        if(_normalize(value).startsWith('${_normalize(current.path)}\\'))
+          return '${target.path}${value.substring(current.path.length)}';
+        final uri=Uri.tryParse(value);
+        if(uri?.scheme=='file') {
+          final path=uri!.toFilePath(windows:Platform.isWindows);
+          if(_normalize(path).startsWith('${_normalize(current.path)}\\'))
+            return Uri.file('${target.path}${path.substring(current.path.length)}',windows:Platform.isWindows).toString();
+        }
+      }
+      return value;
+    }
+    for(final file in [targetDb,File('${targetDb.path}.bak')]) {
+      if(await file.exists()) {
+        final decoded=jsonDecode(await file.readAsString());
+        if(decoded is! Map)throw StateError('Copied database is invalid; current folder retained.');
+        await file.writeAsString(jsonEncode(rebase(decoded)),flush:true);
       }
     }
 
@@ -269,7 +303,9 @@ class WindowsLocalStorage {
           '${target.path}${Platform.pathSeparator}$name';
 
       if (entity is File) {
-        await entity.copy(destination);
+        final copied=await entity.copy(destination);
+        if(await entity.length()!=await copied.length() || (await sha256.bind(entity.openRead()).first)!=(await sha256.bind(copied.openRead()).first))
+          throw StateError('File copy verification failed; current folder retained.');
       } else if (entity is Directory) {
         await _copyDirectory(entity, Directory(destination));
       }

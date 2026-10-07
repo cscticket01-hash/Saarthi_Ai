@@ -1,0 +1,27 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const {createAttendanceQueue}=require('../attendance-queue');
+const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32);
+function store(rows=new Map()) {return {rows,create:async(id,r)=>{if(rows.has(id))return false;rows.set(id,{...r});return true;},pending:async n=>[...rows.values()].filter(r=>r.state!=='completed'&&r.state!=='needsAttention').slice(0,n),claim:async(id,claim,now,expires)=>{const r=rows.get(id);if(!r||r.state==='processing'&&r.claimExpiresAt>now)return false;Object.assign(r,{state:'processing',claim,claimExpiresAt:expires});return true;},finish:async(id,claim,v)=>{if(rows.get(id).claim===claim)Object.assign(rows.get(id),v,{claim:'',claimExpiresAt:0});}};}
+const event=(school=A,person='pupil')=>({schoolId:school,role:'student',personId:person,day:'2026-10-07',mode:'entry',payload:{encrypted:'test'}});
+test('durable acknowledgement follows store commit; retries deduplicate stable intended event',async()=>{
+ const s=store(),q=createAttendanceQueue({store:s,deliver:async()=>[]});
+ const first=await q.enqueue(event()),retry=await q.enqueue(event());assert.equal(first.duplicate,false);assert.equal(retry.duplicate,true);assert.equal(s.rows.size,1);
+ const broken=createAttendanceQueue({store:{create:async()=>{throw Error('disk/db unavailable');}},deliver:async()=>[]});await assert.rejects(broken.enqueue(event()));
+});
+test('restart and crash during upload retain durable operation; verified retry completes once',async()=>{
+ const s=store();let time=1000,applied=new Set(),attempts=0;
+ const deliver=async(school,items)=>{attempts++;items.forEach(i=>applied.add(i.operationId));if(attempts===1)throw Error('crash after remote commit');return items.map(i=>({operationId:i.operationId,success:true}));};
+ const q=createAttendanceQueue({store:s,deliver,now:()=>time});await q.enqueue(event());await q.drain();assert.equal([...s.rows.values()][0].state,'retry');
+ time+=20000;const restarted=createAttendanceQueue({store:s,deliver,now:()=>time});await restarted.drain();assert.equal([...s.rows.values()][0].state,'completed');assert.equal(applied.size,1);
+});
+test('batching preserves School A/B and missing acknowledgements never complete operations',async()=>{
+ const s=store(),groups=[];const q=createAttendanceQueue({store:s,deliver:async(school,items)=>{groups.push({school,items});return school===A?items.map(i=>({operationId:i.operationId,success:true})):[];}});
+ await q.enqueue(event(A));await q.enqueue(event(B));await q.drain();assert.equal(groups.length,2);for(const g of groups)assert(g.items.every(i=>i.schoolId===g.school));
+ assert.equal([...s.rows.values()].find(i=>i.schoolId===B).state,'retry');
+});
+test('authoritative licence denial is retained for attention; temporary service error backs off',async()=>{
+ const s=store(),q=createAttendanceQueue({store:s,deliver:async(_,items)=>items.map(i=>({operationId:i.operationId,success:false,authoritative:true}))});
+ await q.enqueue(event());await q.drain();assert.equal([...s.rows.values()][0].state,'needsAttention');assert.equal(s.rows.size,1);
+});
+module.exports={store,event};

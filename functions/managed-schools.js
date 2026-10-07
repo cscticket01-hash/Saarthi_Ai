@@ -1,4 +1,5 @@
 'use strict';
+const {createAttendanceQueue,firestoreAttendanceStore}=require('./attendance-queue');
 const {randomUUID,randomBytes,createHash,createHmac,timingSafeEqual,createCipheriv,createDecipheriv}=require('node:crypto');
 const SCHOOL=/^vs-[a-f0-9]{32}$/;
 const COLLECTIONS=new Set(['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results']);
@@ -8,7 +9,57 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+ const mobileStates=new Map(),storageStates=new Map();
+ function invalidate(id){mobileStates.delete(id);storageStates.delete(id);}
+ async function cachedRead(cache,id,read){
+  const old=cache.get(id);if(old&&old.until>now())return old.promise;
+  if(cache.size>=5000)cache.delete(cache.keys().next().value);
+  const promise=read();const value={promise,until:now()+30000};cache.set(id,value);
+  try{return await promise;}catch(e){if(cache.get(id)===value)cache.delete(id);throw e;}
+ }
+ async function mobileState(id){return cachedRead(mobileStates,id,async()=>{
+  const [school,entitlement]=await Promise.all([db.doc('platform_schools/'+id).get(),db.doc('school_entitlements/'+id).get()]);
+  const e={...entitlement.data()};let licence;
+  if(e.status!=='trial')licence=await db.doc('platform_license_status/'+e.licenseHash).get();
+  return {school:school.exists?{...school.data()}:null,entitlement:entitlement.exists?e:null,licence:licence?.exists?{...licence.data()}:null};
+ });}
+ function attendancePermit(schoolId,sessionToken,policy,expiresAt){
+  if(!policy||typeof policy!=='object'||!['student','teacher'].includes(policy.role)||typeof policy.personId!=='string'||typeof policy.qrHash!=='string')return undefined;
+  const value=Buffer.from(JSON.stringify({...policy,purpose:'attendance',schoolId,sessionHash:hash(sessionToken),
+    expiresAt:Math.min(expiresAt,now()+900000,Date.parse(policy.day+'T00:00:00+05:30')+86400000)})).toString('base64url');
+  return value+'.'+createHmac('sha256',encryptionKey).update(value).digest('hex');
+ }
+ function verifyAttendance(schoolId,request){
+  const token=request.attendancePermit;
+  if(typeof token!=='string'||token.length>3000)fail(401,'Refresh school attendance verification.');
+  const parts=token.split('.');if(parts.length!==2||!/^[a-f0-9]{64}$/.test(parts[1]))fail(401,'Refresh school attendance verification.');
+  if(!timingSafeEqual(createHmac('sha256',encryptionKey).update(parts[0]).digest(),Buffer.from(parts[1],'hex')))fail(401,'Attendance verification rejected.');
+  let p;try{p=JSON.parse(Buffer.from(parts[0],'base64url').toString('utf8'));}catch{fail(401,'Attendance verification rejected.');}
+  if(p.purpose!=='attendance'||p.schoolId!==schoolId||p.expiresAt<=now()||p.sessionHash!==hash(String(request.sessionToken||''))||
+   p.role!==request.role||p.documentId!==request.personId||p.qrHash!==hash(p.role+'/'+request.personId+'/'+request.linkToken))fail(409,'Attendance verification expired or belongs to another person. Refresh school data and retry.');
+  if(p.open!==true)fail(400,'School is closed today. Attendance is disabled for everyone');
+  const lat=Number(request.latitude),lng=Number(request.longitude),accuracy=Number(request.accuracy),radius=Number(p.radiusMeters);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180||!Number.isFinite(accuracy)||accuracy<0||accuracy>radius||!Number.isFinite(radius)||radius<25||radius>200||!Number.isFinite(Number(p.latitude))||!Number.isFinite(Number(p.longitude)))fail(400,'Accurate school location required');
+  const rad=x=>x*Math.PI/180,h=Math.sin(rad(p.latitude-lat)/2)**2+Math.cos(rad(lat))*Math.cos(rad(p.latitude))*Math.sin(rad(p.longitude-lng)/2)**2;
+  if(6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))>radius)fail(400,'Attendance can be marked only within the school location');
+  return p;
+ }
+ const queue=createAttendanceQueue({store:attendanceStore||firestoreAttendanceStore(db),now,deliver:async(schoolId,items)=>{
+  const state=await mobileState(schoolId),e=state.entitlement;
+  if(!state.school||!e||!e.active||e.blocked||state.school.deletedAt) return items.map(i=>({operationId:i.operationId,success:false,authoritative:true}));
+  if(e.status!=='trial'){
+   if(!state.licence||state.licence.revoked||state.licence.schoolId!==schoolId)return items.map(i=>({operationId:i.operationId,success:false,authoritative:true}));
+   e.expiresAt=Number(state.licence.expiresAt?.toMillis?.()??state.licence.expiresAt);
+  }
+  const m={schoolId,entitlement:e};
+  if(!lease(m).allowed||e.status!=='trial'&&!e.activated)return items.map(i=>({operationId:i.operationId,success:false,authoritative:true}));
+  if(now()-Number(state.school.lastSeenAt||0)>90000)throw Error('School Windows app offline');
+  const result=await signed(m,{action:'managed_attendance_batch',lease:{schoolId,expiresAt:lease(m).expiresAt},
+   operations:items.map(i=>({operationId:i.operationId,request:{...JSON.parse(unprotect(i.payload,encryptionKey)),operationId:i.operationId,submittedAt:i.createdAt}}))});
+  if(!Array.isArray(result.acknowledgements))throw Error('Attendance acknowledgement missing');
+  return result.acknowledgements;
+ }});
  const pairingTickets=new Map();
  function presence(m,access){
   if(!access.allowed||access.status!=='trial'&&!access.activated)return undefined;
@@ -32,7 +83,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  if(entitlement.status!=='trial'&&entitlement.licenseHash){const licence=await db.doc('platform_license_status/'+entitlement.licenseHash).get();if(!licence.exists||licence.data().schoolId!==id||licence.data().revoked!==false){entitlement.expiresAt=0;}else{const end=licence.data().expiresAt;entitlement.expiresAt=typeof end?.toMillis==='function'?end.toMillis():Number(end||0);}}
  return {uid:u.uid,schoolId:id,entitlement};}
  function lease(m){const e=m.entitlement,t=now(),paid=e.status!=='trial',end=Number(e.expiresAt||0);return {success:true,managed:true,schoolId:m.schoolId,uid:m.uid,projectId,serverTime:t,activated:e.activated===true,expiresAt:end,allowed:e.startsAt<=t&&end>t,status:e.startsAt>t?'pending':end>t?(paid?'licensed':'trial'):'expired'};}
- async function signed(m,body){const s=await db.doc('school_storage_private/'+m.schoolId).get();if(!s.exists||s.data().ready!==true)fail(409,'Developer must connect this school Apps Script first');const c=s.data(),payload=JSON.stringify(body),timestamp=now(),nonce=randomBytes(24).toString('hex'),signature=createHmac('sha256',unprotect(c.secret,encryptionKey)).update(m.schoolId+'\n'+timestamp+'\n'+nonce+'\n'+payload).digest('hex');let url=scriptUrl(c.url);let response=await fetchImpl(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify({schoolId:m.schoolId,timestamp,nonce,payload,signature}),signal:AbortSignal.timeout(90000)});if([301,302,303].includes(response.status)){const target=new URL(response.headers.get('location'));if(target.protocol!=='https:'||target.hostname!=='script.googleusercontent.com'||target.username||target.password)fail(502,'Unexpected script redirect');response=await fetchImpl(target.href,{redirect:'error',signal:AbortSignal.timeout(90000)});}if(!response.ok)fail(502,'School script request failed');const raw=await response.text();if(raw.length>30*1024*1024)fail(502,'School script response is too large');let out;try{out=JSON.parse(raw);}catch{fail(502,'School script returned invalid JSON');}if(out.schoolId!==m.schoolId)fail(502,'School script identity or operation failed');if(out.success!==true){if(out.message==='Record revision conflict')fail(409,'Record revision conflict');const safe=['This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.','Ask your school to regenerate this ID card.','Class, roll number or date of birth is incorrect','School session expired. Scan your ID again.','School record or ID card was changed; scan again'];if(body.action==='managed_mobile'&&safe.includes(out.message))fail(403,out.message);fail(502,'School script identity or operation failed');}return out;}
+ async function signed(m,body){const s=await cachedRead(storageStates,m.schoolId,()=>db.doc('school_storage_private/'+m.schoolId).get());if(!s.exists||s.data().ready!==true)fail(409,'Developer must connect this school Apps Script first');const c=s.data(),payload=JSON.stringify(body),timestamp=now(),nonce=randomBytes(24).toString('hex'),signature=createHmac('sha256',unprotect(c.secret,encryptionKey)).update(m.schoolId+'\n'+timestamp+'\n'+nonce+'\n'+payload).digest('hex');let url=scriptUrl(c.url);let response=await fetchImpl(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify({schoolId:m.schoolId,timestamp,nonce,payload,signature}),signal:AbortSignal.timeout(90000)});if([301,302,303].includes(response.status)){const target=new URL(response.headers.get('location'));if(target.protocol!=='https:'||target.hostname!=='script.googleusercontent.com'||target.username||target.password)fail(502,'Unexpected script redirect');response=await fetchImpl(target.href,{redirect:'error',signal:AbortSignal.timeout(90000)});}if(!response.ok)fail(502,'School script request failed');const raw=await response.text();if(raw.length>30*1024*1024)fail(502,'School script response is too large');let out;try{out=JSON.parse(raw);}catch{fail(502,'School script returned invalid JSON');}if(out.schoolId!==m.schoolId)fail(502,'School script identity or operation failed');if(out.success!==true){if(out.message==='Record revision conflict')fail(409,'Record revision conflict');const safe=['This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.','Ask your school to regenerate this ID card.','Class, roll number or date of birth is incorrect','School session expired. Scan your ID again.','School session expired','School login required','School identity mismatch','This QR does not belong to the active school','School record or ID card was changed; scan again'];if(body.action==='managed_mobile'&&safe.includes(out.message))fail(403,out.message);fail(502,'School script identity or operation failed');}return out;}
  async function scriptRequest(url,body){
   let response=await fetchImpl(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
   if([301,302,303].includes(response.status)){const target=new URL(response.headers.get('location'));if(target.protocol!=='https:'||target.hostname!=='script.googleusercontent.com'||target.username||target.password)fail(502,'Unexpected script redirect');response=await fetchImpl(target.href,{redirect:'error',signal:AbortSignal.timeout(30000)});}
@@ -40,7 +91,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   const raw=await response.text();if(raw.length>8192)fail(502,'Invalid school script connection response');
   try{return JSON.parse(raw);}catch{fail(502,'Update this school managed Apps Script deployment before connecting');}
  }
- return async req=>{
+ const handler=async req=>{
  const b=req.body||{},action=b.action;if(req.method!=='POST')fail(405,'Use POST');
  // This capability authorizes ONLY a bounded presence write, never school data.
  // Membership/licence revocation is rechecked when the 15-minute lease renews.
@@ -58,7 +109,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   ticket.used=true;return {success:true,schoolId:m.schoolId};
  }
  if(action?.startsWith('developer/managed/')){
-  const admin=await developer(req),id=b.schoolId;if(action==='developer/managed/create'){
+  const admin=await developer(req),id=b.schoolId;invalidate(id);if(action==='developer/managed/create'){
    const email=String(b.email||'').trim().toLowerCase(),name=String(b.schoolName||'').trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||name.length<2||name.length>160)fail(400,'School name and valid login email required');
    const password=b.password;
    if(password!==undefined&&(typeof password!=='string'||password.length<12||password.length>128))fail(400,'Use an initial password of 12–128 characters');
@@ -103,24 +154,32 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
    let r=await fetchImpl(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify({schoolId:id,timestamp,nonce,payload,signature}),signal:AbortSignal.timeout(30000)});if([301,302,303].includes(r.status)){const u=new URL(r.headers.get('location'));if(u.protocol!=='https:'||u.hostname!=='script.googleusercontent.com'||u.username||u.password)fail(502,'Unexpected script redirect');r=await fetchImpl(u.href,{redirect:'error',signal:AbortSignal.timeout(30000)});}if(!r.ok)fail(502,'School script is unavailable');const result=await r.json();if(result.schoolId!==id||result.success!==true||result.storageReady!==true)fail(409,'Script is not prepared for this school');if(old.exists&&old.data().url!==url&&b.replace!==true)fail(409,'Existing storage retained. Explicit replacement required');
    await db.doc('school_storage_private/'+id).set(staged);await db.doc('platform_schools/'+id).set({storageReady:true,storageCheckedAt:now()},{merge:true});
   }else fail(400,'Unknown developer operation');
-  await db.collection('platform_audit').add({action,schoolId:id,actor:admin.uid,at:now()});return {success:true};
+  await db.collection('platform_audit').add({action,schoolId:id,actor:admin.uid,at:now()});invalidate(id);return {success:true};
  }
  if(action==='managed/mobile'){
   if(!SCHOOL.test(b.schoolId||''))fail(400,'Invalid school ID');
-  const school=await db.doc('platform_schools/'+b.schoolId).get(),entitlement=await db.doc('school_entitlements/'+b.schoolId).get();
-  if(!school.exists||school.data().managed!==true||school.data().deletedAt||!entitlement.exists||!entitlement.data().active||entitlement.data().blocked)fail(403,'Unable to connect: school is unavailable');
-  const e={...entitlement.data()};
-  if(e.status!=='trial'){const licence=await db.doc('platform_license_status/'+e.licenseHash).get();if(!licence.exists||licence.data().revoked!==false||licence.data().schoolId!==b.schoolId)fail(403,'Unable to connect: school licence is inactive');const end=licence.data().expiresAt;e.expiresAt=typeof end?.toMillis==='function'?end.toMillis():Number(end||0);}
+  const state=await mobileState(b.schoolId),school=state.school,entitlement=state.entitlement;
+  if(!school||school.managed!==true||school.deletedAt||!entitlement||!entitlement.active||entitlement.blocked)fail(403,'Unable to connect: school is unavailable');
+  const e={...entitlement};
+  if(e.status!=='trial'){const licence=state.licence;if(!licence||licence.revoked!==false||licence.schoolId!==b.schoolId)fail(403,'Unable to connect: school licence is inactive');const end=licence.expiresAt;e.expiresAt=typeof end?.toMillis==='function'?end.toMillis():Number(end||0);}
   const m={schoolId:b.schoolId,entitlement:e};
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
-  const seen=Number(school.data().lastSeenAt||0);
+  const seen=Number(school.lastSeenAt||0);
   if(seen>now()||now()-seen>90000)fail(409,'Unable to connect: school Windows app is offline');
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_asset','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
-  return signed(m,{action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(b.request.action==='mobile_mark_attendance'&&b.request.attendancePermit){
+   const permit=verifyAttendance(b.schoolId,b.request);
+   const result=await queue.enqueue({schoolId:b.schoolId,role:permit.role,personId:permit.personId,day:permit.day,mode:b.request.mode==='exit'?'exit':'entry',payload:protect(JSON.stringify({...b.request,attendancePermit:undefined}),encryptionKey)});
+   return {success:true,schoolId:b.schoolId,projectId:b.schoolId,...result};
+  }
+  const result=await signed(m,{action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
+  if(result.attendancePolicy) result.attendancePermit=attendancePermit(b.schoolId,b.request.sessionToken||result.sessionToken,result.attendancePolicy,e.expiresAt);
+  delete result.attendancePolicy;
+  return {...result,policyExpiresAt:Math.min(e.expiresAt,now()+72*3600000)};
  }
  const m=await identity(req,b.schoolId);
  if(action==='managed/session'){const access=lease(m);await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:access.allowed?now():0},{merge:true});const storage=await db.doc('school_storage_private/'+m.schoolId).get();return {...access,presenceToken:presence(m,access),storageReady:storage.exists&&storage.data().ready===true,scriptUrl:storage.exists?storage.data().url:''};}
- if(action==='managed/disconnect'){await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:0},{merge:true});return {success:true};}
+ if(action==='managed/disconnect'){invalidate(m.schoolId);await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:0},{merge:true});return {success:true};}
  if(action==='managed/summary'){
   if(!lease(m).allowed||m.entitlement.status!=='trial'&&m.entitlement.activated!==true)fail(403,'School licence is inactive');
   const school=await db.doc('platform_schools/'+m.schoolId).get();
@@ -165,6 +224,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   return {success:true,schoolId:m.schoolId,registrationState,profile:recovered,storageReady:storage.exists&&storage.data().ready===true};
  }
  if(action==='managed/storage/connect'){
+ invalidate(m.schoolId);
   const url=scriptUrl(b.scriptUrl),ref=db.doc('school_storage_private/'+m.schoolId),old=await ref.get();
   if(old.exists&&old.data().ready===true){
    if(old.data().url!==url){if(b.replace!==true||b.expectedScriptUrl!==old.data().url)fail(409,'Existing storage retained. Confirm the current school Drive connection before replacement');}
@@ -202,5 +262,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  if(action==='managed/restore'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid backup file ID');return signed(m,{action:'managed_restore',fileId:b.fileId});}
  fail(400,'Unknown managed school operation');
  };
+ handler.drainAttendance=queue.drain;handler.attendanceMetrics=queue.metrics;
+ return handler;
 }
 module.exports={createManagedSchools,scriptUrl,protect,unprotect,clean,COLLECTIONS};

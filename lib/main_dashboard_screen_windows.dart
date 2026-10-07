@@ -18431,7 +18431,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                       size: 16,
                                     ),
                                     label: const Text(
-                                      'Student All Documents',
+                                      'Student Inventory',
                                       style: TextStyle(
                                         fontSize: 10.5,
                                         fontWeight: FontWeight.w700,
@@ -20562,7 +20562,7 @@ class _StudentDocumentsScreenState
       backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Student All Documents'),
+        title: const Text('Student Inventory'),
       ),
       floatingActionButton: FloatingActionButton.extended(
         key: const ValueKey('student-document-upload'),

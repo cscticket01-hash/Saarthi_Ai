@@ -2,14 +2,14 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto'),vm=require('node:vm'),fs=require('node:fs');
 const {createManagedSchools,protect,unprotect,clean,scriptUrl}=require('../managed-schools');
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),key='c'.repeat(64),secret='d'.repeat(64),time=1800000000000;
-function fixture(fetchOverride){const docs=new Map(),users=new Map(),sent=[];
+function fixture(fetchOverride,options={}){const docs=new Map(),users=new Map(),sent=[];
  const snap=p=>({exists:docs.has(p),data:()=>docs.get(p)});
  const db={doc:p=>({path:p,get:async()=>snap(p),set:async(v,o)=>docs.set(p,o?.merge?{...docs.get(p),...v}:v)}),collection:name=>({add:async()=>{},where:(field,op,value)=>({limit:()=>({get:async()=>({empty:![...docs.entries()].some(([path,data])=>path.startsWith(name+'/')&&data[field]===value)})})})}),batch:()=>{const queue=[];return {create:(r,v)=>queue.push(()=>{assert(!docs.has(r.path));docs.set(r.path,v)}),set:(r,v,o)=>queue.push(()=>docs.set(r.path,o?.merge?{...docs.get(r.path),...v}:v)),commit:async()=>queue.forEach(f=>f())}}};
  db.runTransaction=async fn=>fn({get:async ref=>snap(ref.path),set:(ref,value,options)=>docs.set(ref.path,options?.merge?{...docs.get(ref.path),...value}:value)});
  const auth={verifyIdToken:async t=>{if(t==='developer')return {uid:'dev',developer:true};if(users.get(t)?.disabled)throw Error();if(!['A','B','forged','A-new-pc'].includes(t))throw Error();return {uid:['forged','A-new-pc'].includes(t)?'A':t,auth_time:time/1000-10,...(t==='forged'?{admin:true,schoolId:B}:{})}},createUser:async v=>{users.set('new',v);return {uid:'new'}},deleteUser:async u=>users.delete(u),generatePasswordResetLink:async e=>'https://reset.example/'+e,updateUser:async(u,v)=>users.set(u,{...users.get(u),...v}),revokeRefreshTokens:async()=>{}};
  for(const [uid,id]of [['A',A],['B',B]]){docs.set('school_memberships/'+uid,{schoolId:id,role:'school_admin',managed:true,active:true});docs.set('school_entitlements/'+id,{active:true,blocked:false,status:'trial',startsAt:time-1000,expiresAt:time+86400000});docs.set('platform_schools/'+id,{managed:true,authUid:uid,loginEmail:uid+'@school.example'});docs.set('school_storage_private/'+id,{url:'https://script.google.com/macros/s/'+id+'/exec',secret:protect(secret,key),ready:true});}
  const fetchImpl=async(url,opt)=>{sent.push({url,opt});if(fetchOverride)return fetchOverride(url,opt,body=>handle({method:'POST',headers:{},body}));const b=JSON.parse(opt.body);assert.equal(b.signature,crypto.createHmac('sha256',secret).update(b.schoolId+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex'));return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:b.schoolId,records:{},storageReady:true}),json:async()=>({success:true,schoolId:b.schoolId,storageReady:true})}};
- const handle=createManagedSchools({auth,db,projectId:'central',encryptionKey:key,fetchImpl,now:()=>time});const call=(body,token='A')=>handle({method:'POST',headers:{authorization:'Bearer '+token},body});return {docs,users,sent,call,db,auth};}
+ const handle=createManagedSchools({auth,db,projectId:'central',encryptionKey:key,fetchImpl,now:()=>time,...options});const call=(body,token='A')=>handle({method:'POST',headers:{authorization:'Bearer '+token},body});return {docs,users,sent,call,db,auth,handle};}
 test('only developer creates accounts; passwords never enter Firestore/dashboard',async()=>{const f=fixture(),b={action:'developer/managed/create',email:'new@school.example',schoolName:'New School'};await assert.rejects(f.call(b),e=>e.status===403);const r=await f.call(b,'developer');assert(r.passwordSetupLink);assert.equal(r.password,undefined);assert(!JSON.stringify([...f.docs.values()]).includes('password'));assert.equal(f.docs.get('school_memberships/new').schoolId,r.schoolId);assert.equal(f.docs.get('school_entitlements/'+r.schoolId).expiresAt,time+5*86400000);});
 test('forged tenant/developer claims never override membership',async()=>{const f=fixture();await assert.rejects(f.call({action:'managed/session',schoolId:B}),e=>e.status===403);await assert.rejects(f.call({action:'developer/managed/monitor'},'forged'),e=>e.status===403);assert.equal((await f.call({action:'managed/session'},'forged')).schoolId,A);});
 test('block, expiry, disable and membership revocation deny storage before forwarding',async()=>{for(const mode of ['block','expire','disable','membership']){const f=fixture(),e=f.docs.get('school_entitlements/'+A);if(mode==='block')e.blocked=true;if(mode==='expire')e.expiresAt=time;if(mode==='disable')e.active=false;if(mode==='membership')f.docs.get('school_memberships/A').active=false;await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read'}));assert.equal(f.sent.length,0);}});
@@ -278,4 +278,35 @@ test('broker forwards version CAS, operation identity and known collection revis
  const payload=JSON.parse(JSON.parse(f.sent[0].opt.body).payload);assert.equal(payload.operationId,'operation-0000000000000001');assert.equal(payload.expectedRecordRevision,'server-1');assert.equal(payload.data.schoolId,A);
  await f.call({action:'managed/records',collection:'school_notices',operation:'read',syncProtocol:2,knownRevision:'collection-1'});
  assert.equal(JSON.parse(JSON.parse(f.sent[1].opt.body).payload).knownRevision,'collection-1');
+});
+
+
+test('coalesced mobile school/storage policy uses three Firebase reads for 100 refreshes; block invalidates it',async()=>{
+ const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=time;
+ let reads=0;const doc=f.db.doc;f.db.doc=p=>{const r=doc(p),get=r.get;r.get=async()=>{reads++;return get();};return r;};
+ for(let i=0;i<100;i++)await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:'same'}});
+ assert.equal(reads,3);assert.equal(f.sent.length,100);
+ await f.call({action:'developer/managed/block',schoolId:A,blocked:true},'developer');
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:'same'}}),e=>e.status===403);
+});
+test('verified attendance permit -> encrypted durable queue -> batched school Drive acknowledgement; tampering/GPS/foreign school denied',async()=>{
+ const rows=new Map(),store={create:async(id,row)=>{if(rows.has(id))return false;rows.set(id,{...row});return true;},pending:async n=>[...rows.values()].filter(r=>r.state==='pending').slice(0,n),claim:async(id,claim)=>{rows.get(id).claim=claim;return true;},finish:async(id,claim,v)=>{assert.equal(rows.get(id).claim,claim);Object.assign(rows.get(id),v);}};
+ const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(time));
+ const f=fixture(async(url,opt)=>{
+  const envelope=JSON.parse(opt.body),payload=JSON.parse(envelope.payload);
+  const result=payload.action==='managed_attendance_batch'?{acknowledgements:payload.operations.map(i=>({operationId:i.operationId,success:true}))}:
+   {projectId:A,attendancePolicy:{role:'student',personId:'stable-pupil',documentId:'pupil',qrHash:crypto.createHash('sha256').update('student/pupil/'+'x'.repeat(48)).digest('hex'),day,open:true,latitude:24,longitude:92,radiusMeters:200}};
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,...result})};
+ },{attendanceStore:store});
+ f.docs.get('platform_schools/'+A).lastSeenAt=time;
+ const session='s'.repeat(64),verified=await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:session}});
+ const request={action:'mobile_mark_attendance',sessionToken:session,attendancePermit:verified.attendancePermit,role:'student',personId:'pupil',linkToken:'x'.repeat(48),latitude:24,longitude:92,accuracy:3,mode:'entry'};
+ const first=await f.call({action:'managed/mobile',schoolId:A,request});assert.equal(first.accepted,true);assert.equal(f.sent.length,1);assert.equal(rows.size,1);
+ assert(!JSON.stringify([...rows.values()]).includes(session));assert(!JSON.stringify([...rows.values()]).includes('x'.repeat(48)));
+ const duplicate=await f.call({action:'managed/mobile',schoolId:A,request});assert.equal(duplicate.duplicate,true);assert.equal(rows.size,1);
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,latitude:25}}),e=>e.status===400);
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,attendancePermit:request.attendancePermit+'x'}}),e=>e.status===401);
+ f.docs.get('platform_schools/'+B).lastSeenAt=time;
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:B,request}),e=>e.status===409);
+ await f.handle.drainAttendance();assert.equal([...rows.values()][0].state,'completed');assert.equal(f.sent.length,2);
 });

@@ -1,3 +1,4 @@
+import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
 import 'school_cloud_state.dart';
 import 'dart:async';
@@ -756,7 +757,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
 
     setState(() => _busy = true);
     try {
-      await WindowsLocalStorage.changeLocation(next);
+      await WindowsBackendBridge.changeLocalStorageLocation(next);
       await _refresh();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -850,11 +851,6 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
             runSpacing: 9,
             children: [
               OutlinedButton.icon(
-                onPressed: _busy ? null : WindowsLocalStorage.openFolder,
-                icon: const Icon(Icons.folder_open_rounded, size: 18),
-                label: const Text('Open Folder'),
-              ),
-              OutlinedButton.icon(
                 onPressed: _busy ? null : _backup,
                 icon: const Icon(Icons.backup_rounded, size: 18),
                 label: const Text('Backup Data'),
@@ -862,13 +858,9 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
               FilledButton.icon(
                 onPressed: _busy ? null : _changeLocation,
                 icon: const Icon(Icons.drive_file_move_rounded, size: 18),
-                label: const Text('Change HDD / Folder'),
+                label: const Text('Select / Change Folder'),
               ),
-              IconButton(
-                tooltip: WindowsUiLanguage.translate('Re-test local storage'),
-                onPressed: _busy ? null : _refresh,
-                icon: const Icon(Icons.refresh_rounded),
-              ),
+
             ],
           ),
           const SizedBox(height: 8),

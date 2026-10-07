@@ -6612,6 +6612,14 @@ function VS_managedHandle(e) {
     const b=VS_managedVerify(e);let result;
     if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
+    else if(b.action==='managed_attendance_batch'){
+      if(!Array.isArray(b.operations)||b.operations.length>25)throw new Error('Invalid attendance batch');
+      result={acknowledgements:b.operations.map(op=>{
+        if(!/^[a-f0-9]{64}$/.test(op.operationId||''))throw new Error('Invalid attendance operation');
+        try{VS_managedMobile(Object.assign({},op.request,{action:'mobile_mark_attendance',operationId:op.operationId}),b.lease);return {operationId:op.operationId,success:true};}
+        catch(e){const authoritative=/School (session expired|record or ID|licence|is closed)|already recorded|Check in before|Attendance can be marked|own school ID|Accurate school location/.test(e.message||'');return {operationId:op.operationId,success:false,authoritative:authoritative};}
+      })};
+    }
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
     else if(b.action==='managed_records'){const lock=LockService.getScriptLock();lock.waitLock(30000);try{result=VS_managedRecord(b);}finally{lock.releaseLock();}}
     else if(b.action==='managed_upload'){
@@ -6662,8 +6670,9 @@ function VS_managedMobile(request,lease) {
  if(!lease||lease.schoolId!==school||lease.expiresAt<=Date.now())throw new Error('School licence is inactive');
  function VS_project(){return school;}
  function VS_requireLicense(){if(lease.expiresAt<=Date.now())throw new Error('School licence expired');}
- function VS_records(col){return VS_managedRecord({operation:'read',collection:col}).records;}
- function VS_get(col,id){const d=VS_records(col)[id];return d?Object.assign({},d,{id:id}):null;}
+ const recordCache={};
+ function VS_records(col){return recordCache[col]||(recordCache[col]=VS_managedRecord({operation:'read',collection:col}).records);}
+ function VS_get(col,id){const files=VS_managedCollection(col).getFilesByName(Utilities.base64EncodeWebSafe(id)+'.json');if(!files.hasNext())return null;const raw=JSON.parse(files.next().getBlob().getDataAsString());if(files.hasNext()||raw.schoolId!==school||raw.id!==id)throw new Error('School identity mismatch');if(raw.data._syncDeleted)return null;return Object.assign({},raw.data,{id:id});}
  function VS_query(col,field,value){const records=VS_records(col);return Object.keys(records).filter(id=>!field||records[id][field]===value).map(id=>Object.assign({},records[id],{id:id}));}
  function VS_set(col,id,data){VS_managedRecord({operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})});return Object.assign({},data,{id:id});}
  function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecord({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
@@ -6711,22 +6720,51 @@ function VS_mobileAction(b){
  if(action==='mobile_asset')return VS_mobileAsset(b,session);
  if(action==='mobile_dashboard'){
   VS_touchPresence(session,b.version);
-  const profile=VS_mobileSchoolProfile();
-  const notices=VS_query('school_notices').sort((a,c)=>(c.timestamp||c.createdAt||0)-(a.timestamp||a.createdAt||0)).slice(0,100);
-  const result={person:VS_safePerson(session.person),school:profile,notices:notices,templates:VS_get('school_settings','document_templates')||{},calendar:VS_query('school_calendar'),calendarSettings:VS_get('school_settings','calendar')||{closedWeekdays:[0]}};
-  if(session.role==='student'){
-   result.reportCards=VS_own('exam_results',session);
-   result.fees=VS_own('fee_ledger',session);
-   result.payments=VS_own('fee_payments',session);
-  }else{result.salary=VS_query('teacher_salary','teacherId',session.person.teacherId||session.person.id);}
+  const props=PropertiesService.getScriptProperties(),known=b.knownRevisions||{};
+  const loc=VS_get('school_settings','school_location')||{},day=VS_day();
+  const policy={role:session.role,personId:session.personId,documentId:session.person.id,
+   qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,open:VS_isOpen(day),
+   latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200};
+  const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy};
+  const groups={school:'school_config',templates:'school_settings',notices:'school_notices',calendar:'school_calendar',documents:'documents'};
+  if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments'});
+  else groups.salary='teacher_salary';
+  Object.keys(groups).forEach(key=>{
+   const col=groups[key],revision=props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
+   if(known[key]===revision)return;
+   if(key==='school')result.school=VS_mobileSchoolProfile();
+   else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}
+   else if(key==='notices')result.notices=VS_query(col).sort((a,c)=>(c.timestamp||c.createdAt||0)-(a.timestamp||a.createdAt||0)).slice(0,100);
+   else if(key==='calendar')result.calendar=VS_query(col);
+   else if(key==='salary')result.salary=VS_query(col,'teacherId',session.person.teacherId||session.person.id);
+   else if(key==='documents'){
+    const docs=VS_own(col,session).filter(d=>!d.deleted&&!d._syncDeleted);
+    result.documents=docs.filter(d=>d.documentKind!=='idCard').map(d=>({documentId:d.id,documentName:d.documentName,mimeType:d.mimeType,sizeBytes:d.sizeBytes,documentRevision:d.documentRevision,contentHash:d.contentHash}));
+    const card=docs.find(d=>d.documentKind==='idCard'&&d.ownerRole===session.role);
+    result.idCardPackage=card?{documentId:card.id,documentRevision:card.documentRevision,contentHash:card.contentHash,sizeBytes:card.sizeBytes}:null;
+   } else result[key]=VS_own(col,session);
+  });
+  result.revisions=revisions;
+  result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',VS_safePerson(session.person)]));
+  if(b.knownRevision===result.revision)return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy};
+
   return result;
+ }
+ if(action==='mobile_document'){
+  const document=VS_get('documents',String(b.documentId||''));
+  if(!document||document.deleted||document._syncDeleted||
+   !((document.personId===session.personId)||(document.studentId===session.person.id&&(!document.ownerRole||document.ownerRole===session.role))))throw new Error('School document is not accessible');
+  if(b.knownRevision===document.documentRevision)return {unchanged:true,documentRevision:document.documentRevision};
+  const blob=VS_managedFile(document.fileId).getBlob(),bytes=blob.getBytes();
+  if(bytes.length>20*1024*1024)throw new Error('File limit exceeded');
+  return {base64:Utilities.base64Encode(bytes),mime:blob.getContentType(),documentRevision:document.documentRevision,contentHash:document.contentHash};
  }
  if(action==='mobile_attendance_list'){
   const month=String(b.month||'');if(!/^\d{4}-\d{2}$/.test(month))throw new Error('Select a month');
   return {attendance:VS_query('attendance_records','personId',session.personId).filter(d=>String(d.date||'').startsWith(month)),calendar:VS_query('school_calendar').filter(d=>d.id.startsWith(month)),calendarSettings:VS_get('school_settings','calendar')||{closedWeekdays:[0]}};
  }
  if(action==='mobile_mark_attendance'){
-  const day=VS_day();if(!VS_isOpen(day))throw new Error('School is closed today. Attendance is disabled for everyone');
+  const day=b.submittedAt?Utilities.formatDate(new Date(b.submittedAt),'Asia/Kolkata','yyyy-MM-dd'):VS_day();if(!VS_isOpen(day))throw new Error('School is closed today. Attendance is disabled for everyone');
   const loc=VS_get('school_settings','school_location')||{};const lat=Number(b.latitude),lng=Number(b.longitude);
   if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180)throw new Error('Enable your device location');
   if(loc.latitude===undefined||loc.longitude===undefined)throw new Error('School location is not configured');
@@ -6736,11 +6774,13 @@ function VS_mobileAction(b){
   const id=VS_hash(session.role+'/'+session.personId+'/'+day);const lock=LockService.getScriptLock();lock.waitLock(20000);
   try{
    const current=VS_get('attendance_records',id)||{};const mode=b.mode==='exit'?'exit':'entry';
+   const operationField=mode==='entry'?'entryOperationId':'exitOperationId';
+   if(b.operationId&&current[operationField]===b.operationId)return {message:'Attendance already recorded',record:current};
    if(mode==='entry'&&current.checkIn)throw new Error('Today’s check-in is already recorded');
    if(mode==='exit'&&!current.checkIn)throw new Error('Check in before checking out');
    if(mode==='exit'&&current.checkOut)throw new Error('Today’s check-out is already recorded');
    const doc=Object.assign({},current,{personId:session.personId,documentId:session.person.id,role:session.role,name:session.person.name||'',studentClass:session.person.class||'',rollNo:session.person.rollNo||'',date:day,source:'ANDROID_QR',updatedAt:Date.now()});delete doc.id;
-   doc[mode==='entry'?'checkIn':'checkOut']=Date.now();VS_set('attendance_records',id,doc);
+   doc[mode==='entry'?'checkIn':'checkOut']=b.submittedAt||Date.now();if(b.operationId)doc[operationField]=b.operationId;VS_set('attendance_records',id,doc);
    return {message:mode==='entry'?'Check-in recorded':'Check-out recorded',record:doc};
   }finally{lock.releaseLock();}
  }

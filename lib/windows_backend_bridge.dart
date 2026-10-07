@@ -1,3 +1,7 @@
+import 'document_processing_engine.dart';
+import 'school_qr_link.dart';
+import 'id_card_engine.dart';
+
 import 'package:crypto/crypto.dart' as crypto;
 
 import 'dart:typed_data';
@@ -41,7 +45,8 @@ class WindowsBackendBridge {
     return {
       ...await _handleLocal(action, body),
       'windowsLocalFallback': true,
-      'sessionOnly': !await FirebaseFirestore.instance.localPersistenceEnabled(),
+      'sessionOnly': !await FirebaseFirestore.instance
+          .localPersistenceEnabled(),
     };
   }
 
@@ -57,61 +62,140 @@ class WindowsBackendBridge {
     return next;
   }
 
+  static Future<void> changeLocalStorageLocation(String path) =>
+      _documentWrite(()=>FirebaseFirestore.instance.changeLocalStorageLocation(path));
   /// Lazy authenticated asset restore. Stable revision/hash filename avoids
   /// repeatedly downloading unchanged files; originals on this PC remain intact.
   static final Map<String, Future<Uint8List>> _documentRestores = {};
-  static Future<Uint8List> documentBytes(Map<String,dynamic> document, {
-    Future<Map<String,dynamic>> Function(String school,String fileId)? fetch,
+  static Future<Uint8List> documentBytes(
+    Map<String, dynamic> document, {
+    Future<Map<String, dynamic>> Function(String school, String fileId)? fetch,
   }) async {
-    final profile=FirebaseFirestore.instance.activeProfileId;
-    final key=jsonEncode([profile,document['schoolId'],document['fileId'],document['fileUrl'],document['documentRevision'],document['uploadedAt'],document['contentHash'],document['originalPath'],document['localPath']]);
-    final existing=_documentRestores[key];if(existing!=null)return existing;
-    final pending=_restoreDocumentBytes(document,fetch:fetch);_documentRestores[key]=pending;
-    try{return await pending;}finally{if(identical(_documentRestores[key],pending))_documentRestores.remove(key);}
-  }
-  static Future<Uint8List> _restoreDocumentBytes(Map<String,dynamic> document, {
-    Future<Map<String,dynamic>> Function(String school,String fileId)? fetch,
-  }) async {
-    final db=FirebaseFirestore.instance,origin=FirebaseFirestore.instance.activeProfileId;
-    final saved=await CentralSchoolCloud.saved(),school=saved['schoolId']?.toString()??'';
-    void own(){if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school ||
-      document['schoolId']!=school)throw StateError('Foreign school document blocked.');}
-    own();
-    if(!await db.localPersistenceEnabled())throw StateError('Verified local school context required.');
-    final root=await WindowsLocalStorage.localFilesDirectory();
-    final schoolRoot=Directory('${root.path}${Platform.pathSeparator}${_safeFileName(origin)}');
-    final local=document['originalPath']??document['localPath'];
-    if(local is String && await File(local).exists()) {
-      final canonical=await File(local).resolveSymbolicLinks(),safeRoot=await schoolRoot.resolveSymbolicLinks();
-      if(!canonical.startsWith('$safeRoot${Platform.pathSeparator}'))throw StateError('Foreign local document path blocked.');
-      own();final bytes=await File(canonical).readAsBytes();own();return bytes;
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    final key = jsonEncode([
+      profile,
+      document['schoolId'],
+      document['fileId'],
+      document['fileUrl'],
+      document['documentRevision'],
+      document['uploadedAt'],
+      document['contentHash'],
+      document['originalPath'],
+      document['localPath'],
+    ]);
+    final existing = _documentRestores[key];
+    if (existing != null) return existing;
+    final pending = _restoreDocumentBytes(document, fetch: fetch);
+    _documentRestores[key] = pending;
+    try {
+      return await pending;
+    } finally {
+      if (identical(_documentRestores[key], pending))
+        _documentRestores.remove(key);
     }
-    final id=document['fileId']?.toString()??schoolDriveFileIdForDocument(document['fileUrl']?.toString()??'');
-    if(!RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(id))throw StateError('Document cloud file is not available yet.');
-    final key=crypto.sha256.convert(utf8.encode('$school:$id:${document['documentRevision']??document['uploadedAt']}')).toString();
-    final directory=Directory('${root.path}${Platform.pathSeparator}${_safeFileName(origin)}${Platform.pathSeparator}restored_documents');
-    final cached=File('${directory.path}${Platform.pathSeparator}$key');
-    if(await cached.exists()){
-      own();final bytes=await cached.readAsBytes();
-      final hash=document['contentHash'];
-      if(bytes.isNotEmpty && bytes.length<=20*1024*1024 &&
-          (hash is! String || crypto.sha256.convert(bytes).toString()==hash)){own();return bytes;}
+  }
+
+  static Future<Uint8List> _restoreDocumentBytes(
+    Map<String, dynamic> document, {
+    Future<Map<String, dynamic>> Function(String school, String fileId)? fetch,
+  }) async {
+    final db = FirebaseFirestore.instance,
+        origin = FirebaseFirestore.instance.activeProfileId;
+    final saved = await CentralSchoolCloud.saved(),
+        school = saved['schoolId']?.toString() ?? '';
+    void own() {
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != school ||
+          document['schoolId'] != school)
+        throw StateError('Foreign school document blocked.');
+    }
+
+    own();
+    if (!await db.localPersistenceEnabled())
+      throw StateError('Verified local school context required.');
+    final root = await WindowsLocalStorage.localFilesDirectory();
+    final schoolRoot = Directory(
+      '${root.path}${Platform.pathSeparator}${_safeFileName(origin)}',
+    );
+    final local = document['originalPath'] ?? document['localPath'];
+    if (local is String && await File(local).exists()) {
+      final canonical = await File(local).resolveSymbolicLinks(),
+          safeRoot = await schoolRoot.resolveSymbolicLinks();
+      if (!canonical.startsWith('$safeRoot${Platform.pathSeparator}'))
+        throw StateError('Foreign local document path blocked.');
+      own();
+      final bytes = await File(canonical).readAsBytes();
+      own();
+      return bytes;
+    }
+    final id =
+        document['fileId']?.toString() ??
+        schoolDriveFileIdForDocument(document['fileUrl']?.toString() ?? '');
+    if (!RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(id))
+      throw StateError('Document cloud file is not available yet.');
+    final key = crypto.sha256
+        .convert(
+          utf8.encode(
+            '$school:$id:${document['documentRevision'] ?? document['uploadedAt']}',
+          ),
+        )
+        .toString();
+    final directory = Directory(
+      '${root.path}${Platform.pathSeparator}${_safeFileName(origin)}${Platform.pathSeparator}restored_documents',
+    );
+    final cached = File('${directory.path}${Platform.pathSeparator}$key');
+    if (await cached.exists()) {
+      own();
+      final bytes = await cached.readAsBytes();
+      final hash = document['contentHash'];
+      if (bytes.isNotEmpty &&
+          bytes.length <= 20 * 1024 * 1024 &&
+          (hash is! String ||
+              crypto.sha256.convert(bytes).toString() == hash)) {
+        own();
+        return bytes;
+      }
       // Retain a corrupt cache for diagnosis; replace it only after a valid download.
     }
-    final result=await (fetch??((s,id)=>ManagedSchoolSession.callForSchool(s,'managed/file/read',{'fileId':id})))(school,id);
+    final result =
+        await (fetch ??
+            ((s, id) => ManagedSchoolSession.callForSchool(
+              s,
+              'managed/file/read',
+              {'fileId': id},
+            )))(school, id);
     own();
-    if(result['success']!=true || result['schoolId']!=school || result['base64'] is! String)throw StateError('School document restore failed.');
-    final bytes=Uint8List.fromList(base64Decode(result['base64']));
-    if(bytes.isEmpty || bytes.length>20*1024*1024)throw StateError('Invalid restored document size.');
-    if(document['contentHash'] is String && crypto.sha256.convert(bytes).toString()!=document['contentHash'])throw StateError('Document hash mismatch.');
-    await directory.create(recursive:true);own();
-    final pending=File('${cached.path}.pending');await pending.writeAsBytes(bytes,flush:true);own();await pending.rename(cached.path);own();
+    if (result['success'] != true ||
+        result['schoolId'] != school ||
+        result['base64'] is! String)
+      throw StateError('School document restore failed.');
+    final bytes = Uint8List.fromList(base64Decode(result['base64']));
+    if (bytes.isEmpty || bytes.length > 20 * 1024 * 1024)
+      throw StateError('Invalid restored document size.');
+    if (document['contentHash'] is String &&
+        crypto.sha256.convert(bytes).toString() != document['contentHash'])
+      throw StateError('Document hash mismatch.');
+    await directory.create(recursive: true);
+    own();
+    final pending = File('${cached.path}.pending');
+    await pending.writeAsBytes(bytes, flush: true);
+    own();
+    await pending.rename(cached.path);
+    own();
     return bytes;
   }
+
   static String schoolDriveFileIdForDocument(String source) {
-    final uri=Uri.tryParse(source);
-    if(uri==null||uri.scheme!='https'||uri.host!='drive.google.com'||uri.userInfo.isNotEmpty)return '';
-    return RegExp(r'^/file/d/([A-Za-z0-9_-]{1,200})/view$').firstMatch(uri.path)?.group(1)??'';
+    final uri = Uri.tryParse(source);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'drive.google.com' ||
+        uri.userInfo.isNotEmpty)
+      return '';
+    return RegExp(r'^/file/d/([A-Za-z0-9_-]{1,200})/view$')
+            .firstMatch(uri.path)
+            ?.group(1) ??
+        '';
   }
 
   static Future<void> flushDocumentPending({
@@ -128,118 +212,134 @@ class WindowsBackendBridge {
         if (FirebaseFirestore.instance.activeProfileId != origin)
           throw StateError('School changed during document sync.');
         final record = queued.data();
-        if(record['syncState']=='conflict' || record['syncState']=='needsAttention')continue;
+        if (record['syncState'] == 'conflict' ||
+            record['syncState'] == 'needsAttention')
+          continue;
         try {
-        final identity = await CentralSchoolCloud.saved();
-        if (record['schoolId'] != identity['schoolId'] ||
-            FirebaseFirestore.instance.activeProfileId != origin)
-          throw StateError('Pending document belongs to another school.');
-        final path =
-            record['optimizedPath']?.toString() ??
-            record['localPath']?.toString() ??
-            '';
-        final generationPath = record['localPath'];
-        if (path.isEmpty && record['deleted'] != true)
-          throw StateError('Pending document file is missing.');
-        final bytes = record['deleted'] == true
-            ? <int>[]
-            : await File(path).readAsBytes();
-        if (FirebaseFirestore.instance.activeProfileId != origin)
-          throw StateError('School changed before upload.');
-        final payload = <String, dynamic>{
-          for (final key in [
-            'studentId',
-            'studentName',
-            'studentClass',
-            'rollNo',
-            'documentName',
-            'fileName',
-            'mimeType',
-            'uploadedBy',
-          ])
-            key: record[key],
-          'action': record['deleted'] == true
-              ? 'delete_student_document'
-              : 'upload_student_document',
-          'fileName': record['optimizedFileName'] ?? record['fileName'],
-          'mimeType': record['optimizedMimeType'] ?? record['mimeType'],
-          'documentId': queued.id,
-          'schoolId': record['schoolId'],
-          'documentRevision': record['documentRevision'],
-          'sizeBytes': record['sizeBytes'],
-          'sourceBytes': record['sourceBytes'],
-          'contentHash':crypto.sha256.convert(bytes).toString(),
-          'cleanupStatus': record['cleanupStatus'],
-          'targetMet': record['targetMet'],
-          'baseCloudRevision': record['baseCloudRevision'] ?? '',
-          'baseCloudUploadedAt': record['baseCloudUploadedAt'],
-          'fileBase64': base64Encode(bytes),
-        };
-        final result = await (send ?? _handleCentral)(payload);
-        if (result['success'] != true)
-          throw StateError('Document sync failed. Original retained.');
-        await _documentWrite(() async {
+          final identity = await CentralSchoolCloud.saved();
+          if (record['schoolId'] != identity['schoolId'] ||
+              FirebaseFirestore.instance.activeProfileId != origin)
+            throw StateError('Pending document belongs to another school.');
+          final path =
+              record['optimizedPath']?.toString() ??
+              record['localPath']?.toString() ??
+              '';
+          final generationPath = record['localPath'];
+          if (path.isEmpty && record['deleted'] != true)
+            throw StateError('Pending document file is missing.');
+          final bytes = record['deleted'] == true
+              ? <int>[]
+              : await File(path).readAsBytes();
           if (FirebaseFirestore.instance.activeProfileId != origin)
-            throw StateError('School changed during document sync.');
-          final ref = FirebaseFirestore.instance
-              .collection('_local_student_documents')
-              .doc(queued.id);
-          final current = (await ref.get()).data();
-          if (current?['localPath'] != generationPath ||
-              current?['deleted'] != record['deleted']) {
-            // The earlier version reached the cloud, but the replacement is
-            // still pending. Advance only its compare-and-set baseline.
-            if (current != null &&
-                current['baseCloudRevision'] == record['baseCloudRevision']) {
-              final baseline = result['document'] is Map
-                  ? result['document']['documentRevision']
-                  : null;
-              if (baseline != null) {
-                final batch = FirebaseFirestore.instance.batch();
-                batch.set(ref, {
-                  'cloudRevision': baseline,
-                  'baseCloudRevision': baseline,
-                }, SetOptions(merge: true));
-                batch.set(
-                  FirebaseFirestore.instance
-                      .collection('_windows_document_outbox')
-                      .doc(queued.id),
-                  {'baseCloudRevision': baseline},
-                  SetOptions(merge: true),
-                );
-                await batch.commit();
+            throw StateError('School changed before upload.');
+          final payload = <String, dynamic>{
+            for (final key in [
+              'studentId',
+              'studentName',
+              'studentClass',
+              'rollNo',
+              'documentName',
+              'fileName',
+              'mimeType',
+              'uploadedBy',
+              'documentKind',
+              'ownerRole',
+              'personId',
+              'inputRevision',
+            ])
+              key: record[key],
+            'action': record['deleted'] == true
+                ? 'delete_student_document'
+                : 'upload_student_document',
+            'fileName': record['optimizedFileName'] ?? record['fileName'],
+            'mimeType': record['optimizedMimeType'] ?? record['mimeType'],
+            'documentId': queued.id,
+            'schoolId': record['schoolId'],
+            'documentRevision': record['documentRevision'],
+            'sizeBytes': record['sizeBytes'],
+            'sourceBytes': record['sourceBytes'],
+            'contentHash': crypto.sha256.convert(bytes).toString(),
+            'cleanupStatus': record['cleanupStatus'],
+            'targetMet': record['targetMet'],
+            'baseCloudRevision': record['baseCloudRevision'] ?? '',
+            'baseCloudUploadedAt': record['baseCloudUploadedAt'],
+            'fileBase64': base64Encode(bytes),
+          };
+          final result = await (send ?? _handleCentral)(payload);
+          if (result['success'] != true)
+            throw StateError('Document sync failed. Original retained.');
+          await _documentWrite(() async {
+            if (FirebaseFirestore.instance.activeProfileId != origin)
+              throw StateError('School changed during document sync.');
+            final ref = FirebaseFirestore.instance
+                .collection('_local_student_documents')
+                .doc(queued.id);
+            final current = (await ref.get()).data();
+            if (current?['localPath'] != generationPath ||
+                current?['deleted'] != record['deleted']) {
+              // The earlier version reached the cloud, but the replacement is
+              // still pending. Advance only its compare-and-set baseline.
+              if (current != null &&
+                  current['baseCloudRevision'] == record['baseCloudRevision']) {
+                final baseline = result['document'] is Map
+                    ? result['document']['documentRevision']
+                    : null;
+                if (baseline != null) {
+                  final batch = FirebaseFirestore.instance.batch();
+                  batch.set(ref, {
+                    'cloudRevision': baseline,
+                    'baseCloudRevision': baseline,
+                  }, SetOptions(merge: true));
+                  batch.set(
+                    FirebaseFirestore.instance
+                        .collection('_windows_document_outbox')
+                        .doc(queued.id),
+                    {'baseCloudRevision': baseline},
+                    SetOptions(merge: true),
+                  );
+                  await batch.commit();
+                }
               }
+              return;
             }
-            return;
-          }
-          final batch = FirebaseFirestore.instance.batch();
-          batch.set(ref, {
-            'cloudFileUrl': result['fileUrl'],
-            'cloudRevision': result['document'] is Map
-                ? result['document']['documentRevision']
-                : record['baseCloudRevision'],
-            'cloudUploadedAt': result['document'] is Map
-                ? result['document']['uploadedAt']
-                : record['baseCloudUploadedAt'],
-            'syncState': 'Synced',
-          }, SetOptions(merge: true));
-          batch.delete(
-            FirebaseFirestore.instance
-                .collection('_windows_document_outbox')
-                .doc(queued.id),
-          );
-          await batch.commit();
-        });
-        } catch(error) {
-          if(FirebaseFirestore.instance.activeProfileId==origin)await _documentWrite(()async{
-            final current=(await queued.reference.get()).data();
-            if(current!=null && current['documentRevision']==record['documentRevision'] && current['localPath']==record['localPath']) {
-              final conflict=error.toString().toLowerCase().contains('conflict');
-              await queued.reference.set({'syncState':conflict?'conflict':'retry',
-                'retryCount':(current['retryCount'] as num? ?? 0).toInt()+1,
-                'lastError':conflict?'Document version conflict; local original retained.':'Document synchronization failed; local original retained.'},SetOptions(merge:true));
-            }
+            final batch = FirebaseFirestore.instance.batch();
+            batch.set(ref, {
+              'cloudFileUrl': result['fileUrl'],
+              'cloudRevision': result['document'] is Map
+                  ? result['document']['documentRevision']
+                  : record['baseCloudRevision'],
+              'cloudUploadedAt': result['document'] is Map
+                  ? result['document']['uploadedAt']
+                  : record['baseCloudUploadedAt'],
+              'syncState': 'Synced',
+            }, SetOptions(merge: true));
+            batch.delete(
+              FirebaseFirestore.instance
+                  .collection('_windows_document_outbox')
+                  .doc(queued.id),
+            );
+            await batch.commit();
           });
+        } catch (error) {
+          if (FirebaseFirestore.instance.activeProfileId == origin)
+            await _documentWrite(() async {
+              final current = (await queued.reference.get()).data();
+              if (current != null &&
+                  current['documentRevision'] == record['documentRevision'] &&
+                  current['localPath'] == record['localPath']) {
+                final conflict = error.toString().toLowerCase().contains(
+                  'conflict',
+                );
+                await queued.reference.set({
+                  'syncState': conflict ? 'conflict' : 'retry',
+                  'retryCount':
+                      (current['retryCount'] as num? ?? 0).toInt() + 1,
+                  'lastError': conflict
+                      ? 'Document version conflict; local original retained.'
+                      : 'Document synchronization failed; local original retained.',
+                }, SetOptions(merge: true));
+              }
+            });
           rethrow;
         }
       }
@@ -303,22 +403,44 @@ class WindowsBackendBridge {
             .get();
         if (FirebaseFirestore.instance.activeProfileId != originProfile)
           throw StateError('School changed while loading documents.');
-        final manifest = (await FirebaseFirestore.instance.collection('_windows_sync_manifest').get()).docs
-            .where((d)=>d.data()['collection']=='documents').expand((d)=>d.data()['deletedIds'] as List? ?? []).toSet();
+        final manifest =
+            (await FirebaseFirestore.instance
+                    .collection('_windows_sync_manifest')
+                    .get())
+                .docs
+                .where((d) => d.data()['collection'] == 'documents')
+                .expand((d) => d.data()['deletedIds'] as List? ?? [])
+                .toSet();
         final rows = <String, Map<String, dynamic>>{
           for (final d in remote.docs) d.id: {...d.data(), 'documentId': d.id},
-          for (final d in local.docs) d.id: d.data()['syncState']=='Synced' && remote.docs.any((r)=>r.id==d.id)
-            ? {...d.data(),...remote.docs.firstWhere((r)=>r.id==d.id).data(),
-                if(d.data()['cloudRevision']!=remote.docs.firstWhere((r)=>r.id==d.id).data()['documentRevision'])
-                  ...{'originalPath':null,'localPath':null}}
-            : d.data(),
+          for (final d in local.docs)
+            d.id:
+                d.data()['syncState'] == 'Synced' &&
+                    remote.docs.any((r) => r.id == d.id)
+                ? {
+                    ...d.data(),
+                    ...remote.docs.firstWhere((r) => r.id == d.id).data(),
+                    if (d.data()['cloudRevision'] !=
+                        remote.docs
+                            .firstWhere((r) => r.id == d.id)
+                            .data()['documentRevision']) ...{
+                      'originalPath': null,
+                      'localPath': null,
+                    },
+                  }
+                : d.data(),
         };
         return http.Response(
           jsonEncode({
             'success': true,
             'documents': rows.values
-                .where((r) => r['deleted'] != true && r['_syncDeleted']!=true &&
-                  !(r['syncState']=='Synced' && manifest.contains(r['documentId'])))
+                .where(
+                  (r) =>
+                      r['deleted'] != true &&
+                      r['_syncDeleted'] != true &&
+                      !(r['syncState'] == 'Synced' &&
+                          manifest.contains(r['documentId'])),
+                )
                 .toList(),
             'localFirst': true,
           }),
@@ -326,7 +448,9 @@ class WindowsBackendBridge {
         );
       }
       if (!await FirebaseFirestore.instance.localPersistenceEnabled())
-        throw StateError('Current school durable document storage is unavailable.');
+        throw StateError(
+          'Current school durable document storage is unavailable.',
+        );
       if (localAction['action'] == 'delete_student_document') {
         final result = await _documentWrite(() async {
           if (FirebaseFirestore.instance.activeProfileId != originProfile)
@@ -1054,7 +1178,9 @@ class WindowsBackendBridge {
       );
       await ensureSchool();
       await FirebaseFirestore.instance.applySyncedDocument(
-          FirebaseFirestore.instance.collection(collection).doc(id),centralSchoolData(data, school));
+        FirebaseFirestore.instance.collection(collection).doc(id),
+        centralSchoolData(data, school),
+      );
     }
 
     try {
@@ -1191,7 +1317,11 @@ class WindowsBackendBridge {
         );
         await ensureSchool();
         await FirebaseFirestore.instance.applySyncedDocument(
-            FirebaseFirestore.instance.collection('documents').doc(data['documentId']),null);
+          FirebaseFirestore.instance
+              .collection('documents')
+              .doc(data['documentId']),
+          null,
+        );
         return {'success': true};
       }
       final lists = {
@@ -1537,11 +1667,60 @@ class WindowsBackendBridge {
     };
   }
 
+  static String publishedIdCardId(String qr) {
+    final link = SchoolLink.parse(qr);
+    return 'ID-${crypto.sha256.convert(utf8.encode('${link.role}/${link.personId}'))}';
+  }
+
+  static Future<void> publishIdCard({
+    required Uint8List bytes,
+    required String qr,
+    required String kind,
+    required Map<String, dynamic> person,
+    required String inputRevision,
+  }) async {
+    final link = SchoolLink.parse(qr), db = FirebaseFirestore.instance;
+    if (!link.managed ||
+        link.schoolId != db.activeProfileIdentity['schoolSyncId'] ||
+        person['mobileLinkToken'] != link.linkToken)
+      throw StateError('Verified school ID owner required.');
+    if (!await db.localPersistenceEnabled())
+      throw StateError('Durable local school context required.');
+    final id = publishedIdCardId(qr);
+    await _documentWrite(() async {
+      final old =
+          (await db.collection('_local_student_documents').doc(id).get())
+              .data();
+      if (old?['inputRevision'] == inputRevision && old?['deleted'] != true)
+        return;
+      await _saveLocalStudentDocument({
+        '_queueCloud': true,
+        'replaceDocumentId': id,
+        'studentId': link.personId,
+        'studentName': person['name'],
+        'studentClass': person['class'],
+        'rollNo': person['rollNo'],
+        'documentKind': 'idCard',
+        'ownerRole': link.role,
+        'personId': person['mobileStableId'] ?? link.personId,
+        'inputRevision': inputRevision,
+        'qr': qr,
+        'documentName': 'School ID card • Front & back',
+        'fileName': '$id.pdf',
+        'mimeType': 'application/pdf',
+        'fileBase64': base64Encode(bytes),
+      });
+    });
+    onLocalDocumentCommitted?.call();
+  }
+
   static Future<Map<String, dynamic>> _saveLocalStudentDocument(
     Map<String, dynamic> body,
   ) async {
     final originProfile = FirebaseFirestore.instance.activeProfileId;
-    final owner = body['_queueCloud'] == true ? await CentralSchoolCloud.saved() : <String, dynamic>{};
+    final owner = body['_queueCloud'] == true
+        ? await CentralSchoolCloud.saved()
+        : <String, dynamic>{};
     final studentId = body['studentId']?.toString().trim() ?? '';
     if (studentId.isEmpty) {
       return {'success': false, 'message': 'Student ID missing.'};
@@ -1588,11 +1767,24 @@ class WindowsBackendBridge {
     Map<String, dynamic> processing = {};
     String? processingWarning;
     try {
-      processing = await DocumentPipeline.process(
-        Uint8List.fromList(bytes),
-        body['mimeType']?.toString() ?? '',
-        scope: originProfile,
-      );
+      if (body['documentKind'] == 'idCard') {
+        await IdCardEngine.verifyExport(
+          Uint8List.fromList(bytes),
+          body['qr'].toString(),
+        );
+        processing = {
+          'optimized': Uint8List.fromList(bytes),
+          'highQuality': Uint8List.fromList(bytes),
+          'mimeType': 'application/pdf',
+          'targetMet': bytes.length <= DocumentProcessingEngine.setTarget ~/ 8,
+          'cleanupStatus': 'Exact verified school-rendered front/back ID; vector/QR preserved',
+        };
+      } else
+        processing = await DocumentPipeline.process(
+          Uint8List.fromList(bytes),
+          body['mimeType']?.toString() ?? '',
+          scope: originProfile,
+        );
       optimized = processing['optimized'] as Uint8List;
       highQuality = processing['highQuality'] as Uint8List;
     } catch (e) {
@@ -1602,9 +1794,13 @@ class WindowsBackendBridge {
     }
     if (body['_queueCloud'] == true) {
       final current = await CentralSchoolCloud.saved();
-      if (current['managed'] != true || current['uid'] != owner['uid'] ||
+      if (current['managed'] != true ||
+          current['uid'] != owner['uid'] ||
           current['schoolId'] != owner['schoolId'] ||
-          current['schoolId'] != FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] ||
+          current['schoolId'] !=
+              FirebaseFirestore
+                  .instance
+                  .activeProfileIdentity['schoolSyncId'] ||
           FirebaseFirestore.instance.activeProfileId != originProfile ||
           !await FirebaseFirestore.instance.localPersistenceEnabled()) {
         throw StateError('School changed before durable document save.');
@@ -1612,7 +1808,10 @@ class WindowsBackendBridge {
     }
     await file.writeAsBytes(bytes, flush: true);
     final optimizedExtension = processing['mimeType'] == 'application/pdf'
-        ? 'pdf' : processing['mimeType'] == 'image/png' ? 'png' : 'jpg';
+        ? 'pdf'
+        : processing['mimeType'] == 'image/png'
+        ? 'png'
+        : 'jpg';
     final optimizedFile = File('${file.path}.optimized.$optimizedExtension');
     final highFile = File(
       '${file.path}.processed.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
@@ -1628,6 +1827,12 @@ class WindowsBackendBridge {
     // explicit retention policy removes them; a failed metadata write rolls back.
     final metadata = <String, dynamic>{
       'documentId': documentId,
+      if (body['documentKind'] == 'idCard') ...{
+        'documentKind': 'idCard',
+        'ownerRole': body['ownerRole'],
+        'personId': body['personId'],
+        'inputRevision': body['inputRevision'],
+      },
       'schoolId':
           FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
       'studentId': studentId,

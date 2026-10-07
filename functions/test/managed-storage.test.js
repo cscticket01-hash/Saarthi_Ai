@@ -9,7 +9,7 @@ function storage(){
  const roots={[A]:folder('rootA',A),[B]:folder('rootB',B)};
  const props=new Map([['VS_MANAGED_SCHOOL_ID',A],['VS_MANAGED_ROOT_ID','rootA'],['VS_MANAGED_SECRET',secret]]);
  const p={getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v),getProperties:()=>Object.fromEntries(props),deleteProperty:k=>props.delete(k)};
- const context=vm.createContext({Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},base64Decode:v=>[...Buffer.from(v,'base64')],newBlob:(bytes,mime,name)=>({bytes,mime,name}),computeDigest:(_,v)=>[...crypto.createHash('sha256').update(typeof v==='string'?v:Buffer.from(v)).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
+ const context=vm.createContext({Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},base64Decode:v=>[...Buffer.from(v,'base64')],base64Encode:v=>Buffer.from(v).toString('base64'),newBlob:(bytes,mime,name)=>({bytes,mime,name}),computeDigest:(_,v)=>[...crypto.createHash('sha256').update(typeof v==='string'?v:Buffer.from(v)).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),context);
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedMobile.gs','utf8'),context);
  const call=body=>{const b={schoolId:A,timestamp:Date.now(),nonce:crypto.randomBytes(24).toString('hex'),payload:JSON.stringify(body)};b.signature=crypto.createHmac('sha256',secret).update(A+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex');return context.VS_managedHandle({postData:{contents:JSON.stringify(b)}});};
@@ -130,4 +130,33 @@ test('document deletion retains explicit tombstone across PCs and blocks stale r
  assert.equal(f.call({...base,operation:'read'}).records.gone,undefined);
  assert.equal(f.call({...base,operation:'read',syncProtocol:2}).records.gone._syncDeleted,true);
  assert.equal(f.call({...base,operation:'write',expectedRevision:'r1',data:{schoolId:A,documentRevision:'stale'}}).success,false);
+});
+
+test('Windows version-safe notice write -> Android changed group -> unchanged checkpoint -> changed notice',()=>{
+ const f=storage(),write=(col,id,data,rev='')=>f.call({action:'managed_records',operation:'write',collection:col,id,syncProtocol:2,operationId:crypto.randomBytes(16).toString('hex'),expectedRecordRevision:rev,data:{schoolId:A,...data}});
+ write('students_directory','pupil',{name:'Mohit Das',class:'Class 1',rollNo:'1',dob:'2015-01-01',mobileLinkToken:'a'.repeat(48)});
+ const mobile=request=>f.call({action:'managed_mobile',request,lease:{schoolId:A,expiresAt:Date.now()+3600000}});
+ const login=mobile({action:'mobile_login',projectId:A,role:'student',personId:'pupil',linkToken:'a'.repeat(48),studentClass:'1',rollNo:'1',dob:'2015-01-01'});assert.equal(login.success,true);
+ const saved=write('school_notices','notice-1',{title:'Actual synced notice',timestamp:1});assert.equal(saved.syncProtocol,2);
+ const first=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken});assert.equal(first.notices[0].title,'Actual synced notice');
+ const unchanged=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevision:first.revision,knownRevisions:first.revisions});assert.equal(unchanged.unchanged,true);assert.equal(unchanged.notices,undefined);
+ write('school_notices','notice-1',{title:'New revision',timestamp:2},saved.recordRevision);
+ const changed=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevision:first.revision,knownRevisions:first.revisions});assert.equal(changed.notices[0].title,'New revision');assert.equal(changed.reportCards,undefined);assert.equal(changed.calendar,undefined);
+});
+
+test('published school PDF is owner-scoped, versioned, exact-byte readable and unchanged versions transfer no file',()=>{
+ const f=storage(),write=(collection,id,data)=>f.call({action:'managed_records',operation:'write',collection,id,data:{schoolId:A,...data}});
+ const token='a'.repeat(48);write('students_directory','pupil',{name:'Pupil',class:'Class 1',rollNo:'1',dob:'2015-01-01',mobileLinkToken:token});
+ const mobile=request=>f.call({action:'managed_mobile',request,lease:{schoolId:A,expiresAt:Date.now()+3600000}});
+ const login=mobile({action:'mobile_login',projectId:A,role:'student',personId:'pupil',linkToken:token,studentClass:'1',rollNo:'1',dob:'2015-01-01'});
+ const bytes=Buffer.from('%PDF-1.7\nExact school selected front/back package fixture\n%%EOF'),contentHash=crypto.createHash('sha256').update(bytes).digest('hex');
+ const file=f.call({action:'managed_upload',name:'Card.pdf',mime:'application/pdf',base64:bytes.toString('base64'),uploadKey:'published-own-card'});assert.equal(file.success,true);
+ write('documents','ID-own',{studentId:'pupil',studentName:'Pupil',ownerRole:'student',documentKind:'idCard',fileId:file.fileId,documentRevision:'v10',contentHash});
+ const home=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken});assert.equal(home.idCardPackage.documentRevision,'v10');
+ const exact=mobile({action:'mobile_document',sessionToken:login.sessionToken,documentId:'ID-own'});assert.equal(Buffer.from(exact.base64,'base64').toString(),bytes.toString());assert.equal(exact.contentHash,contentHash);
+ const unchanged=mobile({action:'mobile_document',sessionToken:login.sessionToken,documentId:'ID-own',knownRevision:'v10'});assert.equal(unchanged.unchanged,true);assert.equal(unchanged.base64,undefined);
+ write('documents','ID-foreign',{studentId:'someone-else',ownerRole:'student',documentKind:'idCard',fileId:file.fileId,documentRevision:'v11',contentHash});
+ assert.equal(mobile({action:'mobile_document',sessionToken:login.sessionToken,documentId:'ID-foreign'}).success,false);
+ const replacement=f.call({action:'managed_records',operation:'write',collection:'documents',id:'ID-own',expectedRevision:'v10',data:{schoolId:A,studentId:'pupil',studentName:'Pupil',ownerRole:'student',documentKind:'idCard',fileId:file.fileId,documentRevision:'v11',contentHash}});assert.equal(replacement.success,true);
+ const updated=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevisions:home.revisions,knownRevision:home.revision});assert.equal(updated.idCardPackage.documentRevision,'v11');
 });

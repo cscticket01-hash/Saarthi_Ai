@@ -151,6 +151,14 @@ function VS_managedHandle(e) {
     const b=VS_managedVerify(e);let result;
     if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
+    else if(b.action==='managed_attendance_batch'){
+      if(!Array.isArray(b.operations)||b.operations.length>25)throw new Error('Invalid attendance batch');
+      result={acknowledgements:b.operations.map(op=>{
+        if(!/^[a-f0-9]{64}$/.test(op.operationId||''))throw new Error('Invalid attendance operation');
+        try{VS_managedMobile(Object.assign({},op.request,{action:'mobile_mark_attendance',operationId:op.operationId}),b.lease);return {operationId:op.operationId,success:true};}
+        catch(e){const authoritative=/School (session expired|record or ID|licence|is closed)|already recorded|Check in before|Attendance can be marked|own school ID|Accurate school location/.test(e.message||'');return {operationId:op.operationId,success:false,authoritative:authoritative};}
+      })};
+    }
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
     else if(b.action==='managed_records'){const lock=LockService.getScriptLock();lock.waitLock(30000);try{result=VS_managedRecord(b);}finally{lock.releaseLock();}}
     else if(b.action==='managed_upload'){

@@ -115,6 +115,7 @@ class FirebaseFirestore {
   /// legacy standalone RAM-only preference. Authentication/licensing stay in
   /// the startup gate; this validates its saved identity against the live store.
   String? _persistenceBinding;
+  Future<void> changeLocalStorageLocation(String path) => _database.changeStorageLocation(path);
   Future<int>? _persistenceResolution;
 
   Future<bool> localPersistenceEnabled() async {
@@ -730,6 +731,11 @@ class _LocalJsonDatabase {
 
   Future<void> _writeTail = Future<void>.value();
 
+  Future<void> changeStorageLocation(String path) {
+    final migration=_writeTail.then((_)=>WindowsLocalStorage.changeLocation(path));
+    _writeTail=migration.then<void>((_) {},onError:(Object _,StackTrace __) {});
+    return migration;
+  }
   Future<File> _file() => WindowsLocalStorage.databaseFile();
 
   String _activeProfileId = 'unbound';
