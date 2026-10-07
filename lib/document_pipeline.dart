@@ -42,7 +42,7 @@ class DocumentPipeline {
       final result = await compute(DocumentProcessingEngine.process, {
         'bytes': bytes,
       });
-      return {...result, 'mimeType': 'image/jpeg'};
+      return result;
     }
     if (bytes.length > DocumentProcessingEngine.sourceLimit)
       throw const FormatException('PDF exceeds source safety limit.');

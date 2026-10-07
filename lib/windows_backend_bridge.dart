@@ -1611,9 +1611,9 @@ class WindowsBackendBridge {
       }
     }
     await file.writeAsBytes(bytes, flush: true);
-    final optimizedFile = File(
-      '${file.path}.optimized.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
-    );
+    final optimizedExtension = processing['mimeType'] == 'application/pdf'
+        ? 'pdf' : processing['mimeType'] == 'image/png' ? 'png' : 'jpg';
+    final optimizedFile = File('${file.path}.optimized.$optimizedExtension');
     final highFile = File(
       '${file.path}.processed.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
     );
@@ -1655,7 +1655,7 @@ class WindowsBackendBridge {
       'processedPath': highQuality != null ? highFile.path : file.path,
       'optimizedMimeType': processing['mimeType'] ?? body['mimeType'],
       'optimizedFileName': optimized != null
-          ? '${documentId}.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}'
+          ? '$documentId.$optimizedExtension'
           : safeName,
       'targetMet': processing['targetMet'] == true,
       'cleanupStatus': processing['cleanupStatus'] ?? processingWarning,

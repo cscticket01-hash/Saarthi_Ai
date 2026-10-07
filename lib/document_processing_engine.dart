@@ -91,6 +91,7 @@ class DocumentProcessingEngine {
     final highQuality = Uint8List.fromList(img.encodeJpg(image, quality: 94));
     final target = (input['targetBytes'] as num? ?? setTarget ~/ 8).toInt();
     var optimized = highQuality;
+    var optimizedWidth = image.width, optimizedHeight = image.height;
     var quality = 94;
     for (final q in [88, 82, 78]) {
       if (optimized.length <= target) break;
@@ -108,18 +109,30 @@ class DocumentProcessingEngine {
         interpolation: img.Interpolation.average,
       );
       optimized = Uint8List.fromList(img.encodeJpg(smaller, quality: 78));
+      optimizedWidth = smaller.width; optimizedHeight = smaller.height;
       quality = 78;
+    }
+    // Text and line scans often compress better losslessly than as JPEG.
+    // Compare fully processed pixels, never silently substitute an unprocessed
+    // source or remove the retained original/high-quality generation.
+    final lossless = Uint8List.fromList(img.encodePng(image, level: 9));
+    var optimizedMime = 'image/jpeg';
+    if (lossless.length < optimized.length) {
+      optimized = lossless;
+      optimizedMime = 'image/png';
+      optimizedWidth = image.width; optimizedHeight = image.height;
     }
     return {
       'optimized': optimized,
+      'mimeType': optimizedMime,
       'highQuality': highQuality,
       'quality': quality,
       'targetMet': optimized.length <= target,
       'actualBytes': optimized.length,
       'perspectiveCorrected': corrected,
       'deskewDegrees': deskew,
-      'width': image.width,
-      'height': image.height,
+      'width': optimizedWidth,
+      'height': optimizedHeight,
       'cleanupStatus': corrected
           ? 'Detected paper boundary corrected'
           : 'No confident boundary; full image preserved',
