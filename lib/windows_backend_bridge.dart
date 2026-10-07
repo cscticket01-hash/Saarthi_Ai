@@ -1303,10 +1303,12 @@ class WindowsBackendBridge {
       if (action == 'delete_student_document') {
         final id = data['documentId']?.toString() ?? '';
         final old = (await read('documents'))[id];
-        if (old == null) return {'success': true};
-        if (old['studentId'] != data['studentId'])
+        // Retry the remote delete even if standard reads already hide its tombstone.
+        // A prior attempt may have committed metadata before file cleanup failed.
+        if (old != null && old['studentId'] != data['studentId'])
           throw StateError('Document belongs to another student.');
-        // Remove the index only. Drive file retention avoids accidental data loss.
+        // The adapter writes a durable tombstone and removes only a verified,
+        // exclusively owned immutable document upload. Shared/legacy files remain safe.
         await WindowsFirebaseRemote.deleteDocument(
           projectId: connection['projectId'],
           idToken: token,

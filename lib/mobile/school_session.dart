@@ -321,6 +321,17 @@ class SchoolSession {
       if (jsonEncode(merged).length > 2 * 1024 * 1024)
         throw StateError('School response exceeds cache safety limit.');
       final old = dashboard, oldPerson = person;
+      final removedPdfs = <String, dynamic>{};
+      if (result.containsKey('idCardPackage') && result['idCardPackage'] == null && _pdfCache.containsKey('idCard')) {
+        removedPdfs['idCard'] = _pdfCache.remove('idCard');
+      }
+      if (result['reportCards'] is List) {
+        final current = (result['reportCards'] as List).whereType<Map>().map((r) =>
+            'report:${r['id'] ?? r['reportCardId'] ?? r['examName'] ?? 'current'}').toSet();
+        for (final key in _pdfCache.keys.where((key) => key.startsWith('report:') && !current.contains(key)).toList()) {
+          removedPdfs[key] = _pdfCache.remove(key);
+        }
+      }
       dashboard = merged;
       person = Map<String, dynamic>.from(dashboard['person'] as Map? ?? person);
       try {
@@ -328,13 +339,51 @@ class SchoolSession {
       } catch (_) {
         dashboard = old;
         person = oldPerson;
+        _pdfCache.addAll(removedPdfs);
         rethrow;
+      }
+      for (final key in removedPdfs.keys) _pdfMemory.remove(key);
+      // Only acknowledged removal invalidates private files. Temporary outages
+      // never enter this path; unlink only files no longer referenced in this tenant.
+      for (final metadata in removedPdfs.values.whereType<Map>()) {
+        if (generation != _generation) break;
+        final hash = metadata['hash'];
+        if (hash is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(hash) &&
+            !_pdfCache.values.whereType<Map>().any((m) => m['hash'] == hash)) {
+          try { final file = File('${(await _files()).path}/$hash.pdf');
+            if (await file.exists()) await file.delete();
+          } on FileSystemException { /* Inaccessible orphan is not an active cache entry. */ }
+        }
       }
     } else {
       dashboard = {...dashboard, ...result};
       await _persist();
     }
     return dashboard;
+  }
+
+  /// Fetch the exact school-published PDF, never independently render an ID.
+  Future<Uint8List?> publishedIdCard() async {
+    final manifest = dashboard['idCardPackage'];
+    if (manifest is! Map) return dashboard.containsKey('idCardPackage') ? null : cachedPdf('idCard');
+    final revision = manifest['documentRevision']?.toString() ?? '';
+    final hash = manifest['contentHash']?.toString() ?? '';
+    if (revision.isEmpty || !RegExp(r'^[a-f0-9]{64}$').hasMatch(hash))
+      throw StateError('Published ID metadata is incomplete. Ask the school to Sync.');
+    if (cachedPdfVersion('idCard') == revision) {
+      final existing = await cachedPdf('idCard');
+      if (existing != null) return existing;
+    }
+    final generation = _generation;
+    final result = await schoolCall('mobile_document', {'documentId': manifest['documentId']});
+    if (generation != _generation) throw SchoolAccessDenied('School session changed.');
+    if (result['documentRevision'] != revision || result['mime'] != 'application/pdf' || result['contentHash'] != hash)
+      throw StateError('Published ID changed. Refresh school data and retry.');
+    Uint8List bytes;
+    try { bytes = Uint8List.fromList(base64Decode(result['base64'].toString())); }
+    on FormatException { throw StateError('Published ID verification failed. Please retry.'); }
+    await cachePdf('idCard', revision, bytes, expectedHash: hash);
+    return bytes;
   }
 
   Future<Directory> _files() async {

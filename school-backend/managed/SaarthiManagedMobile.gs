@@ -1,16 +1,20 @@
 /** Managed mobile bridge. Only called AFTER central server verification and
  * the adapter's HMAC/replay verification. Legacy per-project code is untouched. */
 function VS_managedMobile(request,lease) {
+ const lock=LockService.getScriptLock();lock.waitLock(30000);
+ try{return VS_managedMobileUnlocked(request,lease);}finally{lock.releaseLock();}
+}
+function VS_managedMobileUnlocked(request,lease) {
  const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
  if(!lease||lease.schoolId!==school||lease.expiresAt<=Date.now())throw new Error('School licence is inactive');
  function VS_project(){return school;}
  function VS_requireLicense(){if(lease.expiresAt<=Date.now())throw new Error('School licence expired');}
  const recordCache={};
- function VS_records(col){return recordCache[col]||(recordCache[col]=VS_managedRecord({operation:'read',collection:col}).records);}
- function VS_get(col,id){const files=VS_managedCollection(col).getFilesByName(Utilities.base64EncodeWebSafe(id)+'.json');if(!files.hasNext())return null;const raw=JSON.parse(files.next().getBlob().getDataAsString());if(files.hasNext()||raw.schoolId!==school||raw.id!==id)throw new Error('School identity mismatch');if(raw.data._syncDeleted)return null;return Object.assign({},raw.data,{id:id});}
+ function VS_records(col){return recordCache[col]||(recordCache[col]=VS_managedRecordUnlocked({operation:'read',collection:col}).records);}
+ function VS_get(col,id){const item=VS_sheetItem(VS_managedSheet(col),String(id));if(!item||item.data._syncDeleted)return null;return Object.assign({},item.data,{id:String(id)});}
  function VS_query(col,field,value){const records=VS_records(col);return Object.keys(records).filter(id=>!field||records[id][field]===value).map(id=>Object.assign({},records[id],{id:id}));}
- function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecord(request);return Object.assign({},data,{id:id});}
- function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecord({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
+ function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecordUnlocked(request);return Object.assign({},data,{id:id});}
+ function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecordUnlocked({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
  function VS_touchPresence(){} // Windows presence is central and cannot be renewed by mobile.
  function VS_messagingOptions(){return null;} // No per-school Firebase project is required.
  function VS_mobileSchoolProfile(){const p=VS_get('school_config','school_profile_cache')||{};const out={};['schoolName','principalName','schoolContactNo'].forEach(k=>{if(p[k]!==undefined)out[k]=p[k];});return out;}
@@ -41,7 +45,7 @@ function VS_mobileAction(b){
   const token=VS_secret();const expires=Date.now()+30*86400000;const stable=p.mobileStableId||p.id;
   VS_set('mobile_sessions',VS_hash(token),{personId:stable,documentId:p.id,role:verified.role,linkToken:p.mobileLinkToken,expiresAt:expires,createdAt:Date.now()});
   VS_set('mobile_users',VS_hash(verified.role+'/'+stable),{role:verified.role});
-  return {sessionToken:token,personId:stable,role:verified.role,expiresAt:expires,person:VS_safePerson(p),messaging:VS_messagingOptions(),schoolName:VS_project()};
+  return {sessionToken:token,personId:stable,role:verified.role,expiresAt:expires,person:VS_safePerson(p),messaging:VS_messagingOptions(),schoolName:VS_mobileSchoolProfile().schoolName||'School'};
  }
  if(b.projectId && b.projectId!==VS_project())throw new Error('School identity mismatch');
  const session=VS_session(b);
@@ -65,7 +69,8 @@ function VS_mobileAction(b){
   if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments'});
   else groups.salary='teacher_salary';
   Object.keys(groups).forEach(key=>{
-   const col=groups[key],revision=props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
+   const col=groups[key];if(props.getProperty('VS_SHEET_MIGRATED_'+col)!=='1')VS_managedSheet(col);
+   const revision=props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
    if(known[key]===revision)return;
    if(key==='school')result.school=VS_mobileSchoolProfile();
    else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}
@@ -111,8 +116,8 @@ function VS_mobileAction(b){
   const distance=VS_distance(lat,lng,Number(loc.latitude),Number(loc.longitude));const radius=Number(loc.radiusMeters||200),accuracy=Number(b.accuracy);if(radius<25||radius>200||!Number.isFinite(radius)||!Number.isFinite(accuracy)||accuracy<0||accuracy>radius)throw new Error('Accurate school location required');if(distance>radius)throw new Error('Attendance can be marked only within the school location');
   // A scan at attendance time must be the same person as the verified session.
   const qr=VS_person(b);if(qr.role!==session.role||qr.person.mobileLinkToken!==session.person.mobileLinkToken)throw new Error('Scan your own school ID card');
-  const id=VS_hash(session.role+'/'+session.personId+'/'+day);const lock=LockService.getScriptLock();lock.waitLock(20000);
-  try{
+  const id=VS_hash(session.role+'/'+session.personId+'/'+day);
+  {
    const current=VS_get('attendance_records',id)||{};const mode=b.mode==='exit'?'exit':'entry';
    const operationField=mode==='entry'?'entryOperationId':'exitOperationId';
    if(b.operationId&&current[operationField]===b.operationId)return {message:'Attendance already recorded',record:current};
@@ -122,7 +127,7 @@ function VS_mobileAction(b){
    const doc=Object.assign({},current,{personId:session.personId,documentId:session.person.id,role:session.role,name:session.person.name||'',studentClass:session.person.class||'',rollNo:session.person.rollNo||'',date:day,source:'ANDROID_QR',updatedAt:Date.now()});delete doc.id;
    doc[mode==='entry'?'checkIn':'checkOut']=b.submittedAt||Date.now();if(b.operationId)doc[operationField]=b.operationId;VS_set('attendance_records',id,doc);
    return {message:mode==='entry'?'Check-in recorded':'Check-out recorded',record:doc};
-  }finally{lock.releaseLock();}
+  }
  }
  throw new Error('Unknown school mobile action');
 }

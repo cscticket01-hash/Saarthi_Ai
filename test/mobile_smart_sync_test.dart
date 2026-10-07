@@ -245,4 +245,57 @@ void main() {
       expect(s.dashboard, isEmpty);
     },
   );
+  test('exact published ID replaces a known older version; cache survives offline restart; tombstone removes it', () async {
+    final root = await Directory.systemTemp.createTemp('vs-published-id');
+    addTearDown(() => root.delete(recursive: true));
+    var version = 1, downloads = 0;
+    var deleted = false, offline = false;
+    Uint8List bytes() => Uint8List.fromList(utf8.encode('%PDF-1.7\nexact school ID version $version\n%%EOF'));
+    final transport = MockClient((request) async {
+      final b = jsonDecode(request.body)['request'] as Map;
+      if (b['action'] == 'mobile_login') return http.Response(jsonEncode(login()), 200);
+      if (offline) throw const SocketException('offline');
+      final pdf = bytes(), hash = sha256.convert(pdf).toString();
+      if (b['action'] == 'mobile_document') {
+        downloads++; expect(b['documentId'], 'own-card');
+        return http.Response(jsonEncode(response({'documentRevision':'v$version',
+          'mime':'application/pdf', 'contentHash':hash, 'base64':base64Encode(pdf)})), 200);
+      }
+      return http.Response(jsonEncode(response({'revision':'dashboard-$version-$deleted',
+        'idCardPackage': deleted ? null : {'documentId':'own-card','documentRevision':'v$version','contentHash':hash},
+        'documents':[], 'reportCards':[]})), 200);
+    });
+    final session = SchoolSession(client: transport, cacheDirectory: () async => root);
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await session.refreshDashboard();
+    expect(await session.publishedIdCard(), bytes()); expect(downloads, 1);
+    expect(await session.publishedIdCard(), bytes()); expect(downloads, 1);
+    version = 2; await session.refreshDashboard();
+    expect(await session.publishedIdCard(), bytes()); expect(downloads, 2);
+    offline = true;
+    final restored = SchoolSession(client: transport, cacheDirectory: () async => root);
+    await restored.restore(); expect(await restored.publishedIdCard(), bytes()); expect(downloads, 2);
+    await expectLater(restored.refreshDashboard(), throwsA(isA<SocketException>()));
+    expect(await restored.publishedIdCard(), bytes());
+    offline = false; deleted = true; await restored.refreshDashboard();
+    expect(await restored.publishedIdCard(), isNull); expect(await restored.cachedPdf('idCard'), isNull);
+    final afterDelete = SchoolSession(cacheDirectory: () async => root); await afterDelete.restore();
+    expect(await afterDelete.cachedPdf('idCard'), isNull);
+  });
+  test('acknowledged notice IDs remove deleted cached notices without duplicate retries', () async {
+    var stage = 0;
+    final session = SchoolSession(client: MockClient((request) async {
+      final b = jsonDecode(request.body)['request'] as Map;
+      if (b['action'] == 'mobile_login') return http.Response(jsonEncode(login()), 200);
+      return http.Response(jsonEncode(response({'revision':'v${stage++}', 'noticesDelta':true,
+        'noticeIds':stage == 1 ? ['own'] : [],
+        'notices':stage == 1 ? [{'id':'own','title':'Exact notice','_noticeRevision':'r1'}] : []})), 200);
+    }));
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await session.refreshDashboard(); expect(session.dashboard['notices'], hasLength(1));
+    await session.refreshDashboard(); expect(session.dashboard['notices'], isEmpty);
+    await session.refreshDashboard(); expect(session.dashboard['notices'], isEmpty);
+    final restored = SchoolSession(); await restored.restore(); expect(restored.dashboard['notices'], isEmpty);
+  });
+
 }

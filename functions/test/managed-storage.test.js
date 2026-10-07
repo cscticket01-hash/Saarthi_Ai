@@ -5,15 +5,31 @@ const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),secret='d'.repeat(64);
 function storage(){
  const all=new Map();let serial=0;
  const iterator=items=>{let n=0;return {hasNext:()=>n<items.length,next:()=>items[n++]};};
- function folder(id,school){const children=[],files=[];const f={getId:()=>id,getName:()=>id,getDescription:()=> 'VIDYA_MANAGED_SCHOOL:'+school,getFolders:()=>iterator(children),getFoldersByName:name=>iterator(children.filter(c=>c.getName()===name)),createFolder:name=>{const c=folder(name,school);children.push(c);return c;},getFiles:()=>iterator(files.filter(x=>!x.trash)),getFilesByName:name=>iterator(files.filter(x=>!x.trash&&x.name===name)),createFile:(name,text,mime)=>{if(typeof name==='object'){mime=name.mime;text=Buffer.from(name.bytes).toString('binary');name=name.name;}const file={id:'file'+ ++serial,name,text,mime,getId(){return this.id;},getDescription(){return this.description||'';},setDescription(v){this.description=v;},getSize(){return Buffer.byteLength(this.text);},getParents:()=>iterator([f]),getBlob(){return {getDataAsString:()=>this.text,getBytes:()=>[...Buffer.from(this.text)],getContentType:()=>this.mime};},setContent(text){this.text=text;},setTrashed(v){this.trash=v;}};files.push(file);all.set(file.id,file);return file;}};all.set(id,f);return f;}
+ function folder(id,school){const children=[],files=[];const f={files:files,getParents(){return iterator(this.parent?[this.parent]:[]);},getId:()=>id,getName:()=>id,getDescription:()=> 'VIDYA_MANAGED_SCHOOL:'+school,getFolders:()=>iterator(children),getFoldersByName:name=>iterator(children.filter(c=>c.getName()===name)),createFolder:name=>{const c=folder(name,school);c.parent=f;children.push(c);return c;},getFiles:()=>iterator(files.filter(x=>!x.trash)),getFilesByName:name=>iterator(files.filter(x=>!x.trash&&x.name===name)),createFile:(name,text,mime)=>{if(typeof name==='object'){mime=name.mime;text=Buffer.from(name.bytes).toString('binary');name=name.name;}const file={id:'file'+ ++serial,name,text,mime,getId(){return this.id;},getDescription(){return this.description||'';},setDescription(v){this.description=v;},getSize(){return Buffer.byteLength(this.text);},parent:f,getParents(){return iterator([this.parent]);},moveTo(target){const old=this.parent.files.indexOf(this);if(old>=0)this.parent.files.splice(old,1);target.files.push(this);this.parent=target;return this;},getBlob(){return {getDataAsString:()=>this.text,getBytes:()=>[...Buffer.from(this.text)],getContentType:()=>this.mime};},setContent(text){this.text=text;},isTrashed(){return this.trash===true;},setTrashed(v){this.trash=v;}};files.push(file);all.set(file.id,file);return file;}};all.set(id,f);return f;}
  const roots={[A]:folder('rootA',A),[B]:folder('rootB',B)};
  const props=new Map([['VS_MANAGED_SCHOOL_ID',A],['VS_MANAGED_ROOT_ID','rootA'],['VS_MANAGED_SECRET',secret]]);
  const p={getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v),getProperties:()=>Object.fromEntries(props),deleteProperty:k=>props.delete(k)};
- const context=vm.createContext({Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},base64Decode:v=>[...Buffer.from(v,'base64')],base64Encode:v=>Buffer.from(v).toString('base64'),newBlob:(bytes,mime,name)=>({bytes,mime,name}),computeDigest:(_,v)=>[...crypto.createHash('sha256').update(typeof v==='string'?v:Buffer.from(v)).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
+ const books=new Map();
+ function sheet(name) {
+  const rows=[];let maxRows=1000,maxColumns=26;
+  return {name,getMaxRows:()=>maxRows,getMaxColumns:()=>maxColumns,insertRowsAfter(_,count){maxRows+=count;},insertColumnsAfter(_,count){maxColumns+=count;},getName:()=>name,getLastRow:()=>rows.length,setFrozenRows(){},getRange(r,c,h,w) {
+   return {getRow:()=>r,
+    setValues(values){for(let y=0;y<h;y++){rows[r+y-1]??=[];for(let x=0;x<w;x++)rows[r+y-1][c+x-1]=values[y][x];}},
+    getValues:()=>Array.from({length:h},(_,y)=>Array.from({length:w},(_,x)=>rows[r+y-1]?.[c+x-1]??'')),
+    createTextFinder(value){return {
+     matchEntireCell(){return this;},matchCase(){return this;},
+     findAll:()=>Array.from({length:h},(_,y)=>r+y).filter(row=>rows[row-1]?.[c-1]===value).map(row=>({getRow:()=>row}))
+    };}
+   };
+  }};
+ }
+
+ const SpreadsheetApp={flush(){},openById:id=>books.get(id),create(name){const file=roots[A].createFile(name,'','application/vnd.google-apps.spreadsheet'),tabs=new Map();const book={getId:()=>file.id,getSheetByName:n=>tabs.get(n),insertSheet(n){const tab=sheet(n);tabs.set(n,tab);return tab;}};books.set(file.id,book);return book;}};
+ const context=vm.createContext({SpreadsheetApp,Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},base64Decode:v=>[...Buffer.from(v,'base64')],base64Encode:v=>Buffer.from(v).toString('base64'),newBlob:(bytes,mime,name)=>({bytes,mime,name}),computeDigest:(_,v)=>[...crypto.createHash('sha256').update(typeof v==='string'?v:Buffer.from(v)).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),context);
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedMobile.gs','utf8'),context);
  const call=body=>{const b={schoolId:A,timestamp:Date.now(),nonce:crypto.randomBytes(24).toString('hex'),payload:JSON.stringify(body)};b.signature=crypto.createHmac('sha256',secret).update(A+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex');return context.VS_managedHandle({postData:{contents:JSON.stringify(b)}});};
- return {call,roots,all};
+ return {call,roots,all,props,books,context};
 }
 test('document compare-and-set preserves newer edits and refuses unversioned overwrites/deletes',()=>{
  const f=storage(),write=(revision,expected)=>f.call({action:'managed_records',operation:'write',collection:'documents',id:'DOC-1',expectedRevision:expected,data:{schoolId:A,studentId:'S-1',documentRevision:revision}});
@@ -41,8 +57,8 @@ test('GS backup and create-only restore retain current records and reject anothe
  const restore=f.call({action:'managed_restore',fileId:backup.fileId});assert.equal(restore.success,true);assert.equal(restore.skipped,1);assert.equal(restore.copied,0);
  assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).records.student.name,'Edited');
  assert.equal(f.call({action:'managed_records',operation:'delete',collection:'students_directory',id:'student'}).success,true);
- assert.equal(f.call({action:'managed_restore',fileId:backup.fileId}).copied,1);
- assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).records.student.name,'Original');
+ assert.equal(f.call({action:'managed_restore',fileId:backup.fileId}).skipped,1);
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).records.student,undefined);
  const foreign=f.roots[B].createFile('foreign.json',JSON.stringify({schemaVersion:3,schoolId:B,records:{}}),'application/json');
  assert.equal(f.call({action:'managed_restore',fileId:foreign.getId()}).success,false);
  assert.equal(f.call({action:'managed_file',fileId:foreign.getId()}).success,false);
@@ -66,7 +82,7 @@ test('managed mobile reuses existing QR verification and never exposes another p
  write('students_directory','pupil',{name:'Own pupil',mobileLinkToken:'z'.repeat(48)});assert.equal(mobile({action:'mobile_dashboard',sessionToken:session.sessionToken}).success,false);
 });
 test('managed summary measures own root only and includes actual student count',()=>{
- const f=storage();f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'pupil',data:{schoolId:A,name:'A'}});f.roots[B].createFile('foreign','foreign-school-data','text/plain');
+ const f=storage();f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'pupil',data:{schoolId:A,name:'A'}});f.roots[A].createFile('own','own-data','text/plain');f.roots[B].createFile('foreign','foreign-school-data','text/plain');
  const result=f.call({action:'managed_summary'});assert.equal(result.success,true);assert.equal(result.studentCount,1);assert(result.driveBytes>0);assert.equal(result.partial,false);
 });
 
@@ -161,4 +177,85 @@ test('published school PDF is owner-scoped, versioned, exact-byte readable and u
  assert.equal(mobile({action:'mobile_document',sessionToken:login.sessionToken,documentId:'ID-foreign'}).success,false);
  const replacement=f.call({action:'managed_records',operation:'write',collection:'documents',id:'ID-own',expectedRevision:'v10',data:{schoolId:A,studentId:'pupil',studentName:'Pupil',ownerRole:'student',documentKind:'idCard',fileId:file.fileId,documentRevision:'v11',contentHash}});assert.equal(replacement.success,true);
  const updated=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevisions:home.revisions,knownRevision:home.revision});assert.equal(updated.idCardPackage.documentRevision,'v11');
+});
+
+test('organized Sheet backfill verifies records, retains legacy JSON and handles interrupted retry',()=>{
+ const f=storage(),folder=f.context.VS_managedCollection('students_directory');
+ const legacy=folder.createFile(Buffer.from('legacy').toString('base64url')+'.json',JSON.stringify({id:'legacy',schoolId:A,data:{schoolId:A,name:'Legacy pupil',notes:'x'.repeat(100000)}}),'application/json');
+ const read=()=>f.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2});
+ assert.equal(read().records.legacy.notes.length,100000);assert.equal(legacy.trash,undefined);
+ assert.equal(folder.getFiles().hasNext(),true);assert.equal(f.books.size,1);
+ // Crash before the migration completion marker: verified identical rows backfill once.
+ f.props.delete('VS_SHEET_MIGRATED_students_directory');
+ assert.equal(read().records.legacy.name,'Legacy pupil');assert.equal(f.books.size,1);
+ const book=f.books.get(f.props.get('VS_MANAGED_SHEET_ID'));assert.equal(book.getSheetByName('students_directory').getLastRow(),2);
+ assert.equal(f.props.get('VS_MANAGED_ROOT_ID'),'rootA');assert.equal(f.props.get('VS_MANAGED_SECRET'),secret);
+});
+test('backfill refuses foreign or duplicate source records and preserves both conflict versions',()=>{
+ const f=storage(),folder=f.context.VS_managedCollection('school_notices');
+ const raw={id:'n',schoolId:A,data:{schoolId:A,title:'Old'}};
+ folder.createFile('old.json',JSON.stringify(raw),'application/json');
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'school_notices'}).records.n.title,'Old');
+ f.props.delete('VS_SHEET_MIGRATED_school_notices');
+ folder.getFiles().next().setContent(JSON.stringify({...raw,data:{schoolId:A,title:'Changed externally'}}));
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'school_notices'}).success,false);
+ assert.equal(f.props.get('VS_SHEET_MIGRATED_school_notices'),undefined);
+ assert.equal(folder.getFiles().next().trash,undefined);
+ const foreign=f.context.VS_managedCollection('teachers_directory');foreign.createFile('foreign.json',JSON.stringify({...raw,schoolId:B}),'application/json');
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'teachers_directory'}).success,false);
+});
+test('organized binary folders reuse existing root upload IDs without copying or deleting originals',()=>{
+ const f=storage(),bytes=Buffer.from('existing'),key='revision-own',name='Existing.pdf';
+ const legacy=f.roots[A].createFile(name,bytes.toString(),'application/pdf');legacy.setDescription('VIDYA_UPLOAD:'+A+':'+key+':'+crypto.createHash('sha256').update(bytes).digest('hex'));
+ const result=f.call({action:'managed_upload',name,mime:'application/pdf',base64:bytes.toString('base64'),uploadKey:key});
+ assert.equal(result.fileId,legacy.getId());assert.equal(legacy.trash,undefined);
+ const fresh=f.call({action:'managed_upload',name:'New.pdf',mime:'application/pdf',base64:bytes.toString('base64'),uploadKey:'revision-new'});
+ assert.equal(f.all.get(fresh.fileId).parent.getName(),'Documents');assert.equal(f.all.get(fresh.fileId).parent.parent.getName(),'Files');
+});
+test('document tombstone precedes verified owned-file deletion, crash retry is idempotent, foreign files survive',()=>{
+ const f=storage(),id='doc',revision='v1',key=crypto.createHash('sha256').update(id+':'+revision).digest('hex');
+ const upload=f.call({action:'managed_upload',name:'Own.pdf',mime:'application/pdf',base64:Buffer.from('%PDF-1.4\n%%EOF').toString('base64'),uploadKey:key});
+ const write=f.call({action:'managed_records',operation:'write',collection:'documents',id,syncProtocol:2,operationId:'operation-write-00001',expectedRecordRevision:'',expectedRevision:'',data:{schoolId:A,fileId:upload.fileId,documentRevision:revision}});assert.equal(write.success,true);
+ const file=f.all.get(upload.fileId),original=file.setTrashed;
+ file.setTrashed=()=>{throw new Error('Drive outage');};
+ const body={action:'managed_records',operation:'delete',collection:'documents',id,syncProtocol:2,operationId:'operation-delete-0001',expectedRecordRevision:write.recordRevision,expectedRevision:revision};
+ assert.equal(f.call(body).success,false);
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'documents',syncProtocol:2}).records.doc._syncDeleted,true);
+ file.setTrashed=original;assert.equal(f.call(body).fileCleanup,'deleted');assert.equal(file.trash,true);
+ assert.equal(f.call(body).success,true);
+ assert.equal(f.call({action:'managed_records',operation:'write',collection:'documents',id,syncProtocol:2,operationId:'operation-stale-00001',expectedRecordRevision:write.recordRevision,expectedRevision:revision,data:{schoolId:A}}).success,false);
+ const foreign=f.roots[B].createFile('B.pdf','school-b','application/pdf');
+ f.call({action:'managed_records',operation:'write',collection:'documents',id:'foreign-ref',expectedRevision:'',data:{schoolId:A,fileId:foreign.getId(),documentRevision:'v1'}});
+ assert.equal(f.call({action:'managed_records',operation:'delete',collection:'documents',id:'foreign-ref',expectedRevision:'v1'}).success,false);assert.equal(foreign.trash,undefined);
+});
+test('notice deletion is acknowledged as a tombstone and removes mobile delta even after offline retry',()=>{
+ const f=storage();f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'pupil',data:{schoolId:A,name:'Pupil',class:'1',rollNo:'1',dob:'2015-01-01',mobileLinkToken:'x'.repeat(48)}});
+ const mobile=request=>f.call({action:'managed_mobile',lease:{schoolId:A,expiresAt:Date.now()+60000},request});
+ const login=mobile({action:'mobile_login',role:'student',personId:'pupil',linkToken:'x'.repeat(48),studentClass:'1',rollNo:'1',dob:'2015-01-01'});
+ const write=f.call({action:'managed_records',operation:'write',collection:'school_notices',id:'n',syncProtocol:2,operationId:'operation-notice-0001',expectedRecordRevision:'',data:{schoolId:A,title:'Exact Windows notice'}});
+ const first=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken});assert.equal(first.notices[0].title,'Exact Windows notice');
+ const deletion={action:'managed_records',operation:'delete',collection:'school_notices',id:'n',syncProtocol:2,operationId:'operation-delete-0001',expectedRecordRevision:write.recordRevision};
+ assert.equal(f.call(deletion).success,true);assert.equal(f.call(deletion).success,true);
+ const next=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevisions:first.revisions,knownNoticeRevisions:{n:first.notices[0]._noticeRevision}});
+ assert.deepEqual(next.noticeIds,[]);assert.deepEqual(next.notices,[]);
+ assert.equal(f.call({action:'managed_health'}).scriptBundleVersion,'2026-10-07.1');
+});
+
+test('bounded migration resumes across requests and never activates a partial collection',()=>{
+ const f=storage(),folder=f.context.VS_managedCollection('attendance_records');
+ for(let n=0;n<103;n++)folder.createFile('legacy-'+n+'.json',JSON.stringify({id:'r'+n,schoolId:A,data:{schoolId:A,personId:'p',date:'2026-10-05',value:n}}),'application/json');
+ const body={action:'managed_records',operation:'read',collection:'attendance_records',syncProtocol:2};
+ const first=f.call(body);assert.equal(first.success,false);assert.match(first.message,/organization in progress/);assert.equal(first.records,undefined);
+ assert.equal(f.props.get('VS_SHEET_MIGRATED_attendance_records'),undefined);
+ const second=f.call(body);assert.equal(second.success,true);assert.equal(Object.keys(second.records).length,103);
+ assert.equal(f.books.get(f.props.get('VS_MANAGED_SHEET_ID')).getSheetByName('attendance_records').getLastRow(),104);
+ assert.equal(folder.files.filter(file=>!file.trash).length,103);
+});
+test('Sheet continuation values are inert quoted fragments; large Unicode records round-trip exactly',()=>{
+ const f=storage(),notes='='.repeat(20000)+'😀'.repeat(50000),data={schoolId:A,name:'=HYPERLINK("unsafe")',notes};
+ const result=f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'safe',data});assert.equal(result.success,true);
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).records.safe.notes,notes);
+ const tab=f.books.get(f.props.get('VS_MANAGED_SHEET_ID')).getSheetByName('students_directory');
+ const row=tab.getRange(2,1,1,33).getValues()[0];assert.equal(row[5][0],"'");
+ for(const chunk of row.slice(6).filter(Boolean)){assert.equal(chunk[0],'"');assert(chunk.length<50000);}
 });

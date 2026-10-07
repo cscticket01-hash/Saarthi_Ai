@@ -15,6 +15,7 @@ import 'windows_firebase_sync.dart';
 import 'windows_local_auth.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
+import 'windows_local_folder_picker.dart';
 import 'windows_service_status.dart';
 import 'windows_update_service.dart';
 import 'windows_app_restart.dart';
@@ -703,61 +704,16 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
   }
 
   Future<void> _changeLocation() async {
-    final controller = TextEditingController(text: _path);
-    String? error;
-    final next = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF172229),
-          title: const Text('Change Local Storage Location', style: TextStyle(color: Colors.white)),
-          content: SizedBox(
-            width: 570,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Example: D:\\VidyaSaarthiData\nCurrent database aur LocalFiles new HDD/folder me COPY honge. Old copy safety ke liye rahegi.',
-                  style: TextStyle(color: Colors.white54, fontSize: 11, height: 1.45),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: 'New Folder Path',
-                    errorText: error,
-                    prefixIcon: const Icon(Icons.folder_open_rounded),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () {
-                final value = controller.text.trim();
-                if (value.isEmpty) {
-                  setDialogState(() => error = 'Folder path daalein.');
-                  return;
-                }
-                Navigator.pop(ctx, value);
-              },
-              child: const Text('Move / Use This Folder'),
-            ),
-          ],
-        ),
-      ),
-    );
-    controller.dispose();
-    if (next == null || next.trim().isEmpty) return;
-
     setState(() => _busy = true);
     try {
-      await WindowsBackendBridge.changeLocalStorageLocation(next);
+      final changed = await selectLocalStorageFolder(
+        initialDirectory: _path,
+        migrate: WindowsBackendBridge.changeLocalStorageLocation,
+      );
+      if (!changed) {
+        if (mounted) setState(() => _busy = false);
+        return;
+      }
       await _refresh();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

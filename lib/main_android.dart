@@ -18,6 +18,7 @@ import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'mobile/school_session.dart';
+import 'mobile/settings_screen.dart';
 import 'mobile/school_notifications.dart';
 import 'mobile/school_messaging.dart';
 import 'school_document_renderer.dart';
@@ -645,30 +646,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
     return pending;
   }
 
-  Future<Uint8List?> _fetchPublishedCard() async {
-    final package = _data['idCardPackage'];
-    if (package is! Map) return _s.cachedPdf('idCard');
-    final version = package['documentRevision']?.toString() ?? '';
-    if (version.isEmpty) throw StateError('Published ID version missing.');
-    if (_s.cachedPdfVersion('idCard') == version) return _s.cachedPdf('idCard');
-    final result = await _s.schoolCall('mobile_document', {
-      'documentId': package['documentId'],
-    });
-    if (result['documentRevision'] != version ||
-        result['mime'] != 'application/pdf' ||
-        result['contentHash'] != package['contentHash'])
-      throw StateError(
-        'Published ID changed; retry school sync. Previous ID retained.',
-      );
-    final pdf = Uint8List.fromList(base64Decode(result['base64'].toString()));
-    await _s.cachePdf(
-      'idCard',
-      version,
-      pdf,
-      expectedHash: package['contentHash'].toString(),
-    );
-    return pdf;
-  }
+  Future<Uint8List?> _fetchPublishedCard() => _s.publishedIdCard();
 
   Future<void> _previewPdf(Uint8List pdf, String title) async {
     if (!mounted) return;
@@ -694,7 +672,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
     try {
       if (kind == 'studentId' || kind == 'teacherId') {
         final cached = await _s.cachedPdf('idCard');
-        if (cached != null) {
+        final manifest = _data['idCardPackage'];
+        final expected = manifest is Map ? manifest['documentRevision']?.toString() : null;
+        if (cached != null && (expected == null || expected == _s.cachedPdfVersion('idCard'))) {
           unawaited(_refreshPublishedCard().catchError((Object _) => null));
           await _previewPdf(cached, 'School ID card • Front & back');
           return;
@@ -702,7 +682,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
         final published = await _refreshPublishedCard();
         if (published == null)
           throw StateError(
-            'Your school has not synced the selected ID card yet. Ask the school to Sync.',
+            'Your selected ID card has not reached school cloud storage yet. Ask the school to complete Sync.',
           );
         await _previewPdf(published, 'School ID card • Front & back');
         return;
@@ -779,16 +759,16 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
     }
   }
 
-  Future<void> _update() async {
+  Future<void> _update({Map<String, dynamic>? update}) async {
     if (_busy) return;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final r = await _s.platformCall('updates/latest', {
+      final r = update == null ? await _s.platformCall('updates/latest', {
         'platform': 'android',
-      });
+      }) : <String, dynamic>{'update': update};
       final u = r['update'];
       if (u is! Map) throw StateError('No update is published yet.');
       final installed =
@@ -1256,13 +1236,19 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
         : [_home(), _attendancePage(), _documents(), _fees(), _calendar()];
     return Scaffold(
       appBar: AppBar(
-        title: Text(_s.schoolName),
+        title: const VidyaSaarthiBrand(),
         actions: [
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
           PopupMenuButton<String>(
             onSelected: (v) {
               if (v == 'complaint') _complaint();
-              if (v == 'update') _update();
+              if (v == 'settings') Navigator.push(context, MaterialPageRoute(
+                builder: (_) => MobileSettingsScreen(
+                  version: SchoolSession.version,
+                  build: int.tryParse(const String.fromEnvironment('APP_BUILD', defaultValue: '0')) ?? 0,
+                  checkUpdate: () => _s.platformCall('updates/latest', {'platform': 'android'}),
+                  installUpdate: (update) => _update(update: update),
+                ),
+              ));
               if (v == 'logout') _logout();
             },
             itemBuilder: (_) => const [
@@ -1270,7 +1256,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
                 value: 'complaint',
                 child: Text('Report app problem'),
               ),
-              PopupMenuItem(value: 'update', child: Text('Check for updates')),
+              PopupMenuItem(value: 'settings', child: Text('Settings')),
               PopupMenuItem(
                 value: 'logout',
                 child: Text('Sign out / change school'),

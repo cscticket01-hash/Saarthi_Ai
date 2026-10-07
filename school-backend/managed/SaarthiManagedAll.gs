@@ -6536,29 +6536,130 @@ function VS_managedCollection(name) {
   if(folders.hasNext()) {const folder=folders.next();if(folders.hasNext())throw new Error('Duplicate collection folders; operator review required');return folder;}
   return root.createFolder('records_'+name);
 }
+// One authoritative record store: one verified spreadsheet, one tab per collection.
+// Legacy JSON files are retained as migration evidence, never deleted by backfill.
+function VS_managedFolder(parent,name) {
+  const matches=parent.getFoldersByName(name);
+  if(matches.hasNext()){const folder=matches.next();if(matches.hasNext())throw new Error('Duplicate storage folder; operator review required');return folder;}
+  return parent.createFolder(name);
+}
+function VS_managedSheet(collection) {
+  const legacy=VS_managedCollection(collection),p=PropertiesService.getScriptProperties();
+  const school=p.getProperty('VS_MANAGED_SCHOOL_ID');let id=p.getProperty('VS_MANAGED_SHEET_ID'),book;
+  const pending=p.getProperty('VS_MANAGED_SHEET_PENDING');
+  if(!id&&pending){const file=DriveApp.getFileById(pending);if(file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('Pending workbook identity mismatch');file.moveTo(VS_managedFolder(VS_managedRoot(),'School Data'));p.setProperty('VS_MANAGED_SHEET_ID',pending);p.deleteProperty('VS_MANAGED_SHEET_PENDING');id=pending;}
+  if(id){const file=VS_managedFile(id);if(file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook identity mismatch');book=SpreadsheetApp.openById(id);}
+  else {
+    // Recover a create/move crash without creating a second school workbook.
+    const target=VS_managedFolder(VS_managedRoot(),'School Data');
+    const matches=target.getFilesByName('Vidya Saarthi School Data');
+    if(matches.hasNext()){
+      const file=matches.next();if(matches.hasNext()||file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook requires operator review');
+      id=file.getId();book=SpreadsheetApp.openById(id);
+    }else{
+      book=SpreadsheetApp.create('Vidya Saarthi School Data');id=book.getId();
+      const file=DriveApp.getFileById(id);file.setDescription('VIDYA_SCHOOL_DATA:'+school);p.setProperty('VS_MANAGED_SHEET_PENDING',id);file.moveTo(target);
+    }
+    p.setProperty('VS_MANAGED_SHEET_ID',id);p.deleteProperty('VS_MANAGED_SHEET_PENDING');
+  }
+  let sheet=book.getSheetByName(collection);
+  if(!sheet){sheet=book.insertSheet(collection);if(sheet.getMaxColumns()<33)sheet.insertColumnsAfter(sheet.getMaxColumns(),33-sheet.getMaxColumns());sheet.getRange(1,1,1,33).setValues([['Record Key','School ID','Revision','Deleted','Operation ID','Display Name'].concat(Array.from({length:27},(_,n)=>'Data '+(n+1)))]);sheet.setFrozenRows(1);}
+  const store={sheet:sheet,school:school};
+  if(p.getProperty('VS_SHEET_MIGRATED_'+collection)!=='1'){
+    const files=legacy.getFiles();let bytes=0,copied=0;const seen={};
+    while(files.hasNext()){
+      const raw=files.next().getBlob().getDataAsString();bytes+=raw.length;
+      if(bytes>20*1024*1024)throw new Error('Collection migration exceeds safe limit');
+      const item=JSON.parse(raw);
+      if(!item||item.schoolId!==school||typeof item.id!=='string'||!item.data||item.data.schoolId!==school||seen[item.id])throw new Error('Invalid or duplicate legacy record; operator review required');
+      seen[item.id]=true;
+      const old=VS_sheetItem(store,item.id);
+      if(old){if(JSON.stringify(old.data)!==JSON.stringify(item.data))throw new Error('Migration conflict; both versions retained');}
+      else {VS_sheetPut(store,item);copied++;if(copied>=100&&files.hasNext())throw new Error('School data organization in progress; retry Sync. Pending data retained');}
+    }
+    p.setProperty('VS_RECORD_REV_'+collection,Utilities.getUuid());
+    p.setProperty('VS_SHEET_MIGRATED_'+collection,'1');
+  }
+  return store;
+}
+function VS_sheetItem(store,id) {
+  const key=Utilities.base64EncodeWebSafe(id),last=store.sheet.getLastRow();
+  if(last<2)return null;
+  const matches=store.sheet.getRange(2,1,last-1,1).createTextFinder(key).matchEntireCell(true).matchCase(true).findAll();
+  if(matches.length>1)throw new Error('Duplicate Sheet record; operator review required');
+  if(!matches.length)return null;
+  const row=matches[0].getRow(),values=store.sheet.getRange(row,1,1,33).getValues()[0];
+  const item=VS_sheetDecode(store,values);if(item.id!==id)throw new Error('Sheet identity mismatch');item.row=row;return item;
+}
+function VS_sheetDecode(store,values) {
+  const item=JSON.parse(values.slice(6).filter(v=>v!=='').map(v=>JSON.parse(v)).join(''));
+  if(!item||item.schoolId!==store.school||!item.data||item.data.schoolId!==store.school||Utilities.base64EncodeWebSafe(item.id)!==values[0]||values[1]!==store.school)throw new Error('Foreign school record');
+  return item;
+}
+function VS_sheetPut(store,item) {
+  const text=JSON.stringify({id:item.id,schoolId:item.schoolId,data:item.data});
+  if(text.length>512*1024)throw new Error('Record too large; upload files separately');
+  const old=VS_sheetItem(store,item.id),data=item.data;
+  // Display cells are inert text; canonical JSON always begins with '{'.
+  const label=String(data.name||data.studentName||data.title||data.documentName||'').slice(0,200);
+  const values=[Utilities.base64EncodeWebSafe(item.id),store.school,data._syncRevision||'',data._syncDeleted===true?'YES':'NO',data._syncOperationId||'',label&&/^[=+\-@]/.test(label)?"'"+label:label];
+  // Quoted fragments cannot be interpreted as Sheet formulas, even when a
+  // continuation begins with '='. Rejoining preserves all Unicode code units.
+  for(let n=0;n<27;n++){const part=text.slice(n*20000,(n+1)*20000);values.push(part?JSON.stringify(part):'');}
+  const row=old?old.row:Math.max(2,store.sheet.getLastRow()+1);
+  if(row>store.sheet.getMaxRows())store.sheet.insertRowsAfter(store.sheet.getMaxRows(),Math.max(100,row-store.sheet.getMaxRows()));
+  store.sheet.getRange(row,1,1,33).setValues([values]);SpreadsheetApp.flush();
+  const saved=VS_sheetItem(store,item.id);
+  if(!saved||JSON.stringify(saved.data)!==JSON.stringify(data))throw new Error('School record verification failed');
+}
+function VS_sheetRecords(store) {
+  const last=store.sheet.getLastRow(),records={};let bytes=0;
+  if(last<2)return records;
+  const rows=store.sheet.getRange(2,1,last-1,33).getValues();
+  rows.forEach(values=>{if(!values[0])return;bytes+=values.slice(6).join('').length;if(bytes>20*1024*1024)throw new Error('Collection export exceeds safe limit');const item=VS_sheetDecode(store,values);if(records[item.id])throw new Error('Duplicate Sheet record');records[item.id]=item.data;});
+  return records;
+}
+// Delete only the immutable upload belonging to this exact document revision.
+// Unkeyed legacy or shared files are retained; no broad Drive delete is possible.
+function VS_managedDeletedFile(store,id,data) {
+  if(!data._syncDeletedFileId)return 'none';
+  if(data._syncFileCleanupComplete===true)return 'deleted';
+  const file=VS_managedFile(data._syncDeletedFileId);
+  const marker=String(file.getDescription()||'');
+  const key=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,id+':'+data.documentRevision).map(v=>('0'+((v+256)%256).toString(16)).slice(-2)).join('');
+  if(marker.indexOf('VIDYA_UPLOAD:'+store.school+':'+key+':')!==0)return 'retained-legacy';
+  const records=VS_sheetRecords(store);
+  if(Object.keys(records).some(other=>other!==id&&!records[other]._syncDeleted&&records[other].fileId===data._syncDeletedFileId))return 'retained-shared';
+  file.setTrashed(true);
+  if(!file.isTrashed())throw new Error('Document file deletion not acknowledged');
+  data._syncFileCleanupComplete=true;VS_sheetPut(store,{id:id,schoolId:store.school,data:data});
+  return 'deleted';
+}
 function VS_managedRecord(b) {
-  const folder=VS_managedCollection(b.collection), school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try{return VS_managedRecordUnlocked(b);}finally{lock.releaseLock();}
+}
+function VS_managedRecordUnlocked(b) {
+  const store=VS_managedSheet(b.collection), school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
   if(b.operation==='read') {
     const revision=PropertiesService.getScriptProperties().getProperty('VS_RECORD_REV_'+b.collection)||'legacy';
     if(b.syncProtocol===2 && b.knownRevision===revision)return {records:{},unchanged:true,collectionRevision:revision,syncProtocol:2};
-    const files=folder.getFiles(),records={};let bytes=0;
-    while(files.hasNext()){const raw=files.next().getBlob().getDataAsString();bytes+=raw.length;if(bytes>20*1024*1024)throw new Error('Collection export exceeds safe limit');const item=JSON.parse(raw);if(item.schoolId!==school)throw new Error('Foreign school record');if(b.syncProtocol===2 || !item.data._syncDeleted)records[item.id]=item.data;}
+    const all=VS_sheetRecords(store),records={};Object.keys(all).forEach(id=>{if(b.syncProtocol===2||!all[id]._syncDeleted)records[id]=all[id];});
     return {records:records,collectionRevision:revision,syncProtocol:2};
   }
   if(!/^[^/]{1,200}$/.test(b.id||'')||b.id==='.'||b.id==='..')throw new Error('Invalid record ID');
-  const name=Utilities.base64EncodeWebSafe(b.id)+'.json', matches=folder.getFilesByName(name);let file=matches.hasNext()?matches.next():null;if(matches.hasNext())throw new Error('Duplicate record; operator review required');
-  if(file&&b.createOnly===true)return {skipped:true};
-  const existing=file?JSON.parse(file.getBlob().getDataAsString()):null;
+  const existing=VS_sheetItem(store,b.id),file=existing;
+  if(existing&&b.createOnly===true)return {skipped:true};
   if(existing&&(existing.schoolId!==school||existing.id!==b.id))throw new Error('Foreign school record');
   if(b.syncProtocol!==2 && existing&&existing.data._syncOperationId)throw new Error('Record revision conflict');
   if(b.syncProtocol===2){
     if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string')throw new Error('Invalid sync operation');
-    if(existing&&existing.data._syncOperationId===b.operationId)return {recordRevision:existing.data._syncRevision,syncProtocol:2};
+    if(existing&&existing.data._syncOperationId===b.operationId)return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:existing.data._syncDeleted?VS_managedDeletedFile(store,b.id,existing.data):undefined};
     if((existing&&existing.data._syncRevision||'')!==b.expectedRecordRevision)throw new Error('Record revision conflict');
   }
 
   if(b.collection==='documents' && (b.expectedRevision!==undefined || file)) {
-    const current=file?JSON.parse(file.getBlob().getDataAsString()):null;
+    const current=existing;
     if(current&&(current.schoolId!==school||current.id!==b.id))throw new Error('Foreign document record');
     const revision=current&&current.data.documentRevision||'';
     if(b.expectedRevision!==undefined) {
@@ -6568,25 +6669,24 @@ function VS_managedRecord(b) {
   }
   if(b.operation==='write' && existing && existing.data._syncDeleted)throw new Error('Record revision conflict');
   if(b.operation==='delete'){
-    if(b.syncProtocol===2 || b.collection==='documents'){
+    {
       const revision=Utilities.getUuid(),data={schoolId:school,_syncDeleted:true,_syncRevision:revision};
       if(b.syncProtocol===2)data._syncOperationId=b.operationId;
-      if(b.collection==='documents' && existing)data.documentRevision=existing.data.documentRevision||'';
-      const text=JSON.stringify({id:b.id,schoolId:school,data:data});
-      if(file)file.setContent(text);else folder.createFile(name,text,'application/json');
+      if(b.collection==='documents' && existing){data.documentRevision=existing.data.documentRevision||'';const fileId=existing.data._syncDeletedFileId||existing.data.fileId;if(fileId)data._syncDeletedFileId=fileId;}
       PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());
-      return {recordRevision:revision,syncProtocol:2};
+      VS_sheetPut(store,{id:b.id,schoolId:school,data:data});
+      return {recordRevision:revision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,data)};
     }
-    if(file)file.setTrashed(true);
-    PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());return {};
+
   }
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
   const revision=Utilities.getUuid(),data=Object.assign({},b.data);
   delete data._syncDeleted;delete data._syncOperationId;delete data._syncRevision;
   data._syncRevision=revision;
   if(b.syncProtocol===2)data._syncOperationId=b.operationId;
+  delete data._syncDeletedFileId;delete data._syncFileCleanupComplete;
   const text=JSON.stringify({id:b.id,schoolId:school,data:data});if(text.length>512*1024)throw new Error('Record too large; upload files separately');
-  if(file)file.setContent(text);else folder.createFile(name,text,'application/json');PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());return {recordRevision:revision,syncProtocol:2};
+  PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());VS_sheetPut(store,{id:b.id,schoolId:school,data:data});return {recordRevision:revision,syncProtocol:2};
 }
 function VS_managedFile(id) {
   const file=DriveApp.getFileById(id),root=VS_managedRoot().getId(),seen={};
@@ -6610,7 +6710,7 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
+    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordStorageVersion:1,scriptBundleVersion:'2026-10-07.1',googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
     else if(b.action==='managed_attendance_batch'){
       if(!Array.isArray(b.operations)||b.operations.length>25)throw new Error('Invalid attendance batch');
@@ -6621,20 +6721,19 @@ function VS_managedHandle(e) {
       })};
     }
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
-    else if(b.action==='managed_records'){const lock=LockService.getScriptLock();lock.waitLock(30000);try{result=VS_managedRecord(b);}finally{lock.releaseLock();}}
+    else if(b.action==='managed_records'){result=VS_managedRecord(b);}
     else if(b.action==='managed_upload'){
       if(!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)throw new Error('Invalid file');const bytes=Utilities.base64Decode(b.base64);if(!bytes.length||bytes.length>20*1024*1024)throw new Error('File limit exceeded');
       const lock=LockService.getScriptLock();lock.waitLock(30000);
       try {
-        const root=VS_managedRoot();let file=null,marker='';
+        const root=VS_managedRoot(),target=VS_managedFolder(VS_managedFolder(root,'Files'),b.mime.indexOf('image/')===0?'Photos':'Documents');let file=null,marker='';
         if(b.uploadKey!==undefined) {
           if(!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))throw new Error('Invalid upload key');
           const digest=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,bytes).map(v=>('0'+((v+256)%256).toString(16)).slice(-2)).join('');
           marker='VIDYA_UPLOAD:'+school+':'+b.uploadKey+':'+digest;
-          const matches=root.getFilesByName(b.name);
-          if(matches.hasNext()){file=matches.next();if(matches.hasNext()||file.getDescription()!==marker)throw new Error('Upload key collision; existing file retained');}
+          for(const source of [target,root]){const matches=source.getFilesByName(b.name);if(matches.hasNext()){const found=matches.next();if(matches.hasNext()||found.getDescription()!==marker||(file&&file.getId()!==found.getId()))throw new Error('Upload key collision; existing file retained');file=found;}}
         }
-        if(!file){file=root.createFile(Utilities.newBlob(bytes,b.mime,b.name));if(marker)file.setDescription(marker);}
+        if(!file){file=target.createFile(Utilities.newBlob(bytes,b.mime,b.name));if(marker)file.setDescription(marker);}
         result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
       } finally {lock.releaseLock();}
 
@@ -6642,18 +6741,19 @@ function VS_managedHandle(e) {
       const blob=VS_managedFile(b.fileId).getBlob();if(blob.getBytes().length>20*1024*1024)throw new Error('File limit exceeded');result={mime:blob.getContentType(),base64:Utilities.base64Encode(blob.getBytes())};
     }else if(b.action==='managed_backup'){
       const root=VS_managedRoot(),folders=root.getFolders(),records={};while(folders.hasNext()){const f=folders.next();if(f.getName().indexOf('records_')===0)records[f.getName().slice(8)]=VS_managedRecord({collection:f.getName().slice(8),operation:'read'}).records;}
-      const text=JSON.stringify({schemaVersion:3,schoolId:school,createdAt:new Date().toISOString(),records:records});if(text.length>20*1024*1024)throw new Error('Backup exceeds safe file limit');const file=root.createFile('School_Backup_'+Date.now()+'.json',text,'application/json');result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
+      const text=JSON.stringify({schemaVersion:3,schoolId:school,createdAt:new Date().toISOString(),records:records});if(text.length>20*1024*1024)throw new Error('Backup exceeds safe file limit');const file=VS_managedFolder(root,'Backups').createFile('School_Backup_'+Date.now()+'.json',text,'application/json');result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
     }else if(b.action==='managed_restore'){
       const file=VS_managedFile(b.fileId),blob=file.getBlob();if(blob.getBytes().length>20*1024*1024)throw new Error('Backup too large');const backup=JSON.parse(blob.getDataAsString());
       if(backup.schemaVersion!==3||backup.schoolId!==school||!backup.records||typeof backup.records!=='object')throw new Error('Foreign or unsupported backup');
       const pending=[];Object.keys(backup.records).forEach(col=>{VS_managedCollection(col);Object.keys(backup.records[col]).forEach(id=>{const data=backup.records[col][id];if(!/^[^/]{1,200}$/.test(id)||id==='.'||id==='..'||!data||data.schoolId!==school)throw new Error('Invalid backup record');pending.push({collection:col,id:id,data:data,operation:'write',createOnly:true});});});
-      let copied=0,skipped=0;const lock=LockService.getScriptLock();lock.waitLock(30000);try{pending.forEach(r=>{const result=VS_managedRecord(r);if(result.skipped)skipped++;else copied++;});}finally{lock.releaseLock();}result={copied:copied,skipped:skipped};
+      let copied=0,skipped=0;const lock=LockService.getScriptLock();lock.waitLock(30000);try{pending.forEach(r=>{const result=VS_managedRecordUnlocked(r);if(result.skipped)skipped++;else copied++;});}finally{lock.releaseLock();}result={copied:copied,skipped:skipped};
     }else throw new Error('Unknown managed storage action');
     return jsonResponse(Object.assign({success:true,schoolId:school},result));
   }catch(error){
     const safe={
       'This QR does not belong to the active school':'This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.',
       'Record revision conflict':'Record revision conflict',
+      'School data organization in progress; retry Sync. Pending data retained':'School data organization in progress; retry Sync. Pending data retained',
       'This ID card needs a new secure school QR':'Ask your school to regenerate this ID card.',
       'Class, roll number or date of birth is incorrect':'Class, roll number or date of birth is incorrect',
       'School session expired':'School session expired. Scan your ID again.',
@@ -6666,16 +6766,20 @@ function VS_managedHandle(e) {
 /** Managed mobile bridge. Only called AFTER central server verification and
  * the adapter's HMAC/replay verification. Legacy per-project code is untouched. */
 function VS_managedMobile(request,lease) {
+ const lock=LockService.getScriptLock();lock.waitLock(30000);
+ try{return VS_managedMobileUnlocked(request,lease);}finally{lock.releaseLock();}
+}
+function VS_managedMobileUnlocked(request,lease) {
  const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
  if(!lease||lease.schoolId!==school||lease.expiresAt<=Date.now())throw new Error('School licence is inactive');
  function VS_project(){return school;}
  function VS_requireLicense(){if(lease.expiresAt<=Date.now())throw new Error('School licence expired');}
  const recordCache={};
- function VS_records(col){return recordCache[col]||(recordCache[col]=VS_managedRecord({operation:'read',collection:col}).records);}
- function VS_get(col,id){const files=VS_managedCollection(col).getFilesByName(Utilities.base64EncodeWebSafe(id)+'.json');if(!files.hasNext())return null;const raw=JSON.parse(files.next().getBlob().getDataAsString());if(files.hasNext()||raw.schoolId!==school||raw.id!==id)throw new Error('School identity mismatch');if(raw.data._syncDeleted)return null;return Object.assign({},raw.data,{id:id});}
+ function VS_records(col){return recordCache[col]||(recordCache[col]=VS_managedRecordUnlocked({operation:'read',collection:col}).records);}
+ function VS_get(col,id){const item=VS_sheetItem(VS_managedSheet(col),String(id));if(!item||item.data._syncDeleted)return null;return Object.assign({},item.data,{id:String(id)});}
  function VS_query(col,field,value){const records=VS_records(col);return Object.keys(records).filter(id=>!field||records[id][field]===value).map(id=>Object.assign({},records[id],{id:id}));}
- function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecord(request);return Object.assign({},data,{id:id});}
- function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecord({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
+ function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecordUnlocked(request);return Object.assign({},data,{id:id});}
+ function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecordUnlocked({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
  function VS_touchPresence(){} // Windows presence is central and cannot be renewed by mobile.
  function VS_messagingOptions(){return null;} // No per-school Firebase project is required.
  function VS_mobileSchoolProfile(){const p=VS_get('school_config','school_profile_cache')||{};const out={};['schoolName','principalName','schoolContactNo'].forEach(k=>{if(p[k]!==undefined)out[k]=p[k];});return out;}
@@ -6706,7 +6810,7 @@ function VS_mobileAction(b){
   const token=VS_secret();const expires=Date.now()+30*86400000;const stable=p.mobileStableId||p.id;
   VS_set('mobile_sessions',VS_hash(token),{personId:stable,documentId:p.id,role:verified.role,linkToken:p.mobileLinkToken,expiresAt:expires,createdAt:Date.now()});
   VS_set('mobile_users',VS_hash(verified.role+'/'+stable),{role:verified.role});
-  return {sessionToken:token,personId:stable,role:verified.role,expiresAt:expires,person:VS_safePerson(p),messaging:VS_messagingOptions(),schoolName:VS_project()};
+  return {sessionToken:token,personId:stable,role:verified.role,expiresAt:expires,person:VS_safePerson(p),messaging:VS_messagingOptions(),schoolName:VS_mobileSchoolProfile().schoolName||'School'};
  }
  if(b.projectId && b.projectId!==VS_project())throw new Error('School identity mismatch');
  const session=VS_session(b);
@@ -6730,7 +6834,8 @@ function VS_mobileAction(b){
   if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments'});
   else groups.salary='teacher_salary';
   Object.keys(groups).forEach(key=>{
-   const col=groups[key],revision=props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
+   const col=groups[key];if(props.getProperty('VS_SHEET_MIGRATED_'+col)!=='1')VS_managedSheet(col);
+   const revision=props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
    if(known[key]===revision)return;
    if(key==='school')result.school=VS_mobileSchoolProfile();
    else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}
@@ -6776,8 +6881,8 @@ function VS_mobileAction(b){
   const distance=VS_distance(lat,lng,Number(loc.latitude),Number(loc.longitude));const radius=Number(loc.radiusMeters||200),accuracy=Number(b.accuracy);if(radius<25||radius>200||!Number.isFinite(radius)||!Number.isFinite(accuracy)||accuracy<0||accuracy>radius)throw new Error('Accurate school location required');if(distance>radius)throw new Error('Attendance can be marked only within the school location');
   // A scan at attendance time must be the same person as the verified session.
   const qr=VS_person(b);if(qr.role!==session.role||qr.person.mobileLinkToken!==session.person.mobileLinkToken)throw new Error('Scan your own school ID card');
-  const id=VS_hash(session.role+'/'+session.personId+'/'+day);const lock=LockService.getScriptLock();lock.waitLock(20000);
-  try{
+  const id=VS_hash(session.role+'/'+session.personId+'/'+day);
+  {
    const current=VS_get('attendance_records',id)||{};const mode=b.mode==='exit'?'exit':'entry';
    const operationField=mode==='entry'?'entryOperationId':'exitOperationId';
    if(b.operationId&&current[operationField]===b.operationId)return {message:'Attendance already recorded',record:current};
@@ -6787,7 +6892,7 @@ function VS_mobileAction(b){
    const doc=Object.assign({},current,{personId:session.personId,documentId:session.person.id,role:session.role,name:session.person.name||'',studentClass:session.person.class||'',rollNo:session.person.rollNo||'',date:day,source:'ANDROID_QR',updatedAt:Date.now()});delete doc.id;
    doc[mode==='entry'?'checkIn':'checkOut']=b.submittedAt||Date.now();if(b.operationId)doc[operationField]=b.operationId;VS_set('attendance_records',id,doc);
    return {message:mode==='entry'?'Check-in recorded':'Check-out recorded',record:doc};
-  }finally{lock.releaseLock();}
+  }
  }
  throw new Error('Unknown school mobile action');
 }
