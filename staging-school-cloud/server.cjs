@@ -10,7 +10,7 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
     const requestId=randomUUID();
-    let action='UNKNOWN';
+    let action='UNKNOWN',operation;
     const send=(status,body)=>{
       if(req.url==='/school-cloud' && req.method==='POST') logger({event:'central_request',endpoint:'/school-cloud',action,status,requestId});
       res.setHeader('X-Saarthi-Request-Id',requestId);
@@ -38,19 +38,22 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
       let body;
       try{body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return send(bytes>256*1024?413:400,{success:false,message:bytes>256*1024?'Request is too large':'Invalid JSON'});}
       if(bytes>256*1024&&body?.action!=='managed/file/upload')return send(413,{success:false,message:'Request is too large'});
+      operation=/^(managed\/|developer\/managed\/)[a-zA-Z0-9_/-]{1,80}$/.test(body?.action||'')?body.action:undefined;
       action=ACTIONS.has(body?.action)?body.action:/^(managed\/|developer\/managed\/)/.test(body?.action||'')?'MANAGED':'UNKNOWN';
       return send(200,await handle({method:'POST',headers:req.headers,body}));
     }catch(e){
       const code=typeof e.code==='string'&&/^[a-zA-Z0-9_/-]{1,100}$/.test(e.code)?e.code:'UNKNOWN';
-      if(code!=='UNKNOWN')logger({event:'central_failure',action,status:e.status||503,code,requestId});
       const authErrors={
         'auth/email-already-exists':'This email already has a Firebase login. No new school was created. Use another email or ask the developer to inspect its existing account mapping.',
         'auth/invalid-email':'Enter a valid school login email.',
         'auth/invalid-password':'Use a valid initial password of 12–128 characters.',
         'auth/insufficient-permission':'School creation is blocked by backend Firebase Auth permissions. The developer must grant the existing backend account permission to manage Firebase users.'
       };
-      const status=code==='auth/email-already-exists'?409:[400,401,403,405,409].includes(e.status)?e.status:503;
-      return send(status,{success:false,message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
+      const status=code==='auth/email-already-exists'?409:[400,401,403,405,409,429,502,503,504].includes(e.status)?e.status:503;
+      // Log every failure without exception text, request payloads or credentials.
+      // Upstream Script failures must not masquerade as a central-service outage.
+      logger({event:'central_failure',action,...(operation?{operation}:{}),status,code,requestId});
+      return send(status,{success:false,code,message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
     }
   };
 }
