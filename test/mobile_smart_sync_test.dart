@@ -95,7 +95,7 @@ void main() {
                   'revision': 'v1',
                   'revisions': {'notices': 'n1'},
                   'notices': [
-                    {'id': '1'},
+                    {'id': '1', '_noticeRevision': 'own-n1'},
                   ],
                   'reportCards': [
                     {'id': 'r1'},
@@ -105,6 +105,7 @@ void main() {
               200,
             );
           expect(b['knownRevision'], 'v1');
+          expect(b['knownNoticeRevisions']['1'], 'own-n1');
           return http.Response(
             jsonEncode(
               response(
@@ -113,6 +114,8 @@ void main() {
                     : {
                         'revision': 'v2',
                         'revisions': {'notices': 'n2'},
+                        'noticesDelta': true,
+                        'noticeIds': ['2', '1'],
                         'notices': [
                           {'id': '2'},
                         ],
@@ -129,6 +132,8 @@ void main() {
       expect((s.dashboard['notices'] as List).first['id'], '1');
       await s.refreshDashboard();
       expect((s.dashboard['notices'] as List).first['id'], '2');
+      expect((s.dashboard['notices'] as List).length, 2);
+      expect((s.dashboard['notices'] as List).last['id'], '1');
       expect(s.dashboard['reportCards'], isNotEmpty);
     },
   );

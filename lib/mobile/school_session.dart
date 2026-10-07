@@ -296,11 +296,28 @@ class SchoolSession {
         'knownRevision': dashboard['revision'],
       if (dashboard['revisions'] is Map)
         'knownRevisions': dashboard['revisions'],
+      if (dashboard['notices'] is List)
+        'knownNoticeRevisions': {
+          for (final notice in (dashboard['notices'] as List).whereType<Map>())
+            if (notice['id'] is String && notice['_noticeRevision'] is String)
+              notice['id']: notice['_noticeRevision'],
+        },
     });
     if (generation != _generation)
       throw SchoolAccessDenied('School session changed.');
     if (result['unchanged'] != true) {
       final merged = {...dashboard, ...result};
+      if (result['noticesDelta'] == true && result['noticeIds'] is List) {
+        final ids = (result['noticeIds'] as List).whereType<String>().toList();
+        final rows = <String, Map>{};
+        for (final row in (dashboard['notices'] as List? ?? []).whereType<Map>()) {
+          if (row['id'] is String && ids.contains(row['id'])) rows[row['id']] = row;
+        }
+        for (final row in (result['notices'] as List? ?? []).whereType<Map>()) {
+          if (row['id'] is String && ids.contains(row['id'])) rows[row['id']] = row;
+        }
+        merged['notices'] = [for (final id in ids) if (rows[id] != null) rows[id]];
+      }
       if (jsonEncode(merged).length > 2 * 1024 * 1024)
         throw StateError('School response exceeds cache safety limit.');
       final old = dashboard, oldPerson = person;

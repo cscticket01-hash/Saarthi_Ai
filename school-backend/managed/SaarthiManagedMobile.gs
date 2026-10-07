@@ -69,7 +69,12 @@ function VS_mobileAction(b){
    if(known[key]===revision)return;
    if(key==='school')result.school=VS_mobileSchoolProfile();
    else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}
-   else if(key==='notices')result.notices=VS_query(col).sort((a,c)=>(c.timestamp||c.createdAt||0)-(a.timestamp||a.createdAt||0)).slice(0,100);
+   else if(key==='notices'){
+    const notices=VS_query(col).sort((a,c)=>(c.timestamp||c.createdAt||0)-(a.timestamp||a.createdAt||0)).slice(0,100).map(n=>Object.assign({},n,{_noticeRevision:n._syncRevision||VS_hash(JSON.stringify(n))}));
+    const prior=b.knownNoticeRevisions&&typeof b.knownNoticeRevisions==='object'?b.knownNoticeRevisions:{};
+    result.noticeIds=notices.map(n=>n.id);result.noticesDelta=true;
+    result.notices=notices.filter(n=>prior[n.id]!==n._noticeRevision);
+   }
    else if(key==='calendar')result.calendar=VS_query(col);
    else if(key==='salary')result.salary=VS_query(col,'teacherId',session.person.teacherId||session.person.id);
    else if(key==='documents'){

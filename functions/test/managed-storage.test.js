@@ -139,10 +139,11 @@ test('Windows version-safe notice write -> Android changed group -> unchanged ch
  const mobile=request=>f.call({action:'managed_mobile',request,lease:{schoolId:A,expiresAt:Date.now()+3600000}});
  const login=mobile({action:'mobile_login',projectId:A,role:'student',personId:'pupil',linkToken:'a'.repeat(48),studentClass:'1',rollNo:'1',dob:'2015-01-01'});assert.equal(login.success,true);
  const saved=write('school_notices','notice-1',{title:'Actual synced notice',timestamp:1});assert.equal(saved.syncProtocol,2);
+ write('school_notices','notice-stable',{title:'Unchanged retained notice',timestamp:0});
  const first=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken});assert.equal(first.notices[0].title,'Actual synced notice');
  const unchanged=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevision:first.revision,knownRevisions:first.revisions});assert.equal(unchanged.unchanged,true);assert.equal(unchanged.notices,undefined);
  write('school_notices','notice-1',{title:'New revision',timestamp:2},saved.recordRevision);
- const changed=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevision:first.revision,knownRevisions:first.revisions});assert.equal(changed.notices[0].title,'New revision');assert.equal(changed.reportCards,undefined);assert.equal(changed.calendar,undefined);
+ const changed=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevision:first.revision,knownRevisions:first.revisions,knownNoticeRevisions:Object.fromEntries(first.notices.map(n=>[n.id,n._noticeRevision]))});assert.equal(changed.notices.length,1);assert.equal(changed.noticesDelta,true);assert.equal(changed.noticeIds.length,2);assert.equal(changed.notices[0].title,'New revision');assert.equal(changed.reportCards,undefined);assert.equal(changed.calendar,undefined);
 });
 
 test('published school PDF is owner-scoped, versioned, exact-byte readable and unchanged versions transfer no file',()=>{
