@@ -21,6 +21,12 @@ jobs:
         node --check platform.js
         node --check domain.js
         npm test
+    - name: Benchmark isolated durable attendance queue
+      run: node .github/scripts/attendance_queue_load.cjs build/review-metrics/attendance-queue-load.json
+    - uses: actions/upload-artifact@v4
+      with:
+        name: attendance-queue-load-measurements
+        path: build/review-metrics
     - name: Verify OAuth exchange service security
       run: |
         npm --prefix oauth-broker install --ignore-scripts
@@ -52,12 +58,12 @@ jobs:
     - name: Format platform source for review
       run: dart format lib/main.dart lib/main_android.dart lib/main_windows.dart lib/developer_portal.dart lib/school_document_renderer.dart
         lib/windows_platform_client.dart lib/windows_license_gate.dart lib/windows_school_operations.dart lib/windows_document_templates.dart
-        lib/mobile/school_session.dart lib/platform/platform_config.dart test/document_renderer_test.dart lib/windows_school_identity.dart
+        lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/platform/platform_config.dart test/document_renderer_test.dart lib/windows_school_identity.dart
         lib/mobile/school_notifications.dart test/mobile_boundary_test.dart
         lib/school_text_data.dart lib/school_backend_transport.dart test/school_text_data_test.dart lib/platform/developer_service.dart lib/platform/spark_client.dart
         lib/platform/github_updates.dart lib/platform/monitor_summary.dart lib/mobile/school_messaging.dart
         lib/managed_developer_panel.dart lib/developer_account_widgets.dart lib/firebase_monitor_panel.dart lib/school_password_panel.dart
-        test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart
+        test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
     - name: Analyze developer portal
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart lib/platform
     - name: Analyze Windows school source
@@ -68,12 +74,12 @@ jobs:
         lib/managed_developer_panel.dart lib/developer_account_widgets.dart lib/firebase_monitor_panel.dart lib/school_password_panel.dart lib/windows_settings_panel.dart lib/windows_managed_school_gate.dart
         lib/windows_staff_payroll.dart lib/windows_app_reset.dart lib/windows_license_gate.dart lib/windows_admin_setup.dart lib/windows_connect
     - name: Verify documents and mobile school boundaries
-      run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart
+      run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
     - name: Verify durable document queue and retained originals
       timeout-minutes: 3
       env:
         APPDATA: ${{ runner.temp }}/document-queue-tests
-      run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart
+      run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart test/windows_local_migration_test.dart test/windows_local_folder_picker_test.dart
     - name: Verify Windows portal regressions
       env:
         APPDATA: ${{ runner.temp }}/windows-portal-tests
@@ -130,12 +136,12 @@ jobs:
           lib/windows_license_gate.dart
           lib/windows_school_operations.dart
           lib/windows_document_templates.dart
-          lib/mobile/school_session.dart
+          lib/mobile/school_session.dart lib/mobile/settings_screen.dart
           lib/platform
           lib/mobile/school_messaging.dart
           test/monitor_summary_test.dart test/firebase_metric_samples_test.dart
           test/spark_license_test.dart
-          test/github_update_test.dart
+          test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
           test/document_renderer_test.dart
 
           lib/windows_school_identity.dart
@@ -211,7 +217,7 @@ jobs:
       timeout-minutes: 3
       env:
         APPDATA: ${{ runner.temp }}/windows-document-screen-tests
-      run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart
+      run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart test/windows_local_migration_test.dart test/windows_local_folder_picker_test.dart
     - name: Verify reference PDF contents and continuation pages
       run: |
         python -m pip install "pypdf>=6,<7" "pymupdf>=1.26,<2" "zxing-cpp>=2.3,<4" "numpy>=2,<3"
@@ -236,7 +242,7 @@ jobs:
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
         SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
-      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.101 --build-number=101 --dart-define=APP_VERSION=2.1.101-review --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.102 --build-number=102 --dart-define=APP_VERSION=2.1.102-review --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
     - name: Execute Windows fresh-start duplicate-launch and restart smoke test
       shell: powershell
       run: .github/scripts/test_windows_executable.ps1
@@ -247,7 +253,7 @@ jobs:
         if ($registrant -notmatch 'FileSelectorWindowsRegisterWithRegistrar') { throw 'Native Windows file picker plugin not registered.' }
         Copy-Item build/windows/x64/runner/Release build/windows-review -Recurse
         Set-Content build/windows-review/TEST-COMMIT.txt $env:GITHUB_SHA
-        Copy-Item docs/windows-test-2.1.101.md build/windows-review/TEST-INSTRUCTIONS.md
+        Copy-Item docs/windows-test-2.1.102.md build/windows-review/TEST-INSTRUCTIONS.md
         Copy-Item school-backend/managed/SaarthiManagedAll.gs build/windows-review/REVIEW-SCHOOL-STORAGE.gs
     # The production upload path is verified with the injected native adapter.
     # Hosted-runner Win32 picker control automation has repeatedly timed out.
@@ -315,17 +321,21 @@ jobs:
     - name: Align resolved Android plugin SDKs
       run: python .github/scripts/configure_android_plugins.py
     - name: Analyze universal mobile app
-      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
-      run: flutter test test/school_qr_login_test.dart test/mobile_boundary_test.dart
+      run: flutter test test/school_qr_login_test.dart test/mobile_boundary_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
     - name: Build unsigned Android preview
       env:
         SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
-      run: flutter build apk --debug -t lib/main_android.dart --build-name=1.0.481 --build-number=481 --dart-define=APP_VERSION=1.0.481-review --dart-define=APP_BUILD=481 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
+      run: flutter build apk --debug -t lib/main_android.dart --build-name=1.0.495 --build-number=495 --dart-define=APP_VERSION=1.0.495-review --dart-define=APP_BUILD=495 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
+    - name: Record Android TEST source commit
+      run: echo "$GITHUB_SHA" > build/app/outputs/flutter-apk/TEST-COMMIT.txt
     - uses: actions/upload-artifact@v4
       with:
         name: android-review-apk
-        path: build/app/outputs/flutter-apk/app-debug.apk
+        path: |
+          build/app/outputs/flutter-apk/app-debug.apk
+          build/app/outputs/flutter-apk/TEST-COMMIT.txt
 'on':
   push:
     branches:
@@ -337,6 +347,7 @@ jobs:
     - fix/windows-local-startup-engine
     - fix/document-id-qr-engines
     - fix/local-first-template-engine
+    - fix/mobile-smart-sync-20261007
   pull_request:
     branches:
     - main

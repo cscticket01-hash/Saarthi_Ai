@@ -1,25 +1,32 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
-Future<Map<String,dynamic>> latestAndroidUpdate() async {
+Future<Map<String,dynamic>> latestAndroidUpdate({http.Client? client}) async {
+  final transport = client ?? http.Client();
+  try {
   // Static release asset: checks do not consume Firebase reads or GitHub API quota.
-  final staticResponse=await http.get(Uri.parse('https://github.com/cscticket01-hash/Saarthi_Ai/releases/latest/download/android-update.json'))
-      .timeout(const Duration(seconds:20));
-  if(staticResponse.statusCode==200){
-    final data=jsonDecode(staticResponse.body);
-    if(data is! Map) throw StateError('Invalid update response');
-    final update=Map<String,dynamic>.from(data);
-    validateAndroidUpdate(update);
-    return {'success':true,'update':update};
-  }
+  try {
+    final staticResponse=await transport.get(Uri.parse('https://github.com/cscticket01-hash/Saarthi_Ai/releases/latest/download/android-update.json')).timeout(const Duration(seconds:20));
+    if(staticResponse.statusCode==200){
+      final data=jsonDecode(staticResponse.body);
+      if(data is! Map) throw StateError('Invalid update response');
+      final update=Map<String,dynamic>.from(data);
+      validateAndroidUpdate(update);
+      return {'success':true,'update':update};
+    }
+  } on Exception { /* The public release index is the existing safe fallback. */ }
 
-  final r = await http.get(Uri.parse('https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/releases?per_page=100'),
+  final r = await transport.get(Uri.parse('https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/releases?per_page=100'),
     headers:{'Accept':'application/vnd.github+json','User-Agent':'Vidya-Saarthi'})
     .timeout(const Duration(seconds:20));
   if(r.statusCode != 200) throw StateError('Update service unavailable. Try again later.');
   final releases = jsonDecode(r.body);
   if(releases is! List) throw StateError('Invalid update response');
-  for(final release in releases) {
+  final sorted = releases.whereType<Map>().toList()..sort((a,b) {
+    int build(Map r)=>int.tryParse(r['tag_name'].toString().split('.').last)??0;
+    return build(b).compareTo(build(a));
+  });
+  for(final release in sorted) {
     final tag=release['tag_name'].toString();
     if(release['draft']==true || release['prerelease']==true || !tag.startsWith('android-v')) continue;
     final version=tag.substring('android-v'.length),build=int.tryParse(version.split('.').last);
@@ -30,11 +37,12 @@ Future<Map<String,dynamic>> latestAndroidUpdate() async {
       final uri=Uri.tryParse(asset['browser_download_url'].toString());
       if(uri==null||uri.scheme!='https'||uri.host!='github.com'||
         !uri.path.startsWith('/cscticket01-hash/Saarthi_Ai/releases/download/android-v')) continue;
-      final update=<String,dynamic>{'versionCode':build,'versionName':version,'apkUrl':uri.toString(),'sha256':asset['digest']};
+      final update=<String,dynamic>{'versionCode':build,'versionName':version,'apkUrl':uri.toString(),'sha256':asset['digest'],'releaseNotes':release['body']??'','whatsNew':[release['body']??'']};
       validateAndroidUpdate(update);return {'success':true,'update':update};
     }
   }
   throw StateError('No Android update is published yet');
+  } finally { if(client == null) transport.close(); }
 }
 
 void validateAndroidUpdate(Map<String,dynamic> update) {

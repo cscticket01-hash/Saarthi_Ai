@@ -72,6 +72,10 @@ function fromEnvironment(env) {
     return getAuth(legacy).verifyIdToken(String(token || '')); 
   }});
   const managed=require('../functions/managed-schools').createManagedSchools({auth,db,projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
+  if(env.SAARTHI_ATTENDANCE_QUEUE_ENABLED!=='false'){
+    const worker=require('../functions/attendance-queue').createAttendanceWorker({drain:managed.drainAttendance,onError:()=>console.info(JSON.stringify({event:'attendance_retry_pending'}))});
+    managed.setAttendanceWake(worker.wake);
+  }
   const handle=req => /^(managed\/|developer\/managed\/)/.test(req.body?.action || '') ? managed(req) : legacyHandle(req);
   return createHandler({handle,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await db.doc('_central_staging_health/runtime').get();

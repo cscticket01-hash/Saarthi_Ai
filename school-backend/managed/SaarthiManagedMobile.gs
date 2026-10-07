@@ -1,15 +1,20 @@
 /** Managed mobile bridge. Only called AFTER central server verification and
  * the adapter's HMAC/replay verification. Legacy per-project code is untouched. */
 function VS_managedMobile(request,lease) {
+ const lock=LockService.getScriptLock();lock.waitLock(30000);
+ try{return VS_managedMobileUnlocked(request,lease);}finally{lock.releaseLock();}
+}
+function VS_managedMobileUnlocked(request,lease) {
  const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
  if(!lease||lease.schoolId!==school||lease.expiresAt<=Date.now())throw new Error('School licence is inactive');
  function VS_project(){return school;}
  function VS_requireLicense(){if(lease.expiresAt<=Date.now())throw new Error('School licence expired');}
- function VS_records(col){return VS_managedRecord({operation:'read',collection:col}).records;}
- function VS_get(col,id){const d=VS_records(col)[id];return d?Object.assign({},d,{id:id}):null;}
+ const recordCache={};
+ function VS_records(col){return recordCache[col]||(recordCache[col]=VS_managedRecordUnlocked({operation:'read',collection:col}).records);}
+ function VS_get(col,id){const item=VS_sheetItem(VS_managedSheet(col),String(id));if(!item||item.data._syncDeleted)return null;return Object.assign({},item.data,{id:String(id)});}
  function VS_query(col,field,value){const records=VS_records(col);return Object.keys(records).filter(id=>!field||records[id][field]===value).map(id=>Object.assign({},records[id],{id:id}));}
- function VS_set(col,id,data){VS_managedRecord({operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})});return Object.assign({},data,{id:id});}
- function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecord({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
+ function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecordUnlocked(request);return Object.assign({},data,{id:id});}
+ function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecordUnlocked({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
  function VS_touchPresence(){} // Windows presence is central and cannot be renewed by mobile.
  function VS_messagingOptions(){return null;} // No per-school Firebase project is required.
  function VS_mobileSchoolProfile(){const p=VS_get('school_config','school_profile_cache')||{};const out={};['schoolName','principalName','schoolContactNo'].forEach(k=>{if(p[k]!==undefined)out[k]=p[k];});return out;}
@@ -40,7 +45,7 @@ function VS_mobileAction(b){
   const token=VS_secret();const expires=Date.now()+30*86400000;const stable=p.mobileStableId||p.id;
   VS_set('mobile_sessions',VS_hash(token),{personId:stable,documentId:p.id,role:verified.role,linkToken:p.mobileLinkToken,expiresAt:expires,createdAt:Date.now()});
   VS_set('mobile_users',VS_hash(verified.role+'/'+stable),{role:verified.role});
-  return {sessionToken:token,personId:stable,role:verified.role,expiresAt:expires,person:VS_safePerson(p),messaging:VS_messagingOptions(),schoolName:VS_project()};
+  return {sessionToken:token,personId:stable,role:verified.role,expiresAt:expires,person:VS_safePerson(p),messaging:VS_messagingOptions(),schoolName:VS_mobileSchoolProfile().schoolName||'School'};
  }
  if(b.projectId && b.projectId!==VS_project())throw new Error('School identity mismatch');
  const session=VS_session(b);
@@ -54,38 +59,75 @@ function VS_mobileAction(b){
  if(action==='mobile_asset')return VS_mobileAsset(b,session);
  if(action==='mobile_dashboard'){
   VS_touchPresence(session,b.version);
-  const profile=VS_mobileSchoolProfile();
-  const notices=VS_query('school_notices').sort((a,c)=>(c.timestamp||c.createdAt||0)-(a.timestamp||a.createdAt||0)).slice(0,100);
-  const result={person:VS_safePerson(session.person),school:profile,notices:notices,templates:VS_get('school_settings','document_templates')||{},calendar:VS_query('school_calendar'),calendarSettings:VS_get('school_settings','calendar')||{closedWeekdays:[0]}};
-  if(session.role==='student'){
-   result.reportCards=VS_own('exam_results',session);
-   result.fees=VS_own('fee_ledger',session);
-   result.payments=VS_own('fee_payments',session);
-  }else{result.salary=VS_query('teacher_salary','teacherId',session.person.teacherId||session.person.id);}
+  const props=PropertiesService.getScriptProperties(),known=b.knownRevisions||{};
+  const loc=VS_get('school_settings','school_location')||{},day=VS_day();
+  const policy={role:session.role,personId:session.personId,documentId:session.person.id,
+   qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,open:VS_isOpen(day),
+   latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200};
+  const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy};
+  const groups={school:'school_config',templates:'school_settings',notices:'school_notices',calendar:'school_calendar',documents:'documents'};
+  if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments'});
+  else groups.salary='teacher_salary';
+  Object.keys(groups).forEach(key=>{
+   const col=groups[key];if(props.getProperty('VS_SHEET_MIGRATED_'+col)!=='1')VS_managedSheet(col);
+   const revision=props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
+   if(known[key]===revision)return;
+   if(key==='school')result.school=VS_mobileSchoolProfile();
+   else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}
+   else if(key==='notices'){
+    const notices=VS_query(col).sort((a,c)=>(c.timestamp||c.createdAt||0)-(a.timestamp||a.createdAt||0)).slice(0,100).map(n=>Object.assign({},n,{_noticeRevision:n._syncRevision||VS_hash(JSON.stringify(n))}));
+    const prior=b.knownNoticeRevisions&&typeof b.knownNoticeRevisions==='object'?b.knownNoticeRevisions:{};
+    result.noticeIds=notices.map(n=>n.id);result.noticesDelta=true;
+    result.notices=notices.filter(n=>prior[n.id]!==n._noticeRevision);
+   }
+   else if(key==='calendar')result.calendar=VS_query(col);
+   else if(key==='salary')result.salary=VS_query(col,'teacherId',session.person.teacherId||session.person.id);
+   else if(key==='documents'){
+    const docs=VS_own(col,session).filter(d=>!d.deleted&&!d._syncDeleted);
+    result.documents=docs.filter(d=>d.documentKind!=='idCard').map(d=>({documentId:d.id,documentName:d.documentName,mimeType:d.mimeType,sizeBytes:d.sizeBytes,documentRevision:d.documentRevision,contentHash:d.contentHash}));
+    const card=docs.find(d=>d.documentKind==='idCard'&&d.ownerRole===session.role);
+    result.idCardPackage=card?{documentId:card.id,documentRevision:card.documentRevision,contentHash:card.contentHash,sizeBytes:card.sizeBytes}:null;
+   } else result[key]=VS_own(col,session);
+  });
+  result.revisions=revisions;
+  result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',VS_safePerson(session.person)]));
+  if(b.knownRevision===result.revision)return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy};
+
   return result;
+ }
+ if(action==='mobile_document'){
+  const document=VS_get('documents',String(b.documentId||''));
+  if(!document||document.deleted||document._syncDeleted||
+   !((document.personId===session.personId)||(document.studentId===session.person.id&&(!document.ownerRole||document.ownerRole===session.role))))throw new Error('School document is not accessible');
+  if(b.knownRevision===document.documentRevision)return {unchanged:true,documentRevision:document.documentRevision};
+  const blob=VS_managedFile(document.fileId).getBlob(),bytes=blob.getBytes();
+  if(bytes.length>20*1024*1024)throw new Error('File limit exceeded');
+  return {base64:Utilities.base64Encode(bytes),mime:blob.getContentType(),documentRevision:document.documentRevision,contentHash:document.contentHash};
  }
  if(action==='mobile_attendance_list'){
   const month=String(b.month||'');if(!/^\d{4}-\d{2}$/.test(month))throw new Error('Select a month');
   return {attendance:VS_query('attendance_records','personId',session.personId).filter(d=>String(d.date||'').startsWith(month)),calendar:VS_query('school_calendar').filter(d=>d.id.startsWith(month)),calendarSettings:VS_get('school_settings','calendar')||{closedWeekdays:[0]}};
  }
  if(action==='mobile_mark_attendance'){
-  const day=VS_day();if(!VS_isOpen(day))throw new Error('School is closed today. Attendance is disabled for everyone');
+  const day=b.submittedAt?Utilities.formatDate(new Date(b.submittedAt),'Asia/Kolkata','yyyy-MM-dd'):VS_day();if(!VS_isOpen(day))throw new Error('School is closed today. Attendance is disabled for everyone');
   const loc=VS_get('school_settings','school_location')||{};const lat=Number(b.latitude),lng=Number(b.longitude);
   if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180)throw new Error('Enable your device location');
   if(loc.latitude===undefined||loc.longitude===undefined)throw new Error('School location is not configured');
   const distance=VS_distance(lat,lng,Number(loc.latitude),Number(loc.longitude));const radius=Number(loc.radiusMeters||200),accuracy=Number(b.accuracy);if(radius<25||radius>200||!Number.isFinite(radius)||!Number.isFinite(accuracy)||accuracy<0||accuracy>radius)throw new Error('Accurate school location required');if(distance>radius)throw new Error('Attendance can be marked only within the school location');
   // A scan at attendance time must be the same person as the verified session.
   const qr=VS_person(b);if(qr.role!==session.role||qr.person.mobileLinkToken!==session.person.mobileLinkToken)throw new Error('Scan your own school ID card');
-  const id=VS_hash(session.role+'/'+session.personId+'/'+day);const lock=LockService.getScriptLock();lock.waitLock(20000);
-  try{
+  const id=VS_hash(session.role+'/'+session.personId+'/'+day);
+  {
    const current=VS_get('attendance_records',id)||{};const mode=b.mode==='exit'?'exit':'entry';
+   const operationField=mode==='entry'?'entryOperationId':'exitOperationId';
+   if(b.operationId&&current[operationField]===b.operationId)return {message:'Attendance already recorded',record:current};
    if(mode==='entry'&&current.checkIn)throw new Error('Today’s check-in is already recorded');
    if(mode==='exit'&&!current.checkIn)throw new Error('Check in before checking out');
    if(mode==='exit'&&current.checkOut)throw new Error('Today’s check-out is already recorded');
    const doc=Object.assign({},current,{personId:session.personId,documentId:session.person.id,role:session.role,name:session.person.name||'',studentClass:session.person.class||'',rollNo:session.person.rollNo||'',date:day,source:'ANDROID_QR',updatedAt:Date.now()});delete doc.id;
-   doc[mode==='entry'?'checkIn':'checkOut']=Date.now();VS_set('attendance_records',id,doc);
+   doc[mode==='entry'?'checkIn':'checkOut']=b.submittedAt||Date.now();if(b.operationId)doc[operationField]=b.operationId;VS_set('attendance_records',id,doc);
    return {message:mode==='entry'?'Check-in recorded':'Check-out recorded',record:doc};
-  }finally{lock.releaseLock();}
+  }
  }
  throw new Error('Unknown school mobile action');
 }

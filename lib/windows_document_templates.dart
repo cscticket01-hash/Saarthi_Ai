@@ -1,3 +1,11 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
+import 'school_qr_link.dart';
+import 'windows_school_identity.dart';
+import 'windows_backend_bridge.dart';
+import 'windows_connect/central_school_cloud.dart';
 import 'id_card_catalog.dart';
 import 'id_card_engine.dart';
 import 'fitted_document_preview.dart';
@@ -86,12 +94,163 @@ class WindowsDocumentTemplates {
     );
   }
 
-  static Future<Uint8List?> selected(String kind,Map<String,dynamic> data,{String qr=''}) async {
-    qr=IdCardEngine.compactQr(qr);
-    final bytes=await _selected(kind,data,qr:qr);
-    if(bytes!=null && {'studentId','teacherId','otherStaffId'}.contains(kind) && qr.isNotEmpty)
-      await IdCardEngine.verifyExport(bytes,qr);
+  static Future<Uint8List?> selected(
+    String kind,
+    Map<String, dynamic> data, {
+    String qr = '',
+    bool publish = true,
+  }) async {
+    qr = IdCardEngine.compactQr(qr);
+    final bytes = await _selected(kind, data, qr: qr);
+    if (bytes != null &&
+        {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
+        qr.isNotEmpty)
+      await IdCardEngine.verifyExport(bytes, qr);
+    if (bytes != null &&
+        publish &&
+        {'studentId', 'teacherId'}.contains(kind) &&
+        qr.isNotEmpty) {
+      final identity = await CentralSchoolCloud.saved();
+      if (identity['managed'] == true) await _publish(kind, data, qr, bytes);
+    }
     return bytes;
+  }
+
+  static String _fingerprint(
+    Map<String, dynamic> data,
+    Map<String, dynamic> profile,
+    dynamic template,
+    String qr,
+  ) {
+    dynamic clean(dynamic v) {
+      if (v is Timestamp) return v.millisecondsSinceEpoch;
+      if (v is DateTime) return v.millisecondsSinceEpoch;
+      if (v is Map) {
+        final keys =
+            v.keys
+                .map((k) => k.toString())
+                .where(
+                  (k) =>
+                      !k.startsWith('_sync') &&
+                      !{
+                        'updatedAt',
+                        'lastEdited',
+                        'mobileLinkUpdatedAt',
+                      }.contains(k),
+                )
+                .toList()
+              ..sort();
+        return {for (final k in keys) k: clean(v[k])};
+      }
+      if (v is List) return v.map(clean).toList();
+      return v;
+    }
+
+    return sha256
+        .convert(utf8.encode(jsonEncode(clean([data, profile, template, qr]))))
+        .toString();
+  }
+
+  static Future<void> _publish(
+    String kind,
+    Map<String, dynamic> data,
+    String qr,
+    Uint8List bytes,
+  ) async {
+    final link = SchoolLink.parse(qr), db = FirebaseFirestore.instance;
+    final collection = kind == 'teacherId'
+        ? 'teachers_directory'
+        : 'students_directory';
+    final person = (await db.collection(collection).doc(link.personId).get())
+        .data();
+    if (person == null ||
+        person['mobileLinkToken'] != link.linkToken ||
+        link.schoolId != db.activeProfileIdentity['schoolSyncId'])
+      throw StateError('Verified ID owner changed. Reopen ID card.');
+    final profile =
+        (await db.collection('school_config').doc('school_profile_cache').get())
+            .data() ??
+        {};
+    final revision = _fingerprint(
+      person,
+      profile,
+      (await selections())[kind],
+      qr,
+    );
+    await WindowsBackendBridge.publishIdCard(
+      bytes: bytes,
+      qr: qr,
+      kind: kind,
+      person: person,
+      inputRevision: revision,
+    );
+  }
+
+  /// Uses the same selected renderer and the existing durable document outbox.
+  /// Only changed person/profile/template inputs create a new immutable package.
+  static Future<void> publishChangedIdCards() async {
+    final db = FirebaseFirestore.instance, origin = db.activeProfileId;
+    final identity = await CentralSchoolCloud.saved();
+    if (identity['managed'] != true) return;
+    final profile =
+        (await db.collection('school_config').doc('school_profile_cache').get())
+            .data() ??
+        {};
+    final templates = await selections();
+    for (final kind in ['studentId', 'teacherId']) {
+      final collection = kind == 'studentId'
+          ? 'students_directory'
+          : 'teachers_directory';
+      final people = await db.collection(collection).get();
+      for (final doc in people.docs) {
+        if (db.activeProfileId != origin)
+          throw StateError('School changed during ID publication.');
+        final person = await SchoolPersonIdentity.ensure(collection, doc.id);
+        final qr = SchoolLink.encodeCompact({
+          'app': 'VIDYA_SAARTHI',
+          'v': 2,
+          'managed': true,
+          'schoolId': identity['schoolId'],
+          'centralEndpoint': identity['endpoint'],
+          'firebaseProjectId': identity['projectId'],
+          'type': kind == 'studentId' ? 'student' : 'teacher',
+          'personId': doc.id,
+          'linkToken': person['mobileLinkToken'],
+        });
+        final revision = _fingerprint(person, profile, templates[kind], qr);
+        final id = WindowsBackendBridge.publishedIdCardId(qr);
+        final existing =
+            (await db.collection('_local_student_documents').doc(id).get())
+                .data();
+        if (existing?['inputRevision'] == revision &&
+            existing?['deleted'] != true)
+          continue;
+        final address = [
+          person['address'],
+          person['district'],
+          person['state'],
+        ].where((v) => v != null && v.toString().isNotEmpty).join(', ');
+        final data = {
+          ...person,
+          'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
+          'roll': person['rollNo'],
+          'contact': person['parentContact'],
+          'streetAddress': person['address'],
+          'address': address,
+          'showStudentUid': person['studentUid'] != null,
+        };
+        final bytes = await selected(kind, data, qr: qr, publish: false);
+        if (bytes == null)
+          throw StateError('Selected ID renderer returned no package.');
+        await WindowsBackendBridge.publishIdCard(
+          bytes: bytes,
+          qr: qr,
+          kind: kind,
+          person: person,
+          inputRevision: revision,
+        );
+      }
+    }
   }
 
   static Future<Uint8List?> _selected(

@@ -209,13 +209,44 @@ class DocumentProcessingEngine {
     border.sort();
     final background = border[border.length ~/ 2];
     if (background > 190) return null;
-    final points = <img.Point>[];
-    for (var y = 1; y < sample.height - 1; y += 2)
-      for (var x = 1; x < sample.width - 1; x += 2) {
-        if (light(x, y) > math.max(205, background + 45))
-          points.add(img.Point(x, y));
+    // Use one connected, neutral paper surface. Unrelated bright table/hand
+    // pixels must never become the page's corners.
+    final gw = (sample.width + 1) ~/ 2, gh = (sample.height + 1) ~/ 2;
+    final mask = Uint8List(gw * gh);
+    for (var y = 1; y < gh - 1; y++) {
+      for (var x = 1; x < gw - 1; x++) {
+        final pixel = sample.getPixel(x * 2, y * 2);
+        final spread = math.max(pixel.r, math.max(pixel.g, pixel.b)) -
+            math.min(pixel.r, math.min(pixel.g, pixel.b));
+        if (light(x * 2, y * 2) > math.max(205, background + 45) && spread < 32) {
+          mask[y * gw + x] = 1;
+        }
       }
-    if (points.length < sample.width * sample.height * 0.12) return null;
+    }
+    var points = <img.Point>[];
+    var runnerUp = 0;
+    for (var seed = 0; seed < mask.length; seed++) {
+      if (mask[seed] != 1) continue;
+      final queue = <int>[seed], component = <img.Point>[];
+      mask[seed] = 2;
+      for (var index = 0; index < queue.length; index++) {
+        final cell = queue[index], x = cell % gw, y = cell ~/ gw;
+        component.add(img.Point(x * 2, y * 2));
+        for (final next in [cell - 1, cell + 1, cell - gw, cell + gw]) {
+          if (next >= 0 && next < mask.length && mask[next] == 1) {
+            mask[next] = 2;
+            queue.add(next);
+          }
+        }
+      }
+      if (component.length > points.length) {
+        runnerUp = points.length;
+        points = component;
+      } else if (component.length > runnerUp) {
+        runnerUp = component.length;
+      }
+    }
+    if (points.length < gw * gh * 0.30 || runnerUp > points.length * 0.25) return null;
     img.Point extreme(num Function(img.Point) score, bool minimum) =>
         points.reduce(
           (a, b) =>
@@ -232,7 +263,9 @@ class DocumentProcessingEngine {
       final a = p[i], b = p[(i + 1) % 4];
       area += a.x * b.y - b.x * a.y;
     }
-    if (area.abs() / 2 < sample.width * sample.height * 0.30) return null;
+    final quadArea = area.abs() / 2;
+    if (quadArea < sample.width * sample.height * 0.30 ||
+        points.length * 4 / quadArea < 0.70) return null;
     // Preserve a small margin so border text/seals are not shaved off.
     final cx = p.fold<double>(0, (v, p) => v + p.x.toDouble()) / 4,
         cy = p.fold<double>(0, (v, p) => v + p.y.toDouble()) / 4;

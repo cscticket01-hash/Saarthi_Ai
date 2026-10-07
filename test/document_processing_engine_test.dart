@@ -26,6 +26,23 @@ void main() {
     final output=File('build/document-measurements.json');await output.parent.create(recursive:true);await output.writeAsString(jsonEncode(report));
     print('MEASURE document set '+jsonEncode(report));
   });
+  test('disconnected bright objects do not pull paper corners; competing pages are preserved', () {
+    final image = img.Image(width: 600, height: 800);
+    img.fill(image, color: img.ColorRgb8(45, 45, 45));
+    img.fillRect(image, x1: 80, y1: 90, x2: 520, y2: 700, color: img.ColorRgb8(250, 250, 250));
+    img.fillRect(image, x1: 2, y1: 2, x2: 28, y2: 30, color: img.ColorRgb8(255, 255, 255));
+    final bytes = Uint8List.fromList(img.encodePng(image));
+    final before = List<int>.from(bytes);
+    final result = DocumentProcessingEngine.process({'bytes': bytes});
+    expect(result['perspectiveCorrected'], true);
+    expect(result['width'], lessThan(500));
+    expect(bytes, before);
+    final competing = img.Image(width: 600, height: 800);
+    img.fill(competing, color: img.ColorRgb8(45, 45, 45));
+    img.fillRect(competing, x1: 30, y1: 40, x2: 265, y2: 760, color: img.ColorRgb8(255, 255, 255));
+    img.fillRect(competing, x1: 335, y1: 40, x2: 570, y2: 760, color: img.ColorRgb8(255, 255, 255));
+    expect(DocumentProcessingEngine.process({'bytes': Uint8List.fromList(img.encodePng(competing))})['perspectiveCorrected'], false);
+  });
   test('truncated real PNG/JPEG containers are rejected before decoding', () {
     final image = img.Image(width: 20, height: 30);
     for (final bytes in [img.encodePng(image), img.encodeJpg(image)]) {
