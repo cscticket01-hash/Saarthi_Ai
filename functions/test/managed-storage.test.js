@@ -78,6 +78,7 @@ test('managed GPS attendance keeps school-selected 25–200m range and rejects m
  const attendance={action:'mobile_mark_attendance',sessionToken:session.sessionToken,role:'teacher',personId:'teacher',linkToken:'x'.repeat(48),latitude:0,longitude:0};
  assert.equal(mobile(attendance).success,false);assert.equal(mobile({...attendance,accuracy:100}).success,false);assert.equal(mobile({...attendance,latitude:1,accuracy:5}).success,false);
  assert.equal(mobile({...attendance,accuracy:5}).success,true);assert.equal(mobile({...attendance,accuracy:5}).success,false);
+ const exit=mobile({...attendance,accuracy:5,mode:'exit',operationId:'f'.repeat(64)});assert.equal(exit.success,true);assert.equal(mobile({...attendance,accuracy:5,mode:'exit',operationId:'f'.repeat(64)}).success,true);
 });
 test('generated school bundle retains managed mobile, summary and preparation implementations',()=>{
  const bundle=fs.readFileSync('../school-backend/managed/SaarthiManagedAll.gs','utf8');

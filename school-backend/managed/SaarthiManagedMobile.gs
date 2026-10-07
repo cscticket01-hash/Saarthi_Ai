@@ -9,7 +9,7 @@ function VS_managedMobile(request,lease) {
  function VS_records(col){return recordCache[col]||(recordCache[col]=VS_managedRecord({operation:'read',collection:col}).records);}
  function VS_get(col,id){const files=VS_managedCollection(col).getFilesByName(Utilities.base64EncodeWebSafe(id)+'.json');if(!files.hasNext())return null;const raw=JSON.parse(files.next().getBlob().getDataAsString());if(files.hasNext()||raw.schoolId!==school||raw.id!==id)throw new Error('School identity mismatch');if(raw.data._syncDeleted)return null;return Object.assign({},raw.data,{id:id});}
  function VS_query(col,field,value){const records=VS_records(col);return Object.keys(records).filter(id=>!field||records[id][field]===value).map(id=>Object.assign({},records[id],{id:id}));}
- function VS_set(col,id,data){VS_managedRecord({operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})});return Object.assign({},data,{id:id});}
+ function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecord(request);return Object.assign({},data,{id:id});}
  function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecord({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
  function VS_touchPresence(){} // Windows presence is central and cannot be renewed by mobile.
  function VS_messagingOptions(){return null;} // No per-school Firebase project is required.

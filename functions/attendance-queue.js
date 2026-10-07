@@ -35,7 +35,7 @@ function createAttendanceQueue({store,deliver,now=Date.now,batchSize=25}){
      await store.finish(item.operationId,item.claim,{state,attempts,
        ...(state==='completed'?{completedAt:now()}:{}),
        lastError:state==='completed'?'':definitive?'Attendance requires school review.':'Attendance service unavailable; operation retained.',
-       nextAttemptAt:now()+Math.min(3600000,5000*2**Math.min(attempts,9))});
+       nextAttemptAt:['completed','needsAttention'].includes(state)?Number.MAX_SAFE_INTEGER:now()+Math.min(3600000,5000*2**Math.min(attempts,9))});
      if(state==='completed')metrics.completed++;else if(state==='retry')metrics.retried++;else metrics.rejected++;
     }
    }
@@ -49,13 +49,13 @@ function firestoreAttendanceStore(db){
  return {
   create:async(id,row)=>{try{await ref(id).create(row);return true;}catch(e){if(e.code===6||e.code==='already-exists')return false;throw e;}},
   pending:async(limit)=>{
-   const result=await collection.where('state','in',['pending','retry','processing']).limit(limit).get();
+   const result=await collection.where('nextAttemptAt','<=',Date.now()).orderBy('nextAttemptAt').limit(limit).get();
    return result.docs.map(d=>({...d.data(),operationId:d.id}));
   },
   claim:(id,claim,at,expires)=>db.runTransaction(async tx=>{
    const r=ref(id),snap=await tx.get(r);if(!snap.exists)return false;const row=snap.data();
    if(!['pending','retry','processing'].includes(row.state)||row.nextAttemptAt>at||row.state==='processing'&&row.claimExpiresAt>at)return false;
-   tx.set(r,{state:'processing',claim,claimExpiresAt:expires},{merge:true});return true;
+   tx.set(r,{state:'processing',claim,claimExpiresAt:expires,nextAttemptAt:expires},{merge:true});return true;
   }),
   finish:(id,claim,values)=>db.runTransaction(async tx=>{
    const r=ref(id),snap=await tx.get(r);if(!snap.exists||snap.data().claim!==claim)return;

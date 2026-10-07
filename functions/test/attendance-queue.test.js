@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {createAttendanceQueue}=require('../attendance-queue');
+const {createAttendanceQueue,firestoreAttendanceStore}=require('../attendance-queue');
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32);
 function store(rows=new Map()) {return {rows,create:async(id,r)=>{if(rows.has(id))return false;rows.set(id,{...r});return true;},pending:async n=>[...rows.values()].filter(r=>r.state!=='completed'&&r.state!=='needsAttention').slice(0,n),claim:async(id,claim,now,expires)=>{const r=rows.get(id);if(!r||r.state==='processing'&&r.claimExpiresAt>now)return false;Object.assign(r,{state:'processing',claim,claimExpiresAt:expires});return true;},finish:async(id,claim,v)=>{if(rows.get(id).claim===claim)Object.assign(rows.get(id),v,{claim:'',claimExpiresAt:0});}};}
 const event=(school=A,person='pupil')=>({schoolId:school,role:'student',personId:person,day:'2026-10-07',mode:'entry',payload:{encrypted:'test'}});
@@ -25,3 +25,11 @@ test('authoritative licence denial is retained for attention; temporary service 
  await q.enqueue(event());await q.drain();assert.equal([...s.rows.values()][0].state,'needsAttention');assert.equal(s.rows.size,1);
 });
 module.exports={store,event};
+
+test('Firestore worker queries due operations only and defers claimed rows until lease expiry',async()=>{
+ const calls=[];let claimed;
+ const query={where:(field,op,value)=>{calls.push({field,op,value});return query;},orderBy:field=>{calls.push({orderBy:field});return query;},limit:()=>query,get:async()=>({docs:[]})};
+ const db={collection:()=>query,doc:()=>({}),runTransaction:async callback=>callback({get:async()=>({exists:true,data:()=>({state:'pending',nextAttemptAt:0})}),set:(_,values)=>{claimed=values;}})};
+ const s=firestoreAttendanceStore(db);await s.pending(25);assert.equal(calls[0].field,'nextAttemptAt');assert.equal(calls[0].op,'<=');assert.equal(calls[1].orderBy,'nextAttemptAt');
+ await s.claim('op','claim',1000,121000);assert.equal(claimed.nextAttemptAt,121000);assert.equal(claimed.claimExpiresAt,121000);
+});

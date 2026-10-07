@@ -156,7 +156,7 @@ function VS_managedHandle(e) {
       result={acknowledgements:b.operations.map(op=>{
         if(!/^[a-f0-9]{64}$/.test(op.operationId||''))throw new Error('Invalid attendance operation');
         try{VS_managedMobile(Object.assign({},op.request,{action:'mobile_mark_attendance',operationId:op.operationId}),b.lease);return {operationId:op.operationId,success:true};}
-        catch(e){const authoritative=/School (session expired|record or ID|licence|is closed)|already recorded|Check in before|Attendance can be marked|own school ID|Accurate school location/.test(e.message||'');return {operationId:op.operationId,success:false,authoritative:authoritative};}
+        catch(e){const authoritative=/School (session expired|record or ID|licence|is closed)|already recorded|Attendance can be marked|own school ID|Accurate school location/.test(e.message||'');return {operationId:op.operationId,success:false,authoritative:authoritative};}
       })};
     }
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
