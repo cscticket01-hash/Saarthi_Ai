@@ -15,6 +15,7 @@ void main() {
   testWidgets('Android first screen renders while notification initialization is blocked', (tester) async {
     FlutterSecureStorage.setMockInitialValues({});
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    FlutterLocalNotificationsPlugin();
     final previous = FlutterLocalNotificationsPlatform.instance;
     FlutterLocalNotificationsPlatform.instance = AndroidFlutterLocalNotificationsPlugin();
     final pending = Completer<bool>();

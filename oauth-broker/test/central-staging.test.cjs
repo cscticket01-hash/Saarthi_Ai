@@ -44,8 +44,9 @@ test('Central request traces expose only allowlisted actions, status and generat
     body:JSON.stringify({action:'migration/import',sourceAdminToken:'secret-admin',googleAccessToken:'secret-google',schoolId:'private-school'})});
   assert.equal(r.status,403);const body=await r.json();assert(!JSON.stringify(body).includes('private-token'));
   assert.match(body.requestId,/^[a-f0-9-]{36}$/);assert.equal(r.headers.get('x-saarthi-request-id'),body.requestId);
-  assert.deepEqual(logs,[{event:'central_request',endpoint:'/school-cloud',action:'migration/import',status:403,requestId:body.requestId}]);
+  assert.deepEqual(logs.filter(e=>e.event==='central_request'),[{event:'central_request',endpoint:'/school-cloud',action:'migration/import',status:403,requestId:body.requestId}]);
+  assert.deepEqual(logs.find(e=>e.event==='central_failure'),{event:'central_failure',action:'migration/import',status:403,code:'UNKNOWN',requestId:body.requestId});
   await fetch(base+'/school-cloud',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"action":"secret-token"}'});
-  assert.equal(logs[1].action,'UNKNOWN');assert(!JSON.stringify(logs).includes('secret'));
+  assert.equal(logs.filter(e=>e.event==='central_request')[1].action,'UNKNOWN');assert(!JSON.stringify(logs).includes('secret'));
  });
 });
