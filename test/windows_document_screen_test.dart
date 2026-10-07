@@ -275,7 +275,8 @@ void main() {
     await t.pumpAndSettle();
     }
   });
-  test('folder migration preserves original, rebases document paths, and rejects occupied/nested destinations', () async {
+  testWidgets('folder migration preserves original, rebases document paths, and rejects occupied/nested destinations', (tester) async {
+   await tester.runAsync(() async {
     final source = await WindowsLocalStorage.dataDirectory();
     final files = await WindowsLocalStorage.localFilesDirectory();
     await files.create(recursive: true);
@@ -301,6 +302,7 @@ void main() {
     expect(Uri.parse(record['originalUrl'] as String).toFilePath(windows:Platform.isWindows), record['originalPath']);
     await WindowsLocalStorage.initialize();
     expect(await WindowsLocalStorage.currentPath(), target);
+   });
   });
 
 }
