@@ -79,7 +79,7 @@ jobs:
       timeout-minutes: 3
       env:
         APPDATA: ${{ runner.temp }}/document-queue-tests
-      run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart
+      run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart test/windows_local_migration_test.dart
     - name: Verify Windows portal regressions
       env:
         APPDATA: ${{ runner.temp }}/windows-portal-tests
@@ -217,7 +217,7 @@ jobs:
       timeout-minutes: 3
       env:
         APPDATA: ${{ runner.temp }}/windows-document-screen-tests
-      run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart
+      run: flutter test --concurrency=1 --timeout=60s test/windows_document_screen_test.dart test/windows_document_queue_test.dart test/windows_local_migration_test.dart
     - name: Verify reference PDF contents and continuation pages
       run: |
         python -m pip install "pypdf>=6,<7" "pymupdf>=1.26,<2" "zxing-cpp>=2.3,<4" "numpy>=2,<3"
