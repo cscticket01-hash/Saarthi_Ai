@@ -323,7 +323,7 @@ jobs:
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
-      run: flutter test test/school_qr_login_test.dart test/mobile_boundary_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
+      run: flutter test test/android_startup_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
     - name: Build unsigned Android preview
       env:
         SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
@@ -349,6 +349,7 @@ jobs:
     - fix/local-first-template-engine
     - fix/mobile-smart-sync-20261007
     - fix/android-persistent-login-20261007
+    - fix/android-startup-splash-20261007
   pull_request:
     branches:
     - main
