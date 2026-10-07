@@ -114,7 +114,7 @@ class IdCardLayout {
     double minFontSize = 8,
     bool wrap = false,
     int maxLines = 1,
-    String overflow = 'ellipsis',
+    String overflow = 'error',
     PdfColor color = PdfColors.black,
     pw.TextAlign align = pw.TextAlign.left,
   }) =>
@@ -274,7 +274,10 @@ class IdCardLayout {
       data: value,
       errorCorrectLevel: QrErrorCorrectLevel.L,
     ).moduleCount;
-    if (physicalSideMm != null && physicalSideMm / (modules + 8) < .20) {
+    // Compact credentials in preserved CR80 artwork may use 0.15 mm modules.
+    // This is only the geometry floor: acceptance still requires decoding the
+    // final composed 300-DPI export, not just constructing the QR widget.
+    if (physicalSideMm != null && physicalSideMm / (modules + 8) < .15) {
       throw const FormatException(
         'QR region is too small for this payload. Use a larger QR region or a shorter verified link.',
       );

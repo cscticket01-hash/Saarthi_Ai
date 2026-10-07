@@ -17,7 +17,64 @@ class SchoolLink {
     parse(raw);
     return raw;
   }
+  /// Compact managed identity only; DOB/password and server lease verification
+  /// remain mandatory. No names, location, Drive URL or Firebase config in QR.
+  static String encodeCompact(Map<String, dynamic> fields) {
+    final checked = parse(jsonEncode({...fields, 'app':'VIDYA_SAARTHI','v':2}));
+    if (!checked.managed) return encode(fields);
+    final person = base64Url.encode(utf8.encode(checked.personId)).replaceAll('=', '');
+    if (!RegExp(r'^[A-Za-z0-9_-]{32,128}$').hasMatch(checked.linkToken)) {
+      throw const FormatException('Invalid issued QR token.');
+    }
+    return 'VS3|${checked.schoolId.substring(3)}|${checked.role == 'student' ? 's' : 't'}|$person|${checked.linkToken}';
+  }
+  static int detectVersion(String raw) {
+    final value = raw.trim();
+    if (value.startsWith('VS3|')) return 3;
+    if (RegExp(r'^VS[0-9]+\|').hasMatch(value)) {
+      throw const FormatException('Unsupported ID QR version. Update the app or ask the school to regenerate the card.');
+    }
+    if (!value.startsWith('{')) throw const FormatException('Scan a Vidya Saarthi student or teacher ID card.');
+    try {
+      final data = jsonDecode(value);
+      if (data is Map && data['v'] == 2) return 2;
+    } catch (_) {}
+    throw const FormatException('Invalid or unsupported school ID QR.');
+  }
   static SchoolLink parse(String raw) {
+    if (raw.length > 8192) throw const FormatException('QR payload exceeds safety limit.');
+    final value = raw.trim();
+    detectVersion(value);
+    try {
+      return _parse(value);
+    } on FormatException {
+      throw const FormatException('Invalid school ID QR. Scan the original card or ask the school to regenerate it.');
+    } on RangeError {
+      throw const FormatException('Incomplete school ID QR. Scan the original card again.');
+    } on TypeError {
+      throw const FormatException('Invalid school ID QR fields.');
+    }
+  }
+  static SchoolLink _parse(String raw) {
+    if (raw.length > 8192) throw const FormatException('QR payload exceeds safety limit.');
+    if (raw.startsWith('VS3|')) {
+      final parts = raw.split('|');
+      if (parts.length != 5 || !{'s','t'}.contains(parts[2]) ||
+          !RegExp(r'^[a-f0-9]{32}$').hasMatch(parts[1]) ||
+          !RegExp(r'^[A-Za-z0-9_-]{32,128}$').hasMatch(parts[4])) {
+        throw const FormatException('Invalid compact school ID.');
+      }
+      String person;
+      try { person = utf8.decode(base64Url.decode(base64Url.normalize(parts[3])), allowMalformed:false); }
+      catch (_) { throw const FormatException('Invalid compact person ID.'); }
+      const endpoint = String.fromEnvironment('SAARTHI_SCHOOL_CLOUD_URL', defaultValue:'https://saarthi-oauth-staging.onrender.com/school-cloud');
+      final validated = parse(jsonEncode({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+        'schoolId':'vs-${parts[1]}','centralEndpoint':endpoint,'type':parts[2]=='s'?'student':'teacher',
+        'personId':person,'linkToken':parts[4]}));
+      return SchoolLink(projectId:validated.projectId,scriptUrl:'',role:validated.role,
+        personId:person,linkToken:validated.linkToken,rawQr:raw,managed:true,
+        schoolId:validated.schoolId,endpoint:validated.endpoint);
+    }
     final d = jsonDecode(raw);
     if (d is! Map || d['app'] != 'VIDYA_SAARTHI' || d['v'] != 2)
       throw const FormatException(

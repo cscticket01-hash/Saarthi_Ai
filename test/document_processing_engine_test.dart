@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +8,24 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('eight encoded text scans produce measurable optimized bytes without forcing unreadable target',()async {
+    final measurements=<Map<String,dynamic>>[];
+    for(var n=0;n<8;n++) {
+      final image=img.Image(width:1000,height:1400);img.fill(image,color:img.ColorRgb8(255,255,255));
+      for(var row=60;row<1300;row+=42) img.drawString(image,'School record ${n+1} - Name, date and marks 0123456789',font:img.arial24,x:35,y:row,color:img.ColorRgb8(20,20,20));
+      final source=Uint8List.fromList(n.isEven?img.encodePng(image):img.encodeJpg(image,quality:98));
+      final result=DocumentProcessingEngine.process({'bytes':source});final optimized=result['optimized'] as Uint8List;
+      expect(result['actualBytes'],optimized.length);expect(img.decodeImage(optimized),isNotNull);
+      expect((result['quality'] as int),greaterThanOrEqualTo(78));
+      measurements.add({'sourceBytes':source.length,'optimizedBytes':optimized.length,'savingsPercent':100*(1-optimized.length/source.length),'targetMet':result['targetMet']});
+    }
+    final total=measurements.fold<int>(0,(sum,row)=>sum+(row['optimizedBytes'] as int));
+    final originalTotal=measurements.fold<int>(0,(sum,row)=>sum+(row['sourceBytes'] as int));
+    final report={'documents':measurements,'originalTotal':originalTotal,'optimizedTotal':total,'savingsPercent':100*(1-total/originalTotal),'targetBytes':DocumentProcessingEngine.setTarget,
+      'status':total<=DocumentProcessingEngine.setTarget?'Optimized':'Readability Protected','representativeInput':'Generated text scan containers, not a real school upload'};
+    final output=File('build/document-measurements.json');await output.parent.create(recursive:true);await output.writeAsString(jsonEncode(report));
+    print('MEASURE document set '+jsonEncode(report));
+  });
   test('truncated real PNG/JPEG containers are rejected before decoding', () {
     final image = img.Image(width: 20, height: 30);
     for (final bytes in [img.encodePng(image), img.encodeJpg(image)]) {
@@ -38,7 +58,7 @@ void main() {
     expect(bytes, original);
     expect(result['targetMet'], false);
     expect(result['actualBytes'], (result['optimized'] as Uint8List).length);
-    final decoded = img.decodeJpg(result['optimized'] as Uint8List)!;
+    final decoded = img.decodeImage(result['optimized'] as Uint8List)!;
     expect(decoded.width, 600);
     expect(decoded.height, 800);
     expect(result['perspectiveCorrected'], false);
@@ -97,7 +117,7 @@ void main() {
     final bytes = Uint8List.fromList(img.encodePng(tilted));
     final result = DocumentProcessingEngine.process({'bytes': bytes});
     expect(result['deskewDegrees'], closeTo(3, 1));
-    expect(img.decodeJpg(result['optimized'] as Uint8List), isNotNull);
+    expect(img.decodeImage(result['optimized'] as Uint8List), isNotNull);
   });
   test(
     'transparent PNG/PDF raster paper stays white with readable black text',
@@ -115,7 +135,7 @@ void main() {
       final result = DocumentProcessingEngine.process({
         'bytes': Uint8List.fromList(img.encodePng(image)),
       });
-      final decoded = img.decodeJpg(result['optimized'] as Uint8List)!;
+      final decoded = img.decodeImage(result['optimized'] as Uint8List)!;
       expect(decoded.getPixel(200, 210).r, greaterThan(230));
       expect(decoded.getPixel(200, 200).r, lessThan(60));
     },
@@ -149,11 +169,12 @@ void main() {
         'bytes': Uint8List.fromList(img.encodePng(image)),
       });
       expect(result['perspectiveCorrected'], true);
-      expect(img.decodeJpg(result['optimized'] as Uint8List), isNotNull);
+      expect(img.decodeImage(result['optimized'] as Uint8List), isNotNull);
     },
   );
   test('eight dense text scans report total target honestly and retain readable copies', () {
     var total = 0;
+    var originalTotal = 0;
     for (var n = 0; n < 8; n++) {
       final image = img.Image(width: 600, height: 800);
       img.fill(image, color: img.ColorRgb8(255, 255, 255));
@@ -168,21 +189,24 @@ void main() {
           thickness: 2,
         );
       final bytes = Uint8List.fromList(img.encodePng(image));
+      originalTotal += bytes.length;
       final original = List<int>.from(bytes);
       final result = DocumentProcessingEngine.process({'bytes': bytes});
       final optimized = result['optimized'] as Uint8List;
       total += optimized.length;
+      print('MEASURE scan $n: original=${bytes.length} optimized=${optimized.length} savings=${(100*(1-optimized.length/bytes.length)).toStringAsFixed(1)}%');
       expect(
         result['targetMet'],
         optimized.length <= DocumentProcessingEngine.setTarget ~/ 8,
       );
-      final readable = img.decodeJpg(optimized)!;
+      final readable = img.decodeImage(optimized)!;
       expect(readable.getPixel(200, 80).r, lessThan(70));
       expect(readable.getPixel(200, 90).r, greaterThan(220));
       expect(bytes, original);
       expect((result['highQuality'] as Uint8List).length, greaterThan(0));
       expect(result['quality'], greaterThanOrEqualTo(78));
     }
+    print('MEASURE 8 documents original=$originalTotal optimized=$total target=${DocumentProcessingEngine.setTarget} achieved=${total<=DocumentProcessingEngine.setTarget}');
     expect(
       total,
       greaterThan(0),
@@ -196,7 +220,7 @@ void main() {
       final result = DocumentProcessingEngine.process({
         'bytes': Uint8List.fromList(img.encodeJpg(image)),
       });
-      final optimized = img.decodeJpg(result['optimized'] as Uint8List)!;
+      final optimized = img.decodeImage(result['optimized'] as Uint8List)!;
       expect(optimized.height, inInclusiveRange(1600, 2200));
       expect(result['height'], 2200);
     },
@@ -212,4 +236,19 @@ void main() {
       );
     },
   );
+  test('line scan uses smaller processed lossless PNG instead of expanding to JPEG', () {
+    final image=img.Image(width:600,height:800);
+    img.fill(image,color:img.ColorRgb8(255,255,255));
+    for(var y=80;y<720;y+=24) img.drawLine(image,x1:40,y1:y,x2:550,y2:y,color:img.ColorRgb8(20,20,20),thickness:2);
+    final source=Uint8List.fromList(img.encodePng(image));
+    final result=DocumentProcessingEngine.process({'bytes':source});
+    expect(result['mimeType'],'image/png');
+    expect((result['optimized'] as Uint8List).length,lessThan(10000));
+    expect(result['targetMet'],true);
+    final output=img.decodePng(result['optimized'] as Uint8List)!;
+    expect(output.getPixel(200,80).r,lessThan(70));
+    expect(output.getPixel(200,90).r,greaterThan(220));
+    expect(result['width'],output.width);expect(result['height'],output.height);
+  });
+
 }

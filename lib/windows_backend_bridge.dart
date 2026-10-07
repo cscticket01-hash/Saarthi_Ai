@@ -57,6 +57,63 @@ class WindowsBackendBridge {
     return next;
   }
 
+  /// Lazy authenticated asset restore. Stable revision/hash filename avoids
+  /// repeatedly downloading unchanged files; originals on this PC remain intact.
+  static final Map<String, Future<Uint8List>> _documentRestores = {};
+  static Future<Uint8List> documentBytes(Map<String,dynamic> document, {
+    Future<Map<String,dynamic>> Function(String school,String fileId)? fetch,
+  }) async {
+    final profile=FirebaseFirestore.instance.activeProfileId;
+    final key=jsonEncode([profile,document['schoolId'],document['fileId'],document['fileUrl'],document['documentRevision'],document['uploadedAt'],document['contentHash'],document['originalPath'],document['localPath']]);
+    final existing=_documentRestores[key];if(existing!=null)return existing;
+    final pending=_restoreDocumentBytes(document,fetch:fetch);_documentRestores[key]=pending;
+    try{return await pending;}finally{if(identical(_documentRestores[key],pending))_documentRestores.remove(key);}
+  }
+  static Future<Uint8List> _restoreDocumentBytes(Map<String,dynamic> document, {
+    Future<Map<String,dynamic>> Function(String school,String fileId)? fetch,
+  }) async {
+    final db=FirebaseFirestore.instance,origin=FirebaseFirestore.instance.activeProfileId;
+    final saved=await CentralSchoolCloud.saved(),school=saved['schoolId']?.toString()??'';
+    void own(){if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school ||
+      document['schoolId']!=school)throw StateError('Foreign school document blocked.');}
+    own();
+    if(!await db.localPersistenceEnabled())throw StateError('Verified local school context required.');
+    final root=await WindowsLocalStorage.localFilesDirectory();
+    final schoolRoot=Directory('${root.path}${Platform.pathSeparator}${_safeFileName(origin)}');
+    final local=document['originalPath']??document['localPath'];
+    if(local is String && await File(local).exists()) {
+      final canonical=await File(local).resolveSymbolicLinks(),safeRoot=await schoolRoot.resolveSymbolicLinks();
+      if(!canonical.startsWith('$safeRoot${Platform.pathSeparator}'))throw StateError('Foreign local document path blocked.');
+      own();final bytes=await File(canonical).readAsBytes();own();return bytes;
+    }
+    final id=document['fileId']?.toString()??schoolDriveFileIdForDocument(document['fileUrl']?.toString()??'');
+    if(!RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(id))throw StateError('Document cloud file is not available yet.');
+    final key=crypto.sha256.convert(utf8.encode('$school:$id:${document['documentRevision']??document['uploadedAt']}')).toString();
+    final directory=Directory('${root.path}${Platform.pathSeparator}${_safeFileName(origin)}${Platform.pathSeparator}restored_documents');
+    final cached=File('${directory.path}${Platform.pathSeparator}$key');
+    if(await cached.exists()){
+      own();final bytes=await cached.readAsBytes();
+      final hash=document['contentHash'];
+      if(bytes.isNotEmpty && bytes.length<=20*1024*1024 &&
+          (hash is! String || crypto.sha256.convert(bytes).toString()==hash)){own();return bytes;}
+      // Retain a corrupt cache for diagnosis; replace it only after a valid download.
+    }
+    final result=await (fetch??((s,id)=>ManagedSchoolSession.callForSchool(s,'managed/file/read',{'fileId':id})))(school,id);
+    own();
+    if(result['success']!=true || result['schoolId']!=school || result['base64'] is! String)throw StateError('School document restore failed.');
+    final bytes=Uint8List.fromList(base64Decode(result['base64']));
+    if(bytes.isEmpty || bytes.length>20*1024*1024)throw StateError('Invalid restored document size.');
+    if(document['contentHash'] is String && crypto.sha256.convert(bytes).toString()!=document['contentHash'])throw StateError('Document hash mismatch.');
+    await directory.create(recursive:true);own();
+    final pending=File('${cached.path}.pending');await pending.writeAsBytes(bytes,flush:true);own();await pending.rename(cached.path);own();
+    return bytes;
+  }
+  static String schoolDriveFileIdForDocument(String source) {
+    final uri=Uri.tryParse(source);
+    if(uri==null||uri.scheme!='https'||uri.host!='drive.google.com'||uri.userInfo.isNotEmpty)return '';
+    return RegExp(r'^/file/d/([A-Za-z0-9_-]{1,200})/view$').firstMatch(uri.path)?.group(1)??'';
+  }
+
   static Future<void> flushDocumentPending({
     Future<Map<String, dynamic>> Function(Map<String, dynamic>)? send,
   }) async {
@@ -71,6 +128,8 @@ class WindowsBackendBridge {
         if (FirebaseFirestore.instance.activeProfileId != origin)
           throw StateError('School changed during document sync.');
         final record = queued.data();
+        if(record['syncState']=='conflict' || record['syncState']=='needsAttention')continue;
+        try {
         final identity = await CentralSchoolCloud.saved();
         if (record['schoolId'] != identity['schoolId'] ||
             FirebaseFirestore.instance.activeProfileId != origin)
@@ -109,6 +168,7 @@ class WindowsBackendBridge {
           'documentRevision': record['documentRevision'],
           'sizeBytes': record['sizeBytes'],
           'sourceBytes': record['sourceBytes'],
+          'contentHash':crypto.sha256.convert(bytes).toString(),
           'cleanupStatus': record['cleanupStatus'],
           'targetMet': record['targetMet'],
           'baseCloudRevision': record['baseCloudRevision'] ?? '',
@@ -170,6 +230,18 @@ class WindowsBackendBridge {
           );
           await batch.commit();
         });
+        } catch(error) {
+          if(FirebaseFirestore.instance.activeProfileId==origin)await _documentWrite(()async{
+            final current=(await queued.reference.get()).data();
+            if(current!=null && current['documentRevision']==record['documentRevision'] && current['localPath']==record['localPath']) {
+              final conflict=error.toString().toLowerCase().contains('conflict');
+              await queued.reference.set({'syncState':conflict?'conflict':'retry',
+                'retryCount':(current['retryCount'] as num? ?? 0).toInt()+1,
+                'lastError':conflict?'Document version conflict; local original retained.':'Document synchronization failed; local original retained.'},SetOptions(merge:true));
+            }
+          });
+          rethrow;
+        }
       }
     } finally {
       _documentDraining = false;
@@ -177,6 +249,7 @@ class WindowsBackendBridge {
   }
 
   static FutureOr<void> Function()? onRemoteAvailable;
+  static FutureOr<void> Function()? onLocalDocumentCommitted;
 
   static const Set<String> _mutatingActions = <String>{
     'add_student',
@@ -230,15 +303,22 @@ class WindowsBackendBridge {
             .get();
         if (FirebaseFirestore.instance.activeProfileId != originProfile)
           throw StateError('School changed while loading documents.');
+        final manifest = (await FirebaseFirestore.instance.collection('_windows_sync_manifest').get()).docs
+            .where((d)=>d.data()['collection']=='documents').expand((d)=>d.data()['deletedIds'] as List? ?? []).toSet();
         final rows = <String, Map<String, dynamic>>{
           for (final d in remote.docs) d.id: {...d.data(), 'documentId': d.id},
-          for (final d in local.docs) d.id: d.data(),
+          for (final d in local.docs) d.id: d.data()['syncState']=='Synced' && remote.docs.any((r)=>r.id==d.id)
+            ? {...d.data(),...remote.docs.firstWhere((r)=>r.id==d.id).data(),
+                if(d.data()['cloudRevision']!=remote.docs.firstWhere((r)=>r.id==d.id).data()['documentRevision'])
+                  ...{'originalPath':null,'localPath':null}}
+            : d.data(),
         };
         return http.Response(
           jsonEncode({
             'success': true,
             'documents': rows.values
-                .where((r) => r['deleted'] != true)
+                .where((r) => r['deleted'] != true && r['_syncDeleted']!=true &&
+                  !(r['syncState']=='Synced' && manifest.contains(r['documentId'])))
                 .toList(),
             'localFirst': true,
           }),
@@ -295,6 +375,7 @@ class WindowsBackendBridge {
           await batch.commit();
           return {'success': true, 'cloudSyncPending': true};
         });
+        onLocalDocumentCommitted?.call();
         return http.Response(jsonEncode(result), 200);
       }
       final result = await _documentWrite(() {
@@ -302,6 +383,7 @@ class WindowsBackendBridge {
           throw StateError('School changed before document save.');
         return _saveLocalStudentDocument({...localAction, '_queueCloud': true});
       });
+      onLocalDocumentCommitted?.call();
       return http.Response(
         jsonEncode({...result, 'cloudSyncPending': true}),
         200,
@@ -971,10 +1053,8 @@ class WindowsBackendBridge {
         expectedUploadedAt: expectedUploadedAt,
       );
       await ensureSchool();
-      await FirebaseFirestore.instance
-          .collection(collection)
-          .doc(id)
-          .set(centralSchoolData(data, school));
+      await FirebaseFirestore.instance.applySyncedDocument(
+          FirebaseFirestore.instance.collection(collection).doc(id),centralSchoolData(data, school));
     }
 
     try {
@@ -1110,10 +1190,8 @@ class WindowsBackendBridge {
           expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );
         await ensureSchool();
-        await FirebaseFirestore.instance
-            .collection('documents')
-            .doc(data['documentId'])
-            .delete();
+        await FirebaseFirestore.instance.applySyncedDocument(
+            FirebaseFirestore.instance.collection('documents').doc(data['documentId']),null);
         return {'success': true};
       }
       final lists = {
@@ -1533,9 +1611,9 @@ class WindowsBackendBridge {
       }
     }
     await file.writeAsBytes(bytes, flush: true);
-    final optimizedFile = File(
-      '${file.path}.optimized.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
-    );
+    final optimizedExtension = processing['mimeType'] == 'application/pdf'
+        ? 'pdf' : processing['mimeType'] == 'image/png' ? 'png' : 'jpg';
+    final optimizedFile = File('${file.path}.optimized.$optimizedExtension');
     final highFile = File(
       '${file.path}.processed.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
     );
@@ -1577,7 +1655,7 @@ class WindowsBackendBridge {
       'processedPath': highQuality != null ? highFile.path : file.path,
       'optimizedMimeType': processing['mimeType'] ?? body['mimeType'],
       'optimizedFileName': optimized != null
-          ? '${documentId}.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}'
+          ? '$documentId.$optimizedExtension'
           : safeName,
       'targetMet': processing['targetMet'] == true,
       'cleanupStatus': processing['cleanupStatus'] ?? processingWarning,

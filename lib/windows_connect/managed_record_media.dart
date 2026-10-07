@@ -1,3 +1,5 @@
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
 import '../windows_school_image_cache.dart';
 import '../windows_local_firestore.dart';
 import 'central_school_cloud.dart';
@@ -20,7 +22,8 @@ Future<Map<String,dynamic>> _prepareManagedRecord(Map<String,dynamic> data, Stri
     final image = UriData.parse(raw);
     own();
     final upload = await call('managed/file/upload', {
-      'name': '$prefix.png', 'mime': image.mimeType,
+      'name': '${prefix}_${sha256.convert(image.contentAsBytes())}.png', 'mime': image.mimeType,
+      'uploadKey': sha256.convert(utf8.encode('$school:$prefix:$raw')).toString(),
       'base64': raw.substring(raw.indexOf(',') + 1),
     });
     own();

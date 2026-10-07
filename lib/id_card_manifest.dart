@@ -107,6 +107,8 @@ class IdCardRegion {
         fit = data['fit']?.toString() ?? 'contain',
         align = data['align']?.toString() ?? 'left',
         label = data['label']?.toString() ?? '',
+        isRequired = data['required']==true,
+        padding = (data['padding'] as num? ?? 0).toDouble(),
         x = (data['x'] as num).toDouble(),
         y = (data['y'] as num).toDouble(),
         width = (data['width'] as num).toDouble(),
@@ -121,7 +123,7 @@ class IdCardRegion {
         allowOverlapWith = List<String>.from(
           data['allowOverlapWith'] as List? ?? const [],
         ) {
-    if (key.isEmpty ||
+    if (!padding.isFinite || padding<0 || padding*2>=width || padding*2>=height || key.isEmpty ||
         !{'front', 'back'}.contains(side) ||
         !{'text', 'image', 'qr'}.contains(kind) ||
         !{'contain', 'cover'}.contains(fit) ||
@@ -152,7 +154,8 @@ class IdCardRegion {
   }
   final String key, side, kind, fit, align, label;
   final double x, y, width, height, fontSize, minFontSize, focusX, focusY;
-  final bool wrap;
+  final bool wrap, isRequired;
+  final double padding;
   final int maxLines;
   final String overflow;
   final List<String> allowOverlapWith;

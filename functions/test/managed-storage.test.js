@@ -99,3 +99,35 @@ test('exact Windows/Android shared QR fixtures login student and teacher through
   assert.equal(mobile({action:'mobile_dashboard',sessionToken:result.sessionToken}).success,true);
  }
 });
+
+test('revision-aware two-PC sync is idempotent, preserves conflicts and tombstones',()=>{
+ const f=storage(),id='pupil',write=(operationId,base,name)=>f.call({action:'managed_records',operation:'write',collection:'students_directory',id,syncProtocol:2,operationId,expectedRecordRevision:base,data:{schoolId:A,name}});
+ const first=write('operation-0000000000000001','','PC1');assert.equal(first.success,true);
+ const duplicate=write('operation-0000000000000001','','PC1');assert.equal(duplicate.recordRevision,first.recordRevision);
+ const snapshot=f.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2});
+ assert.equal(snapshot.records.pupil.name,'PC1');assert.equal(snapshot.records.pupil._syncRevision,first.recordRevision);
+ const unchanged=f.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2,knownRevision:snapshot.collectionRevision});
+ assert.equal(unchanged.unchanged,true);assert.deepEqual(unchanged.records,{});
+ const second=write('operation-0000000000000002',first.recordRevision,'PC2');assert.equal(second.success,true);
+ assert.equal(write('operation-0000000000000003',first.recordRevision,'Stale PC1').success,false);
+ const deletion=f.call({action:'managed_records',operation:'delete',collection:'students_directory',id,syncProtocol:2,operationId:'operation-0000000000000004',expectedRecordRevision:second.recordRevision});assert.equal(deletion.success,true);
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).records.pupil,undefined);
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2}).records.pupil._syncDeleted,true);
+ assert.equal(write('operation-0000000000000005',second.recordRevision,'Resurrection').success,false);
+ const replay=f.call({action:'managed_records',operation:'delete',collection:'students_directory',id,syncProtocol:2,operationId:'operation-0000000000000004',expectedRecordRevision:second.recordRevision});assert.equal(replay.recordRevision,deletion.recordRevision);
+});
+test('incremental manifest rejects foreign data even for versioned writes',()=>{
+ const f=storage();const result=f.call({action:'managed_records',operation:'write',collection:'school_notices',id:'n',syncProtocol:2,operationId:'operation-0000000000000001',expectedRecordRevision:'',data:{schoolId:B,title:'Foreign'}});
+ assert.equal(result.success,false);assert.deepEqual(f.call({action:'managed_records',operation:'read',collection:'school_notices'}).records,{});
+ assert.equal(f.call({action:'managed_health'}).recordSyncVersion,2);
+});
+
+test('document deletion retains explicit tombstone across PCs and blocks stale resurrection',()=>{
+ const f=storage(),base={action:'managed_records',collection:'documents',id:'gone'};
+ assert.equal(f.call({...base,operation:'write',expectedRevision:'',data:{schoolId:A,documentRevision:'r1'}}).success,true);
+ assert.equal(f.call({...base,operation:'delete',expectedRevision:'r1'}).success,true);
+ assert.equal(f.call({...base,operation:'delete',expectedRevision:'r1'}).success,true);
+ assert.equal(f.call({...base,operation:'read'}).records.gone,undefined);
+ assert.equal(f.call({...base,operation:'read',syncProtocol:2}).records.gone._syncDeleted,true);
+ assert.equal(f.call({...base,operation:'write',expectedRevision:'r1',data:{schoolId:A,documentRevision:'stale'}}).success,false);
+});

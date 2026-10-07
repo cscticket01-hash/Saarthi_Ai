@@ -1,3 +1,6 @@
+import 'windows_sync_engine.dart';
+import 'school_cloud_state.dart';
+import 'dart:async';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'school_password_panel.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -1037,4 +1040,31 @@ Widget _settingsStyleCard({
       ],
     ),
   );
+}
+
+class WindowsSyncStatusCard extends StatelessWidget {
+  const WindowsSyncStatusCard({super.key});
+  @override Widget build(BuildContext context) {
+    final engine=WindowsSyncEngine.instance;
+    return ValueListenableBuilder<SchoolCloudState>(valueListenable:engine.state,builder:(context,state,_)=>
+      ValueListenableBuilder<Map<String,dynamic>>(valueListenable:engine.details,builder:(context,details,_) {
+        final pending=(details['pending'] as num? ?? 0).toInt(),attention=(details['needsAttention'] as num? ?? 0).toInt();
+        final label=state==SchoolCloudState.syncing?'Syncing $pending items...':attention>0?'$attention items need attention':
+          pending>0?'$pending items pending':engine.lastSuccessfulSync==null?'Awaiting first successful sync':'Synced';
+        return _settingsStyleCard(icon:Icons.sync,iconColor:attention>0?Colors.orangeAccent:const Color(0xFF00A884),
+          title:'Sync',subtitle:'Sync Status • $label',child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Text('Last successful sync: ${engine.lastSuccessfulSync?.toLocal().toString()??'Not yet completed'}'),
+            Text('Pending: $pending'),
+            if(engine.lastError!=null)Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent)),
+            Row(children:[OutlinedButton(onPressed:state==SchoolCloudState.syncing?null:()=>unawaited(engine.requestSync()),child:const Text('Sync Now')),
+              const SizedBox(width:12),TextButton(onPressed:()=>showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+                title:const Text('Sync details'),content:SizedBox(width:600,child:SingleChildScrollView(child:Column(
+                  crossAxisAlignment:CrossAxisAlignment.start,children:[
+                    for(final item in details['items'] as List? ?? [])Text('${item['collection']??'documents'} / ${item['documentId']??item['id']}: ${item['syncState']??'pending'} • ${item['lastError']??''}'),
+                    Text('Session counters: ${details['metrics']??{}}'),
+                    const Text('Conflicting copies are retained. Review both versions before resolving.')]))),
+                actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))])),child:const Text('Details'))])
+          ]));
+      }));
+  }
 }

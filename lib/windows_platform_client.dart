@@ -398,58 +398,25 @@ class WindowsPlatformClient {
     }
   }
 
+  /// One durable local transaction includes the notice and the tracked outbox.
+  /// Never await network delivery from the user action.
   Future<WindowsNoticeDelivery> publishNotice(String id, Map<String, dynamic> data) async {
-    final profile = FirebaseFirestore.instance.activeProfileId;
-    final saved=await CentralSchoolCloud.saved();
-    final ref=FirebaseFirestore.instance.collection('school_notices').doc(id);
-    if(FirebaseFirestore.instance.activeProfileId!=profile)throw StateError('School changed. Reopen notices.');
-    if(saved['managed']==true) {
-      if(FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=saved['schoolId'])throw StateError('School identity mismatch. Notice not saved.');
-      final payload={...data,'schoolId':saved['schoolId'],'deliveryStatus':'sync_pending'};
-      await ref.set(payload);
-      WindowsSyncEngine.instance.scheduleSoon();
-      if(saved['storageReady']!=true)return const WindowsNoticeDelivery(notificationSent:false,recipients:0,error:'Saved on this PC. Connect school Drive to sync; no notification was sent.');
-      try {
-        final remote=await WindowsFirebaseRemote.status();
-        ref.requireOriginProfile();
-        await WindowsFirebaseRemote.writeDocument(projectId:remote.projectId,idToken:await WindowsFirebaseRemote.freshIdToken(),collection:'school_notices',documentId:id,data:payload);
-        ref.requireOriginProfile();
-        return const WindowsNoticeDelivery(notificationSent:false,schoolPublished:true,recipients:0,info:'Available in this school student/teacher dashboard after refresh. Optional push: not configured; no push delivery claimed.');
-      } catch(e) {return WindowsNoticeDelivery(notificationSent:false,recipients:0,error:'Saved locally; sync can retry. $e');}
+    final watch = Stopwatch()..start();
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final saved = await CentralSchoolCloud.saved();
+    if (origin != db.activeProfileId) throw StateError('School changed. Reopen notices.');
+    if (saved['managed'] == true &&
+        (db.activeProfileIdentity['schoolSyncId'] != saved['schoolId'] || !await db.localPersistenceEnabled())) {
+      throw StateError('Current school durable notice storage is unavailable.');
     }
-    await ref.set({...data,'deliveryStatus':'sync_pending'});
-    final remote = await WindowsFirebaseRemote.status();
-    if (!remote.authenticated || remote.schoolIdentity.isEmpty) {
-      throw StateError('Saved locally; no notification was sent. Connect and verify this school Firebase and Google Script to sync.');
-    }
-    final token = await WindowsFirebaseRemote.freshIdToken();
-    final roster = await WindowsFirebaseRemote.readCollection(
-      projectId: remote.projectId, idToken: token, collection: 'students_directory');
-    final users = await WindowsFirebaseRemote.readCollection(
-      projectId: remote.projectId, idToken: token, collection: 'mobile_users');
-    if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Retry notice publication.');
-    final recipients = schoolNoticeRecipients(roster.values, users.values);
-    if (recipients == 0) {
-      throw StateError('Notice not sent. No students with an issued ID-card QR have registered in this school student app.');
-    }
-    // The school Script must respond online before a notice is published.
-    await call('installation/status', {'projectId': remote.schoolIdentity});
-    final payload = {...data, 'recipientCount': recipients,
-      'deliveryStatus': 'notification_pending'};
-    await WindowsFirebaseRemote.writeDocument(projectId: remote.projectId,
-      idToken: token, collection: 'school_notices', documentId: id, data: payload);
-    if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Retry notice publication.');
-    await FirebaseFirestore.instance.collection('school_notices').doc(id).set(payload);
-    try {
-      final sent = await call('school/notice', {'projectId': remote.schoolIdentity, 'noticeId': id});
-      if (sent['sent'] != true) throw StateError('School notification was not acknowledged.');
-      if (FirebaseFirestore.instance.activeProfileId != profile) throw StateError('School changed. Check notice status in the original school.');
-      _sentNotices.add(id);
-      await FirebaseFirestore.instance.collection('school_notices').doc(id).update({'deliveryStatus': 'sent'});
-      return WindowsNoticeDelivery(notificationSent: true, recipients: recipients);
-    } catch (e) {
-      return WindowsNoticeDelivery(notificationSent: false, recipients: recipients, error: '$e');
-    }
+    await db.collection('school_notices').doc(id).set({...data,
+      if(saved['managed']==true) 'schoolId':saved['schoolId'],
+      'deliveryStatus':saved['managed']==true?'sync_pending':'notification_pending'});
+    watch.stop();
+    WindowsSyncEngine.instance.recordLocalSave('notice', watch.elapsedMicroseconds);
+    WindowsSyncEngine.instance.scheduleSoon();
+    return const WindowsNoticeDelivery(notificationSent:false, recipients:0,
+      info:'Saved durably on this PC. Background synchronization queued.');
   }
 
   static const licenseSkippedKey =

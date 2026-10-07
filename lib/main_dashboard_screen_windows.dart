@@ -1,3 +1,4 @@
+import 'fitted_document_preview.dart';
 import 'document_upload_dialog.dart';
 import 'qr_authentication_engine.dart';
 import 'windows_admin_avatar.dart';
@@ -167,39 +168,25 @@ Future<String> _windowsBuildPersonQrPayload({
     'schoolLng': location['longitude'],
     'attendanceRadiusMeters': location['radiusMeters'] ?? 200,
   };
-  return QrAuthenticationEngine.encode(payload);
+  return SchoolLink.encodeCompact(payload);
 }
 
 Map<String, dynamic>? _windowsParsePersonQr(String raw) {
   final clean = raw.trim();
   if (clean.isEmpty) return null;
   try {
-    final decoded = jsonDecode(clean);
-    if (decoded is Map && decoded['app'] == 'VIDYA_SAARTHI') {
-      return Map<String, dynamic>.from(decoded);
-    }
-  } catch (_) {}
+    // Use the same version-aware identity codec as Android. A compact QR is
+    // never JSON, and malformed credentials must not escape the UI callback.
+    final link = SchoolLink.parse(clean);
+    final metadata = clean.startsWith('{')
+        ? Map<String,dynamic>.from(jsonDecode(clean) as Map)
+        : <String,dynamic>{};
+    return {...metadata,'app':'VIDYA_SAARTHI','v':2,'managed':link.managed,
+      'schoolId':link.schoolId,'firebaseProjectId':link.projectId,
+      'type':link.role,'personId':link.personId,'linkToken':link.linkToken};
+  } on FormatException { return null; }
 
-  // Legacy Student ID card fallback.
-  if (clean.contains('SVN_STUDENT_CARD') ||
-      clean.contains('VIDYA_SAARTHI_STUDENT_CARD')) {
-    final out = <String, dynamic>{
-      'app': 'VIDYA_SAARTHI',
-      'v': 1,
-      'type': 'student',
-    };
-    for (final line in clean.split(RegExp(r'\r?\n'))) {
-      final value = line.trim();
-      if (value.toLowerCase().startsWith('record id:')) {
-        out['personId'] = value.substring('record id:'.length).trim();
-      }
-      if (value.toLowerCase().startsWith('student uid:')) {
-        out['studentUid'] = value.substring('student uid:'.length).trim();
-      }
-    }
-    return out['personId']?.toString().isNotEmpty == true ? out : null;
-  }
-  return null;
+
 }
 
 Future<({double latitude, double longitude, double accuracy})> _windowsCurrentPosition() async {
@@ -5150,20 +5137,20 @@ void _handleLoginBack(bool didPop) {
     try {
 
       final now = DateTime.now().millisecondsSinceEpoch;
-      final id = 'NOTICE-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
+      final id = _editingNoticeId ?? 'NOTICE-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
       // An edited announcement is a new notification, avoiding old FCM-job dedupe.
       final result = await WindowsPlatformClient.instance.publishNotice(id, {
         'title': title, 'description': description, 'category': _noticeCategory,
         'timestamp': now, 'lastEdited': now,
       });
-      if (_editingNoticeId != null && (result.schoolPublished || result.notificationSent)) await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).delete();
+
       if (!mounted) return;
       _cancelNoticeEdit();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         backgroundColor: result.notificationSent || result.schoolPublished ? const Color(0xFF00A884) : Colors.orange,
         content: Text(result.notificationSent
           ? 'Published to the school student app. Notification accepted for ${result.recipients} registered students.'
-          : result.schoolPublished ? 'Notice published to this school dashboard.\n${result.info}${result.error}' : 'Notice saved locally. ${result.error}')));
+          : result.schoolPublished ? 'Notice published to this school dashboard.\n${result.info}${result.error}' : 'Notice saved locally. Background sync queued. ${result.error}')));
     } catch (e) {
       if (mounted) {
         setState(() => _isSavingNotice = false);
@@ -9852,7 +9839,7 @@ class SettingsScreen extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 920),
-            child: const WindowsAppUpdateCard(),
+            child: const Column(children: [WindowsAppUpdateCard(), SizedBox(height:16), WindowsSyncStatusCard()]),
           ),
         ),
       ),
@@ -20338,7 +20325,7 @@ class StudentDocumentsScreen extends StatefulWidget {
 class _StudentDocumentsScreenState
     extends State<StudentDocumentsScreen> {
   late final String _schoolProfile;
-  Timer? _refreshTimer;
+  final List<StreamSubscription> _localSubscriptions=[];
   int _loadGeneration=0;
   bool _loading = true;
   bool _uploading = false;
@@ -20363,11 +20350,15 @@ class _StudentDocumentsScreenState
     super.initState();
     _schoolProfile=FirebaseFirestore.instance.activeProfileId;
     _load();
-    _refreshTimer=Timer.periodic(const Duration(seconds:15),(_){if(mounted&&!_uploading&&!_loading)_load();});
+    for(final collection in ['documents','_local_student_documents']) {
+      _localSubscriptions.add(FirebaseFirestore.instance.collection(collection).snapshots().listen((_){
+        if(mounted&&!_uploading&&!_loading)unawaited(_load());
+      }));
+    }
   }
 
   @override
-  void dispose(){_refreshTimer?.cancel();super.dispose();}
+  void dispose(){for(final subscription in _localSubscriptions)subscription.cancel();super.dispose();}
 
   Future<String> _scriptUrl() async {
     final saved = await CentralSchoolCloud.saved();
@@ -20412,11 +20403,6 @@ class _StudentDocumentsScreenState
       _error = null;
     });
     try {
-      final remote=await FirebaseFirestore.instance.collection('documents').where('studentId',isEqualTo:widget.studentId).get();
-      final local=await FirebaseFirestore.instance.collection('_local_student_documents').where('studentId',isEqualTo:widget.studentId).get();
-      if(!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
-      final cached=<String,Map<String,dynamic>>{for(final d in remote.docs)d.id:{...d.data(),'documentId':d.id},for(final d in local.docs)d.id:d.data()};
-      setState((){_documents=cached.values.where((d)=>d['deleted']!=true).toList();_loading=false;});
       final result = await _post({
         'action': 'list_student_documents',
         'studentId': widget.studentId,
@@ -20542,6 +20528,25 @@ class _StudentDocumentsScreenState
     }
   }
 
+  Future<void> _view(Map<String,dynamic> document) async {
+    try {
+      final saved=await CentralSchoolCloud.saved();
+      if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile)throw StateError('School changed. Reopen documents.');
+      if(saved['managed']!=true){
+        final url=document['fileUrl']?.toString()??'';
+        if(url.isEmpty)throw StateError('Document file is not available.');
+        html.window.open(url,'_blank');return;
+      }
+      final bytes=await WindowsBackendBridge.documentBytes(document);
+      if(!mounted || FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
+      final mime=(document['optimizedMimeType']??document['mimeType']??'').toString();
+      await showDialog<void>(context:context,builder:(ctx)=>Dialog(child:SizedBox(
+        width:900,height:650,child:Column(children:[
+          Expanded(child:mime.contains('pdf')?FittedDocumentPreview(bytes:bytes):Image.memory(bytes,fit:BoxFit.contain)),
+          TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]))));
+    } catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Document preview unavailable: $e')));}
+  }
+
   String _formatBytes(int bytes) {
     if (bytes >= 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
@@ -20626,9 +20631,10 @@ class _StudentDocumentsScreenState
                               color: Colors.white,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Text('${_formatBytes(_totalBytes)} optimized • target 300 KB',
+                      Expanded(child:Text('${_documents.length} documents • ${_documents.every((d)=>d['sourceBytes'] is num) ? _formatBytes(_documents.fold<int>(0,(sum,d)=>sum+(d['sourceBytes'] as num).toInt())) : 'Not fully recorded'} original • ${_formatBytes(_totalBytes)} optimized • target ~300 KB • ${_uploading ? 'Optimizing / pending' : _totalBytes > 300*1024 ? 'Readability Protected' : _documents.isEmpty ? 'Awaiting documents' : 'Optimized'}',
+                          textAlign:TextAlign.right,maxLines:3,
                           style: const TextStyle(
-                              color: Colors.white54, fontSize: 10.5)),
+                              color: Colors.white54, fontSize: 10.5))),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -20637,11 +20643,7 @@ class _StudentDocumentsScreenState
                     minHeight: 7,
                     backgroundColor: Colors.white10,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      ratio >= .9
-                          ? Colors.redAccent
-                          : ratio >= .7
-                              ? Colors.orangeAccent
-                              : const Color(0xFF00A884),
+                      _uploading ? Colors.amber : _totalBytes > 300*1024 ? Colors.orangeAccent : const Color(0xFF00A884),
                     ),
                   ),
                   const SizedBox(height: 7),
@@ -20711,9 +20713,8 @@ class _StudentDocumentsScreenState
                                     color: Colors.white,
                                     fontWeight: FontWeight.w800)),
                             Text(
-                              '${document['fileName'] ?? ''} • ${_formatBytes(size)} • ${document['syncState']??'Cloud copy'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              'Original: ${document['sourceBytes'] is num ? _formatBytes((document['sourceBytes'] as num).toInt()) : 'Not recorded'} • Optimized: ${_formatBytes(size)} • Savings: ${document['sourceBytes'] is num && (document['sourceBytes'] as num)>0 ? (100*(1-size/(document['sourceBytes'] as num))).toStringAsFixed(1)+'%' : 'Not recorded'} • ${document['syncState']??'Cloud copy'}',
+                              maxLines: 3,
                               style: const TextStyle(
                                   color: Colors.white38, fontSize: 9.5),
                             ),
@@ -20722,9 +20723,7 @@ class _StudentDocumentsScreenState
                         ),
                       ),
                       TextButton.icon(
-                        onPressed: url.isEmpty
-                            ? null
-                            : () => html.window.open(url, '_blank'),
+                        onPressed: () => _view(document),
                         icon: const Icon(Icons.visibility_rounded, size: 16),
                         label: const Text('View'),
                       ),
@@ -23626,7 +23625,9 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
   void dispose(){ _qr.dispose(); super.dispose(); }
 
   Future<Map<String,dynamic>> _call(Map<String,dynamic> body) async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
     final scriptUrl = await _windowsGoogleScriptUrl();
+    if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
     final response = await WindowsBackendBridge.post(
       Uri.parse(scriptUrl),
       headers: const {'Content-Type':'text/plain;charset=utf-8'},
@@ -23643,9 +23644,16 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
     if(_busy) return;
     final payload = _windowsParsePersonQr(_qr.text);
     if(payload == null){ setState(()=>_status='Invalid Vidya Saarthi QR.'); return; }
+    final origin = FirebaseFirestore.instance.activeProfileId;
     setState((){_busy=true; _distance=null; _status='School + GPS verify ho raha hai...';});
     try{
       final activeProfile = await _windowsActiveSchoolProfileId();
+      final configured = await CentralSchoolCloud.saved();
+      if(configured['managed']==true &&
+          (payload['managed']!=true || payload['schoolId']!=configured['schoolId'])) {
+        throw StateError('This QR belongs to another school. Attendance blocked.');
+      }
+      if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
       final qrProfile = payload['schoolProfileId']?.toString().trim() ?? '';
       if(qrProfile.isNotEmpty && qrProfile != activeProfile){
         throw StateError('Ye QR kisi doosre school ka hai. Attendance blocked.');
@@ -23695,12 +23703,14 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
         throw StateError('Attendance blocked: school se ${distance.toStringAsFixed(0)}m, GPS accuracy ±${current.accuracy.toStringAsFixed(0)}m. Allowed ${radius.toStringAsFixed(0)}m. Accurate GPS location lekar retry karein.');
       }
 
+      if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
       Map<String,dynamic> body;
       if(type == 'teacher'){
         body={
           'action':'mark_teacher_attendance',
-          'teacherId':payload['teacherId']?.toString().trim().isNotEmpty == true ? payload['teacherId'] : personId,
-          'teacherName':payload['name'] ?? '',
+          if(payload['managed']==true) 'schoolId':payload['schoolId'],
+          'teacherId':personDoc.data()?['teacherId'] ?? personId,
+          'teacherName':personDoc.data()?['name'] ?? '',
           'mode':_mode,
           'source':'WINDOWS_QR_GEOFENCE',
           'markedBy':'Windows Admin',
@@ -23711,10 +23721,11 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
       } else if(type == 'student'){
         body={
           'action':'mark_student_attendance',
+          if(payload['managed']==true) 'schoolId':payload['schoolId'],
           'studentId':personId,
-          'studentName':payload['name'] ?? '',
-          'studentClass':payload['class'] ?? '',
-          'rollNo':payload['rollNo'] ?? '',
+          'studentName':personDoc.data()?['name'] ?? '',
+          'studentClass':personDoc.data()?['class'] ?? '',
+          'rollNo':personDoc.data()?['rollNo'] ?? '',
           'mode':_mode,
           'source':'WINDOWS_QR_GEOFENCE',
           'markedBy':'Windows Admin',

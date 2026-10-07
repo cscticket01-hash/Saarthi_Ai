@@ -6539,13 +6539,24 @@ function VS_managedCollection(name) {
 function VS_managedRecord(b) {
   const folder=VS_managedCollection(b.collection), school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
   if(b.operation==='read') {
+    const revision=PropertiesService.getScriptProperties().getProperty('VS_RECORD_REV_'+b.collection)||'legacy';
+    if(b.syncProtocol===2 && b.knownRevision===revision)return {records:{},unchanged:true,collectionRevision:revision,syncProtocol:2};
     const files=folder.getFiles(),records={};let bytes=0;
-    while(files.hasNext()){const raw=files.next().getBlob().getDataAsString();bytes+=raw.length;if(bytes>20*1024*1024)throw new Error('Collection export exceeds safe limit');const item=JSON.parse(raw);if(item.schoolId!==school)throw new Error('Foreign school record');records[item.id]=item.data;}
-    return {records:records};
+    while(files.hasNext()){const raw=files.next().getBlob().getDataAsString();bytes+=raw.length;if(bytes>20*1024*1024)throw new Error('Collection export exceeds safe limit');const item=JSON.parse(raw);if(item.schoolId!==school)throw new Error('Foreign school record');if(b.syncProtocol===2 || !item.data._syncDeleted)records[item.id]=item.data;}
+    return {records:records,collectionRevision:revision,syncProtocol:2};
   }
   if(!/^[^/]{1,200}$/.test(b.id||'')||b.id==='.'||b.id==='..')throw new Error('Invalid record ID');
   const name=Utilities.base64EncodeWebSafe(b.id)+'.json', matches=folder.getFilesByName(name);let file=matches.hasNext()?matches.next():null;if(matches.hasNext())throw new Error('Duplicate record; operator review required');
   if(file&&b.createOnly===true)return {skipped:true};
+  const existing=file?JSON.parse(file.getBlob().getDataAsString()):null;
+  if(existing&&(existing.schoolId!==school||existing.id!==b.id))throw new Error('Foreign school record');
+  if(b.syncProtocol!==2 && existing&&existing.data._syncOperationId)throw new Error('Record revision conflict');
+  if(b.syncProtocol===2){
+    if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string')throw new Error('Invalid sync operation');
+    if(existing&&existing.data._syncOperationId===b.operationId)return {recordRevision:existing.data._syncRevision,syncProtocol:2};
+    if((existing&&existing.data._syncRevision||'')!==b.expectedRecordRevision)throw new Error('Record revision conflict');
+  }
+
   if(b.collection==='documents' && (b.expectedRevision!==undefined || file)) {
     const current=file?JSON.parse(file.getBlob().getDataAsString()):null;
     if(current&&(current.schoolId!==school||current.id!==b.id))throw new Error('Foreign document record');
@@ -6555,10 +6566,27 @@ function VS_managedRecord(b) {
          (!revision&&current&&b.expectedUploadedAt!==undefined&&b.expectedUploadedAt!==current.data.uploadedAt))throw new Error('Newer cloud document retained; resolve version conflict');
     } else if(revision) throw new Error('Versioned document requires a matching revision');
   }
-  if(b.operation==='delete'){if(file)file.setTrashed(true);return {};}
+  if(b.operation==='write' && existing && existing.data._syncDeleted)throw new Error('Record revision conflict');
+  if(b.operation==='delete'){
+    if(b.syncProtocol===2 || b.collection==='documents'){
+      const revision=Utilities.getUuid(),data={schoolId:school,_syncDeleted:true,_syncRevision:revision};
+      if(b.syncProtocol===2)data._syncOperationId=b.operationId;
+      if(b.collection==='documents' && existing)data.documentRevision=existing.data.documentRevision||'';
+      const text=JSON.stringify({id:b.id,schoolId:school,data:data});
+      if(file)file.setContent(text);else folder.createFile(name,text,'application/json');
+      PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());
+      return {recordRevision:revision,syncProtocol:2};
+    }
+    if(file)file.setTrashed(true);
+    PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());return {};
+  }
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
-  const text=JSON.stringify({id:b.id,schoolId:school,data:b.data});if(text.length>512*1024)throw new Error('Record too large; upload files separately');
-  if(file)file.setContent(text);else folder.createFile(name,text,'application/json');return {};
+  const revision=Utilities.getUuid(),data=Object.assign({},b.data);
+  delete data._syncDeleted;delete data._syncOperationId;delete data._syncRevision;
+  data._syncRevision=revision;
+  if(b.syncProtocol===2)data._syncOperationId=b.operationId;
+  const text=JSON.stringify({id:b.id,schoolId:school,data:data});if(text.length>512*1024)throw new Error('Record too large; upload files separately');
+  if(file)file.setContent(text);else folder.createFile(name,text,'application/json');PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());return {recordRevision:revision,syncProtocol:2};
 }
 function VS_managedFile(id) {
   const file=DriveApp.getFileById(id),root=VS_managedRoot().getId(),seen={};
@@ -6582,7 +6610,7 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
+    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
     else if(b.action==='managed_records'){const lock=LockService.getScriptLock();lock.waitLock(30000);try{result=VS_managedRecord(b);}finally{lock.releaseLock();}}
@@ -6617,6 +6645,7 @@ function VS_managedHandle(e) {
   }catch(error){
     const safe={
       'This QR does not belong to the active school':'This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.',
+      'Record revision conflict':'Record revision conflict',
       'This ID card needs a new secure school QR':'Ask your school to regenerate this ID card.',
       'Class, roll number or date of birth is incorrect':'Class, roll number or date of birth is incorrect',
       'School session expired':'School session expired. Scan your ID again.',

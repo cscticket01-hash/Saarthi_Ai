@@ -59,6 +59,14 @@ class SchoolSession {
     }
   }
 
+  static Map<String, dynamic> _decodeSchoolResponse(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    throw StateError('School service returned an invalid response. Try again; if it continues, contact the school administrator.');
+  }
+
   Future<Map<String, dynamic>> schoolCall(
     String action,
     Map<String, dynamic> body,
@@ -88,7 +96,7 @@ class SchoolSession {
           )
           .timeout(const Duration(seconds: 25));
       unchanged();
-      final d = jsonDecode(r.body);
+      final d = _decodeSchoolResponse(r.body);
       if (r.statusCode != 200 || d is! Map || d['success'] != true)
         throw StateError(
           d is Map
@@ -117,7 +125,7 @@ class SchoolSession {
         ? await _redirect(r.headers['location']!)
         : r;
     unchanged();
-    final d = jsonDecode(response.body);
+    final d = _decodeSchoolResponse(response.body);
     if (d is! Map || d['success'] != true)
       throw StateError(
         d is Map

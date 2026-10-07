@@ -32,9 +32,10 @@
       "fit": "contain",
       "align": "center",
       "minFontSize": 8,
-      "overflow": "ellipsis",
+      "overflow": "error",
       "wrap": true,
-      "maxLines": 3
+      "maxLines": 3,
+      "required": true
     },
     {
       "key": "photo",
@@ -62,9 +63,10 @@
       "fit": "contain",
       "align": "center",
       "minFontSize": 8,
-      "overflow": "ellipsis",
+      "overflow": "error",
       "wrap": true,
-      "maxLines": 2
+      "maxLines": 2,
+      "required": true
     },
     {
       "key": "designation",
@@ -79,7 +81,7 @@
       "fit": "contain",
       "align": "center",
       "minFontSize": 8,
-      "overflow": "ellipsis"
+      "overflow": "error"
     },
     {
       "key": "class",
@@ -94,7 +96,7 @@
       "fit": "contain",
       "align": "left",
       "minFontSize": 8,
-      "overflow": "ellipsis"
+      "overflow": "error"
     },
     {
       "key": "rollNo",
@@ -109,7 +111,7 @@
       "fit": "contain",
       "align": "left",
       "minFontSize": 8,
-      "overflow": "ellipsis"
+      "overflow": "error"
     },
     {
       "key": "contact",
@@ -124,7 +126,7 @@
       "fit": "contain",
       "align": "left",
       "minFontSize": 8,
-      "overflow": "ellipsis"
+      "overflow": "error"
     },
     {
       "key": "signature",
@@ -165,7 +167,7 @@
       "fit": "contain",
       "align": "left",
       "minFontSize": 8,
-      "overflow": "ellipsis",
+      "overflow": "error",
       "wrap": true,
       "maxLines": 2
     },
@@ -182,7 +184,7 @@
       "fit": "contain",
       "align": "left",
       "minFontSize": 8,
-      "overflow": "ellipsis",
+      "overflow": "error",
       "wrap": true,
       "maxLines": 3
     },
@@ -199,7 +201,7 @@
       "fit": "contain",
       "align": "left",
       "minFontSize": 8,
-      "overflow": "ellipsis"
+      "overflow": "error"
     },
     {
       "key": "state",
@@ -214,7 +216,7 @@
       "fit": "contain",
       "align": "left",
       "minFontSize": 8,
-      "overflow": "ellipsis"
+      "overflow": "error"
     },
     {
       "key": "pinCode",
@@ -229,7 +231,7 @@
       "fit": "contain",
       "align": "left",
       "minFontSize": 8,
-      "overflow": "ellipsis"
+      "overflow": "error"
     },
     {
       "key": "schoolAddress",
@@ -244,7 +246,7 @@
       "fit": "contain",
       "align": "left",
       "minFontSize": 8,
-      "overflow": "ellipsis",
+      "overflow": "error",
       "wrap": true,
       "maxLines": 3
     },

@@ -1,3 +1,5 @@
+import 'dart:convert';
+import '../lib/school_qr_link.dart';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_reference_documents.dart';
@@ -60,7 +62,7 @@ void main() {
             kind: kind,
             template: i,
             data: sample,
-            qr: 'VIDYA_SAARTHI_TEST_TEACHER',
+            qr: SchoolLink.encodeCompact(Map<String,dynamic>.from((jsonDecode(File('test/fixtures/windows_person_qr.json').readAsStringSync()) as List).last)),
             photo: await File('assets/school_logo.png').readAsBytes(),
             logo: await File('assets/school_logo.png').readAsBytes(),
             signature: await File('assets/principal_sign.png').readAsBytes());

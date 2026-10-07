@@ -1,3 +1,4 @@
+import 'id_card_engine.dart';
 import 'id_card_layout.dart';
 import 'windows_id_pair.dart';
 
@@ -144,8 +145,8 @@ Future<Uint8List> renderWindowsStudentId({
         s,
         font: bold ? boldFont : normalFont,
         fontSize: size,
-        wrap: s.contains('\n'),
-        maxLines: s.contains('\n') ? s.split('\n').length : 1,
+        wrap: true,
+        maxLines: 3,
         color: color ?? PdfColors.black,
         align: align,
       );
@@ -200,7 +201,7 @@ Future<Uint8List> renderWindowsStudentId({
       );
   pw.Widget qrWidget(double size) => qr.isEmpty
       ? pw.SizedBox()
-      : IdCardLayout.qr(qr, millimetresPerUnit: (portrait ? 54 : 85.6) / width);
+      : IdCardLayout.qr(IdCardEngine.compactQr(qr), millimetresPerUnit: (portrait ? 54 : 85.6) / width);
   final front = <pw.Widget>[
     pw.SvgImage(svg: _background(i, false), width: width, height: height),
   ];

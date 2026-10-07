@@ -261,3 +261,21 @@ test('school storage change requires exact old connection and preserves both sch
  assert.equal(f.docs.get('school_storage_private/'+A).previousConnections[0].secret,old.secret);
  assert.deepEqual(f.docs.get('school_storage_private/'+B),foreign);
 });
+
+test('bounded presence renewals avoid account/Firestore reads and cannot access school data',async()=>{
+ const f=fixture();const session=await f.call({action:'managed/session'});assert.equal(typeof session.presenceToken,'string');
+ let reads=0,authReads=0;const doc=f.db.doc;f.db.doc=p=>{const r=doc(p);const get=r.get;r.get=async()=>{reads++;return get();};return r;};
+ const verify=f.auth.verifyIdToken;f.auth.verifyIdToken=async t=>{authReads++;return verify(t);};
+ const result=await f.call({action:'managed/presence',schoolId:A,presenceToken:session.presenceToken},'invalid-bearer');
+ assert.equal(result.schoolId,A);assert.equal(reads,0);assert.equal(authReads,0);assert.equal(f.docs.get('platform_schools/'+A).lastSeenAt,time);
+ await assert.rejects(f.call({action:'managed/presence',schoolId:B,presenceToken:session.presenceToken}),e=>e.status===403);
+ await assert.rejects(f.call({action:'managed/presence',presenceToken:session.presenceToken+'x'}),e=>e.status===401);
+ await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read',presenceToken:session.presenceToken},'invalid-bearer'),e=>e.status===401);
+});
+test('broker forwards version CAS, operation identity and known collection revision only for authenticated school',async()=>{
+ const f=fixture();await f.call({action:'managed/records',collection:'school_notices',operation:'write',id:'n',syncProtocol:2,
+  operationId:'operation-0000000000000001',expectedRecordRevision:'server-1',data:{title:'Own'}});
+ const payload=JSON.parse(JSON.parse(f.sent[0].opt.body).payload);assert.equal(payload.operationId,'operation-0000000000000001');assert.equal(payload.expectedRecordRevision,'server-1');assert.equal(payload.data.schoolId,A);
+ await f.call({action:'managed/records',collection:'school_notices',operation:'read',syncProtocol:2,knownRevision:'collection-1'});
+ assert.equal(JSON.parse(JSON.parse(f.sent[1].opt.body).payload).knownRevision,'collection-1');
+});
