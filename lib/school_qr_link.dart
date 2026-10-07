@@ -28,7 +28,34 @@ class SchoolLink {
     }
     return 'VS3|${checked.schoolId.substring(3)}|${checked.role == 'student' ? 's' : 't'}|$person|${checked.linkToken}';
   }
+  static int detectVersion(String raw) {
+    final value = raw.trim();
+    if (value.startsWith('VS3|')) return 3;
+    if (RegExp(r'^VS[0-9]+\|').hasMatch(value)) {
+      throw const FormatException('Unsupported ID QR version. Update the app or ask the school to regenerate the card.');
+    }
+    if (!value.startsWith('{')) throw const FormatException('Scan a Vidya Saarthi student or teacher ID card.');
+    try {
+      final data = jsonDecode(value);
+      if (data is Map && data['v'] == 2) return 2;
+    } catch (_) {}
+    throw const FormatException('Invalid or unsupported school ID QR.');
+  }
   static SchoolLink parse(String raw) {
+    if (raw.length > 8192) throw const FormatException('QR payload exceeds safety limit.');
+    final value = raw.trim();
+    detectVersion(value);
+    try {
+      return _parse(value);
+    } on FormatException {
+      throw const FormatException('Invalid school ID QR. Scan the original card or ask the school to regenerate it.');
+    } on RangeError {
+      throw const FormatException('Incomplete school ID QR. Scan the original card again.');
+    } on TypeError {
+      throw const FormatException('Invalid school ID QR fields.');
+    }
+  }
+  static SchoolLink _parse(String raw) {
     if (raw.length > 8192) throw const FormatException('QR payload exceeds safety limit.');
     if (raw.startsWith('VS3|')) {
       final parts = raw.split('|');

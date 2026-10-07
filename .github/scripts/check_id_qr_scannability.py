@@ -4,9 +4,9 @@ import zxingcpp
 import fitz
 import numpy as np
 
-samples = [(Path(f'build/windows-id-previews/student_reference_{i}.pdf'), '"personId":"Class 8_Roll_24"') for i in range(4)]
-samples += [(Path(f'build/reference-document-previews/teacherId_{i}.pdf'), 'VIDYA_SAARTHI_TEST_TEACHER') for i in range(4)]
-samples += [(Path(f'build/reference-document-previews/manifest_{role.replace(" ", "_")}.pdf'), 'verified-test-id') for role in ('Student', 'Teacher', 'Other Staff')]
+samples = [(Path(f'build/windows-id-previews/student_reference_{i}.pdf'), 'VS3|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|s|') for i in range(4)]
+samples += [(Path(f'build/reference-document-previews/teacherId_{i}.pdf'), 'VS3|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|t|') for i in range(4)]
+samples += [(Path(f'build/reference-document-previews/manifest_{role.replace(" ", "_")}.pdf'), 'VS3|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|s|') for role in ('Student', 'Teacher', 'Other Staff')]
 samples += [(Path(f'build/reference-document-previews/manifest_auth_{role}.pdf'), 'VS3|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|') for role in ('student', 'teacher')]
 for path, expected in samples:
     with fitz.open(path) as pdf:

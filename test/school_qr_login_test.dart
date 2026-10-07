@@ -24,9 +24,10 @@ void main() {
   Map<String,dynamic> reply(String school) => {'success':true,'schoolId':school,'projectId':school,'sessionToken':'verified-session',
     'expiresAt':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch,'person':{'name':'Own person'},'schoolName':'Own school'};
   for(final fixture in fixtures) {
-    test('Windows ${fixture['type']} QR encodes the exact envelope Android uses to login and restore',() async {
-      final raw=SchoolLink.encode(fixture);
-      expect(jsonDecode(raw),fixture);
+    test('Windows ${fixture['type']} VS3 QR uses actual Android session login and secure restore',() async {
+      final raw=SchoolLink.encodeCompact(fixture);
+      expect(raw,startsWith('VS3|'));
+      expect(SchoolLink.detectVersion(raw),3);
       final link=SchoolLink.parse(raw);
       final session=SchoolSession(client:MockClient((request) async {
         expect(request.url.toString(),fixture['centralEndpoint']);
@@ -87,4 +88,22 @@ void main() {
       expect(()=>SchoolLink.parse(jsonEncode({...fixtures.first,...edit})),throwsFormatException);
     }
   });
+  test('version detection and parsing never expose JSON parser internals', () {
+    for (final raw in ['', 'random text', 'VS4|x', 'VS3|', 'VS3|a|s|%%%|token', '{', '{"v":2,"app":"VIDYA_SAARTHI","firebaseLink":"{bad"}']) {
+      try { SchoolLink.parse(raw); fail('Invalid QR accepted: $raw'); }
+      on FormatException catch (e) {
+        expect(e.message, isNot(contains('Unexpected character')));
+        expect(e.message, isNot(contains('RangeError')));
+      }
+    }
+  });
+  test('VS3 login rejects malformed school response and retains no session', () async {
+    for (final body in ['VS3|unexpected', '<html>Unavailable</html>', '{truncated', '[]']) {
+      final session = SchoolSession(client:MockClient((_) async => http.Response(body,200)));
+      await expectLater(session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixtures.first))), throwsStateError);
+      expect(session.loggedIn,false);
+      expect(await const FlutterSecureStorage().read(key:'vs_mobile_session'),isNull);
+    }
+  });
+
 }

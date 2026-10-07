@@ -20650,7 +20650,7 @@ class _StudentDocumentsScreenState
                               color: Colors.white,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Expanded(child:Text('${_documents.length} documents • ${_formatBytes(_totalBytes)} optimized • target ~300 KB • ${_uploading ? 'Optimizing / pending' : _totalBytes > 300*1024 ? 'Readability Protected' : _documents.isEmpty ? 'Awaiting documents' : 'Optimized'}',
+                      Expanded(child:Text('${_documents.length} documents • ${_documents.every((d)=>d['sourceBytes'] is num) ? _formatBytes(_documents.fold<int>(0,(sum,d)=>sum+(d['sourceBytes'] as num).toInt())) : 'Not fully recorded'} original • ${_formatBytes(_totalBytes)} optimized • target ~300 KB • ${_uploading ? 'Optimizing / pending' : _totalBytes > 300*1024 ? 'Readability Protected' : _documents.isEmpty ? 'Awaiting documents' : 'Optimized'}',
                           textAlign:TextAlign.right,maxLines:3,
                           style: const TextStyle(
                               color: Colors.white54, fontSize: 10.5))),

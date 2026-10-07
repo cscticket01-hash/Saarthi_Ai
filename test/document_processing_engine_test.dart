@@ -173,6 +173,7 @@ void main() {
   );
   test('eight dense text scans report total target honestly and retain readable copies', () {
     var total = 0;
+    var originalTotal = 0;
     for (var n = 0; n < 8; n++) {
       final image = img.Image(width: 600, height: 800);
       img.fill(image, color: img.ColorRgb8(255, 255, 255));
@@ -187,10 +188,12 @@ void main() {
           thickness: 2,
         );
       final bytes = Uint8List.fromList(img.encodePng(image));
+      originalTotal += bytes.length;
       final original = List<int>.from(bytes);
       final result = DocumentProcessingEngine.process({'bytes': bytes});
       final optimized = result['optimized'] as Uint8List;
       total += optimized.length;
+      print('MEASURE scan $n: original=${bytes.length} optimized=${optimized.length} savings=${(100*(1-optimized.length/bytes.length)).toStringAsFixed(1)}%');
       expect(
         result['targetMet'],
         optimized.length <= DocumentProcessingEngine.setTarget ~/ 8,
@@ -202,6 +205,7 @@ void main() {
       expect((result['highQuality'] as Uint8List).length, greaterThan(0));
       expect(result['quality'], greaterThanOrEqualTo(78));
     }
+    print('MEASURE 8 documents original=$originalTotal optimized=$total target=${DocumentProcessingEngine.setTarget} achieved=${total<=DocumentProcessingEngine.setTarget}');
     expect(
       total,
       greaterThan(0),

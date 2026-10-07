@@ -1,3 +1,4 @@
+import '../lib/school_qr_link.dart';
 import 'dart:io';
 import 'dart:convert';
 
@@ -42,7 +43,7 @@ void main() {
       final bytes = await renderWindowsStudentId(
         template: i,
         data: sample,
-        qr: '{"v":2,"type":"student","personId":"Class 8_Roll_24","linkToken":"${'a' * 48}"}',
+        qr: SchoolLink.encodeCompact(Map<String,dynamic>.from((jsonDecode(File('test/fixtures/windows_person_qr.json').readAsStringSync()) as List).first)),
         photo: await File('assets/school_logo.png').readAsBytes(),
         logo: await File('assets/school_logo.png').readAsBytes(),
         signature: await File('assets/principal_sign.png').readAsBytes(),

@@ -1,3 +1,4 @@
+import '../lib/school_qr_link.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -75,7 +76,7 @@ void main() {
         'designation': role,
         'address': 'School Road, Silchar',
         'rollNo': '12',
-      }, qr: 'verified-test-id');
+      }, qr: SchoolLink.encodeCompact(Map<String,dynamic>.from((jsonDecode(File('test/fixtures/windows_person_qr.json').readAsStringSync()) as List).first)));
       final text = latin1.decode(bytes);
       expect(text.startsWith('%PDF'), true);
       expect(RegExp(r'/Type\s*/Page\b').allMatches(text).length, 1);
