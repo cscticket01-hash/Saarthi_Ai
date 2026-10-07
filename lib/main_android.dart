@@ -690,6 +690,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
   }
 
   Future<void> _showPdf(String kind, Map<String, dynamic> d) async {
+    Uint8List? previousReport;
     try {
       if (kind == 'studentId' || kind == 'teacherId') {
         final cached = await _s.cachedPdf('idCard');
@@ -715,6 +716,15 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
         'schoolName': school['schoolName'] ?? school['name'] ?? _s.schoolName,
         ...d,
       };
+      final reportKey = 'report:${d['id'] ?? d['reportCardId'] ?? d['examName'] ?? 'current'}';
+      final reportVersion = sha256.convert(utf8.encode(jsonEncode([index, school, d]))).toString();
+      if (kind == 'reportCard') {
+        previousReport = await _s.cachedPdf(reportKey);
+        if (previousReport != null && _s.cachedPdfVersion(reportKey) == reportVersion) {
+          await _previewPdf(previousReport, 'Report card');
+          return;
+        }
+      }
       Future<Uint8List?> asset(String kind) async {
         final r = await _s.schoolCall('mobile_asset', {'kind': kind});
         return r['available'] == true
@@ -734,6 +744,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
         photo: photo,
         logo: logo,
       );
+      if (kind == 'reportCard') {
+        await _s.cachePdf(reportKey, reportVersion, pdf,
+            expectedHash: sha256.convert(pdf).toString());
+      }
       if (mounted)
         await Navigator.push(
           context,
@@ -755,6 +769,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
           ),
         );
     } catch (e) {
+      if (previousReport != null && e is! SchoolAccessDenied && _s.cachedAccessAllowed) {
+        await _previewPdf(previousReport, 'Report card • Saved copy');
+        return;
+      }
       if (mounted)
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('$e')));

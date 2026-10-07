@@ -179,6 +179,7 @@ void main() {
     );
     final digest = sha256.convert(pdf).toString();
     await s.cachePdf('idCard', 'v10', pdf, expectedHash: digest);
+    await s.cachePdf('report:term1', 'r1', pdf, expectedHash: digest);
     final watch = Stopwatch()..start();
     expect(await s.cachedPdf('idCard'), pdf);
     watch.stop();
@@ -198,6 +199,7 @@ void main() {
     final restored = SchoolSession(cacheDirectory: () async => root);
     await restored.restore();
     expect(await restored.cachedPdf('idCard'), pdf);
+    expect(await restored.cachedPdf('report:term1'), pdf);
     await restored.clear();
     expect(await restored.cachedPdf('idCard'), isNull);
   });
