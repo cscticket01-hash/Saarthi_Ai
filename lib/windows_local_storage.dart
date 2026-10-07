@@ -30,6 +30,10 @@ class WindowsLocalStorage {
   static Future<void> initialize() async {
     await _controlDirectory.create(recursive: true);
     try {
+      final previous = File('${_configFile.path}.previous');
+      if (!await _configFile.exists() && await previous.exists()) {
+        await previous.copy(_configFile.path);
+      }
       if (await _configFile.exists()) {
         final decoded = jsonDecode(await _configFile.readAsString());
         if (decoded is Map) {
@@ -268,16 +272,23 @@ class WindowsLocalStorage {
       }),
       flush: true,
     );
-    if (await _configFile.exists()) {
-      await _configFile.delete();
-    }
-    await pending.rename(_configFile.path);
+    final oldPath = _customDataPath;
     _customDataPath = target.path;
-
     final ok = await healthCheck();
-    if (!ok) {
-      throw StateError('New local storage health check fail hua.');
+    _customDataPath = oldPath;
+    if (!ok) throw StateError('New local storage health check failed; current folder retained.');
+    final previous = File('${_configFile.path}.previous');
+    if (await _configFile.exists()) {
+      if (await previous.exists()) await previous.delete();
+      await _configFile.rename(previous.path);
     }
+    try {
+      await pending.rename(_configFile.path);
+    } catch (_) {
+      if (!await _configFile.exists() && await previous.exists()) await previous.copy(_configFile.path);
+      rethrow;
+    }
+    _customDataPath = target.path;
   }
 
   static Future<void> resetToDefaultLocation() async {
