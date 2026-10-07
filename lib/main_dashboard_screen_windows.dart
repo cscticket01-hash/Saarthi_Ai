@@ -174,38 +174,19 @@ Future<String> _windowsBuildPersonQrPayload({
 Map<String, dynamic>? _windowsParsePersonQr(String raw) {
   final clean = raw.trim();
   if (clean.isEmpty) return null;
-  if (clean.startsWith('VS3|')) {
-    final link = SchoolLink.parse(clean);
-    return {'app':'VIDYA_SAARTHI','v':2,'managed':true,'schoolId':link.schoolId,
-      'type':link.role,'personId':link.personId,'linkToken':link.linkToken};
-  }
   try {
-    final decoded = jsonDecode(clean);
-    if (decoded is Map && decoded['app'] == 'VIDYA_SAARTHI') {
-      return Map<String, dynamic>.from(decoded);
-    }
-  } catch (_) {}
+    // Use the same version-aware identity codec as Android. A compact QR is
+    // never JSON, and malformed credentials must not escape the UI callback.
+    final link = SchoolLink.parse(clean);
+    final metadata = clean.startsWith('{')
+        ? Map<String,dynamic>.from(jsonDecode(clean) as Map)
+        : <String,dynamic>{};
+    return {...metadata,'app':'VIDYA_SAARTHI','v':2,'managed':link.managed,
+      'schoolId':link.schoolId,'firebaseProjectId':link.projectId,
+      'type':link.role,'personId':link.personId,'linkToken':link.linkToken};
+  } on FormatException { return null; }
 
-  // Legacy Student ID card fallback.
-  if (clean.contains('SVN_STUDENT_CARD') ||
-      clean.contains('VIDYA_SAARTHI_STUDENT_CARD')) {
-    final out = <String, dynamic>{
-      'app': 'VIDYA_SAARTHI',
-      'v': 1,
-      'type': 'student',
-    };
-    for (final line in clean.split(RegExp(r'\r?\n'))) {
-      final value = line.trim();
-      if (value.toLowerCase().startsWith('record id:')) {
-        out['personId'] = value.substring('record id:'.length).trim();
-      }
-      if (value.toLowerCase().startsWith('student uid:')) {
-        out['studentUid'] = value.substring('student uid:'.length).trim();
-      }
-    }
-    return out['personId']?.toString().isNotEmpty == true ? out : null;
-  }
-  return null;
+
 }
 
 Future<({double latitude, double longitude, double accuracy})> _windowsCurrentPosition() async {
@@ -23664,6 +23645,11 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
     setState((){_busy=true; _distance=null; _status='School + GPS verify ho raha hai...';});
     try{
       final activeProfile = await _windowsActiveSchoolProfileId();
+      final configured = await CentralSchoolCloud.saved();
+      if(configured['managed']==true &&
+          (payload['managed']!=true || payload['schoolId']!=configured['schoolId'])) {
+        throw StateError('This QR belongs to another school. Attendance blocked.');
+      }
       final qrProfile = payload['schoolProfileId']?.toString().trim() ?? '';
       if(qrProfile.isNotEmpty && qrProfile != activeProfile){
         throw StateError('Ye QR kisi doosre school ka hai. Attendance blocked.');
@@ -23717,8 +23703,8 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
       if(type == 'teacher'){
         body={
           'action':'mark_teacher_attendance',
-          'teacherId':payload['teacherId']?.toString().trim().isNotEmpty == true ? payload['teacherId'] : personId,
-          'teacherName':payload['name'] ?? '',
+          'teacherId':personDoc.data()?['teacherId'] ?? personId,
+          'teacherName':personDoc.data()?['name'] ?? '',
           'mode':_mode,
           'source':'WINDOWS_QR_GEOFENCE',
           'markedBy':'Windows Admin',
@@ -23730,9 +23716,9 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
         body={
           'action':'mark_student_attendance',
           'studentId':personId,
-          'studentName':payload['name'] ?? '',
-          'studentClass':payload['class'] ?? '',
-          'rollNo':payload['rollNo'] ?? '',
+          'studentName':personDoc.data()?['name'] ?? '',
+          'studentClass':personDoc.data()?['class'] ?? '',
+          'rollNo':personDoc.data()?['rollNo'] ?? '',
           'mode':_mode,
           'source':'WINDOWS_QR_GEOFENCE',
           'markedBy':'Windows Admin',

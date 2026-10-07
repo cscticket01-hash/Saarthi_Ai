@@ -32,6 +32,15 @@ void main() {
     await local.FirebaseFirestore.instance.switchProfile('test-${DateTime.now().microsecondsSinceEpoch}');
   });
   tearDown(() => ui.WindowsUiLanguage.change('en'));
+  testWidgets('Windows attendance rejects malformed compact QR without a parser exception',(tester) async {
+    await tester.pumpWidget(const MaterialApp(home:WindowsAttendanceScreen()));
+    await tester.enterText(find.byType(TextField),'VS3|truncated');
+    await tester.tap(find.text('Verify Location & Mark Attendance'));
+    await tester.pump();
+    expect(find.text('Invalid Vidya Saarthi QR.'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
 
   testWidgets('both sidebar modes render all ten identical options and separate bottom logout', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 1500));
