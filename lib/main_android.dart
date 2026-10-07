@@ -37,6 +37,14 @@ final _messenger = GlobalKey<ScaffoldMessengerState>();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SchoolSession.instance.restore();
+  runApp(const SaarthiMobileApp());
+  // Optional notification/network work must never hold the native splash screen.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeMobileNotifications().catchError((_) {}));
+  });
+}
+
+Future<void> _initializeMobileNotifications() async {
   await SchoolNotifications.initialize();
   try {
     await SchoolMessaging.configure(SchoolSession.instance.messaging);
@@ -56,7 +64,6 @@ Future<void> main() async {
       unawaited(SchoolNotifications.show(m).catchError((_) {}));
     }
   });
-  runApp(const SaarthiMobileApp());
 }
 
 class SaarthiMobileApp extends StatelessWidget {
