@@ -13,7 +13,7 @@ void main() {
  final db=FirebaseFirestore.instance;
  const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
  setUp(() async {
-  FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'managed':true,'schoolId':school,'uid':'migration-review','projectId':platformProjectId,'endpoint':'https://unreachable.example/school-cloud','storageReady':false})});
+  FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'managed':true,'schoolId':school,'uid':'migration-review','projectId':platformProjectId,'endpoint':'https://unreachable.example/school-cloud','storageReady':false,'folderId':'migration-review','firebaseRefreshToken':'synthetic-test-token'})});
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('migration-review',identity:{'schoolSyncId':school,'schoolId':school});
  });
