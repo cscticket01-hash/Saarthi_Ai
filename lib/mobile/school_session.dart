@@ -30,6 +30,7 @@ class SchoolSession {
   Map<String, dynamic> _pdfCache = {};
   Map<String, Uint8List> _pdfMemory = {};
   Future<Map<String, dynamic>>? _refresh;
+  Future<void>? _renewal;
   Future<void> _storageTail = Future<void>.value();
   int _expiresAt = 0;
   int _policyExpiresAt = 0;
@@ -60,10 +61,6 @@ class SchoolSession {
     if (raw == null) return;
     try {
       final d = jsonDecode(raw);
-      if ((d['expiresAt'] as num) <= DateTime.now().millisecondsSinceEpoch) {
-        await clear();
-        return;
-      }
       final restoredLink = QrAuthenticationEngine.decode(d['qr']);
       QrAuthenticationEngine.validateSession(
         restoredLink,
@@ -107,6 +104,11 @@ class SchoolSession {
     final current = link;
     final generation = _generation;
     if (current == null) throw StateError('Scan your school ID first.');
+    if (loggedIn && action != 'mobile_login' && action != 'mobile_refresh' &&
+        action != 'mobile_logout' &&
+        _expiresAt <= DateTime.now().millisecondsSinceEpoch) {
+      await _renewSession();
+    }
     void unchanged() {
       if (generation != _generation || !identical(current, link))
         throw StateError('School session changed. Scan your ID again.');
@@ -186,6 +188,27 @@ class SchoolSession {
     final uri = Uri.parse(location);
     requireSchoolBackendUri(uri);
     return _client.get(uri).timeout(const Duration(seconds: 20));
+  }
+
+  Future<void> _renewSession() async {
+    final running = _renewal;
+    if (running != null) return running;
+    final generation = _generation;
+    final pending = () async {
+      final result = await schoolCall('mobile_refresh', {});
+      if (generation != _generation) throw SchoolAccessDenied('School session changed.');
+      final expiry = result['expiresAt'];
+      if (expiry is! num || !expiry.isFinite ||
+          expiry <= DateTime.now().millisecondsSinceEpoch) {
+        throw StateError('Unable to renew school session. Try again later.');
+      }
+      _expiresAt = expiry.toInt();
+      await _persist();
+    }();
+    _renewal = pending;
+    try { await pending; } finally {
+      if (identical(_renewal, pending)) _renewal = null;
+    }
   }
 
   Future<Map<String, dynamic>> platformCall(
@@ -492,6 +515,7 @@ class SchoolSession {
     _pdfCache = {};
     _pdfMemory = {};
     _refresh = null;
+    _renewal = null;
     _expiresAt = 0;
     _policyExpiresAt = 0;
     final deletion = _storageTail.then(

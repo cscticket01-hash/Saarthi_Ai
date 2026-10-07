@@ -35,6 +35,44 @@ void main() {
     'schoolName': 'Own school',
   });
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  test('expired saved login survives restart and outage; renews without QR; logout persists', () async {
+    var offline = false;
+    var renewals = 0;
+    final client = MockClient((request) async {
+      final action = (jsonDecode(request.body)['request'] as Map)['action'];
+      if (action == 'mobile_login') return http.Response(jsonEncode(login()), 200);
+      if (offline) throw const SocketException('offline');
+      if (action == 'mobile_refresh') {
+        renewals++;
+        return http.Response(jsonEncode(response({'expiresAt': DateTime.now().add(const Duration(days: 30)).millisecondsSinceEpoch})), 200);
+      }
+      return http.Response(jsonEncode(response({'revision': 'renewed'})), 200);
+    });
+    final initial = SchoolSession(client: client);
+    await initial.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    const storage = FlutterSecureStorage();
+    final saved = jsonDecode((await storage.read(key: 'vs_mobile_session'))!) as Map<String, dynamic>;
+    saved['expiresAt'] = DateTime.now().subtract(const Duration(days: 365)).millisecondsSinceEpoch;
+    await storage.write(key: 'vs_mobile_session', value: jsonEncode(saved));
+    final restarted = SchoolSession(client: client);
+    await restarted.restore();
+    expect(restarted.loggedIn, true);
+    expect(restarted.cachedAccessAllowed, false);
+    offline = true;
+    await expectLater(restarted.refreshDashboard(), throwsA(isA<SocketException>()));
+    expect(restarted.loggedIn, true);
+    offline = false;
+    await Future.wait([restarted.refreshDashboard(), restarted.refreshDashboard()]);
+    expect(renewals, 1);
+    expect(restarted.cachedAccessAllowed, true);
+    final again = SchoolSession(client: client);
+    await again.restore();
+    expect(again.loggedIn, true);
+    await again.logout();
+    final loggedOut = SchoolSession();
+    await loggedOut.restore();
+    expect(loggedOut.loggedIn, false);
+  });
   test('verified Home and notice survive network/server/Drive outages and secure restart', () async {
     var offline = false;
     var calls = 0;

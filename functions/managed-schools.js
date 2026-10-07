@@ -167,7 +167,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
   const seen=Number(school.lastSeenAt||0);
   if(seen>now()||now()-seen>90000)fail(409,'Unable to connect: school Windows app is offline');
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
   if(b.request.action==='mobile_mark_attendance'&&b.request.attendancePermit){
    const permit=verifyAttendance(b.schoolId,b.request);
    const result=await queue.enqueue({schoolId:b.schoolId,role:permit.role,personId:permit.personId,day:permit.day,mode:b.request.mode==='exit'?'exit':'entry',payload:protect(JSON.stringify({...b.request,attendancePermit:undefined}),encryptionKey)});
