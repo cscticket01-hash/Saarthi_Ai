@@ -106,4 +106,27 @@ void main() {
     }
   });
 
+  test('already printed JSON v2 still uses authenticated mobile login', () async {
+    final link=SchoolLink.parse(SchoolLink.encode(fixtures.first));
+    expect(SchoolLink.detectVersion(link.rawQr),2);
+    final session=SchoolSession(client:MockClient((request) async {
+      final body=jsonDecode(request.body) as Map;
+      expect((body['request'] as Map)['linkToken'],link.linkToken);
+      return http.Response(jsonEncode(reply(link.schoolId)),200);
+    }));
+    await session.login(link);
+    expect(session.loggedIn,true);
+  });
+  test('tampered VS3 is rejected by server verification, never grants a session', () async {
+    final raw=SchoolLink.encodeCompact(fixtures.first);
+    final tampered=raw.substring(0,raw.length-1)+'y';
+    final session=SchoolSession(client:MockClient((request) async {
+      expect(((jsonDecode(request.body) as Map)['request'] as Map)['linkToken'],isNot(fixtures.first['linkToken']));
+      return http.Response(jsonEncode({'success':false,'message':'Invalid or revoked ID credential'}),403);
+    }));
+    await expectLater(session.login(SchoolLink.parse(tampered)),throwsStateError);
+    expect(session.loggedIn,false);
+    expect(await const FlutterSecureStorage().read(key:'vs_mobile_session'),isNull);
+  });
+
 }

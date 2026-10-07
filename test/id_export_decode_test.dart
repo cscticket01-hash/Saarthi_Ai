@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/id_card_engine.dart';
 void main(){
  final directory=Directory('build/id-final-rasters');
- test('production offline ZXing decoder reads every composed final 300 DPI ID export',(){
+ test('production offline ZXing decoder reads every composed final 300 DPI ID export',() async {
   expect(directory.existsSync(),true,reason:'CI must raster final exported PDFs first');
   final files=directory.listSync().whereType<File>().where((f)=>f.path.endsWith('.png')).toList();
   expect(files.length,greaterThanOrEqualTo(13));
@@ -14,7 +14,11 @@ void main(){
     expect(credential.managed,true,reason:file.path);
     expect(credential.personId,isNotEmpty,reason:file.path);
     expect(credential.linkToken,'x'*48,reason:file.path);
-    QrAuthenticationEngine.validateSession(credential,{'expiresAt':2000,'sessionToken':'server-verified-test','projectId':credential.projectId,'schoolId':credential.schoolId,'person':{'personId':credential.personId}},now:1000);
+    await QrAuthenticationEngine.authenticate(credential,(request)async {
+      expect(request['personId'],credential.personId);
+      expect(request['linkToken'],'x'*48);
+      return {'expiresAt':2000,'sessionToken':'server-verified-test','projectId':credential.projectId,'schoolId':credential.schoolId,'person':{'personId':credential.personId}};
+    },clock:()=>1000);
    }
  });
 }

@@ -174,6 +174,11 @@ Future<String> _windowsBuildPersonQrPayload({
 Map<String, dynamic>? _windowsParsePersonQr(String raw) {
   final clean = raw.trim();
   if (clean.isEmpty) return null;
+  if (clean.startsWith('VS3|')) {
+    final link = SchoolLink.parse(clean);
+    return {'app':'VIDYA_SAARTHI','v':2,'managed':true,'schoolId':link.schoolId,
+      'type':link.role,'personId':link.personId,'linkToken':link.linkToken};
+  }
   try {
     final decoded = jsonDecode(clean);
     if (decoded is Map && decoded['app'] == 'VIDYA_SAARTHI') {
@@ -181,11 +186,6 @@ Map<String, dynamic>? _windowsParsePersonQr(String raw) {
     }
   } catch (_) {}
 
-  if (clean.startsWith('VS3|')) {
-    final link = SchoolLink.parse(clean);
-    return {'app':'VIDYA_SAARTHI','v':2,'managed':true,'schoolId':link.schoolId,
-      'type':link.role,'personId':link.personId,'linkToken':link.linkToken};
-  }
   // Legacy Student ID card fallback.
   if (clean.contains('SVN_STUDENT_CARD') ||
       clean.contains('VIDYA_SAARTHI_STUDENT_CARD')) {
