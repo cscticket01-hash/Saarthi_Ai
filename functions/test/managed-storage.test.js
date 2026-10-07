@@ -259,3 +259,10 @@ test('Sheet continuation values are inert quoted fragments; large Unicode record
  const row=tab.getRange(2,1,1,33).getValues()[0];assert.equal(row[5][0],"'");
  for(const chunk of row.slice(6).filter(Boolean)){assert.equal(chunk[0],'"');assert(chunk.length<50000);}
 });
+test('a deleted authoritative Sheet tab never silently becomes an empty collection',()=>{
+ const f=storage();assert.equal(f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'p',data:{schoolId:A,name:'Keep'}}).success,true);
+ const book=f.books.get(f.props.get('VS_MANAGED_SHEET_ID')),insert=book.insertSheet;let created=0;
+ book.getSheetByName=()=>null;book.insertSheet=name=>{created++;return insert(name);};
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).success,false);assert.equal(created,0);
+ assert.equal(f.props.get('VS_SHEET_MIGRATED_students_directory'),'1');
+});

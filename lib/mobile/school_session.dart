@@ -382,7 +382,14 @@ class SchoolSession {
     Uint8List bytes;
     try { bytes = Uint8List.fromList(base64Decode(result['base64'].toString())); }
     on FormatException { throw StateError('Published ID verification failed. Please retry.'); }
-    await cachePdf('idCard', revision, bytes, expectedHash: hash);
+    bool current() {
+      final latest = dashboard['idCardPackage'];
+      return generation == _generation && latest is Map &&
+          latest['documentId'] == manifest['documentId'] &&
+          latest['documentRevision'] == revision && latest['contentHash'] == hash;
+    }
+    await cachePdf('idCard', revision, bytes, expectedHash: hash, accept: current);
+    if (!current()) throw StateError('Published ID changed. Refresh school data and retry.');
     return bytes;
   }
 
@@ -421,6 +428,7 @@ class SchoolSession {
     String version,
     Uint8List bytes, {
     required String expectedHash,
+    bool Function()? accept,
   }) async {
     final origin = _generation;
     if (!cachedAccessAllowed)
@@ -446,6 +454,8 @@ class SchoolSession {
       await temporary.rename(file.path);
     else
       await temporary.delete();
+    if (accept != null && !accept())
+      throw StateError('Published document changed during download. Please retry.');
     final old = _pdfCache[key];
     _pdfCache[key] = {'version': version, 'hash': expectedHash};
     try {

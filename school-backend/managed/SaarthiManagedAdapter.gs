@@ -102,6 +102,7 @@ function VS_managedSheet(collection) {
     p.setProperty('VS_MANAGED_SHEET_ID',id);p.deleteProperty('VS_MANAGED_SHEET_PENDING');
   }
   let sheet=book.getSheetByName(collection);
+  if(!sheet&&p.getProperty('VS_SHEET_MIGRATED_'+collection)==='1')throw new Error('Verified school tab is missing; operator recovery required');
   if(!sheet){sheet=book.insertSheet(collection);if(sheet.getMaxColumns()<33)sheet.insertColumnsAfter(sheet.getMaxColumns(),33-sheet.getMaxColumns());sheet.getRange(1,1,1,33).setValues([['Record Key','School ID','Revision','Deleted','Operation ID','Display Name'].concat(Array.from({length:27},(_,n)=>'Data '+(n+1)))]);sheet.setFrozenRows(1);}
   const store={sheet:sheet,school:school};
   if(p.getProperty('VS_SHEET_MIGRATED_'+collection)!=='1'){
@@ -208,6 +209,7 @@ function VS_managedRecordUnlocked(b) {
   }
   if(b.operation==='write' && existing && existing.data._syncDeleted)throw new Error('Record revision conflict');
   if(b.operation==='delete'){
+    if(existing&&existing.data._syncDeleted)return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};
     {
       const revision=Utilities.getUuid(),data={schoolId:school,_syncDeleted:true,_syncRevision:revision};
       if(b.syncProtocol===2)data._syncOperationId=b.operationId;

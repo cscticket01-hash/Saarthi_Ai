@@ -674,7 +674,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
         final cached = await _s.cachedPdf('idCard');
         final manifest = _data['idCardPackage'];
         final expected = manifest is Map ? manifest['documentRevision']?.toString() : null;
-        if (cached != null && (expected == null || expected == _s.cachedPdfVersion('idCard'))) {
+        if (cached != null && !(_data.containsKey('idCardPackage') && manifest == null) &&
+            (expected == null || expected == _s.cachedPdfVersion('idCard'))) {
           unawaited(_refreshPublishedCard().catchError((Object _) => null));
           await _previewPdf(cached, 'School ID card • Front & back');
           return;
@@ -1244,7 +1245,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
               if (v == 'settings') Navigator.push(context, MaterialPageRoute(
                 builder: (_) => MobileSettingsScreen(
                   version: SchoolSession.version,
-                  build: int.tryParse(const String.fromEnvironment('APP_BUILD', defaultValue: '0')) ?? 0,
+                  buildNumber: int.tryParse(const String.fromEnvironment('APP_BUILD', defaultValue: '0')) ?? 0,
                   checkUpdate: () => _s.platformCall('updates/latest', {'platform': 'android'}),
                   installUpdate: (update) => _update(update: update),
                 ),

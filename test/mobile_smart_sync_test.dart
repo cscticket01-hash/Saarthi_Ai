@@ -298,4 +298,28 @@ void main() {
     final restored = SchoolSession(); await restored.restore(); expect(restored.dashboard['notices'], isEmpty);
   });
 
+  test('a deleted manifest discards an older in-flight ID download without restoring its cache', () async {
+    final root = await Directory.systemTemp.createTemp('vs-id-deletion-race');
+    addTearDown(() => root.delete(recursive: true));
+    final answer = Completer<http.Response>(), started = Completer<void>();
+    final pdf = Uint8List.fromList(utf8.encode('%PDF-1.7\nold ID\n%%EOF'));
+    final hash = sha256.convert(pdf).toString(); var deleted = false;
+    final session = SchoolSession(cacheDirectory: () async => root, client: MockClient((request) async {
+      final b = jsonDecode(request.body)['request'] as Map;
+      if (b['action'] == 'mobile_login') return http.Response(jsonEncode(login()), 200);
+      if (b['action'] == 'mobile_document') { started.complete(); return answer.future; }
+      return http.Response(jsonEncode(response({'revision':deleted?'deleted':'v1',
+        'idCardPackage':deleted ? null : {'documentId':'id','documentRevision':'v1','contentHash':hash}})), 200);
+    }));
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await session.refreshDashboard();
+    final download = session.publishedIdCard();
+    final rejected = expectLater(download, throwsStateError);
+    await started.future; deleted = true; await session.refreshDashboard();
+    answer.complete(http.Response(jsonEncode(response({'documentRevision':'v1','mime':'application/pdf',
+      'contentHash':hash,'base64':base64Encode(pdf)})), 200));
+    await rejected; expect(await session.cachedPdf('idCard'), isNull);
+    expect(await session.publishedIdCard(), isNull);
+  });
+
 }

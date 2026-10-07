@@ -12,10 +12,10 @@ class VidyaSaarthiBrand extends StatelessWidget {
 }
 
 class MobileSettingsScreen extends StatelessWidget {
-  const MobileSettingsScreen({super.key, required this.version, required this.build,
+  const MobileSettingsScreen({super.key, required this.version, required this.buildNumber,
     required this.checkUpdate, required this.installUpdate});
   final String version;
-  final int build;
+  final int buildNumber;
   final Future<Map<String, dynamic>> Function() checkUpdate;
   final Future<void> Function(Map<String, dynamic>) installUpdate;
   static const whatsNew = [
@@ -32,23 +32,23 @@ class MobileSettingsScreen extends StatelessWidget {
           appBar: AppBar(title: const Text('About')),
           body: ListView(padding: const EdgeInsets.all(20), children: [
             const VidyaSaarthiBrand(), const SizedBox(height: 20),
-            Text('Installed version: $version'), Text('Build: $build'),
+            Text('Installed version: $version'), Text('Build: $buildNumber'),
             const SizedBox(height: 20), const Text("What's New"),
             ...whatsNew.map((line) => Padding(padding: const EdgeInsets.only(top: 12), child: Text(line))),
           ]),
         )))),
       ListTile(leading: const Icon(Icons.system_update), title: const Text('App Update'),
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MobileAppUpdateScreen(
-          version: version, build: build, checkUpdate: checkUpdate, installUpdate: installUpdate)))),
+          version: version, buildNumber: buildNumber, checkUpdate: checkUpdate, installUpdate: installUpdate)))),
     ]),
   );
 }
 
 class MobileAppUpdateScreen extends StatefulWidget {
-  const MobileAppUpdateScreen({super.key, required this.version, required this.build,
+  const MobileAppUpdateScreen({super.key, required this.version, required this.buildNumber,
     required this.checkUpdate, required this.installUpdate});
   final String version;
-  final int build;
+  final int buildNumber;
   final Future<Map<String, dynamic>> Function() checkUpdate;
   final Future<void> Function(Map<String, dynamic>) installUpdate;
   @override
@@ -77,14 +77,14 @@ class _MobileAppUpdateScreenState extends State<MobileAppUpdateScreen> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('App Update')),
     body: ListView(padding: const EdgeInsets.all(20), children: [
-      Text('Current version: ${widget.version} (build ${widget.build})'),
+      Text('Current version: ${widget.version} (build ${widget.buildNumber})'),
       Text('Latest version: ${latest?['versionName'] ?? 'Not checked'}'),
-      if (latest != null) Text((latest!['versionCode'] as int) > widget.build
+      if (latest != null) Text((latest!['versionCode'] as int) > widget.buildNumber
           ? 'Update available' : 'You’re up to date.'),
       if (error != null) Text(error!),
       if (busy) const LinearProgressIndicator(),
       FilledButton(onPressed: busy ? null : check, child: const Text('Check for Updates')),
-      if (latest != null && (latest!['versionCode'] as int) > widget.build)
+      if (latest != null && (latest!['versionCode'] as int) > widget.buildNumber)
         FilledButton(onPressed: busy ? null : () async {
           setState(() => busy = true);
           try { await widget.installUpdate(latest!); }
