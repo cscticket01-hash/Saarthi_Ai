@@ -23625,7 +23625,9 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
   void dispose(){ _qr.dispose(); super.dispose(); }
 
   Future<Map<String,dynamic>> _call(Map<String,dynamic> body) async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
     final scriptUrl = await _windowsGoogleScriptUrl();
+    if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
     final response = await WindowsBackendBridge.post(
       Uri.parse(scriptUrl),
       headers: const {'Content-Type':'text/plain;charset=utf-8'},
@@ -23642,6 +23644,7 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
     if(_busy) return;
     final payload = _windowsParsePersonQr(_qr.text);
     if(payload == null){ setState(()=>_status='Invalid Vidya Saarthi QR.'); return; }
+    final origin = FirebaseFirestore.instance.activeProfileId;
     setState((){_busy=true; _distance=null; _status='School + GPS verify ho raha hai...';});
     try{
       final activeProfile = await _windowsActiveSchoolProfileId();
@@ -23650,6 +23653,7 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
           (payload['managed']!=true || payload['schoolId']!=configured['schoolId'])) {
         throw StateError('This QR belongs to another school. Attendance blocked.');
       }
+      if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
       final qrProfile = payload['schoolProfileId']?.toString().trim() ?? '';
       if(qrProfile.isNotEmpty && qrProfile != activeProfile){
         throw StateError('Ye QR kisi doosre school ka hai. Attendance blocked.');
@@ -23699,10 +23703,12 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
         throw StateError('Attendance blocked: school se ${distance.toStringAsFixed(0)}m, GPS accuracy ±${current.accuracy.toStringAsFixed(0)}m. Allowed ${radius.toStringAsFixed(0)}m. Accurate GPS location lekar retry karein.');
       }
 
+      if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
       Map<String,dynamic> body;
       if(type == 'teacher'){
         body={
           'action':'mark_teacher_attendance',
+          if(payload['managed']==true) 'schoolId':payload['schoolId'],
           'teacherId':personDoc.data()?['teacherId'] ?? personId,
           'teacherName':personDoc.data()?['name'] ?? '',
           'mode':_mode,
@@ -23715,6 +23721,7 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
       } else if(type == 'student'){
         body={
           'action':'mark_student_attendance',
+          if(payload['managed']==true) 'schoolId':payload['schoolId'],
           'studentId':personId,
           'studentName':personDoc.data()?['name'] ?? '',
           'studentClass':personDoc.data()?['class'] ?? '',
