@@ -15,7 +15,8 @@ function createAttendanceQueue({store,deliver,now=Date.now,batchSize=25}){
   return {accepted:true,operationId,duplicate:!created,message:created?'Attendance accepted for processing.':'Attendance submission already accepted.'};
  }
  async function drain(){
-  if(draining)return;draining=true;
+  if(draining)return {processed:0,nextRetryAt:null};draining=true;
+  let processed=0,nextRetryAt=null;
   try{
    const rows=await store.pending(batchSize),groups=new Map();
    for(const row of rows){
@@ -36,10 +37,13 @@ function createAttendanceQueue({store,deliver,now=Date.now,batchSize=25}){
        ...(state==='completed'?{completedAt:now()}:{}),
        lastError:state==='completed'?'':definitive?'Attendance requires school review.':'Attendance service unavailable; operation retained.',
        nextAttemptAt:['completed','needsAttention'].includes(state)?Number.MAX_SAFE_INTEGER:now()+Math.min(3600000,5000*2**Math.min(attempts,9))});
+     processed++;
+     if(state==='retry'){const due=now()+Math.min(3600000,5000*2**Math.min(attempts,9));nextRetryAt=nextRetryAt===null?due:Math.min(nextRetryAt,due);}
      if(state==='completed')metrics.completed++;else if(state==='retry')metrics.retried++;else metrics.rejected++;
     }
    }
   }finally{draining=false;}
+  return {processed,nextRetryAt};
  }
  return {enqueue,drain,metrics};
 }
@@ -63,4 +67,17 @@ function firestoreAttendanceStore(db){
   }),
  };
 }
-module.exports={createAttendanceQueue,firestoreAttendanceStore};
+// Wake on committed submissions; only restart/recovery scans poll while idle.
+function createAttendanceWorker({drain,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now,onError=()=>{}}){
+ let timer=null,running=false,woken=false,stopped=false;
+ function schedule(delay){if(stopped)return;if(timer!==null)clearTimer(timer);timer=setTimer(run,delay);timer?.unref?.();}
+ async function run(){timer=null;if(running){woken=true;return;}running=true;let delay=300000;
+  try{const result=await drain();if(result?.processed>0)delay=2000;
+   if(result?.nextRetryAt!==null&&result?.nextRetryAt!==undefined)delay=Math.min(delay,Math.max(1000,result.nextRetryAt-now()));
+  }catch(e){onError(e);delay=30000;}finally{running=false;const urgent=woken;woken=false;schedule(urgent?0:delay);}
+ }
+ function wake(){if(running){woken=true;return;}schedule(0);}
+ schedule(0);
+ return {wake,stop:()=>{stopped=true;if(timer!==null)clearTimer(timer);timer=null;}};
+}
+module.exports={createAttendanceQueue,firestoreAttendanceStore,createAttendanceWorker};

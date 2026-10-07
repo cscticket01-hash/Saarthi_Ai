@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {createAttendanceQueue,firestoreAttendanceStore}=require('../attendance-queue');
+const {createAttendanceQueue,firestoreAttendanceStore,createAttendanceWorker}=require('../attendance-queue');
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32);
 function store(rows=new Map()) {return {rows,create:async(id,r)=>{if(rows.has(id))return false;rows.set(id,{...r});return true;},pending:async n=>[...rows.values()].filter(r=>r.state!=='completed'&&r.state!=='needsAttention').slice(0,n),claim:async(id,claim,now,expires)=>{const r=rows.get(id);if(!r||r.state==='processing'&&r.claimExpiresAt>now)return false;Object.assign(r,{state:'processing',claim,claimExpiresAt:expires});return true;},finish:async(id,claim,v)=>{if(rows.get(id).claim===claim)Object.assign(rows.get(id),v,{claim:'',claimExpiresAt:0});}};}
 const event=(school=A,person='pupil')=>({schoolId:school,role:'student',personId:person,day:'2026-10-07',mode:'entry',payload:{encrypted:'test'}});
@@ -32,4 +32,15 @@ test('Firestore worker queries due operations only and defers claimed rows until
  const db={collection:()=>query,doc:()=>({}),runTransaction:async callback=>callback({get:async()=>({exists:true,data:()=>({state:'pending',nextAttemptAt:0})}),set:(_,values)=>{claimed=values;}})};
  const s=firestoreAttendanceStore(db);await s.pending(25);assert.equal(calls[0].field,'nextAttemptAt');assert.equal(calls[0].op,'<=');assert.equal(calls[1].orderBy,'nextAttemptAt');
  await s.claim('op','claim',1000,121000);assert.equal(claimed.nextAttemptAt,121000);assert.equal(claimed.claimExpiresAt,121000);
+});
+
+test('idle attendance worker backs off; committed submissions wake it without duplicate loops',async()=>{
+ let scheduled,delay,clears=0,calls=0;const worker=createAttendanceWorker({drain:async()=>{calls++;return {processed:0,nextRetryAt:null};},setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{clears++;}});
+ assert.equal(delay,0);await scheduled();assert.equal(calls,1);assert.equal(delay,300000);
+ worker.wake();worker.wake();assert.equal(delay,0);await scheduled();assert.equal(calls,2);assert.equal(delay,300000);assert(clears>0);worker.stop();
+});
+test('active worker respects retry deadline and retains a wake arriving during upload',async()=>{
+ let scheduled,delay,release,calls=0;const wait=new Promise(r=>release=r);
+ const worker=createAttendanceWorker({now:()=>1000,drain:async()=>{calls++;if(calls===1)await wait;return {processed:1,nextRetryAt:9000};},setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{}});
+ const active=scheduled();worker.wake();release();await active;assert.equal(delay,0);await scheduled();assert.equal(delay,2000);worker.stop();
 });

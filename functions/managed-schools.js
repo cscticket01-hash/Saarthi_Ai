@@ -45,6 +45,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))>radius)fail(400,'Attendance can be marked only within the school location');
   return p;
  }
+ let attendanceWake=()=>{};
  const queue=createAttendanceQueue({store:attendanceStore||firestoreAttendanceStore(db),now,deliver:async(schoolId,items)=>{
   const state=await mobileState(schoolId),e=state.entitlement;
   if(!state.school||!e||!e.active||e.blocked||state.school.deletedAt) return items.map(i=>({operationId:i.operationId,success:false,authoritative:true}));
@@ -170,6 +171,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(b.request.action==='mobile_mark_attendance'&&b.request.attendancePermit){
    const permit=verifyAttendance(b.schoolId,b.request);
    const result=await queue.enqueue({schoolId:b.schoolId,role:permit.role,personId:permit.personId,day:permit.day,mode:b.request.mode==='exit'?'exit':'entry',payload:protect(JSON.stringify({...b.request,attendancePermit:undefined}),encryptionKey)});
+   attendanceWake();
    return {success:true,schoolId:b.schoolId,projectId:b.schoolId,...result};
   }
   const result=await signed(m,{action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
@@ -262,7 +264,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  if(action==='managed/restore'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid backup file ID');return signed(m,{action:'managed_restore',fileId:b.fileId});}
  fail(400,'Unknown managed school operation');
  };
- handler.drainAttendance=queue.drain;handler.attendanceMetrics=queue.metrics;
+ handler.drainAttendance=queue.drain;handler.attendanceMetrics=queue.metrics;handler.setAttendanceWake=wake=>{attendanceWake=wake;};
  return handler;
 }
 module.exports={createManagedSchools,scriptUrl,protect,unprotect,clean,COLLECTIONS};
