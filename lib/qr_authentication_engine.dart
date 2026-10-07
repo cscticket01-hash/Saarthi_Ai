@@ -27,7 +27,8 @@ class QrAuthenticationEngine {
     final token = session[restored ? 'schoolToken' : 'sessionToken'];
     if (expiry is! num ||
         !expiry.isFinite ||
-        expiry <= now ||
+        expiry <= 0 ||
+        (!restored && expiry <= now) ||
         token is! String ||
         token.isEmpty) {
       throw StateError('School returned an invalid or expired login session.');

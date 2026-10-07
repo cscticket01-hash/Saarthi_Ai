@@ -266,3 +266,22 @@ test('a deleted authoritative Sheet tab never silently becomes an empty collecti
  assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).success,false);assert.equal(created,0);
  assert.equal(f.props.get('VS_SHEET_MIGRATED_students_directory'),'1');
 });
+
+test('managed expired login renews indefinitely while token/person/licence remain valid',()=>{
+ const f=storage(),write=(collection,id,data)=>f.call({action:'managed_records',operation:'write',collection,id,data:{...data,schoolId:A}});
+ const linkToken='x'.repeat(48);
+ write('students_directory','pupil',{name:'Own pupil',class:'1',rollNo:'1',dob:'2015-01-01',mobileLinkToken:linkToken});
+ const mobile=(request,lease={schoolId:A,expiresAt:Date.now()+60000})=>f.call({action:'managed_mobile',lease,request});
+ const login=mobile({action:'mobile_login',role:'student',personId:'pupil',linkToken,studentClass:'1',rollNo:'1',dob:'2015-01-01'});
+ assert.equal(login.success,true);
+ const sessionId=crypto.createHash('sha256').update(login.sessionToken).digest('hex');
+ const sessions=f.call({action:'managed_records',operation:'read',collection:'mobile_sessions'}).records;
+ write('mobile_sessions',sessionId,{...sessions[sessionId],expiresAt:1});
+ assert.equal(mobile({action:'mobile_dashboard',sessionToken:login.sessionToken}).success,false);
+ const renewed=mobile({action:'mobile_refresh',sessionToken:login.sessionToken});
+ assert.equal(renewed.success,true);assert.ok(renewed.expiresAt>Date.now());
+ assert.equal(mobile({action:'mobile_refresh',sessionToken:login.sessionToken},{schoolId:B,expiresAt:Date.now()+60000}).success,false);
+ assert.equal(mobile({action:'mobile_refresh',sessionToken:login.sessionToken},{schoolId:A,expiresAt:1}).success,false);
+ assert.equal(mobile({action:'mobile_logout',sessionToken:login.sessionToken}).success,true);
+ assert.equal(mobile({action:'mobile_refresh',sessionToken:login.sessionToken}).success,false);
+});
