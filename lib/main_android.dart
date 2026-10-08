@@ -32,8 +32,8 @@ Future<void> _backgroundNotice(RemoteMessage message) async {
   try {
     await Firebase.initializeApp();
     if (SchoolNotifications.belongsToSession(message.data, SchoolSession.instance.link?.projectId)) {
-      await SchoolSession.instance.flushAttendance().timeout(const Duration(seconds: 20));
       await SchoolNotifications.show(message);
+      try { await SchoolSession.instance.flushAttendance().timeout(const Duration(seconds: 20)); } catch (_) {}
     }
   } catch (_) {}
 }
@@ -1090,9 +1090,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
           (r) => _card(
             Row(
               children: [
-                Expanded(child: Text(r['date'].toString())),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(r['date'].toString()),
+                  if (r['captureTimeSource'] == 'DEVICE_REPORTED') const Text('Device scan time', style: TextStyle(fontSize: 12)),
+                ])),
                 Text('${time(r['entryCapturedAt'] ?? r['checkIn'])} → ${time(r['exitCapturedAt'] ?? r['checkOut'])}'),
-                if (r['captureTimeSource'] == 'DEVICE_REPORTED') const Text('Device scan time; cloud receipt stored separately.'),
               ],
             ),
           ),
