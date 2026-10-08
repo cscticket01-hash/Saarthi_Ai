@@ -83,7 +83,7 @@ jobs:
     - name: Verify Windows portal regressions
       env:
         APPDATA: ${{ runner.temp }}/windows-portal-tests
-      run: flutter test test/windows_portal_test.dart test/windows_fee_structure_test.dart
+      run: flutter test --concurrency=1 test/windows_portal_test.dart test/windows_fee_structure_test.dart
     - name: Verify payroll, reset and licence activation regressions
       env:
         APPDATA: ${{ runner.temp }}/windows-operations-tests
