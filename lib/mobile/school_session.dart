@@ -1,4 +1,6 @@
 import '../qr_authentication_engine.dart';
+import 'attendance_store.dart';
+import 'package:flutter/foundation.dart';
 
 import 'dart:convert';
 import 'dart:async';
@@ -25,9 +27,114 @@ class SchoolAccessDenied extends StateError {
 enum SchoolConnectionState { connected, syncing, cachedOffline, connectionError }
 
 class SchoolSession {
-  SchoolSession({http.Client? client, this.cacheDirectory})
-    : _client = client ?? http.Client();
+  SchoolSession({http.Client? client, this.cacheDirectory, AttendanceStore? attendanceStore})
+    : _client = client ?? http.Client(), _attendanceStore = attendanceStore ?? AttendanceStore();
   final http.Client _client;
+  final AttendanceStore _attendanceStore;
+  Future<void>? _attendanceFlush;
+  final attendanceChanges = ValueNotifier<int>(0);
+  int attendancePending = 0, attendanceAccepted = 0;
+  String attendanceFailure = '';
+  DateTime? lastAttendanceAck;
+  String? get _attendanceOwner => link?.managed == true && loggedIn
+      ? AttendanceStore.owner(link!.endpoint, link!.schoolId, link!.role, link!.personId) : null;
+
+  Future<void> refreshAttendanceStatus() async {
+    final owner = _attendanceOwner;
+    if (owner == null) { attendancePending = 0; attendanceAccepted = 0; return; }
+    final rows = await _attendanceStore.pending(owner);
+    final summary = await _attendanceStore.summary(owner);
+    if (owner != _attendanceOwner) return;
+    attendancePending = (summary['pending'] as num).toInt();
+    attendanceAccepted = (summary['accepted'] as num? ?? 0).toInt();
+    if (summary['ack'] is num) lastAttendanceAck = DateTime.fromMillisecondsSinceEpoch((summary['ack'] as num).toInt());
+    attendanceFailure = rows.where((r) => (r['error'] as String).isNotEmpty)
+        .map((r) => r['error'] as String).take(1).join();
+    attendanceChanges.value++;
+  }
+
+  Future<void> saveAttendance(Map<String, dynamic> gps, int capturedAt, String mode) async {
+    final owner = _attendanceOwner;
+    if (owner == null || !cachedAccessAllowed) throw SchoolAccessDenied('Verified school access required.');
+    if (!['entry', 'exit'].contains(mode) || capturedAt <= 0) throw StateError('Invalid attendance capture.');
+    final day = DateTime.fromMillisecondsSinceEpoch(capturedAt, isUtc: true).add(const Duration(hours: 5, minutes: 30));
+    final date = '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+    await _attendanceStore.save(owner, date, mode, capturedAt, gps);
+    await refreshAttendanceStatus();
+    unawaited(flushAttendance().catchError((_) {}));
+  }
+
+  Future<void> flushAttendance() {
+    final running = _attendanceFlush;
+    if (running != null) return running;
+    final pending = _flushAttendance();
+    _attendanceFlush = pending;
+    return pending.whenComplete(() { if (identical(_attendanceFlush, pending)) _attendanceFlush = null; });
+  }
+
+  Future<void> _flushAttendance() async {
+    final current = link;
+    final owner = _attendanceOwner;
+    final generation = _generation;
+    if (current == null || owner == null) return;
+    final rows = await _attendanceStore.pending(owner);
+    if (rows.isEmpty) return;
+    Map<String, dynamic> refreshed;
+    try { refreshed = await schoolCall('mobile_refresh', {}); }
+    catch (_) { await refreshAttendanceStatus(); return; }
+    if (generation != _generation || owner != _attendanceOwner) return;
+    final permitToken = refreshed['attendancePermit'];
+    if (permitToken is! String) return; // Older broker: no fake acceptance.
+    Map permit;
+    try { permit = jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(permitToken.split('.').first)))) as Map; }
+    catch (_) { return; }
+    if (permit['schoolId'] != current.schoolId || permit['role'] != current.role || permit['documentId'] != current.personId) return;
+    for (var batch = 0; batch < 25; batch++) {
+      if (generation != _generation || owner != _attendanceOwner) break;
+      final at = DateTime.now().millisecondsSinceEpoch;
+      final lease = base64UrlEncode(List.generate(24, (_) => Random.secure().nextInt(256)));
+      final row = await _attendanceStore.claim(owner, at, lease);
+      if (row == null) break;
+      final id = row['id'] as String;
+      final attempts = (row['attempts'] as int) + 1;
+      try {
+        final payload = Map<String, dynamic>.from(jsonDecode(row['payload'] as String));
+        final request = {...payload, 'role': current.role, 'personId': current.personId,
+          'linkToken': current.linkToken, 'mode': row['mode'], 'attendancePermit': permitToken};
+        if (row['state'] == 'pending') {
+          if (row['day'] != permit['day']) throw StateError('Attendance day needs school review; original capture retained.');
+          final expectedId = sha256.convert(utf8.encode(jsonEncode([
+            current.schoolId, permit['role'], permit['personId'], row['day'], row['mode']]))).toString();
+          final ack = await schoolCall('mobile_mark_attendance', request);
+          if (ack['syncProtocol'] != 2 || ack['accepted'] != true || ack['operationId'] != expectedId)
+            throw StateError('Attendance acceptance verification failed; capture retained.');
+          await _attendanceStore.finish(owner, id, lease, {'state': 'accepted',
+            'operationId': expectedId, 'attempts': attempts, 'nextAt': at + 10000, 'error': ''});
+        } else {
+          final ack = await schoolCall('mobile_attendance_status', {...request, 'operationIds': [row['operationId']]});
+          final values = ack['operations'];
+          if (ack['syncProtocol'] != 2 || values is! List || values.length != 1) throw StateError('Attendance ACK verification failed.');
+          final operation = values.single as Map;
+          if (operation['operationId'] != row['operationId']) throw StateError('Attendance ACK identity mismatch.');
+          final completed = operation['state'] == 'completed' && operation['completedAt'] is num && operation['createdAt'] is num && operation['completedAt'] >= operation['createdAt'];
+          if (operation['state'] == 'needsAttention') throw StateError('Attendance needs school review; capture retained.');
+          await _attendanceStore.finish(owner, id, lease, {'state': completed ? 'completed' : 'accepted',
+            'attempts': attempts, 'nextAt': at + 30000, 'error': '', if (completed) 'completedAt': operation['completedAt']});
+          if (completed && generation == _generation) lastAttendanceAck = DateTime.fromMillisecondsSinceEpoch((operation['completedAt'] as num).toInt());
+        }
+      } catch (error) {
+        final review = error is SchoolAccessDenied || error is StateError && error.message.contains('school review');
+        final delay = min(3600000, 5000 * pow(2, min(attempts, 9)).toInt());
+        await _attendanceStore.finish(owner, id, lease, {'attempts': attempts,
+          'nextAt': at + delay + Random.secure().nextInt(max(1, delay ~/ 2)),
+          if (review) 'state': 'needsAttention',
+          'error': review ? 'Attendance needs school review; capture retained.' : 'Attendance unavailable; capture retained for automatic retry.'});
+        if (generation != _generation) break;
+      }
+    }
+    await refreshAttendanceStatus();
+  }
+
   final Future<Directory> Function()? cacheDirectory;
   Map<String, dynamic> dashboard = {};
   SchoolConnectionState connectionState = SchoolConnectionState.cachedOffline;
@@ -370,6 +477,7 @@ class SchoolSession {
   }
 
   Future<Map<String, dynamic>> _refreshDashboard() async {
+    unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
     final result = await schoolCall('mobile_dashboard', {
       if (dashboard['revision'] is String)
@@ -563,6 +671,8 @@ class SchoolSession {
 
   Future<void> clear() async {
     _generation++;
+    attendancePending = 0; attendanceAccepted = 0; attendanceFailure = ''; lastAttendanceAck = null;
+    attendanceChanges.value++;
     link = null;
     schoolToken = '';
     messaging = null;

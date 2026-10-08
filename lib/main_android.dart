@@ -22,6 +22,7 @@ import 'mobile/settings_screen.dart';
 import 'mobile/school_notifications.dart';
 import 'mobile/school_messaging.dart';
 import 'mobile/startup_gate.dart';
+import 'mobile/attendance_background.dart';
 import 'school_document_renderer.dart';
 
 @pragma('vm:entry-point')
@@ -30,7 +31,10 @@ Future<void> _backgroundNotice(RemoteMessage message) async {
   if (!SchoolSession.instance.loggedIn) return;
   try {
     await Firebase.initializeApp();
-    await SchoolNotifications.show(message);
+    if (SchoolNotifications.belongsToSession(message.data, SchoolSession.instance.link?.projectId)) {
+      await SchoolSession.instance.flushAttendance().timeout(const Duration(seconds: 20));
+      await SchoolNotifications.show(message);
+    }
   } catch (_) {}
 }
 
@@ -50,6 +54,7 @@ Future<void> main() async {
     restore: SchoolSession.instance.restore,
     readyBuilder: (_) => const SaarthiMobileApp(),
     onReady: () {
+      unawaited(initializeAttendanceBackground());
       unawaited(_initializeMobileNotifications().catchError((_) {}));
     },
   ));
@@ -444,10 +449,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _s.attendanceChanges.addListener(_attendanceChanged);
     _data = Map<String, dynamic>.from(_s.dashboard);
     _loading = _data.isEmpty;
     _load();
-    _timer = Timer.periodic(const Duration(minutes: 2), (_) => _presence());
+    _timer = Timer.periodic(const Duration(minutes: 4), (_) => _presence());
     _noticeOpened = SchoolNotifications.opened.listen((_) => _load(afterSignal:true));
     _noticeReceived = FirebaseMessaging.onMessage.listen((m) {
       if (SchoolNotifications.belongsToSession(m.data, _s.link?.projectId))
@@ -461,6 +467,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
     _timer?.cancel();
     _noticeOpened?.cancel();
     _noticeReceived?.cancel();
+    _s.attendanceChanges.removeListener(_attendanceChanged);
     super.dispose();
   }
 
@@ -468,6 +475,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) unawaited(_load(afterSignal:true));
   }
+
+  void _attendanceChanged() { if (mounted) setState(() {}); }
 
   Future<void> _presence([String? token]) async {
     if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
@@ -571,6 +580,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
       MaterialPageRoute(builder: (_) => const _QrScanner()),
     );
     if (qr == null || !mounted) return;
+    final scanCapturedAt = DateTime.now().millisecondsSinceEpoch;
     if (qr.projectId != _s.link!.projectId ||
         qr.role != _s.link!.role ||
         qr.linkToken != _s.link!.linkToken) {
@@ -593,19 +603,12 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 20),
       );
-      final d = await _s.schoolCall('mobile_mark_attendance', {
-        'role': qr.role,
-        'personId': qr.personId,
-        'linkToken': qr.linkToken,
-        'mode': _attendanceMode,
-        'latitude': position.latitude,
-        'longitude': position.longitude,
+      await _s.saveAttendance({
+        'latitude': position.latitude, 'longitude': position.longitude,
         'accuracy': position.accuracy,
-        if(_data['attendancePermit'] is String) 'attendancePermit': _data['attendancePermit'],
-      });
-      if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(d['message'].toString())));
+      }, scanCapturedAt, _attendanceMode);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Attendance saved on this device. Cloud confirmation pending.')));
       await _loadAttendance();
     } catch (e) {
       if (mounted)
@@ -1332,6 +1335,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
                     SchoolConnectionState.cachedOffline => 'Cached / Offline',
                     SchoolConnectionState.connectionError => 'Connection error — cached data retained',
                   }, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  Text('Attendance pending: ${_s.attendancePending} (central accepted: ${_s.attendanceAccepted})'),
+                  if (_s.attendanceFailure.isNotEmpty) Text(_s.attendanceFailure),
+                  if (_s.lastAttendanceAck != null) Text('Attendance cloud ACK: ${_s.lastAttendanceAck!.toLocal()}'),
                   if (_s.lastDashboardVerifiedAt != null)
                     Text('Verified: ${_s.lastDashboardVerifiedAt!.toLocal()}',
                       style: const TextStyle(color: Colors.white38, fontSize: 11)),

@@ -306,7 +306,7 @@ test('verified attendance permit -> encrypted durable queue -> batched school Dr
  },{attendanceStore:store});
  f.docs.get('platform_schools/'+A).lastSeenAt=0; // PC off: backend worker must still deliver.
  const session='s'.repeat(64),verified=await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:session}});
- const request={action:'mobile_mark_attendance',sessionToken:session,attendancePermit:verified.attendancePermit,role:'student',personId:'pupil',linkToken:'x'.repeat(48),latitude:24,longitude:92,accuracy:3,mode:'entry'};
+ const request={action:'mobile_mark_attendance',sessionToken:session,attendancePermit:verified.attendancePermit,role:'student',personId:'pupil',linkToken:'x'.repeat(48),latitude:24,longitude:92,accuracy:3,mode:'entry',clientCapturedAt:time-5000};
  const first=await f.call({action:'managed/mobile',schoolId:A,request});assert.equal(first.accepted,true);assert.equal(f.sent.length,1);assert.equal(rows.size,1);
  assert(!JSON.stringify([...rows.values()]).includes(session));assert(!JSON.stringify([...rows.values()]).includes('x'.repeat(48)));
  const duplicate=await f.call({action:'managed/mobile',schoolId:A,request});assert.equal(duplicate.duplicate,true);assert.equal(rows.size,1);
@@ -315,6 +315,17 @@ test('verified attendance permit -> encrypted durable queue -> batched school Dr
  f.docs.get('platform_schools/'+B).lastSeenAt=time;
  await assert.rejects(f.call({action:'managed/mobile',schoolId:B,request}),e=>e.status===409);
  await f.handle.drainAttendance();assert.equal([...rows.values()][0].state,'completed');assert.equal(f.sent.length,2);
+ const row=[...rows.values()][0];f.docs.set('attendance_outbox/'+row.operationId,row);
+ const delivered=JSON.parse(JSON.parse(f.sent[1].opt.body).payload).operations[0].request;
+ assert.equal(delivered.clientCapturedAt,time-5000);assert.equal(delivered.submittedAt,time);
+ const status=await f.call({action:'managed/mobile',schoolId:A,request:{...request,action:'mobile_attendance_status',operationIds:[row.operationId]}});
+ assert.equal(status.syncProtocol,2);assert.equal(status.operations[0].state,'completed');
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,clientCapturedAt:time+300000}}),e=>e.status===409&&e.code==='ATTENDANCE_CAPTURE_REVIEW');
+ const original=row.payload;row.payload=protect(JSON.stringify({...request,personId:'another-pupil'}),key);
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,action:'mobile_attendance_status',operationIds:[row.operationId]}}),e=>e.status===403);
+ row.payload=original;row.schoolId=B;
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,action:'mobile_attendance_status',operationIds:[row.operationId]}}),e=>e.status===403);
+
 });
 
 test('broker forwards only allowlisted Script diagnostic codes and never raw failure details',async()=>{

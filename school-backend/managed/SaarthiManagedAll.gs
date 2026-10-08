@@ -7251,6 +7251,11 @@ function VS_mobileAction(b){
    if(mode==='exit'&&!current.checkIn)throw new Error('Check in before checking out');
    if(mode==='exit'&&current.checkOut)throw new Error('Today’s check-out is already recorded');
    const doc=Object.assign({},current,{personId:session.personId,documentId:session.person.id,role:session.role,name:session.person.name||'',studentClass:session.person.class||'',rollNo:session.person.rollNo||'',date:day,source:'ANDROID_QR',updatedAt:Date.now()});delete doc.id;
+   // Client capture is explicitly device-reported metadata, never a licence/session clock.
+   if(Number.isSafeInteger(b.clientCapturedAt)&&b.clientCapturedAt>0&&b.clientCapturedAt<=Date.now()+120000){
+    doc[mode==='entry'?'entryCapturedAt':'exitCapturedAt']=b.clientCapturedAt;
+    doc.captureTimeSource='DEVICE_REPORTED';
+   }
    doc[mode==='entry'?'checkIn':'checkOut']=b.submittedAt||Date.now();if(b.operationId)doc[operationField]=b.operationId;VS_set('attendance_records',id,doc);
    return {message:mode==='entry'?'Check-in recorded':'Check-out recorded',record:doc};
   }

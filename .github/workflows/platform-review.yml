@@ -63,7 +63,7 @@ jobs:
         lib/school_text_data.dart lib/school_backend_transport.dart test/school_text_data_test.dart lib/platform/developer_service.dart lib/platform/spark_client.dart
         lib/platform/github_updates.dart lib/platform/monitor_summary.dart lib/mobile/school_messaging.dart
         lib/managed_developer_panel.dart lib/developer_account_widgets.dart lib/firebase_monitor_panel.dart lib/school_password_panel.dart
-        test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
+        test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Analyze developer portal
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart lib/platform
     - name: Analyze Windows school source
@@ -74,7 +74,7 @@ jobs:
         lib/managed_developer_panel.dart lib/developer_account_widgets.dart lib/firebase_monitor_panel.dart lib/school_password_panel.dart lib/windows_settings_panel.dart lib/windows_managed_school_gate.dart
         lib/windows_staff_payroll.dart lib/windows_app_reset.dart lib/windows_license_gate.dart lib/windows_admin_setup.dart lib/windows_connect
     - name: Verify documents and mobile school boundaries
-      run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
+      run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Verify durable document queue and retained originals
       timeout-minutes: 3
       env:
@@ -141,7 +141,7 @@ jobs:
           lib/mobile/school_messaging.dart
           test/monitor_summary_test.dart test/firebase_metric_samples_test.dart
           test/spark_license_test.dart
-          test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
+          test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
           test/document_renderer_test.dart
 
           lib/windows_school_identity.dart
@@ -326,7 +326,7 @@ jobs:
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
-      run: flutter test test/android_startup_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
+      run: flutter test test/android_startup_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Build unsigned Android preview
       env:
         SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}

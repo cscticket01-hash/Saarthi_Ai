@@ -48,7 +48,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
     expiresAt:Math.min(expiresAt,now()+900000,Date.parse(policy.day+'T00:00:00+05:30')+86400000)})).toString('base64url');
   return value+'.'+createHmac('sha256',encryptionKey).update(value).digest('hex');
  }
- function verifyAttendance(schoolId,request){
+ function verifyAttendanceIdentity(schoolId,request){
   const token=request.attendancePermit;
   if(typeof token!=='string'||token.length>3000)fail(401,'Refresh school attendance verification.');
   const parts=token.split('.');if(parts.length!==2||!/^[a-f0-9]{64}$/.test(parts[1]))fail(401,'Refresh school attendance verification.');
@@ -56,6 +56,10 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   let p;try{p=JSON.parse(Buffer.from(parts[0],'base64url').toString('utf8'));}catch{fail(401,'Attendance verification rejected.');}
   if(p.purpose!=='attendance'||p.schoolId!==schoolId||p.expiresAt<=now()||p.sessionHash!==hash(String(request.sessionToken||''))||
    p.role!==request.role||p.documentId!==request.personId||p.qrHash!==hash(p.role+'/'+request.personId+'/'+request.linkToken))fail(409,'Attendance verification expired or belongs to another person. Refresh school data and retry.');
+  return p;
+ }
+ function verifyAttendance(schoolId,request){
+  const p=verifyAttendanceIdentity(schoolId,request);
   if(p.open!==true)fail(400,'School is closed today. Attendance is disabled for everyone');
   const lat=Number(request.latitude),lng=Number(request.longitude),accuracy=Number(request.accuracy),radius=Number(p.radiusMeters);
   if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180||!Number.isFinite(accuracy)||accuracy<0||accuracy>radius||!Number.isFinite(radius)||radius<25||radius>200||!Number.isFinite(Number(p.latitude))||!Number.isFinite(Number(p.longitude)))fail(400,'Accurate school location required');
@@ -259,12 +263,28 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
   // Windows presence is monitoring only. Signed school storage and current licence
   // authorize mobile access independently of the management PC's availability.
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(b.request.action==='mobile_attendance_status'){
+   const permit=verifyAttendanceIdentity(b.schoolId,b.request),ids=b.request.operationIds;
+   if(!Array.isArray(ids)||ids.length<1||ids.length>25||ids.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(ids).size!==ids.length)fail(400,'Invalid attendance status batch');
+   const rows=await Promise.all(ids.map(id=>db.doc('attendance_outbox/'+id).get()));
+   const operations=rows.map((row,index)=>{
+    if(!row.exists)return {operationId:ids[index],state:'unknown'};
+    const value=row.data();if(value.schoolId!==b.schoolId)fail(403,'Another school is not accessible');
+    const payload=JSON.parse(unprotect(value.payload,encryptionKey));
+    if(payload.personId!==permit.documentId||payload.role!==permit.role)fail(403,'Another person attendance is not accessible');
+    return {operationId:ids[index],state:value.state,createdAt:value.createdAt,
+      ...(value.state==='completed'?{completedAt:value.completedAt}:{})};
+   });
+   return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,operations};
+  }
   if(b.request.action==='mobile_mark_attendance'&&b.request.attendancePermit){
    const permit=verifyAttendance(b.schoolId,b.request);
+   const captured=b.request.clientCapturedAt;
+   if(captured!==undefined&&(!Number.isSafeInteger(captured)||captured<=0||captured>now()+120000||new Date(captured+19800000).toISOString().slice(0,10)!==permit.day))fail(409,'Attendance capture date needs school review; original data retained.','ATTENDANCE_CAPTURE_REVIEW');
    const result=await queue.enqueue({schoolId:b.schoolId,role:permit.role,personId:permit.personId,day:permit.day,mode:b.request.mode==='exit'?'exit':'entry',payload:protect(JSON.stringify({...b.request,attendancePermit:undefined}),encryptionKey)});
    attendanceWake();
-   return {success:true,schoolId:b.schoolId,projectId:b.schoolId,...result};
+   return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,...result};
   }
   const body={action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}};
   const result=b.request.action==='mobile_dashboard'
