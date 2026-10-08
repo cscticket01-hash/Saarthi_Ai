@@ -1,0 +1,369 @@
+# User-authorized live publication of regression-verified commit 61323fdb (2026-10-08).
+# Existing backend 1383631a is live; school Apps Script migration is not executed.
+# Existing-school recovery and token reuse are verified before this installer release.
+# Website Windows downloads automatically select the latest published Windows release.
+name: Build Vidya Saarthi Windows Admin
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - windows/easy-connect-draft
+    paths:
+      - 'lib/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/build-windows.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vidya-saarthi-windows-release
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    # Only an explicitly requested release publishes from the development branch.
+    if: github.ref != 'refs/heads/windows/easy-connect-draft' || contains(github.event.head_commit.message, '[windows-release]')
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show Flutter Version
+        shell: powershell
+        run: flutter --version
+
+      - name: Generate Windows Platform
+        shell: powershell
+        run: flutter create --platforms=windows --no-pub .
+
+      - name: Prevent concurrent Windows local database instances
+        shell: powershell
+        run: |
+          python .github/scripts/test_windows_single_instance.py
+          python .github/scripts/configure_windows_single_instance.py
+
+      - name: Verify Dedicated Windows Source
+        shell: powershell
+        run: |
+          $required = @(
+            'lib\main_windows.dart',
+            'lib\main_dashboard_screen_windows.dart',
+            'lib\windows_html_shim.dart',
+            'lib\windows_mobile_scanner_shim.dart',
+            'lib\windows_local_firestore.dart',
+            'lib\windows_local_auth.dart',
+            'lib\windows_local_session.dart',
+            'lib\windows_local_settings.dart',
+            'lib\windows_local_storage.dart',
+            'lib\windows_settings_panel.dart',
+            'lib\windows_firebase_sync.dart',
+            'lib\windows_service_status.dart',
+            'lib\windows_update_service.dart',
+            'lib\windows_backend_bridge.dart',
+            'lib\windows_sync_engine.dart',
+            'lib\windows_runtime_flags.dart',
+            'lib\windows_app_restart.dart',
+            'lib\windows_update_manager.dart'
+          )
+          foreach ($file in $required) {
+            if (!(Test-Path $file)) { throw "Missing Windows source: $file" }
+          }
+          Write-Host 'Dedicated Windows dashboard source verified.'
+
+      - name: Prepare Windows-only Dependencies
+        shell: powershell
+        run: |
+          $pubspec = Get-Content 'pubspec.yaml' -Raw
+
+          # Windows Admin uses dedicated local shims + REST connection code.
+          # Native FlutterFire plugins are NOT used by the Windows source.
+          # Remove them only from this temporary GitHub Actions runner copy.
+          # Repository pubspec.yaml, Android and Website stay unchanged.
+          $removePackages = @(
+            'agora_rtc_engine',
+            'geolocator',
+            'mobile_scanner',
+            'firebase_core',
+            'firebase_auth',
+            'firebase_messaging',
+            'flutter_local_notifications',
+            'firebase_storage',
+            'firebase_analytics',
+            'firebase_database',
+            'firebase_crashlytics',
+            'firebase_app_check',
+            'firebase_remote_config',
+            'firebase_functions',
+            'firebase_performance',
+            'cloud_firestore'
+          )
+
+          foreach ($package in $removePackages) {
+            $pattern = "(?m)^\s*" + [regex]::Escape($package) + ":\s*[^\r\n]+\r?\n"
+            $pubspec = [regex]::Replace($pubspec, $pattern, '')
+          }
+
+          Set-Content -Path 'pubspec.yaml' -Value $pubspec -Encoding UTF8
+
+          Write-Host '===== WINDOWS CI REMOVED NATIVE FIREBASE/MOBILE PLUGINS ====='
+          Select-String -Path 'pubspec.yaml' -Pattern `
+            'firebase_|cloud_firestore:|agora_rtc_engine:|mobile_scanner:' `
+            -ErrorAction SilentlyContinue
+
+      - name: Verify Windows Source Does Not Import Native FlutterFire
+        shell: powershell
+        run: |
+          $windowsSources = @(
+            'lib\main_windows.dart',
+            'lib\main_dashboard_screen_windows.dart',
+            'lib\windows_settings_panel.dart',
+            'lib\windows_firebase_sync.dart',
+            'lib\windows_local_firestore.dart',
+            'lib\windows_local_auth.dart',
+            'lib\windows_backend_bridge.dart',
+            'lib\windows_sync_engine.dart',
+            'lib\windows_update_manager.dart'
+          )
+
+          $bad = @()
+
+          foreach ($file in $windowsSources) {
+            if (!(Test-Path $file)) {
+              throw "Missing Windows source: $file"
+            }
+
+            $matches = Select-String `
+              -Path $file `
+              -Pattern "package:firebase_|package:cloud_firestore" `
+              -ErrorAction SilentlyContinue
+
+            if ($matches) {
+              $bad += $matches
+            }
+          }
+
+          if ($bad.Count -gt 0) {
+            $bad | ForEach-Object { Write-Host $_ }
+            throw 'Windows source still imports native FlutterFire. Use Windows local/REST shims instead.'
+          }
+
+          Write-Host 'Windows source native FlutterFire imports: NONE'
+
+      - name: Clean Flutter
+        shell: powershell
+        run: flutter clean
+
+      - name: Get Dependencies
+        shell: powershell
+        run: |
+          flutter pub get
+
+          Write-Host '===== CHECK WINDOWS PLUGIN GRAPH ====='
+          $deps = flutter pub deps
+
+          $nativeFirebase = $deps | Select-String `
+            'firebase_auth |cloud_firestore |firebase_core |firebase_messaging |firebase_storage '
+
+          if ($nativeFirebase) {
+            $nativeFirebase | ForEach-Object { Write-Host $_ }
+            throw 'Native FlutterFire dependency still present in Windows CI dependency graph.'
+          }
+
+          Write-Host 'Native FlutterFire dependency graph: CLEAN'
+
+      - name: Verify Windows release configuration and student cards
+        env:
+          APPDATA: ${{ runner.temp }}/windows-release-tests
+          LOCALAPPDATA: ${{ runner.temp }}/windows-release-tests
+          SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+          SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+          SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
+        shell: powershell
+        run: |
+          flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true
+          if ($LASTEXITCODE -ne 0) { throw 'Release cloud configuration verification failed.' }
+          flutter test --concurrency=1 test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/school_qr_login_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed.' }
+
+      - name: Verify reference PDF contents and continuation pages
+        run: |
+          python -m pip install "pypdf>=6,<7"
+          python .github/scripts/check_reference_document_previews.py
+      - name: Set Windows App Version
+        id: app_version
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Keep the released version at or above the tested v2.1.86 preview.
+          # Current minimum release version is v2.1.86.
+          # After that, latest windows-v2.1.X GitHub Release is detected
+          # and the patch number is increased automatically.
+          $major = 2
+          $minor = 1
+          $baselinePatch = 85
+          $latestPatch = $baselinePatch
+
+          try {
+            $headers = @{
+              'Accept' = 'application/vnd.github+json'
+              'Authorization' = "Bearer $env:GH_TOKEN"
+              'X-GitHub-Api-Version' = '2022-11-28'
+              'User-Agent' = 'Vidya-Saarthi-Windows-Build'
+            }
+
+            $uri = "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100"
+            $releases = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+
+            foreach ($release in $releases) {
+              $tag = [string]$release.tag_name
+
+              if ($tag -match '^windows-v2\.1\.(\d+)$') {
+                $patch = [int]$Matches[1]
+
+                if ($patch -gt $latestPatch) {
+                  $latestPatch = $patch
+                }
+              }
+            }
+          }
+          catch {
+            throw "Cannot safely select a new release version: $($_.Exception.Message)"
+          }
+
+          $nextPatch = $latestPatch + 1
+          $version = "$major.$minor.$nextPatch"
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+          Write-Host "Latest production Windows version: 2.1.$latestPatch"
+          Write-Host "NEW Windows app version: $version"
+          Write-Host "Release tag will be: windows-v$version"
+
+      - name: Build Windows Admin App
+        env:
+          SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+          SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
+          SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
+        shell: powershell
+        run: |
+          flutter build windows `
+            --release `
+            --build-name=${{ steps.app_version.outputs.version }} `
+            -t lib/main_windows.dart `
+            --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
+            --dart-define=SAARTHI_MANAGED_ACCOUNTS=true `
+            --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID `
+            --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true `
+            --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL `
+            --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL `
+            --dart-define=GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+
+      - name: Verify Windows Build
+        shell: powershell
+        run: |
+          $release = 'build\windows\x64\runner\Release'
+          if (!(Test-Path $release)) { throw 'Windows Release folder missing' }
+          $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw 'Windows EXE not found' }
+          Write-Host "Built EXE: $($exe.FullName)"
+
+      - name: Create Portable ZIP
+        shell: powershell
+        run: |
+          $release = 'build\windows\x64\runner\Release'
+          $zip = 'build\Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "$release\*" -DestinationPath $zip -CompressionLevel Optimal
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $iscc)) { choco install innosetup -y --no-progress }
+
+      - name: Create Windows Installer Script
+        shell: powershell
+        run: |
+          $release = (Resolve-Path 'build\windows\x64\runner\Release').Path
+          $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw 'EXE not found for installer' }
+          $outDir = (Resolve-Path 'build').Path
+          $version = '${{ steps.app_version.outputs.version }}'
+          $iss = @"
+          [Setup]
+          AppId={{9B6E3770-2F58-4D10-A468-38C588A4E24B}
+          AppName=Vidya Saarthi
+          AppVersion=$version
+          AppPublisher=Vidya Saarthi
+          DefaultDirName={localappdata}\Programs\Vidya Saarthi
+          DefaultGroupName=Vidya Saarthi
+          OutputDir=$outDir
+          OutputBaseFilename=Vidya_Saarthi_Setup_$version
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          PrivilegesRequired=lowest
+          CloseApplications=yes
+          RestartApplications=yes
+          UninstallDisplayIcon={app}\$($exe.Name)
+
+          [Files]
+          Source: "$release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"
+          Name: "{autodesktop}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"
+
+          [Run]
+          Filename: "{app}\$($exe.Name)"; Description: "Launch Vidya Saarthi"; Flags: nowait postinstall skipifsilent
+          "@
+          $iss | Out-File -FilePath 'build\vidya_saarthi_windows.iss' -Encoding utf8
+
+      - name: Build Setup EXE
+        shell: powershell
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          & $iscc 'build\vidya_saarthi_windows.iss'
+
+      - name: Upload Windows Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vidya-Saarthi-Windows-${{ steps.app_version.outputs.version }}
+          path: |
+            build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
+            build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish Windows GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-v${{ steps.app_version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
+          make_latest: false
+          body: |
+            User-authorized publication of the tested Windows sync improvements. Automatic queue reconciliation runs every four minutes, with immediate local-change triggers, durable pending records and verified cloud ACK handling.
+            Reuses the existing shared sync protocol, adds negotiated delta batching and bounded school-scoped read caches. Document compression preserves originals and targets readable output; 80 KB is a target, not a guarantee.
+            Fees save-and-lock behavior retains the full 30-second wait and authorized App Lock flow. Authentication, licence enforcement and school isolation remain enforced.
+            Full regression CI and Windows/Android/Web TEST builds passed on source commit 61323fdb85385f8bd51ce9b05d7be47a2e7206e3. Release workflow changes affect publication metadata only.
+            Actual Windows-to-Drive-to-Android/Web latency, physical QR scanning, second-PC restore and isolated Google Sheets migration remain pending acceptance. No real-school migration or pending-queue clearing is performed by this release.
+          generate_release_notes: true
+          files: |
+            build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
+            build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
+            school-backend/managed/SaarthiManagedAll.gs
+            school-backend/managed/appsscript.json
+            docs/manual-school-drive-setup.md
