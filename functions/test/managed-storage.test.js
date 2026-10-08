@@ -298,3 +298,10 @@ test('authenticated Script diagnostics use fixed categories without leaking exce
  assert.equal(unauth.code,'SCRIPT_OPERATION_FAILED');
  assert.equal(JSON.stringify(unauth).includes('malformed secret'),false);
 });
+
+test('health and storage readiness do not require optional owner email OAuth scope',()=>{
+ const f=storage();let calls=0;
+ f.context.Session={getEffectiveUser(){calls++;throw new Error('Specified permissions are not sufficient to call Session.getEffectiveUser. Required permissions: userinfo.email');}};
+ const out=f.call({action:'managed_health'});
+ assert.equal(out.success,true);assert.equal(out.storageReady,true);assert.equal(out.recordSyncVersion,2);assert.equal(out.googleEmail,'');assert.equal(calls,0);
+});

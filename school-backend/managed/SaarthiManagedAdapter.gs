@@ -271,7 +271,7 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);verified=true;let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordStorageVersion:1,scriptBundleVersion:'2026-10-07.1',googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
+    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordStorageVersion:1,scriptBundleVersion:'2026-10-07.1',googleEmail:''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
     else if(b.action==='managed_attendance_batch'){
       if(!Array.isArray(b.operations)||b.operations.length>25)throw new Error('Invalid attendance batch');
