@@ -5,13 +5,23 @@ import '../windows_secure_storage.dart';
 import '../platform/platform_config.dart';
 import 'central_school_cloud.dart';
 class ManagedSchoolSession {
+  static http.Client? _transport;
+  static String? _transportScope;
+  static http.Client _transportFor(Map<String,dynamic> saved) {
+    final scope=jsonEncode([saved['endpoint'],saved['schoolId'],saved['uid']]);
+    if(_transport==null||_transportScope!=scope) {
+      _transport?.close();_transport=http.Client();_transportScope=scope;
+    }
+    return _transport!;
+  }
   static const enabled=bool.fromEnvironment('SAARTHI_MANAGED_ACCOUNTS');
   static final changed=ValueNotifier<int>(0);
   static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) => callForSchool(null, action, body);
   static Future<Map<String,dynamic>> callForSchool(String? expectedSchoolId, String action, Map<String,dynamic> body) async {
     final saved=await CentralSchoolCloud.saved();if(saved['managed']!=true)throw StateError('Managed school login required');
     if(expectedSchoolId != null && saved['schoolId'] != expectedSchoolId) throw StateError('School changed before operation.');
-    final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId']);
+    final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId'],
+      client:_transportFor(saved),closeClient:false);
     try {
       final result = await cloud.api({'action':action,...body,'schoolId':saved['schoolId']},token:await CentralSchoolCloud.firebaseToken());
       final currentIdentity = await CentralSchoolCloud.saved();
@@ -99,6 +109,7 @@ class ManagedSchoolSession {
     CentralSchoolCloud.clearFirebaseToken();
     try {await call('managed/disconnect').timeout(const Duration(seconds:5));}catch(_){}
 
+    _transport?.close();_transport=null;_transportScope=null;
     await const WindowsSecureStorage().delete(key:CentralSchoolCloud.key);
     CentralSchoolCloud.clearFirebaseToken();changed.value++;
   }

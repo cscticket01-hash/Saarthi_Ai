@@ -10,9 +10,27 @@ import 'package:saarthi_ai/windows_connect/central_school_cloud.dart';
 import 'package:saarthi_ai/windows_connect/google_authorization.dart';
 import 'package:saarthi_ai/windows_connect/school_provisioner.dart';
 const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+class _CountingClient extends MockClient {
+  _CountingClient():super((request)async=>http.Response(jsonEncode({'success':true,'schoolId':school}),200));
+  int closes=0;
+  @override void close(){closes++;super.close();}
+}
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
+  test('request wrappers can share an explicitly caller-owned connection without closing it', () async {
+    final transport=_CountingClient();
+    for(var i=0;i<2;i++){
+      final cloud=CentralSchoolCloud(client:transport,closeClient:false,endpoint:'https://saarthi-oauth-staging.onrender.com/school-cloud',expectedSchoolId:school);
+      expect((await cloud.api({'action':'status'},token:'test-token'))['schoolId'],school);
+      cloud.close();expect(transport.closes,0);
+    }
+    transport.close();expect(transport.closes,1);
+  });
+  test('default connection ownership still closes and cancels its request wrapper', () {
+    final transport=_CountingClient();final cloud=CentralSchoolCloud(client:transport);
+    cloud.close();expect(cloud.cancelled,true);expect(transport.closes,1);
+  });
   test('Private Drive loader accepts only canonical Drive file identities',(){
     expect(schoolDriveFileId('https://drive.google.com/file/d/own-file/view'),'own-file');
     expect(schoolDriveFileId('https://attacker.example/file/d/token/view'),isNull);

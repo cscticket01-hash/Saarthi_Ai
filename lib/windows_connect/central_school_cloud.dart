@@ -96,6 +96,7 @@ Map<String, dynamic> centralSchoolData(
 class CentralSchoolCloud {
   CentralSchoolCloud({
     http.Client? client,
+    this.closeClient = true,
     this.endpoint = apiUrl,
     this.expectedSchoolId,
     this.storage = const FlutterSecureStorage(),
@@ -155,6 +156,7 @@ class CentralSchoolCloud {
   final String? expectedSchoolId;
   final FlutterSecureStorage storage;
   final http.Client client;
+  final bool closeClient;
   bool cancelled = false;
   String? _diagnosticToken;
   String? _diagnosticSchool;
@@ -818,7 +820,7 @@ class CentralSchoolCloud {
 
   void close() {
     cancelled = true;
-    client.close();
+    if (closeClient) client.close();
   }
 }
 
