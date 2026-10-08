@@ -4,6 +4,32 @@ const {createAttendanceQueue,firestoreAttendanceStore,createAttendanceWorker}=re
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32);
 function store(rows=new Map()) {return {rows,create:async(id,r)=>{if(rows.has(id))return false;rows.set(id,{...r});return true;},pending:async n=>[...rows.values()].filter(r=>r.state!=='completed'&&r.state!=='needsAttention').slice(0,n),claim:async(id,claim,now,expires)=>{const r=rows.get(id);if(!r||r.state==='processing'&&r.claimExpiresAt>now)return false;Object.assign(r,{state:'processing',claim,claimExpiresAt:expires});return true;},finish:async(id,claim,v)=>{if(rows.get(id).claim===claim)Object.assign(rows.get(id),v,{claim:'',claimExpiresAt:0});}};}
 const event=(school=A,person='pupil')=>({schoolId:school,role:'student',personId:person,day:'2026-10-07',mode:'entry',payload:{encrypted:'test'}});
+test('adaptive batches stay compatible, claim just in time and preserve original timestamps',async()=>{
+ const s=store(),sizes=[];let time=1000;
+ const q=createAttendanceQueue({store:s,now:()=>time,batchSize:100,deliver:async(school,items)=>{
+  sizes.push(items.length);assert(items.length<=25);assert(items.every(i=>i.schoolId===school));
+  assert.equal([...s.rows.values()].filter(i=>i.state==='processing').length,items.length);
+  assert(items.every(i=>i.createdAt===1000&&i.payload.originalEventAt===900));time+=1000;
+  return items.map(i=>({operationId:i.operationId,success:true}));
+ }});
+ for(let n=0;n<100;n++)await q.enqueue({...event(A,'p'+n),payload:{originalEventAt:900}});
+ await q.drain();assert.deepEqual(sizes,[25,25,25,25]);assert.equal(q.metrics.completed,100);
+ assert.equal(q.metrics.batchSize,50);assert.equal(q.metrics.lastBatchMillis,4000);
+ assert([...s.rows.values()].every(i=>i.payload.originalEventAt===900&&i.createdAt===1000));
+});
+test('partial ACK reduces admission; jittered retry retains every unacknowledged operation',async()=>{
+ const s=store(),q=createAttendanceQueue({store:s,now:()=>1000,random:()=>0,batchSize:50,deliver:async(_,items)=>items.slice(0,1).map(i=>({operationId:i.operationId,success:true}))});
+ for(let n=0;n<50;n++)await q.enqueue(event(A,'p'+n));
+ const result=await q.drain();assert.equal(q.metrics.completed,2);assert.equal(q.metrics.retried,48);
+ assert.equal(q.metrics.batchSize,25);assert.equal(s.rows.size,50);assert.equal(result.nextRetryAt,6000);
+ assert([...s.rows.values()].filter(i=>i.state==='retry').every(i=>i.nextAttemptAt===6000));
+});
+test('healthy full batch grows within configured bounds and oversized Script batches are rejected',async()=>{
+ const s=store(),q=createAttendanceQueue({store:s,now:()=>1000,batchSize:50,maxBatchSize:75,deliver:async(_,items)=>items.map(i=>({operationId:i.operationId,success:true}))});
+ for(let n=0;n<100;n++)await q.enqueue(event(A,'p'+n));
+ await q.drain();assert.equal(q.metrics.batchSize,75);await q.drain();assert.equal(q.metrics.completed,100);
+ assert.throws(()=>createAttendanceQueue({store:s,deliver:async()=>[],deliveryBatchSize:26}),/Invalid bounded/);
+});
 test('durable acknowledgement follows store commit; retries deduplicate stable intended event',async()=>{
  const s=store(),q=createAttendanceQueue({store:s,deliver:async()=>[]});
  const first=await q.enqueue(event()),retry=await q.enqueue(event());assert.equal(first.duplicate,false);assert.equal(retry.duplicate,true);assert.equal(s.rows.size,1);
