@@ -13327,10 +13327,11 @@ class _FeeCollectionSettingsScreenState
       ),
       body: Row(
         children: [
-          Container(
+          SizedBox(
             width: 190,
-            color: const Color(0xFF121B22),
-            child: ListView.builder(
+            child: Material(
+              color: const Color(0xFF121B22),
+              child: ListView.builder(
               padding: const EdgeInsets.all(10),
               itemCount: _classes.length,
               itemBuilder: (context, index) {
@@ -13363,6 +13364,7 @@ class _FeeCollectionSettingsScreenState
                   ),
                 );
               },
+              ),
             ),
           ),
           Expanded(
