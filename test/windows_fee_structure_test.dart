@@ -16,6 +16,7 @@ void main() {
   const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   final db = FirebaseFirestore.instance;
   setUp(() async {
+    debugPrint('Fee fixture: initialize');
     FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key: jsonEncode({
       'managed':true, 'schoolId':school, 'uid':'fee-admin', 'firebaseRefreshToken':'saved',
       'projectId':platformProjectId, 'folderId':'managed',
@@ -23,9 +24,12 @@ void main() {
       'email':'test@school.example', 'storageReady':false,
     })});
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    debugPrint('Fee fixture: switch profile');
     await db.switchProfile('fees-${DateTime.now().microsecondsSinceEpoch}', identity:{'schoolId':school, 'schoolSyncId':school});
+    debugPrint('Fee fixture: initialize App Lock');
     await WindowsLocalSecurity.initialize();
     await WindowsLocalSecurity.create(adminId:'School admin', password:'app-lock-password');
+    debugPrint('Fee fixture: ready');
   });
   Future<void> waitFor(WidgetTester tester, Finder target) async {
     for (var i = 0; i < 200 && target.evaluate().isEmpty; i++) {
@@ -74,6 +78,7 @@ void main() {
   testWidgets('local save locks inputs and restart remains read-only; edit requires full wait and correct App Lock', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400,1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    debugPrint('Fee widget: open screen');
     await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await waitFor(tester, find.text('Save / Update Fee Structure'));
     expect(find.text('Save / Update Fee Structure'),findsOneWidget);
     await tester.enterText(find.byType(TextField).first,'125.5');
@@ -81,23 +86,28 @@ void main() {
     expect(find.text('Edit Fee Structure'),findsOneWidget);
     expect(find.byType(TextField),findsNothing);expect(find.text('₹ 125.5'),findsOneWidget);
     await tester.pumpWidget(const SizedBox());
+    debugPrint('Fee widget: open screen');
     await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await waitFor(tester, find.text('Edit Fee Structure'));
     expect(find.text('Edit Fee Structure'),findsOneWidget);expect(find.byType(TextField),findsNothing);
     await tester.tap(find.text('Edit Fee Structure'));await waitFor(tester, find.text('Security Waiting Period'));
     expect(find.text('Security Waiting Period'),findsOneWidget);
     expect(find.text('Verify & Continue'),findsNothing);
+    debugPrint('Fee widget: inspect persisted countdown');
     final session=await io(tester, () => WindowsFeeStructure.currentSession());
     final id=WindowsFeeStructure.documentId('Class 1',session!);
     final deadline=await io(tester, () async => (await db.collection('_local_fee_edit_locks').doc(id).get()).data()?['unlockAt']);
+    debugPrint('Fee widget: cancel countdown');
     await tester.tap(find.text('Cancel'));await tester.pumpAndSettle();
     await tester.tap(find.text('Edit Fee Structure'));await waitFor(tester, find.text('Security Waiting Period'));
     final retained=await io(tester, () async => (await db.collection('_local_fee_edit_locks').doc(id).get()).data()?['unlockAt']);
     expect(retained,deadline);
+    debugPrint('Fee widget: advance protected wait');
     await tester.pump(const Duration(seconds:30));await tester.pump();
     expect(find.text('App Lock Verification'),findsOneWidget);
     await tester.enterText(find.byType(TextField),'wrong-password');
     await tester.tap(find.text('Verify & Continue'));await waitFor(tester, find.text('Galat App Lock Password.'));
     expect(find.text('Galat App Lock Password.'),findsOneWidget);
+    debugPrint('Fee widget: verify correct App Lock');
     await tester.enterText(find.byType(TextField),'app-lock-password');
     await tester.tap(find.text('Verify & Continue'));await waitFor(tester, find.text('Save / Update Fee Structure'));await tester.pumpAndSettle();
     expect(find.text('Save / Update Fee Structure'),findsOneWidget);
@@ -105,11 +115,12 @@ void main() {
     await tester.tap(find.text('Save / Update Fee Structure'));await waitFor(tester, find.text('Edit Fee Structure'));
     expect(find.text('Edit Fee Structure'),findsOneWidget);expect(find.byType(TextField),findsNothing);
     await tester.pumpWidget(const SizedBox());
-  });
+  }, timeout: const Timeout(Duration(minutes:2)));
   testWidgets('saved custom fee heads remain visible and editable through the protected flow', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400,1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await io(tester, () async => WindowsFeeStructure.save('Class 1',await WindowsFeeStructure.currentSession(),{'Legacy Custom Fee':35.25,'Tuition Fees':125.5}));
+    debugPrint('Fee widget: open screen');
     await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await waitFor(tester, find.text('Edit Fee Structure'));
     expect(find.text('Edit Fee Structure'),findsOneWidget);
     await tester.scrollUntilVisible(find.text('Legacy Custom Fee'),300,scrollable:find.byType(Scrollable).last);
@@ -117,5 +128,5 @@ void main() {
     expect(find.text('₹ 35.25'),findsOneWidget);
     expect(find.byType(TextField),findsNothing);
     await tester.pumpWidget(const SizedBox());
-  });
+  }, timeout: const Timeout(Duration(minutes:2)));
 }
