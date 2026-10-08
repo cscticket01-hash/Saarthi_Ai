@@ -41,7 +41,9 @@ Run `Platform review builds` manually on `windows/easy-connect-draft` after
 service readiness. Set `test_school_cloud_url` to
 `https://saarthi-sync-v2-test.onrender.com/school-cloud` and
 `test_oauth_broker_url` to `https://saarthi-sync-v2-test.onrender.com/oauth/token`.
-Inputs affect only that run; shared repository endpoint defaults stay unchanged.
+Draft-branch review builds default to the new isolated school-cloud endpoint.
+Other branches retain their existing defaults. Manual inputs affect only that
+run; repository variables and production build workflows stay unchanged.
 Use the resulting exact-SHA Windows, Android `.syncreview` and Web artifacts.
 Do not overwrite the installed real app or its database; use an isolated Windows
 user/VM and Android TEST profile. Hosting or production releases are not implied.
