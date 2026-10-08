@@ -207,6 +207,11 @@ function VS_managedDeletedFile(store,id,data) {
   data._syncFileCleanupComplete=true;VS_sheetPut(store,{id:id,schoolId:store.school,data:data});
   return 'deleted';
 }
+function VS_syncRequestShape(b) {
+  const data=Object.create(null);
+  if(b.operation==='write')Object.keys(b.data||{}).forEach(k=>{if(['_syncRevision','_syncOperationId','_syncRequestHash','_syncDeleted','_syncDeletedFileId','_syncFileCleanupComplete'].indexOf(k)<0)data[k]=b.data[k];});
+  return {operation:b.operation,data:data};
+}
 function VS_managedRecord(b) {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try{return VS_managedRecordUnlocked(b);}finally{lock.releaseLock();}
@@ -226,7 +231,12 @@ function VS_managedRecordUnlocked(b) {
   if(b.syncProtocol!==2 && existing&&existing.data._syncOperationId)throw new Error('Record revision conflict');
   if(b.syncProtocol===2){
     if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string')throw new Error('Invalid sync operation');
-    if(existing&&existing.data._syncOperationId===b.operationId)return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:existing.data._syncDeleted?VS_managedDeletedFile(store,b.id,existing.data):undefined};
+    if(existing&&existing.data._syncOperationId===b.operationId){
+      const digest=VS_layoutHash(VS_syncRequestShape(b));
+      const original=existing.data._syncRequestHash||VS_layoutHash(VS_syncRequestShape({operation:existing.data._syncDeleted?'delete':'write',data:existing.data}));
+      if(digest!==original)throw new Error('Sync operation ID conflict');
+      return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:existing.data._syncDeleted?VS_managedDeletedFile(store,b.id,existing.data):undefined};
+    }
     if((existing&&existing.data._syncRevision||'')!==b.expectedRecordRevision)throw new Error('Record revision conflict');
   }
 
@@ -244,7 +254,7 @@ function VS_managedRecordUnlocked(b) {
     if(existing&&existing.data._syncDeleted)return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};
     {
       const revision=Utilities.getUuid(),data={schoolId:school,_syncDeleted:true,_syncRevision:revision};
-      if(b.syncProtocol===2)data._syncOperationId=b.operationId;
+      if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=VS_layoutHash(VS_syncRequestShape(b));}
       if(b.collection==='documents' && existing){data.documentRevision=existing.data.documentRevision||'';const fileId=existing.data._syncDeletedFileId||existing.data.fileId;if(fileId)data._syncDeletedFileId=fileId;}
       PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());
       VS_sheetPut(store,{id:b.id,schoolId:school,data:data});
@@ -256,7 +266,7 @@ function VS_managedRecordUnlocked(b) {
   const revision=Utilities.getUuid(),data=Object.assign({},b.data);
   delete data._syncDeleted;delete data._syncOperationId;delete data._syncRevision;
   data._syncRevision=revision;
-  if(b.syncProtocol===2)data._syncOperationId=b.operationId;
+  if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=VS_layoutHash(VS_syncRequestShape(b));}
   delete data._syncDeletedFileId;delete data._syncFileCleanupComplete;
   const text=JSON.stringify({id:b.id,schoolId:school,data:data});if(text.length>512*1024)throw new Error('Record too large; upload files separately');
   PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());VS_sheetPut(store,{id:b.id,schoolId:school,data:data});return {recordRevision:revision,syncProtocol:2};
@@ -361,6 +371,7 @@ function VS_managedHandle(e) {
     const safe={
       'This QR does not belong to the active school':'This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.',
       'Record revision conflict':'Record revision conflict',
+      'Sync operation ID conflict':'Sync operation ID conflict',
       'School data organization in progress; retry Sync. Pending data retained':'School data organization in progress; retry Sync. Pending data retained',
       'This ID card needs a new secure school QR':'Ask your school to regenerate this ID card.',
       'Class, roll number or date of birth is incorrect':'Class, roll number or date of birth is incorrect',

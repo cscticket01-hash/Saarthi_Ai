@@ -124,6 +124,9 @@ test('revision-aware two-PC sync is idempotent, preserves conflicts and tombston
  const f=storage(),id='pupil',write=(operationId,base,name)=>f.call({action:'managed_records',operation:'write',collection:'students_directory',id,syncProtocol:2,operationId,expectedRecordRevision:base,data:{schoolId:A,name}});
  const first=write('operation-0000000000000001','','PC1');assert.equal(first.success,true);
  const duplicate=write('operation-0000000000000001','','PC1');assert.equal(duplicate.recordRevision,first.recordRevision);
+ const changedRetry=write('operation-0000000000000001','','Changed payload');
+ assert.equal(changedRetry.success,false);assert.equal(changedRetry.message,'Sync operation ID conflict');
+ assert.equal(f.call({action:'managed_records',operation:'delete',collection:'students_directory',id,syncProtocol:2,operationId:'operation-0000000000000001',expectedRecordRevision:first.recordRevision}).success,false);
  const snapshot=f.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2});
  assert.equal(snapshot.records.pupil.name,'PC1');assert.equal(snapshot.records.pupil._syncRevision,first.recordRevision);
  const unchanged=f.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2,knownRevision:snapshot.collectionRevision});

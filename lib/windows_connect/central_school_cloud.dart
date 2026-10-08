@@ -318,10 +318,12 @@ class CentralSchoolCloud {
           response.statusCode == 409 && body is Map &&
           body['action'] == 'managed/records' &&
           (errorBody['code'] == 'RECORD_REVISION_CONFLICT' ||
+              errorBody['code'] == 'OPERATION_ID_CONFLICT' ||
               errorBody['message'] == 'Record revision conflict');
       if (recordConflict) detail = ' Record revision conflict.';
       const syncFailures = {
         'RECORD_REVISION_CONFLICT': 'Record revision conflict.',
+        'OPERATION_ID_CONFLICT': 'Sync operation ID conflict. Original operation retained; review before retrying.',
         'SCHOOL_STORAGE_NOT_CONNECTED': 'School storage is not connected. Ask the developer to verify the existing school storage binding.',
         'SCRIPT_MIGRATION_PENDING': 'School data organization is in progress. Pending changes are retained.',
         'SCRIPT_MIGRATION_CONFLICT': 'School migration needs review. Both versions are retained.',

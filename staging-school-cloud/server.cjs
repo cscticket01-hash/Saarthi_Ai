@@ -53,7 +53,7 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
       // Log every failure without exception text, request payloads or credentials.
       // Upstream Script failures must not masquerade as a central-service outage.
       const context=e.syncDiagnostic;
-      const diagnostic=status===409&&['RECORD_REVISION_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(code)
+      const diagnostic=status===409&&['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(code)
         &&context&&/^vs-[a-f0-9]{32}$/.test(context.schoolId)&&[1,2].includes(context.syncProtocol)
         ?{schoolId:context.schoolId,syncProtocol:context.syncProtocol,
           ...(typeof context.operationId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(context.operationId)?{operationId:context.operationId}:{})}:{};

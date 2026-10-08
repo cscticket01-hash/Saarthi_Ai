@@ -42,6 +42,15 @@ void main() {
         .having((e) => e.toString(), 'private body', isNot(contains('NEVER_EXPOSE')))));
     cloud.close();
   });
+  test('operation ID conflict retains the precise category without exposing raw bodies', () async {
+    final cloud=CentralSchoolCloud(endpoint:'https://central.example/school-cloud',client:MockClient((_) async=>
+      http.Response(jsonEncode({'success':false,'code':'OPERATION_ID_CONFLICT','message':'PRIVATE_BODY'}),409)));
+    await expectLater(cloud.send('POST',Uri.parse(cloud.endpoint),body:{'action':'managed/records'}),
+      throwsA(isA<CentralCloudException>().having((e)=>e.diagnosticCode,'code','OPERATION_ID_CONFLICT')
+        .having((e)=>e.toString(),'retained conflict',contains('Both versions are retained'))
+        .having((e)=>e.toString(),'privacy',isNot(contains('PRIVATE_BODY')))));
+    cloud.close();
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
   test('request wrappers can share an explicitly caller-owned connection without closing it', () async {

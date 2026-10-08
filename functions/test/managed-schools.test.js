@@ -420,3 +420,8 @@ test('missing school storage is distinct from revision conflict and cannot ACK a
  assert.equal(f.sent.length,0);
  await assert.rejects(f.call({action:'managed/records',schoolId:B,collection:'school_expenses',operation:'read'}),e=>e.status===403&&e.syncDiagnostic===undefined);
 });
+
+test('operation ID reuse conflict never becomes an ACK or arbitrary Script exception',async()=>{
+ const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:A,message:'Sync operation ID conflict'})}));
+ await assert.rejects(f.call({action:'managed/records',collection:'school_expenses',operation:'write',id:'expense',syncProtocol:2,operationId:'retained-operation-123',expectedRecordRevision:'old',data:{amount:100}}),e=>e.status===409&&e.code==='OPERATION_ID_CONFLICT'&&e.syncDiagnostic.operationId==='retained-operation-123');
+});
