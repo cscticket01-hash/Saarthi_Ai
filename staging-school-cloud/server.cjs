@@ -3,7 +3,13 @@ const {createSchoolCloud} = require('../functions/school-cloud-core');
 const {randomUUID}=require('node:crypto');
 const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic']);
 const PROJECT = 'saarthi-ai-df12b';
-function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.info(JSON.stringify(entry))}) {
+function isolatedTestSchool(env) {
+  if(env.SAARTHI_ISOLATED_TEST_MODE===undefined||env.SAARTHI_ISOLATED_TEST_MODE==='false')return null;
+  if(env.SAARTHI_ISOLATED_TEST_MODE!=='true'||!/^vs-[a-f0-9]{32}$/.test(env.SAARTHI_ISOLATED_TEST_SCHOOL_ID||''))throw Error('Isolated TEST school configuration required');
+  return env.SAARTHI_ISOLATED_TEST_SCHOOL_ID;
+}
+function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,logger=entry=>console.info(JSON.stringify(entry))}) {
+  if(testSchoolId!==null&&!/^vs-[a-f0-9]{32}$/.test(testSchoolId))throw Error('Invalid isolated TEST school');
   let windowStart=Date.now(), requests=0,anonymousRequests=0;
   let healthCache;
   return async (req,res) => {
@@ -40,6 +46,11 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
       if(bytes>256*1024&&body?.action!=='managed/file/upload')return send(413,{success:false,message:'Request is too large'});
       operation=/^(managed\/|developer\/managed\/)[a-zA-Z0-9_/-]{1,80}$/.test(body?.action||'')?body.action:undefined;
       action=ACTIONS.has(body?.action)?body.action:/^(managed\/|developer\/managed\/)/.test(body?.action||'')?'MANAGED':'UNKNOWN';
+      // Additional TEST fence only; the existing authenticated handler still
+      // verifies membership, licence, school identity and signed storage access.
+      if(testSchoolId && (body?.schoolId!==testSchoolId ||
+        !(body?.action?.startsWith('managed/')||body?.action==='developer/managed/view')))
+        return send(403,{success:false,code:'ISOLATED_TEST_SCOPE_REQUIRED',message:'This service accepts only its configured isolated TEST school.'});
       return send(200,await handle({method:'POST',headers:req.headers,body}));
     }catch(e){
       const code=typeof e.code==='string'&&/^[a-zA-Z0-9_/-]{1,100}$/.test(e.code)?e.code:'UNKNOWN';
@@ -63,6 +74,7 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
   };
 }
 function fromEnvironment(env) {
+  const testSchoolId=isolatedTestSchool(env);
   const runtimeRequire=require('node:module').createRequire(require.resolve('../oauth-broker/package.json'));
   const {initializeApp,getApps,cert}=runtimeRequire('firebase-admin/app');
   const {getAuth}=runtimeRequire('firebase-admin/auth');
@@ -80,15 +92,19 @@ function fromEnvironment(env) {
     const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
     return getAuth(legacy).verifyIdToken(String(token || '')); 
   }});
-  const managed=require('../functions/managed-schools').createManagedSchools({auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
+  const managed=require('../functions/managed-schools').createManagedSchools({auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
+    ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
+    monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
   if(env.SAARTHI_ATTENDANCE_QUEUE_ENABLED!=='false'){
-    const worker=require('../functions/attendance-queue').createAttendanceWorker({drain:managed.drainAttendance,onError:()=>console.info(JSON.stringify({event:'attendance_retry_pending'}))});
+    const worker=require('../functions/attendance-queue').createAttendanceWorker({drain:async()=>{await verifyTest();return managed.drainAttendance();},onError:()=>console.info(JSON.stringify({event:'attendance_retry_pending'}))});
     managed.setAttendanceWake(worker.wake);
   }
-  const handle=req => /^(managed\/|developer\/managed\/)/.test(req.body?.action || '') ? managed(req) : legacyHandle(req);
-  return createHandler({handle,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
+  const verifyTest=async()=>{if(testSchoolId){const school=await db.doc('schools/'+testSchoolId).get();if(!school.exists||!/^TEST\b/i.test(school.data().schoolName||''))throw Object.assign(Error('Verified TEST school required'),{status:403,code:'ISOLATED_TEST_SCOPE_REQUIRED'});}};
+  const handle=async req => {await verifyTest();return /^(managed\/|developer\/managed\/)/.test(req.body?.action || '') ? managed(req) : legacyHandle(req);};
+  return createHandler({handle,testSchoolId,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
+    await verifyTest();
     await db.doc('_central_staging_health/runtime').get();
     try{await auth.getUser('__saarthi_staging_health__');}catch(e){if(e.code!=='auth/user-not-found')throw e;}
   }});
 }
-module.exports={createHandler,fromEnvironment};
+module.exports={createHandler,fromEnvironment,isolatedTestSchool};

@@ -295,7 +295,8 @@ test('coalesced mobile school/storage policy uses three Firebase reads for 100 r
  await f.call({action:'developer/managed/block',schoolId:A,blocked:true},'developer');
  await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:'same'}}),e=>e.status===403);
 });
-test('verified attendance permit -> encrypted durable queue -> batched school Drive acknowledgement; tampering/GPS/foreign school denied',async()=>{
+for(const attendanceCollection of ['attendance_outbox','attendance_test_outbox']) {
+test('verified attendance permit and final ACK use '+attendanceCollection+'; tampering/GPS/foreign school denied',async()=>{
  const rows=new Map(),store={create:async(id,row)=>{if(rows.has(id))return false;rows.set(id,{...row});return true;},pending:async n=>[...rows.values()].filter(r=>r.state==='pending').slice(0,n),claim:async(id,claim)=>{rows.get(id).claim=claim;return true;},finish:async(id,claim,v)=>{assert.equal(rows.get(id).claim,claim);Object.assign(rows.get(id),v);}};
  const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(time));
  const f=fixture(async(url,opt)=>{
@@ -303,7 +304,7 @@ test('verified attendance permit -> encrypted durable queue -> batched school Dr
   const result=payload.action==='managed_attendance_batch'?{acknowledgements:payload.operations.map(i=>({operationId:i.operationId,success:true}))}:
    {projectId:A,attendancePolicy:{role:'student',personId:'stable-pupil',documentId:'pupil',qrHash:crypto.createHash('sha256').update('student/pupil/'+'x'.repeat(48)).digest('hex'),day,open:true,latitude:24,longitude:92,radiusMeters:200}};
   return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,...result})};
- },{attendanceStore:store});
+ },{attendanceStore:store,attendanceCollection});
  f.docs.get('platform_schools/'+A).lastSeenAt=0; // PC off: backend worker must still deliver.
  const session='s'.repeat(64),verified=await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:session}});
  const request={action:'mobile_mark_attendance',sessionToken:session,attendancePermit:verified.attendancePermit,role:'student',personId:'pupil',linkToken:'x'.repeat(48),latitude:24,longitude:92,accuracy:3,mode:'entry',clientCapturedAt:time-5000};
@@ -315,11 +316,13 @@ test('verified attendance permit -> encrypted durable queue -> batched school Dr
  f.docs.get('platform_schools/'+B).lastSeenAt=time;
  await assert.rejects(f.call({action:'managed/mobile',schoolId:B,request}),e=>e.status===409);
  await f.handle.drainAttendance();assert.equal([...rows.values()][0].state,'completed');assert.equal(f.sent.length,2);
- const row=[...rows.values()][0];f.docs.set('attendance_outbox/'+row.operationId,row);
+ const row=[...rows.values()][0];f.docs.set(attendanceCollection+'/'+row.operationId,row);
+ if(attendanceCollection==='attendance_test_outbox')f.docs.set('attendance_outbox/'+row.operationId,{schoolId:B,state:'pending'});
  const delivered=JSON.parse(JSON.parse(f.sent[1].opt.body).payload).operations[0].request;
  assert.equal(delivered.clientCapturedAt,time-5000);assert.equal(delivered.submittedAt,time);
  const status=await f.call({action:'managed/mobile',schoolId:A,request:{...request,action:'mobile_attendance_status',operationIds:[row.operationId]}});
  assert.equal(status.syncProtocol,2);assert.equal(status.operations[0].state,'completed');
+ const adminStatus=await f.call({action:'managed/attendance/status',operationIds:[row.operationId]});assert.equal(adminStatus.operations[0].state,'completed');
  await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,clientCapturedAt:time+300000}}),e=>e.status===409&&e.code==='ATTENDANCE_CAPTURE_REVIEW');
  const original=row.payload;row.payload=protect(JSON.stringify({...request,personId:'another-pupil'}),key);
  await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,action:'mobile_attendance_status',operationIds:[row.operationId]}}),e=>e.status===403);
@@ -327,6 +330,7 @@ test('verified attendance permit -> encrypted durable queue -> batched school Dr
  await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,action:'mobile_attendance_status',operationIds:[row.operationId]}}),e=>e.status===403);
 
 });
+}
 
 test('broker forwards only allowlisted Script diagnostic codes and never raw failure details',async()=>{
  for(const [code,expected] of [['SCRIPT_PERMISSION_DENIED','SCRIPT_PERMISSION_DENIED'],['SCRIPT_TYPE_ERROR','SCRIPT_TYPE_ERROR'],['secret-root-token','SCRIPT_OPERATION_FAILED']]) {

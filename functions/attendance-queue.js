@@ -68,22 +68,27 @@ function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatc
  }
  return {enqueue,drain,metrics};
 }
-function firestoreAttendanceStore(db){
- const collection=db.collection('attendance_outbox');
- const ref=id=>db.doc('attendance_outbox/'+id);
+function firestoreAttendanceStore(db,{schoolId=null,collectionName='attendance_outbox'}={}){
+ if(schoolId!==null&&!/^vs-[a-f0-9]{32}$/.test(schoolId))throw Error('Invalid attendance school scope');
+ if(!['attendance_outbox','attendance_test_outbox'].includes(collectionName))throw Error('Invalid attendance collection');
+ const collection=db.collection(collectionName);
+ const ref=id=>db.doc(collectionName+'/'+id);
  return {
-  create:async(id,row)=>{try{await ref(id).create(row);return true;}catch(e){if(e.code===6||e.code==='already-exists')return false;throw e;}},
+  create:async(id,row)=>{if(schoolId&&row.schoolId!==schoolId)throw Error('Foreign attendance school');try{await ref(id).create(row);return true;}catch(e){if(e.code===6||e.code==='already-exists')return false;throw e;}},
   pending:async(limit)=>{
-   const result=await collection.where('nextAttemptAt','<=',Date.now()).orderBy('nextAttemptAt').limit(limit).get();
-   return result.docs.map(d=>({...d.data(),operationId:d.id}));
+   const scope=schoolId?collection.where('schoolId','==',schoolId):collection;
+   const result=await scope.where('nextAttemptAt','<=',Date.now()).orderBy('nextAttemptAt').limit(limit).get();
+   return result.docs.map(d=>({...d.data(),operationId:d.id})).filter(row=>!schoolId||row.schoolId===schoolId);
   },
   claim:(id,claim,at,expires)=>db.runTransaction(async tx=>{
    const r=ref(id),snap=await tx.get(r);if(!snap.exists)return false;const row=snap.data();
+   if(schoolId&&row.schoolId!==schoolId)return false;
    if(!['pending','retry','processing'].includes(row.state)||row.nextAttemptAt>at||row.state==='processing'&&row.claimExpiresAt>at)return false;
    tx.set(r,{state:'processing',claim,claimExpiresAt:expires,nextAttemptAt:expires},{merge:true});return true;
   }),
   finish:(id,claim,values)=>db.runTransaction(async tx=>{
    const r=ref(id),snap=await tx.get(r);if(!snap.exists||snap.data().claim!==claim)return;
+   if(schoolId&&snap.data().schoolId!==schoolId)return;
    tx.set(r,{...values,claim:'',claimExpiresAt:0},{merge:true});
   }),
  };

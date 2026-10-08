@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {Readable}=require('node:stream');
-const {createHandler}=require('../../staging-school-cloud/server.cjs');
+const {createHandler,isolatedTestSchool}=require('../../staging-school-cloud/server.cjs');
 async function request(error){
  const logs=[];let status,body;const headers={};
  const req=Readable.from([Buffer.from(JSON.stringify({action:'managed/records',schoolId:'private-school',data:{password:'NEVER_LOG_THIS'}}))]);
@@ -17,6 +17,24 @@ test('upstream errors retain their actual HTTP status and always log a safe oper
   assert.equal(r.logs[0].event,'central_failure');assert.equal(r.logs[0].operation,'managed/records');assert.equal(r.logs[0].code,'UNKNOWN');
   assert.equal(r.logs[0].requestId,r.body.requestId);assert.equal(r.body.requestId,r.headers['X-Saarthi-Request-Id']);
   assert.equal(JSON.stringify(r).includes('NEVER_LOG_THIS'),false);
+ }
+});
+test('isolated TEST mode fails closed and forwards only its school to existing authentication',async()=>{
+ const school='vs-'+ 'a'.repeat(32);
+ assert.equal(isolatedTestSchool({}),null);
+ for(const env of [{SAARTHI_ISOLATED_TEST_MODE:'true'},{SAARTHI_ISOLATED_TEST_MODE:'TRUE'},
+   {SAARTHI_ISOLATED_TEST_MODE:'true',SAARTHI_ISOLATED_TEST_SCHOOL_ID:'foreign'}])assert.throws(()=>isolatedTestSchool(env));
+ assert.equal(isolatedTestSchool({SAARTHI_ISOLATED_TEST_MODE:'true',SAARTHI_ISOLATED_TEST_SCHOOL_ID:school}),school);
+ for(const body of [{action:'managed/records',schoolId:'vs-'+ 'b'.repeat(32)},
+   {action:'developer/managed/create',schoolId:school},{action:'onboard',schoolId:school},
+   {action:'developer/managed/delete',schoolId:school},{action:'managed/records',schoolId:school}]){
+   let called=false,status,out;
+   const req=Readable.from([Buffer.from(JSON.stringify(body))]);Object.assign(req,{url:'/school-cloud',method:'POST',headers:{'content-type':'application/json'}});
+   const res={setHeader(){},writeHead:s=>status=s,end:v=>out=JSON.parse(v)};
+   await createHandler({testSchoolId:school,logger:()=>{},health:async()=>{},handle:async()=>{
+     called=true;throw Object.assign(Error('School login required'),{status:401});}})(req,res);
+   assert.equal(called,body.action==='managed/records'&&body.schoolId===school);
+   assert.equal(status,called?401:403);assert.equal(out.success,false);
  }
 });
 test('uncoded runtime errors remain unavailable without hiding diagnostic correlation',async()=>{

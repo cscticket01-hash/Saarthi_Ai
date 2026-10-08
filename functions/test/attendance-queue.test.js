@@ -1,6 +1,19 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {createAttendanceQueue,firestoreAttendanceStore,createAttendanceWorker}=require('../attendance-queue');
+test('isolated attendance store filters reads and refuses foreign create, claim and finish',async()=>{
+ const own='vs-'+ 'a'.repeat(32),foreign='vs-'+ 'b'.repeat(32),calls=[];let writes=0;
+ const query={where:(...a)=>{calls.push(a);return query;},orderBy:()=>query,limit:()=>query,
+   get:async()=>({docs:[{id:'foreign',data:()=>({schoolId:foreign})},{id:'own',data:()=>({schoolId:own})}]})};
+ const db={collection:name=>{assert.equal(name,'attendance_test_outbox');return query;},doc:path=>{assert(path.startsWith('attendance_test_outbox/'));return {create:async()=>{writes++;}};},
+   runTransaction:async fn=>fn({get:async()=>({exists:true,data:()=>({schoolId:foreign,claim:'lease',state:'pending',nextAttemptAt:0})}),set:()=>{writes++;}})};
+ const s=firestoreAttendanceStore(db,{schoolId:own,collectionName:'attendance_test_outbox'});
+ assert.deepEqual((await s.pending(25)).map(r=>r.operationId),['own']);assert.deepEqual(calls[0],['schoolId','==',own]);
+ await assert.rejects(s.create('foreign',{schoolId:foreign}));
+ assert.equal(await s.claim('foreign','lease',1,2),false);await s.finish('foreign','lease',{state:'completed'});
+ assert.equal(writes,0);assert.throws(()=>firestoreAttendanceStore(db,{schoolId:'invalid'}));
+ assert.throws(()=>firestoreAttendanceStore(db,{collectionName:'school_records'}));
+});
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32);
 function store(rows=new Map()) {return {rows,create:async(id,r)=>{if(rows.has(id))return false;rows.set(id,{...r});return true;},pending:async n=>[...rows.values()].filter(r=>r.state!=='completed'&&r.state!=='needsAttention').slice(0,n),claim:async(id,claim,now,expires)=>{const r=rows.get(id);if(!r||r.state==='processing'&&r.claimExpiresAt>now)return false;Object.assign(r,{state:'processing',claim,claimExpiresAt:expires});return true;},finish:async(id,claim,v)=>{if(rows.get(id).claim===claim)Object.assign(rows.get(id),v,{claim:'',claimExpiresAt:0});}};}
 const event=(school=A,person='pupil')=>({schoolId:school,role:'student',personId:person,day:'2026-10-07',mode:'entry',payload:{encrypted:'test'}});
