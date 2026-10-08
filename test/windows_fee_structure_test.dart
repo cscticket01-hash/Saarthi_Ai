@@ -81,6 +81,7 @@ void main() {
     await WindowsFeeStructure.save('Class 1',await WindowsFeeStructure.currentSession(),{'Legacy Custom Fee':35.25,'Tuition Fees':125.5});
     await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await io(tester);
     expect(find.text('Edit Fee Structure'),findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Legacy Custom Fee'),300,scrollable:find.byType(Scrollable).last);
     expect(find.text('Legacy Custom Fee'),findsOneWidget);
     expect(find.text('₹ 35.25'),findsOneWidget);
     expect(find.byType(TextField),findsNothing);
