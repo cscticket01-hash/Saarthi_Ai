@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'school_cloud_state.dart';
 
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 
 import 'school_backend_transport.dart';
 
@@ -125,6 +126,52 @@ class WindowsSyncEngine {
   }
 
   String? lastError;
+
+  /// Read-only evidence for support. Never exports record bodies or raw errors.
+  Future<Map<String, dynamic>> safeQueueDiagnostics() async {
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    final general = await db.collection('_windows_firebase_outbox').get();
+    final documents = await db.collection('_windows_document_outbox').get();
+    if (db.activeProfileId != origin) throw StateError('School changed. Reopen Sync details.');
+    String? token(dynamic value) => value is String && RegExp(r'^[A-Za-z0-9_-]{1,100}$').hasMatch(value) ? value : null;
+    Map<String, dynamic> errorMetadata(dynamic value) {
+      final text = value is String ? value : '';
+      final candidate = RegExp(r'\[([A-Z_]+)\]').firstMatch(text)?.group(1);
+      final code = {'RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED',
+        'SCRIPT_HTTP_ERROR','SCRIPT_INVALID_RESPONSE','SCRIPT_IDENTITY_MISMATCH','SCRIPT_OPERATION_FAILED',
+        'SCRIPT_MIGRATION_PENDING','SCRIPT_MIGRATION_CONFLICT','SCRIPT_MISSING_MIGRATED_TAB',
+        'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_PERMISSION_DENIED',
+        'SCRIPT_QUOTA_EXCEEDED','SCRIPT_TIMEOUT','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR'}.contains(candidate) ? candidate : null;
+      final reference = RegExp(r'Ref: ([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.').firstMatch(text)?.group(1);
+      final status = RegExp(r'HTTP (400|401|403|409|429|502|503|504)').firstMatch(text)?.group(1);
+      return {if (code != null) 'code': code, if (reference != null) 'referenceId': reference,
+        if (status != null) 'httpStatus': int.parse(status)};
+    }
+    final rows = <Map<String, dynamic>>[];
+    for (final queue in ['records', 'documents']) {
+    for (final entry in queue == 'records' ? general.docs : documents.docs) {
+      final item = entry.data(), state = item['syncState'];
+      final collection = item['collection'];
+      final queuedAt = item['queuedAt'];
+      rows.add({
+        'queue': queue,
+        'collection': collection is String && _firebaseCollections.contains(collection) ? collection : queue == 'documents' ? 'documents' : 'unknown',
+        'recordFingerprint': sha256.convert(utf8.encode('${collection ?? 'documents'}/${item['documentId'] ?? entry.id}')).toString(),
+        if (token(item['operationId']) != null) 'operationId': token(item['operationId']),
+        if (token(item['baseCloudRevision']) != null) 'baseCloudRevision': token(item['baseCloudRevision']),
+        'state': state == null ? 'pending' : {'pending','leased','retry','failed','accepted','acknowledged','conflict','needsAttention'}.contains(state) ? state : 'unknown',
+        if (queuedAt is Timestamp) 'queuedAtMillis': queuedAt.millisecondsSinceEpoch,
+        if (queuedAt is num && queuedAt.isFinite) 'queuedAtMillis': queuedAt.toInt(),
+        ...errorMetadata(item['lastError']),
+      });
+    }
+    }
+    return {'schemaVersion': 1, 'capturedAtUtc': DateTime.now().toUtc().toIso8601String(),
+      if (school is String && RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)) 'schoolId': school,
+      'pendingCount': rows.length, 'items': rows, 'latestError': errorMetadata(lastError),
+      'cloudVerification': 'Not performed by this read-only report'};
+  }
   String _activeProfileId = 'unbound';
   String _activeSchoolSyncId = '';
   String _activeFirebaseProject = '';

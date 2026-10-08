@@ -48,6 +48,28 @@ void main(){
    final summary=engine.performanceSummary['boundedFixtureSaveMicros'] as Map;
    expect(summary['samples'],256);expect(summary['p50'],172);expect(summary['p95'],287);
  });
+ test('safe queue diagnostics preserve rows and exclude payloads, credentials, paths and record identifiers', () async {
+   final records=db.collection('_windows_firebase_outbox');
+   const ref='2c564c78-1738-429c-bf1b-4d09ba3a42b6';
+   await records.doc('PRIVATE_QUEUE_ID').set({'collection':'school_expenses','documentId':'PRIVATE_RECORD_ID',
+     'operationId':'original-operation-123','baseCloudRevision':'retained-revision','syncState':'conflict','queuedAt':1,
+     'data':{'name':'PRIVATE_STUDENT','password':'PRIVATE_PASSWORD'},'localPath':'PRIVATE_PATH',
+     'lastError':'HTTP 409 [OPERATION_ID_CONFLICT] Ref: $ref. PRIVATE_RESPONSE'});
+   final documents=db.collection('_windows_document_outbox');
+   await documents.doc('PRIVATE_DOCUMENT').set({'syncState':'unexpected_PRIVATE_STATE',
+     'operationId':'INVALID_PRIVATE_TOKEN@x','data':{'token':'PRIVATE_TOKEN'},'lastError':'[SCRIPT_PRIVATE_SECRET] PRIVATE_RESPONSE'});
+   final beforeRecords=jsonEncode((await records.get()).docs.single.data());
+   final beforeDocuments=jsonEncode((await documents.get()).docs.single.data());
+   final report=await WindowsSyncEngine.instance.safeQueueDiagnostics();
+   expect(report['pendingCount'],2);expect(report['schoolId'],school);
+   final items=report['items'] as List;
+   expect(items.first['operationId'],'original-operation-123');
+   expect(items.first['code'],'OPERATION_ID_CONFLICT');expect(items.first['referenceId'],ref);
+   expect(items.first['httpStatus'],409);expect(items.last['state'],'unknown');
+   expect(jsonEncode(report),isNot(contains('PRIVATE')));
+   expect(jsonEncode((await records.get()).docs.single.data()),beforeRecords);
+   expect(jsonEncode((await documents.get()).docs.single.data()),beforeDocuments);
+ });
  test('automatic retry starts promptly and exponentially backs off without high-frequency polling', () {
    expect(WindowsSyncEngine.reconciliationInterval, const Duration(minutes:4));
    expect(WindowsSyncEngine.retryDelayForFailure(1), const Duration(seconds:5));

@@ -2,6 +2,7 @@ import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
 import 'school_cloud_state.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'school_password_panel.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -1011,7 +1012,28 @@ class WindowsSyncStatusCard extends StatelessWidget {
                     for(final item in details['items'] as List? ?? [])Text('${item['collection']??'documents'} / ${item['documentId']??item['id']}: ${item['syncState']??'pending'} • ${item['lastError']??''}'),
                     Text('Session counters: ${details['metrics']??{}}'),
                     const Text('Conflicting copies are retained. Review both versions before resolving.')]))),
-                actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))])),child:const Text('Details'))])
+                actions:[TextButton(onPressed:() async {
+                  try {
+                    final report=await engine.safeQueueDiagnostics();
+                    if(!ctx.mounted)return;
+                    await showDialog<void>(context:ctx,builder:(reportContext)=>AlertDialog(
+                      title:const Text('Safe sync diagnostics'),
+                      content:SizedBox(width:600,child:SingleChildScrollView(child:Column(
+                        crossAxisAlignment:CrossAxisAlignment.start,children:[
+                          const Text('Read-only queue snapshot. No records, credentials, paths or raw responses. Record IDs are fingerprints. This does not verify cloud ACK.'),
+                          const SizedBox(height:12),
+                          SelectableText(const JsonEncoder.withIndent('  ').convert(report)),
+                        ]))),
+                      actions:[TextButton(onPressed:()=>Navigator.pop(reportContext),child:const Text('Close'))]));
+                  } catch (_) {
+                    if(!ctx.mounted)return;
+                    await showDialog<void>(context:ctx,builder:(errorContext)=>AlertDialog(
+                      title:const Text('Diagnostics unavailable'),
+                      content:const Text('Queue unchanged. Reopen Sync details for the current school and try again.'),
+                      actions:[TextButton(onPressed:()=>Navigator.pop(errorContext),child:const Text('Close'))]));
+                  }
+                },child:const Text('Safe diagnostics')),
+                  TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))])),child:const Text('Details'))])
           ]));
       }));
   }

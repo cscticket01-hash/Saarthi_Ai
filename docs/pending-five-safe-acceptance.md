@@ -13,6 +13,15 @@ The historical cause and current count are unconfirmed.
 
 ## Device procedure
 
+The current TEST Windows build adds Settings → Sync → Details → Safe diagnostics.
+Select and copy that report. It reads both durable Windows outboxes without
+uploading or changing them, includes operation IDs/states and allowlisted HTTP
+error/reference metadata, and fingerprints record IDs. It excludes record bodies,
+raw errors, local paths and credentials. Record installed build/version separately.
+It is a local inventory, not evidence of final cloud ACK. If the installed version
+lacks this button, use a screenshot of existing Details with personal data hidden;
+do not replace the real installation or clear app data just to collect evidence.
+
 1. Preserve a verified backup of the complete local database/outbox and linked
    originals. Work on a copy for inspection; do not edit its queue. Record the
    installed version, verified school ID, time zone, current pending count and
