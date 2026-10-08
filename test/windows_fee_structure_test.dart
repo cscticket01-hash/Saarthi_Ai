@@ -8,6 +8,7 @@ import '../lib/windows_local_firestore.dart';
 import '../lib/windows_local_settings.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_fee_structure.dart';
+import '../lib/platform/platform_config.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -16,6 +17,8 @@ void main() {
   setUp(() async {
     FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key: jsonEncode({
       'managed':true, 'schoolId':school, 'uid':'fee-admin', 'firebaseRefreshToken':'saved',
+      'projectId':platformProjectId, 'folderId':'managed',
+      'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
       'email':'test@school.example', 'storageReady':false,
     })});
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
