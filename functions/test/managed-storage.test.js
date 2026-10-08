@@ -25,7 +25,7 @@ function storage(){
  }
 
  const SpreadsheetApp={flush(){},openById:id=>books.get(id),create(name){const file=roots[A].createFile(name,'','application/vnd.google-apps.spreadsheet'),tabs=new Map();const book={getId:()=>file.id,getSheetByName:n=>tabs.get(n),insertSheet(n){const tab=sheet(n);tabs.set(n,tab);return tab;}};books.set(file.id,book);return book;}};
- const context=vm.createContext({SpreadsheetApp,Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},base64Decode:v=>[...Buffer.from(v,'base64')],base64Encode:v=>Buffer.from(v).toString('base64'),newBlob:(bytes,mime,name)=>({bytes,mime,name}),computeDigest:(_,v)=>[...crypto.createHash('sha256').update(typeof v==='string'?v:Buffer.from(v)).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
+ const context=vm.createContext({SpreadsheetApp,Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{Charset:{UTF_8:'UTF-8'},formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},base64Decode:v=>[...Buffer.from(v,'base64')],base64Encode:v=>Buffer.from(v).toString('base64'),newBlob:(bytes,mime,name)=>({bytes,mime,name}),computeDigest:(_,v)=>[...crypto.createHash('sha256').update(typeof v==='string'?v:Buffer.from(v)).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k,charset)=>[...crypto.createHmac('sha256',k).update(s,charset==='UTF-8'?'utf8':'latin1').digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),context);
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedMobile.gs','utf8'),context);
  const call=body=>{const b={schoolId:A,timestamp:Date.now(),nonce:crypto.randomBytes(24).toString('hex'),payload:JSON.stringify(body)};b.signature=crypto.createHmac('sha256',secret).update(A+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex');return context.VS_managedHandle({postData:{contents:JSON.stringify(b)}});};
@@ -330,4 +330,13 @@ test('diagnostic owner cache is temporary metadata only and cache failure never 
  c.VS_readLastSyncDiagnostic();assert.equal(logs.at(-1),cached[0][1]);
  c.CacheService.getScriptCache=()=>{throw Error('Unavailable');};
  assert.deepEqual(c.VS_managedHandle({postData:{contents:'{}'}}),before);
+});
+
+test('UTF-8 signed multilingual school records are accepted and preserved',()=>{
+ const f=storage(),data={schoolId:A,name:'বাংলা हिंदी विद्यालय',address:'গাঁও – स्कूल'};
+ const result=f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'unicode-student',data});
+ assert.equal(result.success,true);
+ const read=f.call({action:'managed_records',operation:'read',collection:'students_directory'});
+ assert.equal(read.records['unicode-student'].name,data.name);
+ assert.equal(read.records['unicode-student'].address,data.address);
 });
