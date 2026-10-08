@@ -25,7 +25,7 @@ function storage(){
  }
 
  const SpreadsheetApp={flush(){},openById:id=>books.get(id),create(name){const file=roots[A].createFile(name,'','application/vnd.google-apps.spreadsheet'),tabs=new Map();const book={getId:()=>file.id,getSheetByName:n=>tabs.get(n),insertSheet(n){const tab=sheet(n);tabs.set(n,tab);return tab;}};books.set(file.id,book);return book;}};
- const context=vm.createContext({SpreadsheetApp,Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},base64Decode:v=>[...Buffer.from(v,'base64')],base64Encode:v=>Buffer.from(v).toString('base64'),newBlob:(bytes,mime,name)=>({bytes,mime,name}),computeDigest:(_,v)=>[...crypto.createHash('sha256').update(typeof v==='string'?v:Buffer.from(v)).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
+ const context=vm.createContext({SpreadsheetApp,Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},DriveApp:{getFolderById:id=>all.get(id),getFileById:id=>all.get(id)},Utilities:{Charset:{UTF_8:'UTF-8'},formatDate:()=> '2026-10-05',getUuid:()=>crypto.randomUUID(),DigestAlgorithm:{SHA_256:'sha256'},base64Decode:v=>[...Buffer.from(v,'base64')],base64Encode:v=>Buffer.from(v).toString('base64'),newBlob:(bytes,mime,name)=>({bytes,mime,name}),computeDigest:(_,v)=>[...crypto.createHash('sha256').update(typeof v==='string'?v:Buffer.from(v)).digest()],base64EncodeWebSafe:v=>Buffer.from(v).toString('base64url'),computeHmacSha256Signature:(s,k,charset)=>[...crypto.createHmac('sha256',k).update(s,charset==='UTF-8'?'utf8':'latin1').digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})},jsonResponse:r=>JSON.parse(JSON.stringify(r))});
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),context);
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedMobile.gs','utf8'),context);
  const call=body=>{const b={schoolId:A,timestamp:Date.now(),nonce:crypto.randomBytes(24).toString('hex'),payload:JSON.stringify(body)};b.signature=crypto.createHmac('sha256',secret).update(A+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex');return context.VS_managedHandle({postData:{contents:JSON.stringify(b)}});};
@@ -284,4 +284,59 @@ test('managed expired login renews indefinitely while token/person/licence remai
  assert.equal(mobile({action:'mobile_refresh',sessionToken:login.sessionToken},{schoolId:A,expiresAt:1}).success,false);
  assert.equal(mobile({action:'mobile_logout',sessionToken:login.sessionToken}).success,true);
  assert.equal(mobile({action:'mobile_refresh',sessionToken:login.sessionToken}).success,false);
+});
+
+test('authenticated Script diagnostics use fixed categories without leaking exception contents',()=>{
+ const f=storage();
+ for(const [message,code] of [['Permission denied secret-root-id','SCRIPT_PERMISSION_DENIED'],['Service invoked too many times: private-school','SCRIPT_QUOTA_EXCEEDED'],['Managed storage not prepared','SCRIPT_STORAGE_NOT_PREPARED']]) {
+  f.context.VS_managedRoot=()=>{throw new Error(message);};
+  const out=f.call({action:'managed_health'});
+  assert.equal(out.success,false);assert.equal(out.code,code);
+  assert.equal(JSON.stringify(out).includes(message),false);
+ }
+ const unauth=f.context.VS_managedHandle({postData:{contents:'malformed secret'}});
+ assert.equal(unauth.code,'SCRIPT_OPERATION_FAILED');
+ assert.equal(JSON.stringify(unauth).includes('malformed secret'),false);
+});
+
+test('health and storage readiness do not require optional owner email OAuth scope',()=>{
+ const f=storage();let calls=0;
+ f.context.Session={getEffectiveUser(){calls++;throw new Error('Specified permissions are not sufficient to call Session.getEffectiveUser. Required permissions: userinfo.email');}};
+ const out=f.call({action:'managed_health'});
+ assert.equal(out.success,true);assert.equal(out.storageReady,true);assert.equal(out.recordSyncVersion,2);assert.equal(out.googleEmail,'');assert.equal(calls,0);
+});
+
+
+test('owner execution diagnostics classify swallowed rejection without exposing raw school payload or secrets',()=>{
+ const source=fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),logs=[];
+ const c=vm.createContext({console:{info:line=>logs.push(JSON.parse(line))},PropertiesService:{getScriptProperties:()=>({getProperty:()=>A})},jsonResponse:x=>x});vm.runInContext(source,c);
+ for(const [message,code] of [['Invalid request signature','SCRIPT_SIGNATURE_REJECTED'],['School Drive root mismatch','SCRIPT_ROOT_IDENTITY_MISMATCH'],['Invalid or duplicate legacy record; operator review required','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED'],['Versioned document requires a matching revision','SCRIPT_DOCUMENT_REVISION_REQUIRED']]){
+  c.VS_managedVerify=()=>{throw Object.assign(new Error(message),{stack:'Error private-secret\n at VS_managedVerify (Code:6521:7)'});};
+  const result=c.VS_managedHandle({postData:{contents:'{}'}});assert.equal(result.success,false);assert.equal(result.code,'SCRIPT_OPERATION_FAILED');
+  assert.equal(logs.at(-1).code,code);assert.equal(logs.at(-1).phase,'request_verification');assert.equal(logs.at(-1).line,6521);
+ }
+ c.VS_managedVerify=()=>({action:'managed_records'});c.VS_managedRecord=()=>{throw Object.assign(new Error('private student token path'),{stack:'Error private-secret\n at VS_sheetDecode (Code:6580:7)'});};
+ const result=c.VS_managedHandle({postData:{contents:'{}'}});assert.equal(result.success,false);assert.equal(logs.at(-1).phase,'authorized_operation');assert.equal(logs.at(-1).code,'SCRIPT_OPERATION_FAILED');
+ assert(!JSON.stringify(logs).includes('private'));assert(!JSON.stringify(logs).includes(A));
+});
+
+
+test('diagnostic owner cache is temporary metadata only and cache failure never changes request result',()=>{
+ const logs=[],cached=[];
+ const c=vm.createContext({console:{info:line=>logs.push(line)},Logger:{log:line=>logs.push(line)},CacheService:{getScriptCache:()=>({put:(...args)=>cached.push(args),get:()=>cached.at(-1)?.[1]})},PropertiesService:{getScriptProperties:()=>({getProperty:()=>A})},jsonResponse:x=>x});
+ vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),c);
+ c.VS_managedVerify=()=>{throw new Error('Invalid request signature');};
+ const before=c.VS_managedHandle({postData:{contents:'{}'}});assert.equal(cached[0][0],'VS_SYNC_DIAGNOSTIC_V1');assert.equal(cached[0][2],1800);assert(!cached[0][1].includes(A));
+ c.VS_readLastSyncDiagnostic();assert.equal(logs.at(-1),cached[0][1]);
+ c.CacheService.getScriptCache=()=>{throw Error('Unavailable');};
+ assert.deepEqual(c.VS_managedHandle({postData:{contents:'{}'}}),before);
+});
+
+test('UTF-8 signed multilingual school records are accepted and preserved',()=>{
+ const f=storage(),data={schoolId:A,name:'বাংলা हिंदी विद्यालय',address:'গাঁও – स्कूल'};
+ const result=f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'unicode-student',data});
+ assert.equal(result.success,true);
+ const read=f.call({action:'managed_records',operation:'read',collection:'students_directory'});
+ assert.equal(read.records['unicode-student'].name,data.name);
+ assert.equal(read.records['unicode-student'].address,data.address);
 });

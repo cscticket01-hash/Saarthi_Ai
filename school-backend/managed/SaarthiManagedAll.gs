@@ -6516,7 +6516,7 @@ function VS_managedVerify(e) {
   const b = JSON.parse(e.postData.contents), p = PropertiesService.getScriptProperties();
   const school = p.getProperty('VS_MANAGED_SCHOOL_ID'), secret = p.getProperty('VS_MANAGED_SECRET');
   if (!secret || b.schoolId !== school || !Number.isSafeInteger(b.timestamp) || Math.abs(Date.now()-b.timestamp)>120000 || !/^[a-f0-9]{48}$/.test(b.nonce||'') || typeof b.payload !== 'string' || b.payload.length > 28*1024*1024) throw new Error('Signed school request required');
-  const expected = Utilities.computeHmacSha256Signature(school+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload, secret).map(v=>('0'+((v+256)%256).toString(16)).slice(-2)).join('');
+  const expected = Utilities.computeHmacSha256Signature(school+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload, secret, Utilities.Charset.UTF_8).map(v=>('0'+((v+256)%256).toString(16)).slice(-2)).join('');
   let difference = 0; if (!/^[a-f0-9]{64}$/.test(b.signature||'')) throw new Error('Invalid request signature');
   for(let n=0;n<64;n++) difference |= expected.charCodeAt(n)^b.signature.charCodeAt(n);
   if(difference) throw new Error('Invalid request signature');
@@ -6706,13 +6706,46 @@ function VS_managedConnect(b) {
   const secret=p.getProperty('VS_MANAGED_SECRET');if(!/^[a-f0-9]{64}$/.test(secret||''))throw new Error('Managed storage not prepared');
   return jsonResponse({success:true,schoolId:school,storageReady:true,connectionSecret:secret});
 }
+// Fixed diagnostic categories only. Never return/log exception text, stack or record contents.
+function VS_managedDiagnostic(error) {
+  const message=String(error && error.message || '');
+  const known={
+    'Signed school request required':'SCRIPT_SIGNED_REQUEST_REQUIRED',
+    'Invalid request signature':'SCRIPT_SIGNATURE_REJECTED',
+    'Request already used':'SCRIPT_REPLAY_REJECTED',
+    'Retry storage shortly':'SCRIPT_NONCE_CAPACITY',
+    'School Drive root mismatch':'SCRIPT_ROOT_IDENTITY_MISMATCH',
+    'School workbook identity mismatch':'SCRIPT_WORKBOOK_IDENTITY_MISMATCH',
+    'Pending workbook identity mismatch':'SCRIPT_WORKBOOK_IDENTITY_MISMATCH',
+    'School workbook requires operator review':'SCRIPT_WORKBOOK_REVIEW_REQUIRED',
+    'Invalid or duplicate legacy record; operator review required':'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
+    'Foreign school record':'SCRIPT_FOREIGN_RECORD_REJECTED',
+    'Invalid sync operation':'SCRIPT_INVALID_SYNC_OPERATION',
+    'Versioned document requires a matching revision':'SCRIPT_DOCUMENT_REVISION_REQUIRED',
+    'Newer cloud document retained; resolve version conflict':'SCRIPT_DOCUMENT_REVISION_CONFLICT',
+    'Migration conflict; both versions retained':'SCRIPT_MIGRATION_CONFLICT',
+    'Verified school tab is missing; operator recovery required':'SCRIPT_MISSING_MIGRATED_TAB',
+    'School record verification failed':'SCRIPT_RECORD_VERIFY_FAILED',
+    'Managed storage not prepared':'SCRIPT_STORAGE_NOT_PREPARED',
+    'School data organization in progress; retry Sync. Pending data retained':'SCRIPT_MIGRATION_PENDING'
+  };
+  if(known[message])return known[message];
+  if(/permission|not authorized|authorization is required|access denied/i.test(message))return 'SCRIPT_PERMISSION_DENIED';
+  if(/quota|too many times|limit exceeded/i.test(message))return 'SCRIPT_QUOTA_EXCEEDED';
+  if(/lock|timed out|timeout/i.test(message))return 'SCRIPT_TIMEOUT';
+  if(error && error.name==='TypeError')return 'SCRIPT_TYPE_ERROR';
+  if(error && error.name==='SyntaxError')return 'SCRIPT_PARSE_ERROR';
+  return 'SCRIPT_OPERATION_FAILED';
+}
+
 function VS_managedHandle(e) {
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
+  let verified=false;
   try {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
-    const b=VS_managedVerify(e);let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordStorageVersion:1,scriptBundleVersion:'2026-10-07.1',googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
+    const b=VS_managedVerify(e);verified=true;let result;
+    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordStorageVersion:1,scriptBundleVersion:'2026-10-07.1',googleEmail:''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
     else if(b.action==='managed_attendance_batch'){
       if(!Array.isArray(b.operations)||b.operations.length>25)throw new Error('Invalid attendance batch');
@@ -6761,8 +6794,24 @@ function VS_managedHandle(e) {
       'School session expired':'School session expired. Scan your ID again.',
       'School record or ID card was changed; scan again':'School record or ID card was changed; scan again'
     };
-    return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected'});
+    // Owner-only execution diagnostics: constants and source line, never raw
+    // exceptions, payloads, identities, signatures, paths or credentials.
+    const diagnostic=VS_managedDiagnostic(error);
+    const site=String(error&&error.stack||'').match(/(?:Code|SaarthiManagedAll)(?:\.gs)?:(\d+)/);
+    const trace={event:'managed_storage_failure',at:Date.now(),phase:verified?'authorized_operation':'request_verification',code:diagnostic,line:site?Number(site[1]):0};
+    if(typeof console!=='undefined')console.info(JSON.stringify(trace));
+    // Anonymous web-app executions may not expose logs in the default Cloud
+    // project. Keep only the same non-sensitive trace in a short-lived cache.
+    try{CacheService.getScriptCache().put('VS_SYNC_DIAGNOSTIC_V1',JSON.stringify(trace),1800);}catch(_){}
+    const code=verified?diagnostic:'SCRIPT_OPERATION_FAILED';
+    return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected',code:code});
   }
+}
+
+// Run manually in the owner editor only; not routed through doPost/doGet.
+function VS_readLastSyncDiagnostic() {
+  const trace=CacheService.getScriptCache().get('VS_SYNC_DIAGNOSTIC_V1');
+  Logger.log(trace||'No recent sync diagnostic captured');
 }
 
 /** Managed mobile bridge. Only called AFTER central server verification and
