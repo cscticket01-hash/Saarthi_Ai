@@ -170,6 +170,21 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   }
   if(action==='developer/managed/monitor'){const started=now();const metrics=await monitor();return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics};}
   if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');const school=await db.doc('platform_schools/'+id).get();if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
+  if(action==='developer/managed/exams'){
+   const groups={};
+   for(const collection of ['exams','exam_center_results','exam_results']){
+    const out=await signed({schoolId:id},{action:'managed_records',operation:'read',collection,syncProtocol:2});
+    if(!out.records||typeof out.records!=='object'||Array.isArray(out.records))fail(502,'Invalid school exam response');
+    for(const record of Object.values(out.records))if(!record||record.schoolId!==id)fail(502,'School exam identity mismatch');
+    groups[collection]=out.records;
+   }
+   const removed=new Set(),results={};
+   for(const collection of ['exam_center_results','exam_results'])for(const [key,row]of Object.entries(groups[collection])){
+    if(row._syncDeleted||row.deleted)removed.add(key);
+    else if(!results[key]||Number(row.timestamp||row.updatedAt||0)>=Number(results[key].timestamp||results[key].updatedAt||0))results[key]={...row,id:key};
+   }
+   return {success:true,schoolId:id,exams:Object.entries(groups.exams).filter(([,row])=>!row._syncDeleted&&!row.deleted).map(([key,row])=>({...row,id:key})),results:Object.entries(results).filter(([key])=>!removed.has(key)).map(([,row])=>row),verifiedAt:now()};
+  }
   if(action==='developer/managed/reset')return {success:true,passwordSetupLink:await auth.generatePasswordResetLink(data.loginEmail)};
   if(action==='developer/managed/delete'){
    // Archive the account, never delete its Drive, local or operational data.

@@ -34,12 +34,31 @@ Future<void> _backgroundNotice(RemoteMessage message) async {
 }
 
 final _messenger = GlobalKey<ScaffoldMessengerState>();
+StreamSubscription<String>? _messagingTokenChanges;
+Future<void> _registerManagedNotifications() async {
+  if (!SchoolMessaging.ready || SchoolSession.instance.link?.managed != true) return;
+  _messagingTokenChanges ??= FirebaseMessaging.instance.onTokenRefresh.listen((token) {
+    unawaited(SchoolSession.instance.registerNotificationDevice(token).catchError((_) {}));
+  });
+  final token = await FirebaseMessaging.instance.getToken();
+  if (token != null) await SchoolSession.instance.registerNotificationDevice(token);
+}
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SchoolSession.instance.restore();
+  runApp(const SaarthiMobileApp());
+  // Optional notification/network work must never hold the native splash screen.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeMobileNotifications().catchError((_) {}));
+  });
+}
+
+Future<void> _initializeMobileNotifications() async {
   await SchoolNotifications.initialize();
   try {
-    await SchoolMessaging.configure(SchoolSession.instance.messaging);
+    await SchoolMessaging.configure(SchoolSession.instance.messaging,
+        centralSchool: SchoolSession.instance.link?.managed == true);
+    await _registerManagedNotifications();
   } catch (_) {}
   FirebaseMessaging.onBackgroundMessage(_backgroundNotice);
   try {
@@ -56,7 +75,6 @@ Future<void> main() async {
       unawaited(SchoolNotifications.show(m).catchError((_) {}));
     }
   });
-  runApp(const SaarthiMobileApp());
 }
 
 class SaarthiMobileApp extends StatelessWidget {
@@ -251,8 +269,9 @@ class _SchoolLoginState extends State<_SchoolLogin> {
           if (!same()) return;
           await SchoolNotifications.clear().timeout(const Duration(seconds: 5));
           if (!same()) return;
-          await SchoolMessaging.configure(messaging)
+          await SchoolMessaging.configure(messaging, centralSchool: account?.managed == true)
               .timeout(const Duration(seconds: 10));
+          if (same()) await _registerManagedNotifications();
         } catch (_) {
           _messenger.currentState?.showSnackBar(
             const SnackBar(
@@ -398,7 +417,7 @@ class _SchoolDashboard extends StatefulWidget {
   State<_SchoolDashboard> createState() => _SchoolDashboardState();
 }
 
-class _SchoolDashboardState extends State<_SchoolDashboard> {
+class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingObserver {
   StreamSubscription<void>? _noticeOpened;
   StreamSubscription<RemoteMessage>? _noticeReceived;
   final _s = SchoolSession.instance;
@@ -422,23 +441,30 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _data = Map<String, dynamic>.from(_s.dashboard);
     _loading = _data.isEmpty;
     _load();
     _timer = Timer.periodic(const Duration(minutes: 2), (_) => _presence());
-    _noticeOpened = SchoolNotifications.opened.listen((_) => _load());
+    _noticeOpened = SchoolNotifications.opened.listen((_) => _load(afterSignal:true));
     _noticeReceived = FirebaseMessaging.onMessage.listen((m) {
       if (SchoolNotifications.belongsToSession(m.data, _s.link?.projectId))
-        _load();
+        _load(afterSignal:true);
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _noticeOpened?.cancel();
     _noticeReceived?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_load(afterSignal:true));
   }
 
   Future<void> _presence([String? token]) async {
@@ -447,11 +473,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
     await _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool afterSignal=false}) async {
     if (!mounted) return;
     setState(() => _loading = _data.isEmpty);
     try {
-      final d = await _s.refreshDashboard();
+      final d = await _s.refreshDashboard(afterSignal:afterSignal);
       if (mounted)
         setState(() {
           _data = Map<String, dynamic>.from(d);
@@ -459,6 +485,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
           _error = null;
         });
       unawaited(_refreshPublishedCard().catchError((Object _) => null));
+      unawaited(_registerManagedNotifications().catchError((_) {}));
     } on SchoolAccessDenied catch (e) {
       if (mounted)
         setState(() {
@@ -469,7 +496,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
       if (mounted)
         setState(() {
           _blocked = !_s.cachedAccessAllowed;
-          _error = _blocked ? 'School access needs online verification.' : 'Offline — showing your last verified school data. Refresh will retry.';
+          _error = _blocked ? 'School access needs online verification.'
+              : _s.connectionState == SchoolConnectionState.cachedOffline
+                  ? 'Offline — showing cached school data. Refresh will retry.'
+                  : 'School connection error — showing cached school data. Refresh will retry.';
         });
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -1282,6 +1312,18 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
                 padding: const EdgeInsets.all(20),
                 children: [
                   if (_loading || _busy) const LinearProgressIndicator(),
+                  Text(switch (_s.connectionState) {
+                    SchoolConnectionState.connected => 'Connected — last dashboard verified',
+                    SchoolConnectionState.syncing => 'Syncing',
+                    SchoolConnectionState.cachedOffline => 'Cached / Offline',
+                    SchoolConnectionState.connectionError => 'Connection error — cached data retained',
+                  }, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  if (_s.lastDashboardVerifiedAt != null)
+                    Text('Verified: ${_s.lastDashboardVerifiedAt!.toLocal()}',
+                      style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                  if (SchoolSession.version.endsWith('-sync-test') && _s.lastDashboardRefreshDuration != null)
+                    Text('Dashboard refresh: ${_s.lastDashboardRefreshDuration!.inMilliseconds} ms',
+                      style: const TextStyle(color: Colors.white38, fontSize: 11)),
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 16),

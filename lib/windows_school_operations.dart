@@ -394,8 +394,8 @@ class SchoolPromotionService {
     final id = exam['examId']?.toString() ?? '';
     if (id.isEmpty) return false;
     final definitions = await Future.wait([
-      db.collection('_local_exam_center_exams').doc(id).get(),
       db.collection('exams').doc(id).get(),
+      db.collection('_local_exam_center_exams').doc(id).get(),
       db.collection('school_settings').doc('exam_$id').get(),
     ]);
     if (db.activeProfileId != profile)
@@ -437,6 +437,7 @@ class SchoolPromotionService {
                 .doc('${exam['examId']}_$studentId')
                 .get())
             .data() ??
+        (await FirebaseFirestore.instance.collection('exam_center_results').doc('${exam['examId']}_$studentId').get()).data() ??
         (await FirebaseFirestore.instance
                 .collection('_local_exam_center_results')
                 .doc('${exam['examId']}_$studentId')
@@ -451,13 +452,9 @@ class SchoolPromotionService {
         'Calculate and save this student final-exam result first.',
       );
     final definition =
+        (await FirebaseFirestore.instance.collection('exams').doc(exam['examId'].toString()).get()).data() ??
         (await FirebaseFirestore.instance
                 .collection('_local_exam_center_exams')
-                .doc(exam['examId'])
-                .get())
-            .data() ??
-        (await FirebaseFirestore.instance
-                .collection('exams')
                 .doc(exam['examId'])
                 .get())
             .data();

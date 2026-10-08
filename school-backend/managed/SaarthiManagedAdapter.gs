@@ -51,6 +51,35 @@ function VS_managedRoot() {
   if (!school || root.getDescription() !== 'VIDYA_MANAGED_SCHOOL:' + school) throw new Error('School Drive root mismatch');
   return root;
 }
+/** Owner-editor inventory only. Never routed through the signed web API.
+ * Reads existing IDs/metadata without creating folders, backfilling Sheets,
+ * reading record contents, returning connection secrets or moving files.
+ * A partial inventory must not be used to approve a migration.
+ */
+function VS_inventoryManagedStorage() {
+  const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
+  const root=VS_managedRoot(),pending=[{folder:root,path:[]}],files=[],folders=[],seen={};
+  let partial=false;
+  while(pending.length) {
+    if(files.length+folders.length>=5000){partial=true;break;}
+    const item=pending.shift(),id=item.folder.getId();
+    if(seen[id]){partial=true;continue;}seen[id]=true;
+    folders.push({id:id,path:item.path});
+    const children=item.folder.getFolders();
+    while(children.hasNext()) {
+      if(pending.length+files.length+folders.length>=5000){partial=true;break;}
+      const child=children.next();pending.push({folder:child,path:item.path.concat(child.getName())});
+    }
+    const entries=item.folder.getFiles();
+    while(entries.hasNext()) {
+      if(files.length+folders.length>=5000){partial=true;break;}
+      const file=entries.next();
+      files.push({id:file.getId(),parentId:id,path:item.path,name:file.getName(),mimeType:file.getMimeType(),sizeBytes:file.getSize()});
+    }
+  }
+  return {schoolId:school,rootFolderId:root.getId(),workbookId:p.getProperty('VS_MANAGED_SHEET_ID')||null,
+    inventoryVersion:1,partial:partial,folders:folders,files:files};
+}
 function VS_managedVerify(e) {
   const b = JSON.parse(e.postData.contents), p = PropertiesService.getScriptProperties();
   const school = p.getProperty('VS_MANAGED_SCHOOL_ID'), secret = p.getProperty('VS_MANAGED_SECRET');

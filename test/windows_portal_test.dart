@@ -149,10 +149,17 @@ void main() {
   test('offline exam definitions and subjects save with Local Data OFF', () async {
     final saved = await WindowsExamService.request({'action':'save_exam', 'examName':'Final Exam',
       'studentClass':'Class 5', 'subjects':['English','Maths'], 'isFinal':true, 'fullMarks':100, 'passMarks':33});
-    expect(saved['success'], true); expect(saved['windowsLocalFallback'], true); expect(saved['sessionOnly'], true);
+    expect(saved['success'], true); expect(saved['windowsLocalFallback'], true); expect(saved['sessionOnly'], false);
     final listed = await WindowsExamService.request({'action':'list_exam_center'});
     expect((listed['exams'] as List).single['subjects'], ['English','Maths']);
     expect((listed['exams'] as List).single['isFinal'], true);
+    final origin = local.FirebaseFirestore.instance.activeProfileId;
+    await local.FirebaseFirestore.instance.resetVolatileSession();
+    await local.FirebaseFirestore.instance.switchProfile('exam-restart-away');
+    await local.FirebaseFirestore.instance.switchProfile(origin);
+    final reopened = await WindowsExamService.request({'action':'list_exam_center'});
+    expect((reopened['exams'] as List).single['subjects'], ['English','Maths']);
+    expect(await WindowsRuntimeFlags.localStorageEnabled(), false);
   });
   test('exam actions reject unrelated mutations', () async {
     expect(() => WindowsBackendBridge.localExamAction({'action':'delete_student'}), throwsArgumentError);

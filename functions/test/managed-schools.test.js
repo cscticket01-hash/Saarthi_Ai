@@ -1,6 +1,20 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto'),vm=require('node:vm'),fs=require('node:fs');
 const {createManagedSchools,protect,unprotect,clean,scriptUrl}=require('../managed-schools');
+test('website exam reads require developer auth, retain tenant isolation and suppress duplicate tombstones',async()=>{
+ const f=fixture(async(_,opt)=>{
+  const envelope=JSON.parse(opt.body),request=JSON.parse(envelope.payload);
+  const row={schoolId:envelope.schoolId,examId:'unit',personId:'pupil',timestamp:1};
+  const records=request.collection==='exams'?{unit:{...row,name:'Unit Test'}}:request.collection==='exam_center_results'?{own:row,removed:row}:{own:{...row,timestamp:2,marks:90},removed:{schoolId:envelope.schoolId,_syncDeleted:true}};
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:envelope.schoolId,records})};
+ });
+ await assert.rejects(f.call({action:'developer/managed/exams',schoolId:A}),e=>e.status===403);assert.equal(f.sent.length,0);
+ const result=await f.call({action:'developer/managed/exams',schoolId:A},'developer');
+ assert.equal(result.schoolId,A);assert.equal(result.exams.length,1);assert.equal(result.results.length,1);assert.equal(result.results[0].marks,90);
+ assert(f.sent.every(item=>JSON.parse(item.opt.body).schoolId===A));
+ const foreign=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,records:{foreign:{schoolId:B}}})}));
+ await assert.rejects(foreign.call({action:'developer/managed/exams',schoolId:A},'developer'),e=>e.status===502);
+});
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),key='c'.repeat(64),secret='d'.repeat(64),time=1800000000000;
 function fixture(fetchOverride,options={}){const docs=new Map(),users=new Map(),sent=[];
  const snap=p=>({exists:docs.has(p),data:()=>docs.get(p)});

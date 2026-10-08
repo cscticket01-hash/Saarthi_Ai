@@ -81,6 +81,37 @@ test('managed mobile reuses existing QR verification and never exposes another p
  assert.equal(f.call({action:'managed_mobile',lease:{schoolId:B,expiresAt:Date.now()+60000},request:login}).success,false);
  write('students_directory','pupil',{name:'Own pupil',mobileLinkToken:'z'.repeat(48)});assert.equal(mobile({action:'mobile_dashboard',sessionToken:session.sessionToken}).success,false);
 });
+test('exam centre result delta reaches only its pupil, deduplicates dual writes and retains deletion',()=>{
+ const f=storage();
+ const write=(collection,id,data)=>f.call({action:'managed_records',operation:'write',collection,id,data:{...data,schoolId:A}});
+ write('students_directory','pupil',{name:'Own pupil',class:'Class 1',rollNo:'1',dob:'2015-01-01',mobileLinkToken:'x'.repeat(48)});
+ const mobile=request=>f.call({action:'managed_mobile',lease:{schoolId:A,expiresAt:Date.now()+60000},request});
+ const login=mobile({action:'mobile_login',role:'student',personId:'pupil',linkToken:'x'.repeat(48),studentClass:'Class 1',rollNo:'1',dob:'2015-01-01'});
+ const request={action:'mobile_dashboard',sessionToken:login.sessionToken};
+ const first=mobile(request);assert.equal(first.success,true);
+ write('exam_center_results','exam_pupil',{examId:'exam',personId:'pupil',marks:90,timestamp:1});
+ write('exam_center_results','exam_foreign',{examId:'exam',personId:'other',marks:15});
+ const changed=mobile({...request,knownRevisions:first.revisions});
+ assert.equal(changed.reportCards.length,1);assert.equal(changed.reportCards[0].marks,90);
+ const same=mobile({...request,knownRevisions:changed.revisions,knownRevision:changed.revision});assert.equal(same.unchanged,true);
+ write('exam_results','exam_pupil',{examId:'exam',personId:'pupil',marks:95,timestamp:2});
+ const dual=mobile({...request,knownRevisions:changed.revisions});assert.equal(dual.reportCards.length,1);assert.equal(dual.reportCards[0].marks,95);
+ assert.equal(f.call({action:'managed_records',operation:'delete',collection:'exam_results',id:'exam_pupil'}).success,true);
+ const deleted=mobile({...request,knownRevisions:dual.revisions});assert.equal(deleted.reportCards.length,0);
+});
+test('owner inventory only reads the verified root and never creates or moves storage',()=>{
+ const source=fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8');
+ const iterator=items=>{let i=0;return{hasNext:()=>i<items.length,next:()=>items[i++]};};
+ const child={getId:()=> 'photos',getName:()=> 'Student_Photos',getFolders:()=>iterator([]),getFiles:()=>iterator([{getId:()=> 'photo-id',getName:()=> 'photo.png',getMimeType:()=> 'image/png',getSize:()=>123}])};
+ const root={getId:()=> 'verified-root',getFolders:()=>iterator([child]),getFiles:()=>iterator([])};
+ const context=vm.createContext({PropertiesService:{getScriptProperties:()=>({getProperty:key=>({'VS_MANAGED_SCHOOL_ID':A,'VS_MANAGED_SHEET_ID':'existing-book'})[key]})}});
+ vm.runInContext(source,context);context.VS_managedRoot=()=>root;
+ const out=context.VS_inventoryManagedStorage();
+ assert.equal(out.schoolId,A);assert.equal(out.rootFolderId,'verified-root');assert.equal(out.workbookId,'existing-book');assert.equal(out.partial,false);
+ assert.equal(out.files.length,1);assert.equal(out.files[0].id,'photo-id');assert.equal(out.files[0].parentId,'photos');
+ assert.equal(JSON.stringify(out).includes('secret'),false);
+ assert(!source.includes("b.action==='managed_inventory'"));
+});
 test('managed summary measures own root only and includes actual student count',()=>{
  const f=storage();f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'pupil',data:{schoolId:A,name:'A'}});f.roots[A].createFile('own','own-data','text/plain');f.roots[B].createFile('foreign','foreign-school-data','text/plain');
  const result=f.call({action:'managed_summary'});assert.equal(result.success,true);assert.equal(result.studentCount,1);assert(result.driveBytes>0);assert.equal(result.partial,false);

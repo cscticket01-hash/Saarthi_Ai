@@ -1,4 +1,5 @@
 import 'promotion_session_policy.dart';
+import 'windows_connect/central_school_cloud.dart';
 
 import 'dart:convert';
 import 'dart:math';
@@ -27,7 +28,7 @@ class WindowsExamService {
     if (action == 'save_exam') {
       final existing =
           (await FirebaseFirestore.instance
-                  .collection('_local_exam_center_exams')
+                  .collection('exams')
                   .doc(request['examId'].toString())
                   .get())
               .data();
@@ -43,6 +44,12 @@ class WindowsExamService {
     final local = await WindowsBackendBridge.localExamAction(request);
     _requireProfile(profile);
     if (local['success'] != true) return local;
+    // Managed saves are already queued atomically by the existing local DB.
+    // Do not wait on cloud or duplicate them into a manual legacy queue.
+    if ((await CentralSchoolCloud.saved())['managed'] == true) {
+      _requireProfile(profile);
+      return {...local, 'cloudSyncPending': action != 'list_exam_center'};
+    }
     final connection = await WindowsConnectionCenter.reload();
     _requireProfile(profile);
     if (action != 'list_exam_center') {

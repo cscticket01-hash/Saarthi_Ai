@@ -1,3 +1,4 @@
+import 'windows_fee_structure.dart';
 import 'fitted_document_preview.dart';
 import 'document_upload_dialog.dart';
 import 'qr_authentication_engine.dart';
@@ -11479,18 +11480,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
 Future<Map<String, dynamic>> _getClassFeeSettings(
   String studentClass,
 ) async {
-  final cached = _feeSettingsCache[studentClass];
-
-  if (cached != null) {
-    return cached;
-  }
-
-  final doc = await FirebaseFirestore.instance
-      .collection('fee_settings')
-      .doc(_settingsDocId(studentClass))
-      .get();
-
-  final data = doc.data() ?? <String, dynamic>{};
+  final data = await WindowsFeeStructure.load(studentClass);
   final rawFees =
       Map<String, dynamic>.from(data['fees'] ?? {});
 
@@ -11553,7 +11543,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       return;
     }
 
-        final cachedSettings = _feeSettingsCache[studentClass];
+        final cachedSettings = await _getClassFeeSettings(studentClass);
+        if (!mounted) return;
     
         _activeStudentId = studentDoc.id;
         _selectedClass = studentClass;
@@ -13135,7 +13126,7 @@ class FeeCollectionSettingsScreen extends StatefulWidget {
 
 class _FeeCollectionSettingsScreenState
     extends State<FeeCollectionSettingsScreen> {
-  static const List<String> _feeHeads = [
+  static const List<String> _standardFeeHeads = [
     'Tuition Fees',
     'Admission Fees',
     'Registration Fees',
@@ -13157,14 +13148,46 @@ class _FeeCollectionSettingsScreenState
     'Late Fees',
     'Vehicle Fees',
   ];
+  List<String> _customFeeHeads = [];
+  List<String> get _feeHeads => [..._standardFeeHeads, ..._customFeeHeads];
 
   final List<String> _classes =
       List.generate(12, (index) => 'Class ${index + 1}');
   final Map<String, TextEditingController> _controllers = {};
 
   String _selectedClass = 'Class 1';
+  String _academicSession = '';
+  List<String> get _sessions {
+    final year = int.tryParse(_academicSession.split('-').first) ?? DateTime.now().year;
+    return List.generate(7, (i) => '${year - 3 + i}-${year - 2 + i}');
+  }
   bool _loading = true;
   bool _saving = false;
+  bool _editing = true;
+  final _profile = FirebaseFirestore.instance.activeProfileId;
+
+  Future<void> _editSettings() async {
+    if (_saving || _loading || _editing) return;
+    await WindowsLocalSecurity.initialize();
+    if (!WindowsLocalSecurity.configured) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Set App Lock before editing saved fees.')));
+      return;
+    }
+    final selected = _selectedClass;
+    await FirebaseFirestore.instance.ensureDurableSchoolRecords();
+    if (!mounted || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    final lock = FirebaseFirestore.instance.collection('_local_fee_edit_locks').doc(_docId(selected));
+    final old = (await lock.get()).data();
+    final deadline = old?['unlockAt'] is num
+        ? DateTime.fromMillisecondsSinceEpoch((old!['unlockAt'] as num).toInt())
+        : DateTime.now().add(const Duration(seconds: 30));
+    if (old == null) await lock.set({'unlockAt': deadline.millisecondsSinceEpoch});
+    if (!mounted || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    final authorized = await showDialog<bool>(context: context, barrierDismissible: false,
+      builder: (_) => _DriveUnlinkSecurityDialog(deadline: deadline));
+    if (authorized != true || !mounted || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    setState(() => _editing = true);
+  }
 
   @override
   void initState() {
@@ -13183,7 +13206,7 @@ class _FeeCollectionSettingsScreenState
     super.dispose();
   }
 
-  String _docId(String className) => className.replaceAll(' ', '_');
+  String _docId(String className) => WindowsFeeStructure.documentId(className, _academicSession);
 
   double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
@@ -13200,18 +13223,23 @@ class _FeeCollectionSettingsScreenState
   }
 
   Future<void> _loadSettings() async {
+    final selected = _selectedClass;
     setState(() => _loading = true);
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('fee_settings')
-          .doc(_docId(_selectedClass))
-          .get();
-      final data = doc.data() ?? <String, dynamic>{};
+      if (_academicSession.isEmpty) _academicSession = await WindowsFeeStructure.currentSession();
+      final session = _academicSession;
+      final data = await WindowsFeeStructure.load(selected, session: session);
+      if (!mounted || session != _academicSession || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
       final fees = Map<String, dynamic>.from(data['fees'] ?? {});
+      _customFeeHeads = fees.keys.where((head) => !_standardFeeHeads.contains(head)).toList();
+      for (final head in _customFeeHeads) {
+        _controllers.putIfAbsent(head, () => TextEditingController());
+      }
+      _editing = data['configured'] != true && fees.values.every((v) => _toDouble(v) == 0);
 
       for (final head in _feeHeads) {
         final amount = _toDouble(fees[head]);
-        _controllers[head]!.text = amount > 0 ? amount.toStringAsFixed(0) : '';
+        _controllers[head]!.text = amount > 0 ? (amount == amount.roundToDouble() ? amount.toStringAsFixed(0) : amount.toString()) : '';
       }
     } catch (e) {
       if (mounted) {
@@ -13225,13 +13253,14 @@ class _FeeCollectionSettingsScreenState
   }
 
   Future<void> _saveSettings() async {
-    if (_saving) return;
+    if (_saving || !_editing || _loading || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    final selected = _selectedClass;
 
     final fees = <String, double>{};
     for (final head in _feeHeads) {
       final raw = _controllers[head]!.text.trim();
       final amount = raw.isEmpty ? 0.0 : double.tryParse(raw);
-      if (amount == null || amount < 0) {
+      if (amount == null || !amount.isFinite || amount < 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.redAccent,
@@ -13258,24 +13287,19 @@ class _FeeCollectionSettingsScreenState
 
     setState(() => _saving = true);
     try {
-      await FirebaseFirestore.instance
-          .collection('fee_settings')
-          .doc(_docId(_selectedClass))
-          .set({
-        'className': _selectedClass,
-        'fees': fees,
-        'configured': true,
-        'configuredHeads': configuredHeads,
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-      }, SetOptions(merge: true));
+      await FirebaseFirestore.instance.ensureDurableSchoolRecords();
+      if (selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) throw StateError('School or class changed.');
+      await WindowsFeeStructure.save(selected, _academicSession, fees);
+      if (!mounted || FirebaseFirestore.instance.activeProfileId != _profile) return;
+      setState(() => _editing = false);
+
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF00A884),
           content: Text(
-            '$_selectedClass fee structure saved. ${configuredHeads.length} fee types collection ke liye active hain.',
+            '$selected fee structure saved locally and locked. Cloud sync queued.',
           ),
         ),
       );
@@ -13386,6 +13410,13 @@ class _FeeCollectionSettingsScreenState
                             ),
                           ),
                         ),
+                        if (_academicSession.isNotEmpty)
+                          DropdownButtonFormField<String>(
+                            value: _academicSession,
+                            decoration: const InputDecoration(labelText: 'Academic session'),
+                            items: _sessions.map((session) => DropdownMenuItem(value: session, child: Text(session))).toList(),
+                            onChanged: _saving ? null : (session) { if (session != null) { setState(() => _academicSession = session); _loadSettings(); } },
+                          ),
                         const SizedBox(height: 12),
                         Expanded(
                           child: ListView.separated(
@@ -13412,7 +13443,10 @@ class _FeeCollectionSettingsScreenState
                                     ),
                                     SizedBox(
                                       width: 190,
-                                      child: TextField(
+                                      child: !_editing
+                                          ? Text('₹ ${_controllers[head]!.text.isEmpty ? '0' : _controllers[head]!.text}', textAlign: TextAlign.right, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))
+                                          : TextField(
+                                        enabled: !_saving,
                                         controller: _controllers[head],
                                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                         style: const TextStyle(color: Colors.white),
@@ -13445,16 +13479,16 @@ class _FeeCollectionSettingsScreenState
                               backgroundColor: const Color(0xFF00A884),
                               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 15),
                             ),
-                            onPressed: _saving ? null : _saveSettings,
+                            onPressed: _saving ? null : _editing ? _saveSettings : _editSettings,
                             icon: _saving
                                 ? const SizedBox(
                                     width: 18,
                                     height: 18,
                                     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                   )
-                                : const Icon(Icons.save_rounded, color: Colors.white),
+                                : Icon(_editing ? Icons.save_rounded : Icons.edit_rounded, color: Colors.white),
                             label: Text(
-                              _saving ? 'Saving...' : 'Save / Update Fee Structure',
+                              _saving ? 'Saving...' : _editing ? 'Save / Update Fee Structure' : 'Edit Fee Structure',
                               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
                             ),
                           ),
@@ -20137,7 +20171,8 @@ class _AdvancedStudentUidSettingsPanelState
   }
 }
 class _DriveUnlinkSecurityDialog extends StatefulWidget {
-  const _DriveUnlinkSecurityDialog();
+  const _DriveUnlinkSecurityDialog({this.deadline});
+  final DateTime? deadline;
 
   @override
   State<_DriveUnlinkSecurityDialog> createState() =>
@@ -20157,6 +20192,9 @@ class _DriveUnlinkSecurityDialogState
   @override
   void initState() {
     super.initState();
+    if (widget.deadline != null) {
+      _seconds = ((widget.deadline!.difference(DateTime.now()).inMilliseconds + 999) ~/ 1000).clamp(0, 30).toInt();
+    }
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         timer.cancel();
@@ -20190,7 +20228,7 @@ class _DriveUnlinkSecurityDialogState
       _error = null;
     });
     try {
-      if(FirebaseFirestore.instance.activeProfileId!=_profile)throw StateError('School changed. Reopen Drive settings.');
+      if(FirebaseFirestore.instance.activeProfileId!=_profile)throw StateError('School changed. Reopen settings.');
       await WindowsLocalSecurity.initialize();
       if (!WindowsLocalSecurity.verifyPassword(pass)) {
         throw Exception('Invalid Local App Lock password');
@@ -20427,7 +20465,7 @@ class _StudentDocumentsScreenState
       setState(() {
         if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) _documents = [];
         _loading = false;
-        _error = e.toString();
+        _error = 'Documents could not be loaded. Retry; existing files are retained.';
       });
     }
   }
@@ -22673,7 +22711,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     padding: const EdgeInsets.fromLTRB(18, 18, 18, 100),
                     children: [
                       if (_error != null) ListTile(leading: const Icon(Icons.cloud_off, color: Colors.orange), title: Text(_error!), trailing: TextButton(onPressed: _load, child: const Text('Retry'))),
-                      const Text('Exam tools work offline. With Local Data OFF, offline edits last only for this session. Enable Local Data to keep them on this PC.', style: TextStyle(color: Colors.orangeAccent)),
+                      const Text('Exam records save durably on this PC. Cloud changes sync automatically; offline changes stay pending until acknowledged.', style: TextStyle(color: Colors.white60)),
                       const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.all(20),

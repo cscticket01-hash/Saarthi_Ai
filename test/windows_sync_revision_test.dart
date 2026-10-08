@@ -1,3 +1,4 @@
+import '../lib/windows_exam_service.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
@@ -24,6 +25,28 @@ void main(){
    'projectId':platformProjectId,'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseRefreshToken':'refresh','storageReady':false})});
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('revision-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});
+ });
+ test('automatic retry starts promptly and exponentially backs off without high-frequency polling', () {
+   expect(WindowsSyncEngine.retryDelayForFailure(1), const Duration(seconds:5));
+   expect(WindowsSyncEngine.retryDelayForFailure(2), const Duration(seconds:10));
+   expect(WindowsSyncEngine.retryDelayForFailure(100), const Duration(minutes:5));
+   expect(WindowsSyncEngine.retryDelayForFailure(1, quotaLimited:true), const Duration(minutes:1));
+   expect(WindowsSyncEngine.retryDelayForFailure(100, quotaLimited:true), const Duration(minutes:15));
+ });
+ test('managed exam saves persist, enqueue automatically and retain legacy history without overwriting', () async {
+   await db.collection('_local_exam_center_exams').doc('legacy').set({'examId':'legacy','examName':'Retained old exam'});
+   final created=await WindowsExamService.request({'action':'save_exam','examId':'durable','examName':'Unit Test','subjects':['Maths'],'fullMarks':50,'passMarks':20,'isFinal':false});
+   expect(created['success'],true);expect(created['cloudSyncPending'],true);expect(created['sessionOnly'],false);
+   await WindowsExamService.request({'action':'save_exam_result','examId':'durable','studentId':'own','marks':{'Maths':35},'result':'PASS'});
+   final queue=(await db.collection('_windows_firebase_outbox').get()).docs.map((d)=>d.data()['collection']).toSet();
+   expect(queue,containsAll(['exams','exam_center_results']));
+   expect((await db.collection('_windows_exam_pending').get()).docs,isEmpty);
+   final origin=db.activeProfileId;
+   await db.resetVolatileSession();await db.switchProfile('exam-away');
+   await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+   final reopened=await WindowsExamService.request({'action':'list_exam_center'});
+   expect((reopened['exams'] as List).length,2);expect((reopened['results'] as List).single['marks'],{'Maths':35});
+   expect((await db.collection('_local_exam_center_exams').doc('legacy').get()).exists,true);
  });
  test('notice durable save returns without any Firebase or Drive call',()async{
   final watch=Stopwatch()..start();
@@ -68,7 +91,7 @@ void main(){
  });
  test('lazy document cache survives restart and never fetches unchanged file twice',()async{
   var reads=0;final bytes=Uint8List.fromList(utf8.encode('%PDF-1.4\nrepresentative cached document\n%%EOF'));
-  final record={'schoolId':school,'fileId':'drive-test-${DateTime.now().microsecondsSinceEpoch}','documentRevision':'revision'};
+  final record={'schoolId':school,'fileId':'drive-test-${DateTime.now().microsecondsSinceEpoch}','documentRevision':'revision','originalPath':jsonEncode({'documents':[{'fileUrl':'https://drive.google.com/file/d/cloud/view'}]}),'localPath':'bad\u0000path'};
   Future<Map<String,dynamic>> fetch(String s,String id)async{reads++;expect(s,school);return {'success':true,'schoolId':school,'mime':'application/pdf','base64':base64Encode(bytes)};}
   final simultaneous=await Future.wait([WindowsBackendBridge.documentBytes(record,fetch:fetch),WindowsBackendBridge.documentBytes(record,fetch:fetch)]);expect(simultaneous.every((b)=>base64Encode(b)==base64Encode(bytes)),true);expect(reads,1);
   final origin=db.activeProfileId;await db.switchProfile('away');await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
@@ -81,6 +104,39 @@ void main(){
   await db.applySyncedDocument(ref,{'name':'Stale remote','_syncRevision':'stale'});
   expect((await ref.get()).data()?['name'],'Local');
   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['syncState'],'retry');
+ });
+ test('17 pending operations survive 503 and lost ACK; retry keeps IDs and deduplicates remote commits',()async{
+  for(var i=0;i<17;i++){
+   await db.collection('students_directory').doc('pending-$i').set({'name':'Test pupil $i'});
+  }
+  final profile=db.activeProfileId;
+  final before=(await db.collection('_windows_firebase_outbox').get()).docs;
+  expect(before.length,17);
+  final ids=before.map((d)=>d.data()['operationId']).toSet();
+  await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,
+   send:(a,b,c,d)async=>fail('versioned path only'),
+   sendVersioned:(item)async=>throw const HttpException('Central school API failed (HTTP 503)')),
+   throwsA(isA<HttpException>()));
+  await db.switchProfile('other-school',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+  expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  await db.switchProfile(profile,identity:{'schoolSyncId':school,'schoolId':school});
+  var retained=(await db.collection('_windows_firebase_outbox').get()).docs;
+  expect(retained.length,17);
+  expect(retained.map((d)=>d.data()['operationId']).toSet(),ids);
+  final remote=<String,String>{};var lostAck=true;var commits=0;
+  Future<String> publish(Map<String,dynamic> item)async{
+   expect(item['schoolId'],school);
+   final id=item['operationId'] as String;
+   if(!remote.containsKey(id)){remote[id]='ack-$id';commits++;}
+   if(lostAck){lostAck=false;throw const HttpException('ACK response lost');}
+   return remote[id]!;
+  }
+  await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async{},sendVersioned:publish),throwsA(isA<HttpException>()));
+  expect((await db.collection('_windows_firebase_outbox').get()).docs.length,17);
+  await WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async{},sendVersioned:publish);
+  expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  expect(commits,17);expect(remote.keys.toSet(),ids);
+  expect((await db.collection('students_directory').get()).docs.length,17);
  });
  test('crash generations recover without silently overwriting irrecoverable school data',()async{
   await db.collection('students_directory').doc('retained').set({'name':'Retained'});

@@ -6512,6 +6512,35 @@ function VS_managedRoot() {
   if (!school || root.getDescription() !== 'VIDYA_MANAGED_SCHOOL:' + school) throw new Error('School Drive root mismatch');
   return root;
 }
+/** Owner-editor inventory only. Never routed through the signed web API.
+ * Reads existing IDs/metadata without creating folders, backfilling Sheets,
+ * reading record contents, returning connection secrets or moving files.
+ * A partial inventory must not be used to approve a migration.
+ */
+function VS_inventoryManagedStorage() {
+  const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
+  const root=VS_managedRoot(),pending=[{folder:root,path:[]}],files=[],folders=[],seen={};
+  let partial=false;
+  while(pending.length) {
+    if(files.length+folders.length>=5000){partial=true;break;}
+    const item=pending.shift(),id=item.folder.getId();
+    if(seen[id]){partial=true;continue;}seen[id]=true;
+    folders.push({id:id,path:item.path});
+    const children=item.folder.getFolders();
+    while(children.hasNext()) {
+      if(pending.length+files.length+folders.length>=5000){partial=true;break;}
+      const child=children.next();pending.push({folder:child,path:item.path.concat(child.getName())});
+    }
+    const entries=item.folder.getFiles();
+    while(entries.hasNext()) {
+      if(files.length+folders.length>=5000){partial=true;break;}
+      const file=entries.next();
+      files.push({id:file.getId(),parentId:id,path:item.path,name:file.getName(),mimeType:file.getMimeType(),sizeBytes:file.getSize()});
+    }
+  }
+  return {schoolId:school,rootFolderId:root.getId(),workbookId:p.getProperty('VS_MANAGED_SHEET_ID')||null,
+    inventoryVersion:1,partial:partial,folders:folders,files:files};
+}
 function VS_managedVerify(e) {
   const b = JSON.parse(e.postData.contents), p = PropertiesService.getScriptProperties();
   const school = p.getProperty('VS_MANAGED_SCHOOL_ID'), secret = p.getProperty('VS_MANAGED_SECRET');
@@ -6887,7 +6916,10 @@ function VS_mobileAction(b){
   else groups.salary='teacher_salary';
   Object.keys(groups).forEach(key=>{
    const col=groups[key];if(props.getProperty('VS_SHEET_MIGRATED_'+col)!=='1')VS_managedSheet(col);
-   const revision=props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
+   if(key==='reportCards'&&props.getProperty('VS_SHEET_MIGRATED_exam_center_results')!=='1')VS_managedSheet('exam_center_results');
+   const revision=key==='reportCards'
+    ? JSON.stringify([props.getProperty('VS_RECORD_REV_exam_results')||'legacy',props.getProperty('VS_RECORD_REV_exam_center_results')||'legacy'])
+    : props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
    if(known[key]===revision)return;
    if(key==='school')result.school=VS_mobileSchoolProfile();
    else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}
@@ -6904,6 +6936,21 @@ function VS_mobileAction(b){
     result.documents=docs.filter(d=>d.documentKind!=='idCard').map(d=>({documentId:d.id,documentName:d.documentName,mimeType:d.mimeType,sizeBytes:d.sizeBytes,documentRevision:d.documentRevision,contentHash:d.contentHash}));
     const card=docs.find(d=>d.documentKind==='idCard'&&d.ownerRole===session.role);
     result.idCardPackage=card?{documentId:card.id,documentRevision:card.documentRevision,contentHash:card.contentHash,sizeBytes:card.sizeBytes}:null;
+   } else if(key==='reportCards') {
+    // Both existing writers remain authoritative. A tombstone in either store
+    // suppresses its duplicate; do not revive results through the other writer.
+    const canonical=VS_managedRecordUnlocked({operation:'read',collection:'exam_results',syncProtocol:2}).records;
+    const centre=VS_managedRecordUnlocked({operation:'read',collection:'exam_center_results',syncProtocol:2}).records;
+    const rows={},removed={};
+    [canonical,centre].forEach(records=>Object.keys(records).forEach(id=>{if(records[id]._syncDeleted||records[id].deleted)removed[id]=true;}));
+    recordCache.exam_results={};recordCache.exam_center_results={};
+    [[canonical,'exam_results'],[centre,'exam_center_results']].forEach(pair=>Object.keys(pair[0]).forEach(id=>{if(!removed[id])recordCache[pair[1]][id]=pair[0][id];}));
+    ['exam_center_results','exam_results'].forEach(source=>VS_own(source,session).forEach(row=>{
+     if(removed[row.id])return;
+     const old=rows[row.id];
+     if(!old||Number(row.timestamp||row.updatedAt||0)>=Number(old.timestamp||old.updatedAt||0))rows[row.id]=row;
+    }));
+    result.reportCards=Object.keys(rows).map(id=>rows[id]);
    } else result[key]=VS_own(col,session);
   });
   result.revisions=revisions;

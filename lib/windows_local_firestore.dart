@@ -122,7 +122,8 @@ class FirebaseFirestore {
     final origin = activeProfileId;
     final identity = activeProfileIdentity;
     if (!validSchoolId(identity['schoolSyncId']?.toString() ?? '')) {
-      return WindowsRuntimeFlags.localStorageEnabled();
+      return await WindowsRuntimeFlags.durableSchoolProfile(origin) ||
+          await WindowsRuntimeFlags.localStorageEnabled();
     }
     // Cache only the validated storage decision, never credentials. The
     // authoritative login/session notifier and immutable profile identity
@@ -144,7 +145,7 @@ class FirebaseFirestore {
         ManagedSchoolSession.changed.value != revision) {
       throw StateError('School changed during storage resolution.');
     }
-    return mode == 1 || mode == 0 && await WindowsRuntimeFlags.localStorageEnabled();
+    return mode == 1 || mode == 0 && (await WindowsRuntimeFlags.durableSchoolProfile(origin) || await WindowsRuntimeFlags.localStorageEnabled());
   }
 
   Future<int> _resolvePersistence(Map<String, dynamic> identity) async {
@@ -156,6 +157,16 @@ class FirebaseFirestore {
         identity['schoolSyncId'] == saved['schoolId'] &&
         (identity['schoolId'] == null || identity['schoolId'] == saved['schoolId']) &&
         identity['blocked'] != true ? 1 : -1;
+  }
+
+  /// Exam/fee school records cannot silently fall back to session-only storage.
+  /// Promote only the active standalone profile, keeping the global setting.
+  Future<void> ensureDurableSchoolRecords() async {
+    if (await localPersistenceEnabled()) return;
+    if ((await CentralSchoolCloud.saved())['managed'] == true) {
+      throw StateError('Verified school context required for durable records.');
+    }
+    await _database.enableDurableProfile();
   }
 
   Future<void> resetVolatileSession() => _database.resetVolatileSession();
@@ -1261,6 +1272,44 @@ class _LocalJsonDatabase {
 
   /// Clears only the non-persistent session cache used while Local Storage is
   /// OFF. Disk data is never deleted by this method.
+  Future<void> enableDurableProfile() {
+    final origin = _activeProfileId;
+    final next = _writeTail.then((_) async {
+      if (_activeProfileId != origin) throw StateError('School changed.');
+      if (await FirebaseFirestore.instance.localPersistenceEnabled()) return;
+      final memory = _cloneRoot(_memoryRoot);
+      await WindowsRuntimeFlags.setDurableSchoolProfile(origin, true);
+      try {
+        final disk = await _readRoot();
+        final profiles = Map<String, dynamic>.from(disk['profiles'] as Map? ?? {});
+        final current = (memory['profiles'] as Map?)?[origin] as Map?;
+        if (current != null) {
+          final saved = Map<String, dynamic>.from(profiles[origin] as Map? ?? {});
+          final collections = Map<String, dynamic>.from(saved['collections'] as Map? ?? {});
+          for (final entry in (current['collections'] as Map? ?? {}).entries) {
+            final records = Map<String, dynamic>.from(collections[entry.key] as Map? ?? {});
+            for (final record in (entry.value as Map).entries) {
+              if (records.containsKey(record.key) &&
+                  _jsonStableMap({'data': records[record.key]}) != _jsonStableMap({'data': record.value})) {
+                throw StateError('Existing durable school data conflicts with this session; both retained.');
+              }
+              records[record.key] = record.value;
+            }
+            collections[entry.key.toString()] = records;
+          }
+          profiles[origin] = {...saved, ...Map<String, dynamic>.from(current), 'collections': collections};
+        }
+        disk['profiles'] = profiles;
+        await _writeRoot(disk);
+      } catch (_) {
+        await WindowsRuntimeFlags.setDurableSchoolProfile(origin, false);
+        rethrow;
+      }
+    });
+    _writeTail = next.catchError((_) {});
+    return next;
+  }
+
   Future<void> resetVolatileSession() async {
     _memoryRoot = <String, dynamic>{
       'version': 2,

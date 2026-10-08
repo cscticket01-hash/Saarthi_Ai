@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image/image.dart' as img;
+import 'package:http/http.dart' as http;
 
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
@@ -36,6 +37,37 @@ void main() {
       'documents-${DateTime.now().microsecondsSinceEpoch}',
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
+  });
+  test('synced multilingual inventory JSON is decoded without treating metadata as paths', () async {
+    final metadata = <String,dynamic>{
+      'schoolId':school, 'studentId':'S-1', 'documentId':'doc-unicode',
+      'documentName':'জন্ম সনদ – विद्यालय', 'fileId':'existing-drive-file',
+      'fileUrl':'https://drive.google.com/file/d/existing-drive-file/view',
+      'localPath':r'C:\School\documents\scan.pdf',
+      'documentRevision':'preserved-revision', 'syncState':'Synced',
+      'mimeType':'application/pdf', 'sizeBytes':12345,
+    };
+    expect(() => http.Response(jsonEncode({'documents':[metadata]}),200),throwsArgumentError);
+    await db.collection('documents').doc('doc-unicode').set(metadata);
+    final response = await WindowsBackendBridge.post(Uri.parse(''),
+      body:jsonEncode({'action':'list_student_documents','studentId':'S-1'}));
+    expect(response.statusCode,200);
+    final rows = jsonDecode(response.body)['documents'] as List;
+    expect(rows.single['documentName'],metadata['documentName']);
+    expect(rows.single['fileId'],metadata['fileId']);
+    expect(rows.single['localPath'],metadata['localPath']);
+    expect(WindowsBackendBridge.normalizedDocumentPath(response.body),isNull);
+    expect(WindowsBackendBridge.normalizedDocumentPath(metadata),isNull);
+    expect(WindowsBackendBridge.normalizedDocumentPath(metadata['fileUrl']),isNull);
+    expect(WindowsBackendBridge.normalizedDocumentPath('bad\u0000path'),isNull);
+    final record = (await db.collection('documents').doc('doc-unicode').get()).data();
+    expect(record!['documentRevision'],'preserved-revision');
+    final origin=db.activeProfileId;
+    await db.switchProfile('inventory-restart-away');
+    await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+    final reopened=await WindowsBackendBridge.post(Uri.parse(''),
+      body:jsonEncode({'action':'list_student_documents','studentId':'S-1'}));
+    expect(jsonDecode(reopened.body)['documents'].single['fileId'],'existing-drive-file');
   });
   test('offline replacement is durable, retains originals and queues only the newest generation', () async {
     final image = img.Image(width: 300, height: 400);

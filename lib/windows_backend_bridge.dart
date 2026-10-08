@@ -29,8 +29,7 @@ import 'school_backend_transport.dart';
 
 class WindowsBackendBridge {
   /// The exam editor is available even before a school connects its backend.
-  /// This uses the active school's isolated local store (RAM when Local Data
-  /// is OFF), and never pretends a local save reached Google/Firebase.
+  /// Uses durable school-scoped storage and never labels a local save as cloud ACK.
   static Future<Map<String, dynamic>> localExamAction(
     Map<String, dynamic> body,
   ) async {
@@ -42,6 +41,7 @@ class WindowsBackendBridge {
     }.contains(action)) {
       throw ArgumentError('Not an offline exam action');
     }
+    await FirebaseFirestore.instance.ensureDurableSchoolRecords();
     return {
       ...await _handleLocal(action, body),
       'windowsLocalFallback': true,
@@ -51,6 +51,32 @@ class WindowsBackendBridge {
   }
 
   WindowsBackendBridge._();
+
+  // Response's default Latin-1 encoder rejects multilingual JSON metadata.
+  static http.Response _jsonResponse(String body, int status,
+      {Map<String, String>? headers}) => http.Response.bytes(
+    utf8.encode(body), status,
+    headers: {...?headers, 'content-type': 'application/json; charset=utf-8'},
+  );
+
+  static String? normalizedDocumentPath(dynamic value) {
+    if (value is! String) return null;
+    final path = value.trim();
+    if (path.isEmpty || path.startsWith('{') || path.startsWith('[') ||
+        RegExp(r'[\x00-\x1f]').hasMatch(path) ||
+        RegExp(r'[\uD800-\uDFFF]', unicode: true).hasMatch(path) ||
+        RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(path)) return null;
+    if (Platform.isWindows) {
+      if (!RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(path) &&
+          !RegExp(r'^\\\\[^\\/]+[\\/][^\\/]+[\\/]').hasMatch(path)) return null;
+      if (RegExp(r'[<>"|?*]').hasMatch(path.substring(2)) ||
+          path.substring(2).contains(':')) return null;
+    } else if (!path.startsWith('/')) {
+      return null;
+    }
+    return File(path).absolute.path;
+  }
+
   static Future<void> _documentTail = Future<void>.value();
   static bool _documentDraining = false;
   static Future<T> _documentWrite<T>(Future<T> Function() action) {
@@ -117,16 +143,21 @@ class WindowsBackendBridge {
     final schoolRoot = Directory(
       '${root.path}${Platform.pathSeparator}${_safeFileName(origin)}',
     );
-    final local = document['originalPath'] ?? document['localPath'];
-    if (local is String && await File(local).exists()) {
-      final canonical = await File(local).resolveSymbolicLinks(),
-          safeRoot = await schoolRoot.resolveSymbolicLinks();
-      if (!canonical.startsWith('$safeRoot${Platform.pathSeparator}'))
-        throw StateError('Foreign local document path blocked.');
-      own();
-      final bytes = await File(canonical).readAsBytes();
-      own();
-      return bytes;
+    for (final source in [document['originalPath'], document['localPath']]) {
+      final local = normalizedDocumentPath(source);
+      if (local == null) continue;
+      try {
+        if (!await File(local).exists()) continue;
+        final canonical = await File(local).resolveSymbolicLinks(),
+            safeRoot = await schoolRoot.resolveSymbolicLinks();
+        // A legacy/other-PC path is metadata, not permission to read that file.
+        // Recover via the authenticated own-school cloud file instead.
+        if (!canonical.startsWith('$safeRoot${Platform.pathSeparator}')) continue;
+        own();
+        final bytes = await File(canonical).readAsBytes();
+        own();
+        if (bytes.isNotEmpty) return bytes;
+      } on FileSystemException { /* Retain the path; try authenticated restore. */ }
     }
     final id =
         document['fileId']?.toString() ??
@@ -430,7 +461,7 @@ class WindowsBackendBridge {
                   }
                 : d.data(),
         };
-        return http.Response(
+        return _jsonResponse(
           jsonEncode({
             'success': true,
             'documents': rows.values
@@ -500,7 +531,7 @@ class WindowsBackendBridge {
           return {'success': true, 'cloudSyncPending': true};
         });
         onLocalDocumentCommitted?.call();
-        return http.Response(jsonEncode(result), 200);
+        return _jsonResponse(jsonEncode(result), 200);
       }
       final result = await _documentWrite(() {
         if (FirebaseFirestore.instance.activeProfileId != originProfile)
@@ -508,7 +539,7 @@ class WindowsBackendBridge {
         return _saveLocalStudentDocument({...localAction, '_queueCloud': true});
       });
       onLocalDocumentCommitted?.call();
-      return http.Response(
+      return _jsonResponse(
         jsonEncode({...result, 'cloudSyncPending': true}),
         200,
       );
@@ -543,7 +574,7 @@ class WindowsBackendBridge {
           : raw.startsWith('data:')
           ? raw
           : 'data:${localAction['photoMimeType'] ?? 'image/jpeg'};base64,$raw';
-      return http.Response(
+      return _jsonResponse(
         jsonEncode({
           'success': true,
           'windowsLocalFallback': true,
@@ -581,13 +612,13 @@ class WindowsBackendBridge {
     final central = await CentralSchoolCloud.saved();
     if (central.isNotEmpty) {
       try {
-        return http.Response(
+        return _jsonResponse(
           jsonEncode(await _handleCentral(_decodeBody(body))),
           200,
           headers: {'content-type': 'application/json'},
         );
       } catch (_) {
-        return http.Response(
+        return _jsonResponse(
           jsonEncode({
             'success': false,
             'message': 'School cloud operation failed. Reconnect or retry the same school. Existing files are retained.',
@@ -644,7 +675,7 @@ class WindowsBackendBridge {
                 WindowsServiceType.googleDrive,
                 'School identity mismatch or secure Google backend update required.',
               );
-              return http.Response(
+              return _jsonResponse(
                 jsonEncode({
                   'success': false,
                   'code': 'SCHOOL_PROJECT_MISMATCH',
@@ -1065,7 +1096,7 @@ class WindowsBackendBridge {
   }) async {
     try {
       if (!await FirebaseFirestore.instance.localPersistenceEnabled()) {
-        return http.Response(
+        return _jsonResponse(
           jsonEncode({
             'success': false,
             'message': 'Local Data OFF hai; local fallback/save disabled.',
@@ -1079,7 +1110,7 @@ class WindowsBackendBridge {
       final body = _decodeBody(rawBody);
       final action = body['action']?.toString().trim() ?? '';
       final result = await _handleLocal(action, body);
-      return http.Response(
+      return _jsonResponse(
         jsonEncode({
           ...result,
           'windowsLocalFallback': true,
@@ -1089,7 +1120,7 @@ class WindowsBackendBridge {
         headers: const {'content-type': 'application/json'},
       );
     } catch (e) {
-      return http.Response(
+      return _jsonResponse(
         jsonEncode({
           'success': false,
           'message': 'Local fallback error: $e',
@@ -1498,18 +1529,14 @@ class WindowsBackendBridge {
         return {'success': true, 'profile': merged};
 
       case 'list_exam_center':
-        final exams = await FirebaseFirestore.instance
-            .collection('_local_exam_center_exams')
-            .get();
-        final results = await FirebaseFirestore.instance
-            .collection('_local_exam_center_results')
-            .get();
+        final exams = await FirebaseFirestore.instance.collection('exams').get();
+        final legacyExams = await FirebaseFirestore.instance.collection('_local_exam_center_exams').get();
+        final results = await FirebaseFirestore.instance.collection('exam_center_results').get();
+        final legacyResults = await FirebaseFirestore.instance.collection('_local_exam_center_results').get();
         return {
           'success': true,
-          'exams': exams.docs
-              .map((d) => {'examId': d.id, ...d.data()})
-              .toList(),
-          'results': results.docs.map((d) => d.data()).toList(),
+          'exams': {for (final d in legacyExams.docs) d.id: {'examId': d.id, ...d.data()}, for (final d in exams.docs) d.id: {'examId': d.id, ...d.data()}}.values.toList(),
+          'results': {for (final d in legacyResults.docs) d.id: d.data(), for (final d in results.docs) d.id: d.data()}.values.toList(),
         };
 
       case 'save_exam':
@@ -1523,7 +1550,7 @@ class WindowsBackendBridge {
               body['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
         }..remove('action');
         await FirebaseFirestore.instance
-            .collection('_local_exam_center_exams')
+            .collection('exams')
             .doc(examId)
             .set(data, SetOptions(merge: true));
         return {'success': true, 'examId': examId};
@@ -1543,7 +1570,7 @@ class WindowsBackendBridge {
               ..remove('action')
               ..remove('pdfBase64');
         await FirebaseFirestore.instance
-            .collection('_local_exam_center_results')
+            .collection('exam_center_results')
             .doc('${examId}_$studentId')
             .set(data, SetOptions(merge: true));
         return {'success': true};
@@ -1825,10 +1852,17 @@ class WindowsBackendBridge {
 
     if (FirebaseFirestore.instance.activeProfileId != originProfile)
       throw StateError('School changed. Reopen documents.');
+    final ownerRecord=body['documentKind']=='idCard'?null:
+        (await FirebaseFirestore.instance.collection('students_directory').doc(studentId).get()).data();
+    if (FirebaseFirestore.instance.activeProfileId != originProfile)
+      throw StateError('School changed. Reopen documents.');
     // Immutable generations preserve the original and previous copy until an
     // explicit retention policy removes them; a failed metadata write rolls back.
     final metadata = <String, dynamic>{
       'documentId': documentId,
+      if (ownerRecord?['mobileStableId'] is String) ...{
+        'personId':ownerRecord!['mobileStableId'], 'ownerRole':'student',
+      },
       if (body['documentKind'] == 'idCard') ...{
         'documentKind': 'idCard',
         'ownerRole': body['ownerRole'],

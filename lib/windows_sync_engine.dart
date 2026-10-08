@@ -66,6 +66,8 @@ class WindowsSyncEngine {
   bool _syncBlocked = false;
 
   DateTime? lastSuccessfulSync;
+  String? _protocolIdentity;
+  DateTime? _protocolVerifiedAt;
   final metrics = <String, int>{
     'recordReadRequests': 0,
     'recordWriteRequests': 0,
@@ -73,6 +75,11 @@ class WindowsSyncEngine {
     'reconciliationMicros': 0,
   };
   final details = ValueNotifier<Map<String, dynamic>>({});
+  static Duration retryDelayForFailure(int failures, {bool quotaLimited = false}) {
+    final exponent = (failures - 1).clamp(0, 6).toInt();
+    return Duration(seconds: ((quotaLimited ? 60 : 5) * (1 << exponent)).clamp(5, quotaLimited ? 900 : 300).toInt());
+  }
+
   int _failures = 0;
   DateTime? _nextRetry, _lastPull;
   void recordLocalSave(String entity, int micros) {
@@ -186,7 +193,7 @@ class WindowsSyncEngine {
     }
   }
 
-  void scheduleSoon({Duration delay = const Duration(seconds: 2)}) {
+  void scheduleSoon({Duration delay = const Duration(milliseconds: 250)}) {
     if (!_initialized || _syncBlocked || _resetPaused) return;
     if (_syncing) {
       _rerunRequested = true;
@@ -196,7 +203,8 @@ class WindowsSyncEngine {
     if (lastError == null) state.value = SchoolCloudState.syncPending;
     if (_nextRetry != null && _nextRetry!.isAfter(DateTime.now()))
       delay = _nextRetry!.difference(DateTime.now());
-    _debounceTimer?.cancel();
+    // Coalesce a burst without postponing the first durable operation forever.
+    if (_debounceTimer?.isActive == true) return;
     _debounceTimer = Timer(delay, () {
       unawaited(syncNow());
     });
@@ -826,6 +834,9 @@ class WindowsSyncEngine {
           throw StateError(
             'School Drive connection pending. Local data retained.',
           );
+        final protocolIdentity = jsonEncode([_activeProfileId, _activeSchoolSyncId, _activeGoogleUrl, central['scriptUrl']]);
+        if (_manualSync || _protocolIdentity != protocolIdentity ||
+            _protocolVerifiedAt == null || DateTime.now().difference(_protocolVerifiedAt!) >= const Duration(minutes: 5)) {
         final health = await ManagedSchoolSession.callForSchool(
           _activeSchoolSyncId,
           'managed/storage/check',
@@ -837,12 +848,19 @@ class WindowsSyncEngine {
           throw StateError(
             'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
           );
-        await WindowsDocumentTemplates.publishChangedIdCards();
+          _protocolIdentity = protocolIdentity;
+          _protocolVerifiedAt = DateTime.now();
+        }
         try {
           await _pushManagedOutbox();
         } catch (e) {
           if (!e.toString().contains('conflict')) rethrow;
         }
+        await WindowsDocumentTemplates.publishChangedIdCards();
+        // ID preparation may create credential metadata; drain only those new
+        // durable operations before uploading their published files.
+        try { await _pushManagedOutbox(); }
+        catch (e) { if (!e.toString().contains('conflict')) rethrow; }
         try {
           await WindowsBackendBridge.flushDocumentPending();
         } catch (e) {
@@ -860,6 +878,11 @@ class WindowsSyncEngine {
           throw StateError(
             'Items need conflict review; both versions retained.',
           );
+        if ((details.value['pending'] as num? ?? 0) > 0) {
+          _rerunRequested = true;
+          state.value = SchoolCloudState.syncPending;
+          return;
+        }
         await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
           () => FirebaseFirestore.instance
               .collection('_windows_sync_status')
@@ -917,7 +940,7 @@ class WindowsSyncEngine {
       lastError = e.toString();
       _failures++;
       _nextRetry = DateTime.now().add(
-        Duration(seconds: 30 * (1 << _failures.clamp(0, 6))),
+        retryDelayForFailure(_failures, quotaLimited: RegExp(r'429|QUOTA|quota|RESOURCE_EXHAUSTED').hasMatch(lastError!)),
       );
       if (_activeProfileId == syncOrigin)
         state.value = SchoolCloudState.syncError;
@@ -928,7 +951,7 @@ class WindowsSyncEngine {
       await refreshDetails();
       if (lastError != null || _rerunRequested) {
         _rerunRequested = false;
-        scheduleSoon(delay: const Duration(seconds: 30));
+        scheduleSoon(delay: lastError == null ? const Duration(milliseconds: 250) : retryDelayForFailure(_failures));
       }
     }
   }
@@ -950,10 +973,21 @@ class WindowsSyncEngine {
     send: (c, id, op, data) async {},
     sendVersioned: (item) async {
       metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
+      final queuedAt = item['queuedAt'];
+      final queuedMillis = queuedAt is Timestamp ? queuedAt.millisecondsSinceEpoch
+          : queuedAt is num ? queuedAt.toInt() : null;
+      if (queuedMillis != null) metrics['lastQueueWaitMillis'] =
+          (DateTime.now().millisecondsSinceEpoch - queuedMillis).clamp(0, 1 << 53).toInt();
+      final watch = Stopwatch()..start();
       final reply = await WindowsFirebaseRemote.syncManagedRecord(
         item,
         _activeSchoolSyncId,
       );
+      watch.stop();
+      metrics['lastRecordAckMicros'] = watch.elapsedMicroseconds;
+      final timing = reply['syncTiming'];
+      if (timing is Map && timing['scriptRoundTripMillis'] is num)
+        metrics['lastScriptRoundTripMillis'] = (timing['scriptRoundTripMillis'] as num).toInt();
       return reply['recordRevision'] as String;
     },
   );
@@ -965,6 +999,11 @@ class WindowsSyncEngine {
     for (final collection in _firebaseCollections.where(
       (c) => c != 'backups',
     )) {
+      // A new durable notice must not wait for every startup collection read.
+      if (_rerunRequested) {
+        _rerunRequested = false;
+        await _pushManagedOutbox();
+      }
       final manifest = db
           .collection('_windows_sync_manifest')
           .doc(_manifestId('managed', collection));

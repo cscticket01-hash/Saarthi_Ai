@@ -1,6 +1,7 @@
 import '../qr_authentication_engine.dart';
 
 import 'dart:convert';
+import 'dart:async';
 import 'dart:math';
 import 'dart:io';
 import 'dart:typed_data';
@@ -21,15 +22,23 @@ class SchoolAccessDenied extends StateError {
   SchoolAccessDenied(super.message);
 }
 
+enum SchoolConnectionState { connected, syncing, cachedOffline, connectionError }
+
 class SchoolSession {
   SchoolSession({http.Client? client, this.cacheDirectory})
     : _client = client ?? http.Client();
   final http.Client _client;
   final Future<Directory> Function()? cacheDirectory;
   Map<String, dynamic> dashboard = {};
+  SchoolConnectionState connectionState = SchoolConnectionState.cachedOffline;
+  DateTime? lastDashboardVerifiedAt;
+  DateTime? _pushRegisteredAt;
+  String? _registeredPushToken;
+  Duration? lastDashboardRefreshDuration;
   Map<String, dynamic> _pdfCache = {};
   Map<String, Uint8List> _pdfMemory = {};
   Future<Map<String, dynamic>>? _refresh;
+  Future<Map<String, dynamic>>? _signalRefresh;
   Future<void>? _renewal;
   Future<void> _storageTail = Future<void>.value();
   int _expiresAt = 0;
@@ -184,6 +193,24 @@ class SchoolSession {
     return Map<String, dynamic>.from(d);
   }
 
+  Future<void> registerNotificationDevice(String token) async {
+    if (!loggedIn || link?.managed != true) return;
+    final origin = _generation;
+    if (_registeredPushToken == token && _pushRegisteredAt != null &&
+        DateTime.now().difference(_pushRegisteredAt!) < const Duration(days: 1)) return;
+    final verified=await schoolCall('mobile_refresh', {'fcmToken': token, 'deviceId': deviceId});
+    final expires=verified['expiresAt'];
+    if (expires is! num || expires <= DateTime.now().millisecondsSinceEpoch)
+      throw StateError('Verified notification session renewal failed.');
+    if (origin == _generation) {
+      _expiresAt = expires.toInt();
+      await _persist();
+      if (origin != _generation) return;
+      _registeredPushToken = token;
+      _pushRegisteredAt = DateTime.now();
+    }
+  }
+
   Future<http.Response> _redirect(String location) async {
     final uri = Uri.parse(location);
     requireSchoolBackendUri(uri);
@@ -296,16 +323,46 @@ class SchoolSession {
 
   /// One coalesced refresh of versioned, permission-filtered school content.
   /// Failed refreshes preserve the last durable verified generation.
-  Future<Map<String, dynamic>> refreshDashboard() {
+  Future<Map<String, dynamic>> refreshDashboard({bool afterSignal=false}) {
     final running = _refresh;
-    if (running != null) return running;
+    if (running != null) {
+      if (!afterSignal) return running;
+      final queued = _signalRefresh;
+      if (queued != null) return queued;
+      final origin = _generation;
+      Future<Map<String,dynamic>> next() async {
+        if (origin != _generation) throw SchoolAccessDenied('School session changed.');
+        _signalRefresh = null;
+        return refreshDashboard();
+      }
+      final follow = running.then((_) => next(), onError:(Object _,StackTrace __) => next());
+      _signalRefresh = follow;
+      follow.then((_) { if (identical(_signalRefresh,follow)) _signalRefresh=null; },
+          onError:(Object _,StackTrace __) { if (identical(_signalRefresh,follow)) _signalRefresh=null; });
+      return follow;
+    }
+    final origin = _generation;
+    connectionState = SchoolConnectionState.syncing;
+    final watch = Stopwatch()..start();
     final pending = _refreshDashboard();
     _refresh = pending;
     pending.then(
       (_) {
+        watch.stop();
+        if (origin != _generation) return;
+        lastDashboardRefreshDuration = watch.elapsed;
+        lastDashboardVerifiedAt = DateTime.now();
+        connectionState = SchoolConnectionState.connected;
         if (identical(_refresh, pending)) _refresh = null;
       },
-      onError: (Object _, StackTrace __) {
+      onError: (Object error, StackTrace __) {
+        watch.stop();
+        if (origin != _generation) return;
+        lastDashboardRefreshDuration = watch.elapsed;
+        connectionState = error is SocketException || error is TimeoutException ||
+                error is http.ClientException
+            ? SchoolConnectionState.cachedOffline
+            : SchoolConnectionState.connectionError;
         if (identical(_refresh, pending)) _refresh = null;
       },
     );
@@ -509,12 +566,17 @@ class SchoolSession {
     link = null;
     schoolToken = '';
     messaging = null;
+    _registeredPushToken = null;
+    _pushRegisteredAt = null;
     person = {};
     schoolName = '';
     dashboard = {};
+    connectionState = SchoolConnectionState.cachedOffline;
+    lastDashboardVerifiedAt = null;
     _pdfCache = {};
     _pdfMemory = {};
     _refresh = null;
+    _signalRefresh = null;
     _renewal = null;
     _expiresAt = 0;
     _policyExpiresAt = 0;

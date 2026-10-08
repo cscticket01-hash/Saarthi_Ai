@@ -83,7 +83,7 @@ jobs:
     - name: Verify Windows portal regressions
       env:
         APPDATA: ${{ runner.temp }}/windows-portal-tests
-      run: flutter test test/windows_portal_test.dart
+      run: flutter test test/windows_portal_test.dart test/windows_fee_structure_test.dart
     - name: Verify payroll, reset and licence activation regressions
       env:
         APPDATA: ${{ runner.temp }}/windows-operations-tests
@@ -210,7 +210,7 @@ jobs:
     - name: Format Windows reference document source
       run: dart format lib/windows_reference_documents.dart test/windows_reference_documents_test.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/managed_developer_panel.dart lib/platform/managed_developer_service.dart
     - name: Verify Windows ID cards, licence date and startup
-      run: flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
+      run: flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart test/windows_fee_structure_test.dart
     - name: Verify manifest IDs on Windows
       run: flutter test test/id_card_engine_test.dart
     - name: Verify production Documents screen and durable local queue on Windows
@@ -236,13 +236,14 @@ jobs:
           build/document-measurements.json
           lib/windows_reference_documents.dart
           test/windows_reference_documents_test.dart
+          test/windows_fee_structure_test.dart
     - name: Compile Windows school app
       env:
         SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
         SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
-      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.102 --build-number=102 --dart-define=APP_VERSION=2.1.102-review --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.104 --build-number=104 --dart-define=APP_VERSION=2.1.104-sync-test --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
     - name: Execute Windows fresh-start duplicate-launch and restart smoke test
       shell: powershell
       run: .github/scripts/test_windows_executable.ps1
@@ -285,7 +286,9 @@ jobs:
         if not raw: raise SystemExit('Public Firebase Android configuration is missing')
         data=json.loads(base64.b64decode(raw))
         pathlib.Path('android/app/google-services.json').write_text(json.dumps(data))
-        package=data['client'][0]['client_info']['android_client_info']['package_name']
+        package=data['client'][0]['client_info']['android_client_info']['package_name']+'.syncreview'
+        data['client'][0]['client_info']['android_client_info']['package_name']=package
+        pathlib.Path('android/app/google-services.json').write_text(json.dumps(data))
         p=pathlib.Path('android/app/build.gradle.kts')
         s=p.read_text()
         s=s.replace('plugins {','plugins {\n    id("com.google.gms.google-services")',1)
@@ -323,11 +326,11 @@ jobs:
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
-      run: flutter test test/school_qr_login_test.dart test/mobile_boundary_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
+      run: flutter test test/android_startup_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart
     - name: Build unsigned Android preview
       env:
         SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
-      run: flutter build apk --debug -t lib/main_android.dart --build-name=1.0.495 --build-number=495 --dart-define=APP_VERSION=1.0.495-review --dart-define=APP_BUILD=495 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
+      run: flutter build apk --debug -t lib/main_android.dart --build-name=1.0.498 --build-number=498 --dart-define=APP_VERSION=1.0.498-sync-test --dart-define=APP_BUILD=498 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
     - name: Record Android TEST source commit
       run: echo "$GITHUB_SHA" > build/app/outputs/flutter-apk/TEST-COMMIT.txt
     - uses: actions/upload-artifact@v4
@@ -339,6 +342,7 @@ jobs:
 'on':
   push:
     branches:
+    - windows/easy-connect-draft
     - feature/managed-school-accounts
     - fix/existing-school-restore-20261005
     - fix/legacy-school-recovery-latency
@@ -349,6 +353,8 @@ jobs:
     - fix/local-first-template-engine
     - fix/mobile-smart-sync-20261007
     - fix/android-persistent-login-20261007
+    - fix/central-sync-503-20261007
+    - fix/final-school-sync-fees-exams-20261008
   pull_request:
     branches:
     - main
