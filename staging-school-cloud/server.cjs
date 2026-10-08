@@ -46,6 +46,10 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,logger
       if(bytes>256*1024&&body?.action!=='managed/file/upload')return send(413,{success:false,message:'Request is too large'});
       operation=/^(managed\/|developer\/managed\/)[a-zA-Z0-9_/-]{1,80}$/.test(body?.action||'')?body.action:undefined;
       action=ACTIONS.has(body?.action)?body.action:/^(managed\/|developer\/managed\/)/.test(body?.action||'')?'MANAGED':'UNKNOWN';
+      // First Windows login has no saved school ID yet. Bind its authenticated
+      // session lookup to the configured TEST school; membership must still match.
+      if(testSchoolId&&body?.action==='managed/session'&&body.schoolId==null)
+        body={...body,schoolId:testSchoolId};
       // Additional TEST fence only; the existing authenticated handler still
       // verifies membership, licence, school identity and signed storage access.
       if(testSchoolId && (body?.schoolId!==testSchoolId ||

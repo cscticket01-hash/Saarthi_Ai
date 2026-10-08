@@ -27,18 +27,33 @@ test('isolated TEST mode fails closed and forwards only its school to existing a
  assert.equal(isolatedTestSchool({SAARTHI_ISOLATED_TEST_MODE:'true',SAARTHI_ISOLATED_TEST_SCHOOL_ID:school}),school);
  for(const body of [{action:'managed/records',schoolId:'vs-'+ 'b'.repeat(32)},
    {action:'developer/managed/create',schoolId:school},{action:'onboard',schoolId:school},
-   {action:'developer/managed/delete',schoolId:school},{action:'managed/records',schoolId:school}]){
+   {action:'developer/managed/delete',schoolId:school},{action:'managed/records',schoolId:school},
+   {action:'managed/session'},{action:'managed/session',schoolId:'vs-'+ 'b'.repeat(32)}]){
    let called=false,status,out;
    const req=Readable.from([Buffer.from(JSON.stringify(body))]);Object.assign(req,{url:'/school-cloud',method:'POST',headers:{'content-type':'application/json'}});
    const res={setHeader(){},writeHead:s=>status=s,end:v=>out=JSON.parse(v)};
-   await createHandler({testSchoolId:school,logger:()=>{},health:async()=>{},handle:async()=>{
+   await createHandler({testSchoolId:school,logger:()=>{},health:async()=>{},handle:async req=>{
+     assert.equal(req.body.schoolId,school);
      called=true;throw Object.assign(Error('School login required'),{status:401});}})(req,res);
-   assert.equal(called,body.action==='managed/records'&&body.schoolId===school);
+   assert.equal(called,body.action==='managed/records'&&body.schoolId===school||body.action==='managed/session'&&body.schoolId===undefined);
    assert.equal(status,called?401:403);assert.equal(out.success,false);
  }
 });
 test('uncoded runtime errors remain unavailable without hiding diagnostic correlation',async()=>{
  const r=await request(new TypeError('NEVER_LOG_THIS'));assert.equal(r.status,503);assert.equal(r.body.success,false);assert.equal(r.logs[0].code,'UNKNOWN');
+});
+test('TEST login bootstrap still rejects another school through real membership verification',async()=>{
+ const {fixture,A}=require('./helpers/managed-school-broker');
+ const f=fixture();
+ for(const account of ['A','B']){
+   let status,body;
+   const req=Readable.from([Buffer.from(JSON.stringify({action:'managed/session'}))]);
+   Object.assign(req,{url:'/school-cloud',method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+account}});
+   const res={setHeader(){},writeHead:s=>status=s,end:v=>body=JSON.parse(v)};
+   await createHandler({testSchoolId:A,handle:f.handle,health:async()=>{},logger:()=>{}})(req,res);
+   assert.equal(status,account==='A'?200:403);
+   if(account==='A'){assert.equal(body.schoolId,A);assert.equal(body.uid,'A');}else assert.equal(body.success,false);
+ }
 });
 test('safe upstream category survives handler without a fake acknowledgement',async()=>{
  const r=await request(Object.assign(new Error('School script identity or operation failed'),{status:502,code:'SCRIPT_OPERATION_FAILED',publicMessage:true}));
