@@ -8,6 +8,18 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('neutral text keeps readable processed pixels with a smaller lossless grayscale container', () {
+    final image=img.Image(width:1000,height:1400);
+    img.fill(image,color:img.ColorRgb8(255,255,255));
+    for(var row=60;row<1300;row+=42)img.drawString(image,'School record - marks 0123456789',font:img.arial24,x:35,y:row,color:img.ColorRgb8(20,20,20));
+    final source=Uint8List.fromList(img.encodePng(image));
+    final result=DocumentProcessingEngine.process({'bytes':source});
+    final output=result['optimized'] as Uint8List;
+    expect(result['mimeType'],'image/png');expect(output.length,lessThan(source.length));
+    final restored=img.decodeImage(output)!;
+    expect(restored.width,1000);expect(restored.height,1400);
+    expect(restored.getPixel(900,1300).r,255);
+  });
   test('80 KB target reports real source/output sizes without changing source bytes', () {
     final image=img.Image(width:200,height:300);
     img.fill(image,color:img.ColorRgb8(255,255,255));

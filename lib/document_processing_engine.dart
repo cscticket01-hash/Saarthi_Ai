@@ -117,7 +117,14 @@ class DocumentProcessingEngine {
     // Text and line scans often compress better losslessly than as JPEG.
     // Compare fully processed pixels, never silently substitute an unprocessed
     // source or remove the retained original/high-quality generation.
-    final lossless = Uint8List.fromList(img.encodePng(image, level: 9));
+    // Exact neutral pixels need one channel, not three identical RGB channels.
+    // This retains the processed page and all pixel values without quantization.
+    var neutral = true;
+    for (final pixel in image) {
+      if (pixel.r != pixel.g || pixel.g != pixel.b) { neutral = false; break; }
+    }
+    final lossless = Uint8List.fromList(img.encodePng(
+      neutral ? image.convert(numChannels: 1) : image, level: 9));
     var optimizedMime = 'image/jpeg';
     if (lossless.length < optimized.length) {
       optimized = lossless;
