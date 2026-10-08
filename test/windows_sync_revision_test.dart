@@ -26,7 +26,14 @@ void main(){
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('revision-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});
  });
+ test('performance percentiles retain at most 256 real measurements', () {
+   final engine=WindowsSyncEngine.instance;
+   for(var n=0;n<300;n++)engine.recordLocalSave('boundedFixture',n);
+   final summary=engine.performanceSummary['boundedFixtureSaveMicros'] as Map;
+   expect(summary['samples'],256);expect(summary['p50'],172);expect(summary['p95'],287);
+ });
  test('automatic retry starts promptly and exponentially backs off without high-frequency polling', () {
+   expect(WindowsSyncEngine.reconciliationInterval, const Duration(minutes:4));
    expect(WindowsSyncEngine.retryDelayForFailure(1), const Duration(seconds:5));
    expect(WindowsSyncEngine.retryDelayForFailure(2), const Duration(seconds:10));
    expect(WindowsSyncEngine.retryDelayForFailure(100), const Duration(minutes:5));

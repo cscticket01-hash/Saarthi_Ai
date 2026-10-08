@@ -26,3 +26,22 @@ test('website view validates tenant/shape before returning data and rejects malf
  await assert.rejects(f.call({action:'developer/managed/view',schoolId:A},'developer'),e=>e.status===502);
  await assert.rejects(f.call({action:'developer/managed/view',schoolId:A,knownRevisions:[]},'developer'),e=>e.status===400);
 });
+test('one signed protocol-2 batch returns exact collection checkpoints and tombstones; unchanged groups avoid payloads',async()=>{
+ const gs=storage();class FixedDate extends Date{constructor(...args){super(...(args.length?args:[time]));}static now(){return time;}}gs.context.Date=FixedDate;
+ const broker=fixture(async(_,opt)=>({ok:true,status:200,text:async()=>JSON.stringify(gs.context.VS_managedHandle({postData:{contents:opt.body}}))}));
+ const data={name:'Batch student'};
+ await broker.call({action:'managed/records',collection:'students_directory',operation:'write',id:'batch',syncProtocol:2,operationId:'batch-write-operation1',expectedRecordRevision:'',data});
+ const body={action:'managed/changes',collections:['students_directory','school_notices'],knownRevisions:{}};
+ const before=broker.sent.length;const first=await broker.call(body);assert.equal(broker.sent.length,before+1);assert.equal(first.changes.students_directory.records.batch.name,'Batch student');
+ const knownRevisions=Object.fromEntries(Object.entries(first.changes).map(([key,row])=>[key,row.collectionRevision]));const same=await broker.call({...body,knownRevisions});assert.equal(same.changes.students_directory.unchanged,true);
+ await broker.call({action:'managed/records',collection:'students_directory',operation:'delete',id:'batch',syncProtocol:2,operationId:'batch-delete-operation1',expectedRecordRevision:first.changes.students_directory.records.batch._syncRevision});
+ const removed=await broker.call({...body,knownRevisions});assert.equal(removed.changes.students_directory.records.batch._syncDeleted,true);
+ await assert.rejects(broker.call({...body,schoolId:A},'B'),e=>e.status===403);
+ await assert.rejects(broker.call({...body,collections:['mobile_sessions']}),e=>e.status===400);
+});
+test('batch delta rejects foreign rows and missing collection checkpoints before returning records',async()=>{
+ for(const changes of [{},{students_directory:{syncProtocol:2,collectionRevision:'r',records:{foreign:{schoolId:B}}}}]){
+  const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,syncProtocol:2,changes})}));
+  await assert.rejects(f.call({action:'managed/changes',collections:['students_directory'],knownRevisions:{}}),e=>e.status===502);
+ }
+});

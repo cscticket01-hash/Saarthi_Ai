@@ -71,7 +71,7 @@ class DocumentPipeline {
     for (final page in pages) {
       final result = await compute(DocumentProcessingEngine.process, {
         'bytes': page['bytes'],
-        'targetBytes': DocumentProcessingEngine.setTarget ~/ 8 ~/ pages.length,
+        'targetBytes': DocumentProcessingEngine.photoTarget,
       });
       final format = PdfPageFormat(
         (page['width'] as int) * 72 / 150,
@@ -93,7 +93,11 @@ class DocumentPipeline {
       'highQuality': await high.save(),
       'mimeType': 'application/pdf',
       'actualBytes': output.length,
-      'targetMet': output.length <= DocumentProcessingEngine.setTarget ~/ 8,
+      'originalBytes': bytes.length,
+      'targetBytes': DocumentProcessingEngine.photoTarget * pages.length,
+      'savingsPercent': 100 * (1 - output.length / bytes.length),
+      'pageCount': pages.length,
+      'targetMet': output.length <= DocumentProcessingEngine.photoTarget * pages.length,
       'cleanupStatus': '${pages.length} pages processed; original PDF retained',
     };
   }

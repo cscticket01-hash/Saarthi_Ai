@@ -65,7 +65,7 @@ function VS_mobileAction(b){
   const policy={role:session.role,personId:session.personId,documentId:session.person.id,
    qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,open:VS_isOpen(day),
    latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200};
-  const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy};
+  const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
   const groups={school:'school_config',templates:'school_settings',notices:'school_notices',calendar:'school_calendar',documents:'documents',examinations:'exams'};
   if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments',feeStructures:'fee_settings'});
   else groups.salary='teacher_salary';
@@ -112,7 +112,7 @@ function VS_mobileAction(b){
   });
   result.revisions=revisions;
   result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',VS_safePerson(session.person)]));
-  if(b.knownRevision===result.revision)return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy};
+  if(b.knownRevision===result.revision)return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
 
   return result;
  }

@@ -71,7 +71,7 @@ function firestoreAttendanceStore(db){
 function createAttendanceWorker({drain,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now,onError=()=>{}}){
  let timer=null,running=false,woken=false,stopped=false;
  function schedule(delay){if(stopped)return;if(timer!==null)clearTimer(timer);timer=setTimer(run,delay);timer?.unref?.();}
- async function run(){timer=null;if(running){woken=true;return;}running=true;let delay=300000;
+ async function run(){timer=null;if(running){woken=true;return;}running=true;let delay=240000;
   try{const result=await drain();if(result?.processed>0)delay=2000;
    if(result?.nextRetryAt!==null&&result?.nextRetryAt!==undefined)delay=Math.min(delay,Math.max(1000,result.nextRetryAt-now()));
   }catch(e){onError(e);delay=30000;}finally{running=false;const urgent=woken;woken=false;schedule(urgent?0:delay);}

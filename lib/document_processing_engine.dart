@@ -8,7 +8,9 @@ import 'package:image/image.dart' as img;
 /// caller retains original bytes separately and displays the actual output size.
 class DocumentProcessingEngine {
   static const sourceLimit = 50 * 1024 * 1024;
-  static const setTarget = 300 * 1024;
+  static const photoTarget = 80 * 1024;
+  // Retain the existing eight-document aggregate measurement contract.
+  static const setTarget = 8 * photoTarget;
   static Map<String, dynamic> process(Map<String, dynamic> input) {
     SchoolImageInput.validate(input['bytes'] as Uint8List);
     try {
@@ -89,7 +91,7 @@ class DocumentProcessingEngine {
     image.textData = null;
     image.iccProfile = null;
     final highQuality = Uint8List.fromList(img.encodeJpg(image, quality: 94));
-    final target = (input['targetBytes'] as num? ?? setTarget ~/ 8).toInt();
+    final target = (input['targetBytes'] as num? ?? photoTarget).toInt();
     var optimized = highQuality;
     var optimizedWidth = image.width, optimizedHeight = image.height;
     var quality = 94;
@@ -129,6 +131,9 @@ class DocumentProcessingEngine {
       'quality': quality,
       'targetMet': optimized.length <= target,
       'actualBytes': optimized.length,
+      'originalBytes': bytes.length,
+      'targetBytes': target,
+      'savingsPercent': 100 * (1 - optimized.length / bytes.length),
       'perspectiveCorrected': corrected,
       'deskewDegrees': deskew,
       'width': optimizedWidth,

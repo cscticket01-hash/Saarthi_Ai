@@ -36,8 +36,8 @@ test('Firestore worker queries due operations only and defers claimed rows until
 
 test('idle attendance worker backs off; committed submissions wake it without duplicate loops',async()=>{
  let scheduled,delay,clears=0,calls=0;const worker=createAttendanceWorker({drain:async()=>{calls++;return {processed:0,nextRetryAt:null};},setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{clears++;}});
- assert.equal(delay,0);await scheduled();assert.equal(calls,1);assert.equal(delay,300000);
- worker.wake();worker.wake();assert.equal(delay,0);await scheduled();assert.equal(calls,2);assert.equal(delay,300000);assert(clears>0);worker.stop();
+ assert.equal(delay,0);await scheduled();assert.equal(calls,1);assert.equal(delay,240000);
+ worker.wake();worker.wake();assert.equal(delay,0);await scheduled();assert.equal(calls,2);assert.equal(delay,240000);assert(clears>0);worker.stop();
 });
 test('active worker respects retry deadline and retains a wake arriving during upload',async()=>{
  let scheduled,delay,release,calls=0;const wait=new Promise(r=>release=r);

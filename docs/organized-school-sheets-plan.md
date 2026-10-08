@@ -61,7 +61,7 @@ Activate each collection only after complete verification under the existing sch
 
 Install the reviewed generated `SaarthiManagedAll.gs` in an isolated test-school Script. Preserve its existing root, school ID, secret and deployment URL. Installation alone does not start migration. Do not run these functions against a real school during draft testing.
 
-1. Call `VS_beginOrganizedStorageMigration()` once. It creates the resumable job; repeated calls return its status.
+1. First call `VS_previewOrganizedStorageMigration()` and review counts, hashes, target partitions and oversized files. It performs no writes. Then call `VS_beginOrganizedStorageMigration()` once. It creates the resumable job; repeated calls return its status.
 2. Repeatedly call `VS_stepOrganizedStorageMigration()`. Each call copies at most 25 records or 5 binaries, under the existing lock. Check `VS_organizedStorageStatus()` after every call. Collection checkpoints are validation-time counts, not live inventory counts.
 3. A collection becomes authoritative only after source/target canonical hashes match and a verified activation snapshot exists. Concurrent legacy edits restart reconciliation. Review tabs preserve records with unknown roles.
 4. Binary relocation starts after record migration. Original-byte backups and audit manifests are verified before moving the same file ID. Sources, snapshots and pending queues are retained.

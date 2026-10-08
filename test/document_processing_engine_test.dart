@@ -8,6 +8,17 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('80 KB target reports real source/output sizes without changing source bytes', () {
+    final image=img.Image(width:200,height:300);
+    img.fill(image,color:img.ColorRgb8(255,255,255));
+    final source=Uint8List.fromList(img.encodePng(image));
+    final original=List<int>.from(source);
+    final result=DocumentProcessingEngine.process({'bytes':source});
+    expect(result['targetBytes'],80*1024);
+    expect(result['originalBytes'],source.length);
+    expect(result['actualBytes'],(result['optimized'] as Uint8List).length);
+    expect(source,original);
+  });
   test('eight encoded text scans produce measurable optimized bytes without forcing unreadable target',()async {
     final measurements=<Map<String,dynamic>>[];
     for(var n=0;n<8;n++) {

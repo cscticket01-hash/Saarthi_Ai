@@ -330,6 +330,26 @@ class WindowsFirebaseRemote {
     return result;
   }
 
+  static Future<Map<String,dynamic>> readManagedBatch(String school, Map<String,String> revisions) async {
+    final result=await ManagedSchoolSession.callForSchool(school,'managed/changes',{
+      'collections':revisions.keys.toList(),'knownRevisions':revisions});
+    if(result['schoolId']!=school||result['syncProtocol']!=2||result['changes'] is! Map)
+      throw StateError('Version-safe school delta unavailable.');
+    final changes=Map<String,dynamic>.from(result['changes'] as Map);
+    if(changes.length!=revisions.length)throw StateError('Incomplete school delta.');
+    for(final collection in revisions.keys){
+      final group=Map<String,dynamic>.from(changes[collection] as Map);
+      if(group['syncProtocol']!=2||group['collectionRevision'] is! String||group['records'] is! Map)
+        throw StateError('Invalid school delta checkpoint.');
+      group['records']=(group['records'] as Map).map((key,value)=>MapEntry(key.toString(),
+        Map<String,dynamic>.from(_restoreManagedValue(value) as Map)));
+      if((group['records'] as Map).values.any((row)=>row['schoolId']!=school))
+        throw StateError('Foreign school delta rejected.');
+      changes[collection]=group;
+    }
+    return changes;
+  }
+
   static Future<Map<String,dynamic>> readManagedChanges(String school,String collection,String revision) async {
     final result=await ManagedSchoolSession.callForSchool(school,'managed/records',{
       'operation':'read','collection':collection,'syncProtocol':2,'knownRevision':revision});

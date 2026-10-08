@@ -84,3 +84,10 @@ test('workbook move interruption recovers the persisted creation ID; unmarked cr
  const second=storage();second.context.SpreadsheetApp.create=name=>{original.call(null,name);throw Error('not used');};
  const filename='01_Students — '+A;second.roots[A].createFile(filename,'','application/vnd.google-apps.spreadsheet');assert.throws(()=>second.context.VS_layoutBook('01_Students'),/Unverified/);assert.equal(second.books.size,0);
 });
+test('migration dry run reports canonical counts and hashes without creating workbooks, backups, job or modifying records',()=>{
+ const f=storage();write(f,'students_directory','preview',{name:'Preserved'});
+ const before=JSON.stringify([...f.props]),files=[...f.all.keys()],books=f.books.size;
+ const preview=f.context.VS_previewOrganizedStorageMigration();assert.equal(preview.dryRun,true);assert.equal(preview.writesPerformed,0);assert.equal(preview.collections.length,25);
+ const students=preview.collections.find(row=>row.collection==='students_directory');assert.equal(students.count,1);assert(students.hash);
+ assert.equal(JSON.stringify([...f.props]),before);assert.deepEqual([...f.all.keys()],files);assert.equal(f.books.size,books);assert.equal(f.context.VS_organizedStorageStatus().started,false);
+});

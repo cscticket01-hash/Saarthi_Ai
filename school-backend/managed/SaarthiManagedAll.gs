@@ -6777,7 +6777,8 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);verified=true;let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,scriptBundleVersion:'2026-10-08.1',googleEmail:''};}
+    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,scriptBundleVersion:'2026-10-08.2',googleEmail:''};}
+    else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
     else if(b.action==='managed_attendance_batch'){
@@ -7012,6 +7013,36 @@ function VS_layoutBinaryStep(job,rollback,limit) {
 /** Owner editor ONLY; no signed API route. Run begin once, then step until done.
  * Installing this source never activates a layout or moves a school file.
  */
+/** Read-only owner preview: never creates/backfills tabs or moves files. */
+function VS_previewOrganizedStorageMigration() {
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID'),root=VS_managedRoot(),collections=[];
+    VS_LAYOUT_COLLECTIONS.forEach(collection=>{
+      const state=VS_layoutState(collection);let records=Object.create(null);
+      if(state&&['active','rollingBack'].indexOf(state.phase)>=0)records=VS_sheetRecords(VS_layoutStore(state));
+      else {
+        const bookId=p.getProperty('VS_MANAGED_SHEET_ID');
+        if(bookId){const f=VS_managedFile(bookId);if(f.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook identity mismatch');const sheet=SpreadsheetApp.openById(bookId).getSheetByName(collection);if(sheet)records=VS_sheetRecords({sheet:sheet,school:school});else if(p.getProperty('VS_SHEET_MIGRATED_'+collection)==='1')throw new Error('Verified school tab is missing; operator recovery required');}
+        if(p.getProperty('VS_SHEET_MIGRATED_'+collection)!=='1'){
+          const folders=root.getFoldersByName('records_'+collection);
+          if(folders.hasNext()){
+            const folder=folders.next();if(folders.hasNext())throw new Error('Duplicate collection folders; operator review required');const files=folder.getFiles(),seen=Object.create(null);let bytes=0;
+            while(files.hasNext()){
+              const raw=files.next().getBlob().getDataAsString();bytes+=raw.length;if(bytes>20*1024*1024)throw new Error('Collection migration exceeds safe limit');const item=JSON.parse(raw);
+              if(!item||item.schoolId!==school||typeof item.id!=='string'||!item.data||item.data.schoolId!==school||seen[item.id])throw new Error('Invalid or duplicate legacy record; operator review required');seen[item.id]=true;
+              if(records[item.id]&&VS_layoutHash(records[item.id])!==VS_layoutHash(item.data))throw new Error('Migration conflict; both versions retained');records[item.id]=item.data;
+            }
+          }
+        }
+      }
+      const targets=VS_layoutTargets(collection),partitionCounts=Object.create(null);targets.forEach(name=>partitionCounts[name]=0);
+      Object.keys(records).forEach(id=>partitionCounts[targets[VS_layoutPartition(collection,records[id])]]++);
+      collections.push({collection:collection,count:Object.keys(records).length,hash:VS_layoutHash(records),partitionCounts:partitionCounts,sourcePhase:state?state.phase:'legacy'});
+    });
+    const files=VS_layoutBinaryInventory();return {dryRun:true,schoolId:school,rootFolderId:root.getId(),collections:collections,binaryCount:files.length,binaryBytes:files.reduce((sum,f)=>sum+f.size,0),oversizedFileIds:files.filter(f=>f.size>20*1024*1024).map(f=>f.id),limits:{snapshotBytes:20*1024*1024,binaryBytes:20*1024*1024,inventoryEntries:5000},writesPerformed:0};
+  }finally{lock.releaseLock();}
+}
 function VS_beginOrganizedStorageMigration() {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try{const p=PropertiesService.getScriptProperties(),old=p.getProperty('VS_LAYOUT_JOB');if(old)return VS_organizedStorageStatus();
@@ -7059,6 +7090,16 @@ function VS_managedView(b) {
     const revision=JSON.stringify(['exam_results','exam_center_results'].map(col=>p.getProperty('VS_RECORD_REV_'+col)||'legacy'));revisions.examResults=revision;
     if(known.examResults!==revision){const rows=Object.create(null),removed=Object.create(null);['exam_results','exam_center_results'].forEach(col=>{const all=VS_sheetRecords(VS_managedSheet(col));Object.keys(all).forEach(id=>{const row=all[id];if(row._syncDeleted||row.deleted)removed[id]=true;else if(!rows[id]||Number(row.timestamp||row.updatedAt||0)>=Number(rows[id].timestamp||rows[id].updatedAt||0))rows[id]=row;});});Object.keys(removed).forEach(id=>delete rows[id]);preview('examResults',rows);}
     const result={groups:groups,revisions:revisions,previewLimit:100};if(JSON.stringify(result).length>4*1024*1024)throw new Error('View exceeds safe limit');return result;
+  }finally{lock.releaseLock();}
+}
+
+// Same version-2 record contracts, one lock/checkpoint round-trip per pull.
+function VS_managedDelta(b) {
+  if(!Array.isArray(b.collections)||b.collections.length>22||new Set(b.collections).size!==b.collections.length||b.collections.some(col=>VS_LAYOUT_COLLECTIONS.indexOf(col)<0||['mobile_sessions','mobile_users','mobile_complaints'].indexOf(col)>=0))throw new Error('Invalid delta collections');
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try{const changes={},p=PropertiesService.getScriptProperties();
+    b.collections.forEach(col=>{const revision=p.getProperty('VS_RECORD_REV_'+col)||'legacy';changes[col]=b.knownRevisions&&b.knownRevisions[col]===revision?{records:{},unchanged:true,collectionRevision:revision,syncProtocol:2}:VS_managedRecordUnlocked({operation:'read',collection:col,syncProtocol:2});});
+    if(JSON.stringify(changes).length>20*1024*1024)throw new Error('Delta export exceeds safe limit');return {syncProtocol:2,changes:changes};
   }finally{lock.releaseLock();}
 }
 
@@ -7129,7 +7170,7 @@ function VS_mobileAction(b){
   const policy={role:session.role,personId:session.personId,documentId:session.person.id,
    qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,open:VS_isOpen(day),
    latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200};
-  const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy};
+  const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
   const groups={school:'school_config',templates:'school_settings',notices:'school_notices',calendar:'school_calendar',documents:'documents',examinations:'exams'};
   if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments',feeStructures:'fee_settings'});
   else groups.salary='teacher_salary';
@@ -7176,7 +7217,7 @@ function VS_mobileAction(b){
   });
   result.revisions=revisions;
   result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',VS_safePerson(session.person)]));
-  if(b.knownRevision===result.revision)return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy};
+  if(b.knownRevision===result.revision)return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
 
   return result;
  }

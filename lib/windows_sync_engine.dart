@@ -57,6 +57,7 @@ class WindowsSyncEngine {
     'exam_center_results',
   ];
 
+  static const reconciliationInterval = Duration(minutes: 4);
   Timer? _periodicTimer;
   Timer? _debounceTimer;
   bool _initialized = false;
@@ -68,6 +69,7 @@ class WindowsSyncEngine {
   DateTime? lastSuccessfulSync;
   String? _protocolIdentity;
   DateTime? _protocolVerifiedAt;
+  bool _deltaBatchSupported = false;
   final metrics = <String, int>{
     'recordReadRequests': 0,
     'recordWriteRequests': 0,
@@ -82,8 +84,23 @@ class WindowsSyncEngine {
 
   int _failures = 0;
   DateTime? _nextRetry, _lastPull;
+  final _samples = <String, List<int>>{};
+  void _sample(String name, int value) {
+    final values = _samples.putIfAbsent(name, () => <int>[]);
+    if (values.length >= 256) values.removeAt(0);
+    values.add(value);
+  }
+  Map<String, dynamic> get performanceSummary => {
+    for (final entry in _samples.entries)
+      entry.key: (() {
+        final sorted = entry.value.toList()..sort();
+        int percentile(double p) => sorted[((sorted.length - 1) * p).ceil()];
+        return {'samples': sorted.length, 'p50': percentile(0.5), 'p95': percentile(0.95)};
+      })(),
+  };
   void recordLocalSave(String entity, int micros) {
     metrics['${entity}SaveMicros'] = micros;
+    _sample('${entity}SaveMicros', micros);
   }
 
   Future<void> refreshDetails() async {
@@ -103,6 +120,7 @@ class WindowsSyncEngine {
           .length,
       'items': items.map((d) => {'id': d.id, ...d.data()}).toList(),
       'metrics': Map<String, int>.from(metrics),
+      'performance': performanceSummary,
     };
   }
 
@@ -144,7 +162,7 @@ class WindowsSyncEngine {
     if (_resetPaused) return;
 
     _periodicTimer = Timer.periodic(
-      const Duration(minutes: 15),
+      reconciliationInterval,
       (_) => scheduleSoon(),
     );
 
@@ -540,6 +558,7 @@ class WindowsSyncEngine {
       _nextRetry = null;
       lastSuccessfulSync = null;
       metrics.clear();
+      _samples.clear();
       metrics.addAll({
         'recordReadRequests': 0,
         'recordWriteRequests': 0,
@@ -848,6 +867,7 @@ class WindowsSyncEngine {
           throw StateError(
             'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
           );
+          _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
           _protocolIdentity = protocolIdentity;
           _protocolVerifiedAt = DateTime.now();
         }
@@ -868,7 +888,7 @@ class WindowsSyncEngine {
         }
         if (_lastPull == null ||
             DateTime.now().difference(_lastPull!) >=
-                const Duration(minutes: 15) ||
+                reconciliationInterval ||
             _manualSync) {
           await _pullManagedChanges();
           _lastPull = DateTime.now();
@@ -985,9 +1005,13 @@ class WindowsSyncEngine {
       );
       watch.stop();
       metrics['lastRecordAckMicros'] = watch.elapsedMicroseconds;
+      _sample('cloudAckMicros', watch.elapsedMicroseconds);
+      if (queuedMillis != null) _sample('queueWaitMillis', metrics['lastQueueWaitMillis']!);
       final timing = reply['syncTiming'];
-      if (timing is Map && timing['scriptRoundTripMillis'] is num)
+      if (timing is Map && timing['scriptRoundTripMillis'] is num) {
         metrics['lastScriptRoundTripMillis'] = (timing['scriptRoundTripMillis'] as num).toInt();
+        _sample('scriptRoundTripMillis', metrics['lastScriptRoundTripMillis']!);
+      }
       return reply['recordRevision'] as String;
     },
   );
@@ -996,6 +1020,17 @@ class WindowsSyncEngine {
     final db = FirebaseFirestore.instance,
         origin = db.activeProfileId,
         school = _activeSchoolSyncId;
+    Map<String,dynamic>? batch;
+    if (_deltaBatchSupported) {
+      final revisions=<String,String>{};
+      for(final collection in _firebaseCollections.where((c)=>c!='backups')) {
+        final prior=(await db.collection('_windows_sync_manifest').doc(_manifestId('managed',collection)).get()).data();
+        revisions[collection]=prior?['revision']?.toString()??'';
+      }
+      metrics['recordReadRequests']=metrics['recordReadRequests']!+1;
+      batch=await WindowsFirebaseRemote.readManagedBatch(school,revisions);
+      if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
+    }
     for (final collection in _firebaseCollections.where(
       (c) => c != 'backups',
     )) {
@@ -1008,11 +1043,9 @@ class WindowsSyncEngine {
           .collection('_windows_sync_manifest')
           .doc(_manifestId('managed', collection));
       final prior = (await manifest.get()).data();
-      metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
-      final result = await WindowsFirebaseRemote.readManagedChanges(
-        school,
-        collection,
-        prior?['revision']?.toString() ?? '',
+      if(batch==null)metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
+      final result = batch!=null?Map<String,dynamic>.from(batch[collection] as Map):await WindowsFirebaseRemote.readManagedChanges(
+        school,collection,prior?['revision']?.toString() ?? '',
       );
       if (db.activeProfileId != origin)
         throw StateError('School changed during reconciliation.');
