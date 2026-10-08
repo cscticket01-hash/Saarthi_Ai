@@ -64,9 +64,11 @@ class WindowsBackendBridge {
     final path = value.trim();
     if (path.isEmpty || path.startsWith('{') || path.startsWith('[') ||
         RegExp(r'[\x00-\x1f]').hasMatch(path) ||
+        RegExp(r'[\uD800-\uDFFF]', unicode: true).hasMatch(path) ||
         RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(path)) return null;
     if (Platform.isWindows) {
-      if (!RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(path)) return null;
+      if (!RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(path) &&
+          !RegExp(r'^\\\\[^\\/]+[\\/][^\\/]+[\\/]').hasMatch(path)) return null;
       if (RegExp(r'[<>"|?*]').hasMatch(path.substring(2)) ||
           path.substring(2).contains(':')) return null;
     } else if (!path.startsWith('/')) {
@@ -141,17 +143,21 @@ class WindowsBackendBridge {
     final schoolRoot = Directory(
       '${root.path}${Platform.pathSeparator}${_safeFileName(origin)}',
     );
-    final local = normalizedDocumentPath(document['originalPath']) ??
-        normalizedDocumentPath(document['localPath']);
-    if (local is String && await File(local).exists()) {
-      final canonical = await File(local).resolveSymbolicLinks(),
-          safeRoot = await schoolRoot.resolveSymbolicLinks();
-      if (!canonical.startsWith('$safeRoot${Platform.pathSeparator}'))
-        throw StateError('Foreign local document path blocked.');
-      own();
-      final bytes = await File(canonical).readAsBytes();
-      own();
-      return bytes;
+    for (final source in [document['originalPath'], document['localPath']]) {
+      final local = normalizedDocumentPath(source);
+      if (local == null) continue;
+      try {
+        if (!await File(local).exists()) continue;
+        final canonical = await File(local).resolveSymbolicLinks(),
+            safeRoot = await schoolRoot.resolveSymbolicLinks();
+        // A legacy/other-PC path is metadata, not permission to read that file.
+        // Recover via the authenticated own-school cloud file instead.
+        if (!canonical.startsWith('$safeRoot${Platform.pathSeparator}')) continue;
+        own();
+        final bytes = await File(canonical).readAsBytes();
+        own();
+        if (bytes.isNotEmpty) return bytes;
+      } on FileSystemException { /* Retain the path; try authenticated restore. */ }
     }
     final id =
         document['fileId']?.toString() ??

@@ -446,10 +446,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
     _loading = _data.isEmpty;
     _load();
     _timer = Timer.periodic(const Duration(minutes: 2), (_) => _presence());
-    _noticeOpened = SchoolNotifications.opened.listen((_) => _load());
+    _noticeOpened = SchoolNotifications.opened.listen((_) => _load(afterSignal:true));
     _noticeReceived = FirebaseMessaging.onMessage.listen((m) {
       if (SchoolNotifications.belongsToSession(m.data, _s.link?.projectId))
-        _load();
+        _load(afterSignal:true);
     });
   }
 
@@ -464,7 +464,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) unawaited(_load());
+    if (state == AppLifecycleState.resumed) unawaited(_load(afterSignal:true));
   }
 
   Future<void> _presence([String? token]) async {
@@ -473,11 +473,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
     await _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool afterSignal=false}) async {
     if (!mounted) return;
     setState(() => _loading = _data.isEmpty);
     try {
-      final d = await _s.refreshDashboard();
+      final d = await _s.refreshDashboard(afterSignal:afterSignal);
       if (mounted)
         setState(() {
           _data = Map<String, dynamic>.from(d);

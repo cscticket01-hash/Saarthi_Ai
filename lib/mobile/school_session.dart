@@ -38,6 +38,7 @@ class SchoolSession {
   Map<String, dynamic> _pdfCache = {};
   Map<String, Uint8List> _pdfMemory = {};
   Future<Map<String, dynamic>>? _refresh;
+  Future<Map<String, dynamic>>? _signalRefresh;
   Future<void>? _renewal;
   Future<void> _storageTail = Future<void>.value();
   int _expiresAt = 0;
@@ -316,9 +317,24 @@ class SchoolSession {
 
   /// One coalesced refresh of versioned, permission-filtered school content.
   /// Failed refreshes preserve the last durable verified generation.
-  Future<Map<String, dynamic>> refreshDashboard() {
+  Future<Map<String, dynamic>> refreshDashboard({bool afterSignal=false}) {
     final running = _refresh;
-    if (running != null) return running;
+    if (running != null) {
+      if (!afterSignal) return running;
+      final queued = _signalRefresh;
+      if (queued != null) return queued;
+      final origin = _generation;
+      Future<Map<String,dynamic>> next() async {
+        if (origin != _generation) throw SchoolAccessDenied('School session changed.');
+        _signalRefresh = null;
+        return refreshDashboard();
+      }
+      final follow = running.then((_) => next(), onError:(Object _,StackTrace __) => next());
+      _signalRefresh = follow;
+      follow.then((_) { if (identical(_signalRefresh,follow)) _signalRefresh=null; },
+          onError:(Object _,StackTrace __) { if (identical(_signalRefresh,follow)) _signalRefresh=null; });
+      return follow;
+    }
     final origin = _generation;
     connectionState = SchoolConnectionState.syncing;
     final watch = Stopwatch()..start();
@@ -554,6 +570,7 @@ class SchoolSession {
     _pdfCache = {};
     _pdfMemory = {};
     _refresh = null;
+    _signalRefresh = null;
     _renewal = null;
     _expiresAt = 0;
     _policyExpiresAt = 0;

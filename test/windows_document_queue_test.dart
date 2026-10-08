@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image/image.dart' as img;
+import 'package:http/http.dart' as http;
 
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
@@ -46,6 +47,7 @@ void main() {
       'documentRevision':'preserved-revision', 'syncState':'Synced',
       'mimeType':'application/pdf', 'sizeBytes':12345,
     };
+    expect(() => http.Response(jsonEncode({'documents':[metadata]}),200),throwsArgumentError);
     await db.collection('documents').doc('doc-unicode').set(metadata);
     final response = await WindowsBackendBridge.post(Uri.parse(''),
       body:jsonEncode({'action':'list_student_documents','studentId':'S-1'}));
@@ -60,6 +62,12 @@ void main() {
     expect(WindowsBackendBridge.normalizedDocumentPath('bad\u0000path'),isNull);
     final record = (await db.collection('documents').doc('doc-unicode').get()).data();
     expect(record!['documentRevision'],'preserved-revision');
+    final origin=db.activeProfileId;
+    await db.switchProfile('inventory-restart-away');
+    await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+    final reopened=await WindowsBackendBridge.post(Uri.parse(''),
+      body:jsonEncode({'action':'list_student_documents','studentId':'S-1'}));
+    expect(jsonDecode(reopened.body)['documents'].single['fileId'],'existing-drive-file');
   });
   test('offline replacement is durable, retains originals and queues only the newest generation', () async {
     final image = img.Image(width: 300, height: 400);

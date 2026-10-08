@@ -873,6 +873,11 @@ class WindowsSyncEngine {
           throw StateError(
             'Items need conflict review; both versions retained.',
           );
+        if ((details.value['pending'] as num? ?? 0) > 0) {
+          _rerunRequested = true;
+          state.value = SchoolCloudState.syncPending;
+          return;
+        }
         await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
           () => FirebaseFirestore.instance
               .collection('_windows_sync_status')
@@ -989,6 +994,11 @@ class WindowsSyncEngine {
     for (final collection in _firebaseCollections.where(
       (c) => c != 'backups',
     )) {
+      // A new durable notice must not wait for every startup collection read.
+      if (_rerunRequested) {
+        _rerunRequested = false;
+        await _pushManagedOutbox();
+      }
       final manifest = db
           .collection('_windows_sync_manifest')
           .doc(_manifestId('managed', collection));

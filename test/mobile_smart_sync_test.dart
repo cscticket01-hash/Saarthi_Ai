@@ -36,6 +36,26 @@ void main() {
     'schoolName': 'Own school',
   });
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  test('ACK hint during an older in-flight dashboard schedules one fresh delta read', () async {
+    final oldReply=Completer<http.Response>();
+    var dashboardReads=0;
+    final session=SchoolSession(client:MockClient((request) async {
+      final action=(jsonDecode(request.body)['request'] as Map)['action'];
+      if(action=='mobile_login')return http.Response(jsonEncode(login()),200);
+      dashboardReads++;
+      if(dashboardReads==1)return oldReply.future;
+      return http.Response(jsonEncode(response({'revision':'new','notices':[{'id':'new','title':'After ACK'}]})),200);
+    }));
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    final first=session.refreshDashboard();
+    final signal=session.refreshDashboard(afterSignal:true);
+    final duplicate=session.refreshDashboard(afterSignal:true);
+    oldReply.complete(http.Response(jsonEncode(response({'revision':'old','notices':[]})),200));
+    await Future.wait([first,signal,duplicate]);
+    expect(dashboardReads,2);
+    expect(session.dashboard['revision'],'new');
+    expect(session.connectionState,SchoolConnectionState.connected);
+  });
   test('content-free refresh hints are accepted only for the currently verified school', () {
     expect(SchoolNotifications.belongsToSession({'schoolId':school,'type':'school_sync'},school),true);
     expect(SchoolNotifications.belongsToSession({'schoolId':'foreign-school','type':'school_sync'},school),false);
