@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -33,6 +34,29 @@ void main() {
     }
     expect(target, findsOneWidget, reason: 'Fee UI operation did not complete');
   }
+  Future<T?> io<T>(WidgetTester tester, Future<T> Function() action) async {
+    T? value;
+    Object? error;
+    StackTrace? stack;
+    var done = false;
+    await tester.runAsync(() async {
+      unawaited(action().then<void>((result) {
+        value = result;
+        done = true;
+      }, onError: (Object e, StackTrace st) {
+        error = e;
+        stack = st;
+        done = true;
+      }));
+    });
+    for (var i = 0; i < 200 && !done; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds:25)));
+      await tester.pump(const Duration(milliseconds:50));
+    }
+    expect(done, true, reason: 'Fee storage operation did not complete');
+    if (error != null) Error.throwWithStackTrace(error!, stack!);
+    return value;
+  }
   test('session fee changes preserve unknown legacy heads and decimals; restart retains pending changes and other sessions', () async {
     final session=await WindowsFeeStructure.currentSession();
     await db.collection('fee_settings').doc('Class_1').set({'fees':{'Tuition Fees':125.5,'Legacy Custom Fee':35},'configured':true});
@@ -62,12 +86,12 @@ void main() {
     await tester.tap(find.text('Edit Fee Structure'));await waitFor(tester, find.text('Security Waiting Period'));
     expect(find.text('Security Waiting Period'),findsOneWidget);
     expect(find.text('Verify & Continue'),findsNothing);
-    final session=await tester.runAsync(() => WindowsFeeStructure.currentSession());
+    final session=await io(tester, () => WindowsFeeStructure.currentSession());
     final id=WindowsFeeStructure.documentId('Class 1',session!);
-    final deadline=await tester.runAsync(() async => (await db.collection('_local_fee_edit_locks').doc(id).get()).data()?['unlockAt']);
+    final deadline=await io(tester, () async => (await db.collection('_local_fee_edit_locks').doc(id).get()).data()?['unlockAt']);
     await tester.tap(find.text('Cancel'));await tester.pumpAndSettle();
     await tester.tap(find.text('Edit Fee Structure'));await waitFor(tester, find.text('Security Waiting Period'));
-    final retained=await tester.runAsync(() async => (await db.collection('_local_fee_edit_locks').doc(id).get()).data()?['unlockAt']);
+    final retained=await io(tester, () async => (await db.collection('_local_fee_edit_locks').doc(id).get()).data()?['unlockAt']);
     expect(retained,deadline);
     await tester.pump(const Duration(seconds:30));await tester.pump();
     expect(find.text('App Lock Verification'),findsOneWidget);
@@ -85,7 +109,7 @@ void main() {
   testWidgets('saved custom fee heads remain visible and editable through the protected flow', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400,1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.runAsync(() async => WindowsFeeStructure.save('Class 1',await WindowsFeeStructure.currentSession(),{'Legacy Custom Fee':35.25,'Tuition Fees':125.5}));
+    await io(tester, () async => WindowsFeeStructure.save('Class 1',await WindowsFeeStructure.currentSession(),{'Legacy Custom Fee':35.25,'Tuition Fees':125.5}));
     await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await waitFor(tester, find.text('Edit Fee Structure'));
     expect(find.text('Edit Fee Structure'),findsOneWidget);
     await tester.scrollUntilVisible(find.text('Legacy Custom Fee'),300,scrollable:find.byType(Scrollable).last);
