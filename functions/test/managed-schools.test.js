@@ -397,3 +397,8 @@ test('document refresh hint targets only the Script-verified person, not another
   await new Promise(resolve=>setImmediate(resolve));assert.equal(pushes.length,1); // One school-scoped burst, not one FCM send per record.
   assert(pushes.every(p=>p.data.schoolId===A&&!JSON.stringify(p.data).includes('Private')));
  });
+
+test('signed record revision conflict keeps a precise safe error category without ACK',async()=>{
+ const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:A,message:'Record revision conflict'})}));
+ await assert.rejects(f.call({action:'managed/records',collection:'school_expenses',operation:'write',id:'expense',syncProtocol:2,operationId:'conflict-operation-123',expectedRecordRevision:'old',data:{amount:100}}),e=>e.status===409&&e.code==='RECORD_REVISION_CONFLICT');
+});

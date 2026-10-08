@@ -314,6 +314,12 @@ class CentralSchoolCloud {
         'school_cloud': 'Central school API',
       };
       String detail = reason == 'UNKNOWN' ? '' : ' [$reason]';
+      final recordConflict = uri.toString() == endpoint &&
+          response.statusCode == 409 && body is Map &&
+          body['action'] == 'managed/records' &&
+          (errorBody['code'] == 'RECORD_REVISION_CONFLICT' ||
+              errorBody['message'] == 'Record revision conflict');
+      if (recordConflict) detail = ' Record revision conflict.';
       // Server messages are accepted only from the configured central endpoint,
       // and only when they exactly match a fixed, non-secret public explanation.
       const publicMessages = {
@@ -354,7 +360,9 @@ class CentralSchoolCloud {
             'insufficientPermissions':
                 'Reconnect the same Google account and allow Drive permission.',
           }[reason] ??
-          (response.statusCode == 401
+          (recordConflict
+              ? 'Both versions are retained. Review the conflicting record before retrying.'
+              : response.statusCode == 401
               ? 'Reconnect the same school Google account.'
               : 'Retry the same school; existing data is retained.');
       final reference = errorBody['requestId'];

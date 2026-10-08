@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import '../lib/windows_settings_panel.dart';
@@ -76,10 +78,26 @@ void main(){
   expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
   await ref.set({'name':'Third'});queue=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();expect(queue['baseCloudRevision'],'server-revision-2');
  });
+ test('attendance and financial mutations drain before media with verified ACKs',()async{
+  for(final collection in ['documents','school_notices','fee_payments','attendance_records']) {
+   await db.collection(collection).doc('priority').set({'value':1});
+  }
+  final sent=<String>[];
+  await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+    send:(c,id,op,data)async=>sent.add(c));
+  expect(sent,['attendance_records','fee_payments','school_notices','documents']);
+  expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+ });
  test('conflict retains local copy and stops automatic retry while another school is inaccessible',()async{
   await db.collection('school_expenses').doc('expense').set({'amount':100});
   final origin=db.activeProfileId;
-  await expectLater(WindowsPendingSchoolSync.flush(profileId:origin,send:(a,b,c,d)async{},sendVersioned:(item)async=>throw StateError('Record revision conflict')),throwsStateError);
+  final cloud=CentralSchoolCloud(endpoint:'https://school.example/api',client:MockClient((_)async=>
+    http.Response(jsonEncode({'success':false,'message':'Record revision conflict'}),409)));
+  await expectLater(WindowsPendingSchoolSync.flush(profileId:origin,send:(a,b,c,d)async{},sendVersioned:(item)async{
+    await cloud.send('POST',Uri.parse(cloud.endpoint),body:{'action':'managed/records'});
+    throw StateError('A failed request must never ACK');
+  }),throwsStateError);
+  cloud.close();
   final item=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();expect(item['syncState'],'conflict');
   await WindowsPendingSchoolSync.flush(profileId:origin,send:(a,b,c,d)async=>fail('Conflict must not overwrite'));expect((await db.collection('school_expenses').doc('expense').get()).data()?['amount'],100);
   await db.switchProfile('B',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});

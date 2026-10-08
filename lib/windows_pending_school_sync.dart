@@ -15,7 +15,16 @@ class WindowsPendingSchoolSync {
       final value=d['queuedAt'];
       return value is Timestamp ? value.millisecondsSinceEpoch : value is num ? value.toInt() : 0;
     }
-    final docs=snapshot.docs.toList()..sort((a,b)=>time(a.data()).compareTo(time(b.data())));
+    int priority(Map<String,dynamic> d) {
+      final collection=d['collection'];
+      if ({'attendance_records','attendance_logs','teacher_attendance'}.contains(collection)) return 0;
+      if ({'fee_ledger','fee_payments','school_expenses','teacher_salary'}.contains(collection)) return 1;
+      return collection=='documents' ? 3 : 2;
+    }
+    final docs=snapshot.docs.toList()..sort((a,b) {
+      final order=priority(a.data()).compareTo(priority(b.data()));
+      return order!=0 ? order : time(a.data()).compareTo(time(b.data()));
+    });
     for(final queued in docs) {
       unchanged();queued.reference.requireOriginProfile();
       final item=queued.data();

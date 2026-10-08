@@ -16,6 +16,17 @@ class _CountingClient extends MockClient {
   @override void close(){closes++;super.close();}
 }
 void main() {
+  test('only central managed-record revision conflict reaches conflict recovery', () async {
+    for (final specific in [true, false]) {
+      final cloud=CentralSchoolCloud(endpoint:'https://school.example/api',client:MockClient((r) async =>
+        http.Response(jsonEncode({'success':false,'message':specific?'Record revision conflict':'private value NEVER_EXPOSE',
+          'requestId':'03ee66b9-8b36-4054-a521-a42b5293aba2'}),409)));
+      await expectLater(cloud.send('POST',Uri.parse(cloud.endpoint),body:{'action':'managed/records'}),
+        throwsA(isA<StateError>().having((e)=>e.toString(),'specific conflict',specific?contains('Record revision conflict'):isNot(contains('conflict')))
+          .having((e)=>e.toString(),'privacy',isNot(contains('NEVER_EXPOSE')))));
+      cloud.close();
+    }
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
   test('request wrappers can share an explicitly caller-owned connection without closing it', () async {
