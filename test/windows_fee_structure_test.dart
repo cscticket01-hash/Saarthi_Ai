@@ -59,7 +59,8 @@ void main() {
     await tester.tap(find.text('Edit Fee Structure'));await io(tester);
     expect(find.text('Security Waiting Period'),findsOneWidget);
     expect(find.text('Verify & Continue'),findsNothing);
-    final id=WindowsFeeStructure.documentId('Class 1',await WindowsFeeStructure.currentSession());
+    final session=await tester.runAsync(() => WindowsFeeStructure.currentSession());
+    final id=WindowsFeeStructure.documentId('Class 1',session!);
     final deadline=await tester.runAsync(() async => (await db.collection('_local_fee_edit_locks').doc(id).get()).data()?['unlockAt']);
     await tester.tap(find.text('Cancel'));await tester.pumpAndSettle();
     await tester.tap(find.text('Edit Fee Structure'));await io(tester);
@@ -81,7 +82,7 @@ void main() {
   testWidgets('saved custom fee heads remain visible and editable through the protected flow', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400,1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await WindowsFeeStructure.save('Class 1',await WindowsFeeStructure.currentSession(),{'Legacy Custom Fee':35.25,'Tuition Fees':125.5});
+    await tester.runAsync(() async => WindowsFeeStructure.save('Class 1',await WindowsFeeStructure.currentSession(),{'Legacy Custom Fee':35.25,'Tuition Fees':125.5}));
     await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await io(tester);
     expect(find.text('Edit Fee Structure'),findsOneWidget);
     await tester.scrollUntilVisible(find.text('Legacy Custom Fee'),300,scrollable:find.byType(Scrollable).last);
