@@ -3,10 +3,10 @@ const {createHash,randomUUID}=require('node:crypto');
 const digest=s=>createHash('sha256').update(s).digest('hex');
 /** Durable coordination only. School operational records remain in school Drive.
  * No accepted acknowledgement is sent before store.create has completed. */
-function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatchSize=25,maxBatchSize=200,deliveryBatchSize=25,random=Math.random,targetBatchMillis=2000}){
- if(!Number.isInteger(minBatchSize)||!Number.isInteger(maxBatchSize)||minBatchSize<1||maxBatchSize>200||minBatchSize>maxBatchSize||!Number.isInteger(batchSize)||batchSize<minBatchSize||batchSize>maxBatchSize||!Number.isInteger(deliveryBatchSize)||deliveryBatchSize<1||deliveryBatchSize>25||!Number.isFinite(targetBatchMillis)||targetBatchMillis<=0||typeof random!=='function')throw new Error('Invalid bounded attendance batch configuration');
- let draining=false,currentBatchSize=batchSize;
- const metrics={accepted:0,duplicates:0,completed:0,retried:0,rejected:0,batchSize:currentBatchSize,lastBatchMillis:0,lastBatchFailures:0};
+function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatchSize=25,maxBatchSize=200,deliveryBatchSize=25,random=Math.random,targetBatchMillis=2000,maxConcurrency=2}){
+ if(!Number.isInteger(minBatchSize)||!Number.isInteger(maxBatchSize)||minBatchSize<1||maxBatchSize>200||minBatchSize>maxBatchSize||!Number.isInteger(batchSize)||batchSize<minBatchSize||batchSize>maxBatchSize||!Number.isInteger(deliveryBatchSize)||deliveryBatchSize<1||deliveryBatchSize>25||!Number.isFinite(targetBatchMillis)||targetBatchMillis<=0||typeof random!=='function'||!Number.isInteger(maxConcurrency)||maxConcurrency<1||maxConcurrency>2)throw new Error('Invalid bounded attendance batch configuration');
+ let draining=false,currentBatchSize=batchSize,currentConcurrency=1;
+ const metrics={accepted:0,duplicates:0,completed:0,retried:0,rejected:0,batchSize:currentBatchSize,lastBatchMillis:0,lastBatchFailures:0,concurrency:currentConcurrency};
  async function enqueue({schoolId,role,personId,day,mode,payload}){
   if(!/^vs-[a-f0-9]{32}$/.test(schoolId)||!['student','teacher'].includes(role)||!['entry','exit'].includes(mode)||!/^\d{4}-\d{2}-\d{2}$/.test(day)||typeof personId!=='string'||!personId||personId.length>200)throw new Error('Invalid attendance operation');
   const operationId=digest(JSON.stringify([schoolId,role,personId,day,mode]));
@@ -24,7 +24,7 @@ function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatc
     if(row.nextAttemptAt>now())continue;
     if(!groups.has(row.schoolId))groups.set(row.schoolId,[]);groups.get(row.schoolId).push(row);
    }
-   for(const [school,candidates]of groups){
+   const processSchool=async([school,candidates])=>{
     for(let offset=0;offset<candidates.length;offset+=deliveryBatchSize){
      const items=[];
      // Claim just before delivery: queued later chunks must not expire while an earlier Script call runs.
@@ -50,11 +50,19 @@ function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatc
      if(state==='completed')metrics.completed++;else if(state==='retry')metrics.retried++;else metrics.rejected++;
     }
     }
-   }
+   };
+   // One worker owns each school: its Script mutations remain strictly ordered.
+   // Only independent schools may run concurrently, with an absolute cap of two.
+   const work=[...groups];let cursor=0;
+   const outcomes=await Promise.allSettled(Array.from({length:Math.min(currentConcurrency,work.length)},async()=>{
+    while(cursor<work.length){const group=work[cursor++];await processSchool(group);}
+   }));
+   const failedWorker=outcomes.find(result=>result.status==='rejected');
+   if(failedWorker)throw failedWorker.reason;
    metrics.lastBatchMillis=Math.max(0,now()-started);metrics.lastBatchFailures=failures;
-   if(failures||metrics.lastBatchMillis>targetBatchMillis)currentBatchSize=Math.max(minBatchSize,Math.floor(currentBatchSize/2));
-   else if(processed===currentBatchSize)currentBatchSize=Math.min(maxBatchSize,currentBatchSize+25);
-   metrics.batchSize=currentBatchSize;
+   if(failures||metrics.lastBatchMillis>targetBatchMillis){currentBatchSize=Math.max(minBatchSize,Math.floor(currentBatchSize/2));currentConcurrency=1;}
+   else if(processed===currentBatchSize){currentBatchSize=Math.min(maxBatchSize,currentBatchSize+25);currentConcurrency=Math.min(maxConcurrency,currentConcurrency+1);}
+   metrics.batchSize=currentBatchSize;metrics.concurrency=currentConcurrency;
   }finally{draining=false;}
   return {processed,nextRetryAt};
  }

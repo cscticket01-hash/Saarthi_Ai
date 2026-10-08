@@ -400,5 +400,12 @@ test('document refresh hint targets only the Script-verified person, not another
 
 test('signed record revision conflict keeps a precise safe error category without ACK',async()=>{
  const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:A,message:'Record revision conflict'})}));
- await assert.rejects(f.call({action:'managed/records',collection:'school_expenses',operation:'write',id:'expense',syncProtocol:2,operationId:'conflict-operation-123',expectedRecordRevision:'old',data:{amount:100}}),e=>e.status===409&&e.code==='RECORD_REVISION_CONFLICT');
+ await assert.rejects(f.call({action:'managed/records',collection:'school_expenses',operation:'write',id:'expense',syncProtocol:2,operationId:'conflict-operation-123',expectedRecordRevision:'old',data:{amount:100}}),e=>e.status===409&&e.code==='RECORD_REVISION_CONFLICT'&&e.syncDiagnostic.schoolId===A&&e.syncDiagnostic.operationId==='conflict-operation-123'&&e.syncDiagnostic.syncProtocol===2);
+});
+
+test('missing school storage is distinct from revision conflict and cannot ACK a pending mutation',async()=>{
+ const f=fixture();f.docs.delete('school_storage_private/'+A);
+ await assert.rejects(f.call({action:'managed/records',collection:'school_expenses',operation:'write',id:'expense',syncProtocol:2,operationId:'storage-operation-123',expectedRecordRevision:'',data:{amount:100}}),e=>e.status===409&&e.code==='SCHOOL_STORAGE_NOT_CONNECTED'&&e.syncDiagnostic.schoolId===A&&e.syncDiagnostic.operationId==='storage-operation-123');
+ assert.equal(f.sent.length,0);
+ await assert.rejects(f.call({action:'managed/records',schoolId:B,collection:'school_expenses',operation:'read'}),e=>e.status===403&&e.syncDiagnostic===undefined);
 });

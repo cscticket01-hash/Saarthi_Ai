@@ -320,6 +320,20 @@ class CentralSchoolCloud {
           (errorBody['code'] == 'RECORD_REVISION_CONFLICT' ||
               errorBody['message'] == 'Record revision conflict');
       if (recordConflict) detail = ' Record revision conflict.';
+      const syncFailures = {
+        'RECORD_REVISION_CONFLICT': 'Record revision conflict.',
+        'SCHOOL_STORAGE_NOT_CONNECTED': 'School storage is not connected. Ask the developer to verify the existing school storage binding.',
+        'SCRIPT_MIGRATION_PENDING': 'School data organization is in progress. Pending changes are retained.',
+        'SCRIPT_MIGRATION_CONFLICT': 'School migration needs review. Both versions are retained.',
+        'SCRIPT_IDENTITY_MISMATCH': 'School storage identity verification failed. Pending changes are retained.',
+      };
+      final diagnosticCode = uri.toString() == endpoint &&
+              syncFailures.containsKey(errorBody['code'])
+          ? errorBody['code'] as String
+          : '';
+      if (diagnosticCode.isNotEmpty) {
+        detail = ' [$diagnosticCode] ${syncFailures[diagnosticCode]}';
+      }
       // Server messages are accepted only from the configured central endpoint,
       // and only when they exactly match a fixed, non-secret public explanation.
       const publicMessages = {
@@ -337,6 +351,7 @@ class CentralSchoolCloud {
         'Existing storage retained. Developer must approve replacing this school Drive connection',
       };
       if (uri.toString() == endpoint &&
+          diagnosticCode.isEmpty &&
           publicMessages.contains(errorBody['message']))
         detail = ' ${errorBody['message']}.';
       final action = uri.toString() == endpoint && body is Map
@@ -376,6 +391,7 @@ class CentralSchoolCloud {
         response.statusCode,
         stage,
         '$endpointLabel failed (HTTP ${response.statusCode}).$detail $help$ref',
+        diagnosticCode: diagnosticCode,
         invalidRefresh:
             stage == 'firebase_refresh' &&
             response.statusCode == 400 &&
@@ -838,10 +854,12 @@ class CentralCloudException extends StateError {
     this.stage,
     String message, {
     this.invalidRefresh = false,
+    this.diagnosticCode = '',
   }) : super(message);
   final int status;
   final String stage;
   final bool invalidRefresh;
+  final String diagnosticCode;
   bool get authoritativeAccessDenial =>
       invalidRefresh ||
       stage == 'school_cloud' && (status == 401 || status == 403);

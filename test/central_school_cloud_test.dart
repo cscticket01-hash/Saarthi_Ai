@@ -27,6 +27,21 @@ void main() {
       cloud.close();
     }
   });
+  test('safe coded storage failures remain distinct from revision conflicts', () async {
+    final cloud = CentralSchoolCloud(endpoint: 'https://central.example/school-cloud',
+      client: MockClient((_) async => http.Response(jsonEncode({
+        'success': false, 'code': 'SCHOOL_STORAGE_NOT_CONNECTED',
+        'message': 'NEVER_EXPOSE_PRIVATE_BODY',
+      }), 409)));
+    await expectLater(cloud.send('POST', Uri.parse(cloud.endpoint),
+      body: {'action': 'managed/records'}),
+      throwsA(isA<CentralCloudException>()
+        .having((e) => e.diagnosticCode, 'code', 'SCHOOL_STORAGE_NOT_CONNECTED')
+        .having((e) => e.toString(), 'specific explanation', contains('existing school storage binding'))
+        .having((e) => e.toString(), 'not a revision conflict', isNot(contains('conflict')))
+        .having((e) => e.toString(), 'private body', isNot(contains('NEVER_EXPOSE')))));
+    cloud.close();
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
   test('request wrappers can share an explicitly caller-owned connection without closing it', () async {

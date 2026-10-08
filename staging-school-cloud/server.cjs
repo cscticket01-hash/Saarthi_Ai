@@ -52,8 +52,13 @@ function createHandler({handle,health,allowedOrigins=[],logger=entry=>console.in
       const status=code==='auth/email-already-exists'?409:[400,401,403,405,409,429,502,503,504].includes(e.status)?e.status:503;
       // Log every failure without exception text, request payloads or credentials.
       // Upstream Script failures must not masquerade as a central-service outage.
-      logger({event:'central_failure',action,...(operation?{operation}:{}),status,code,requestId});
-      return send(status,{success:false,code,message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
+      const context=e.syncDiagnostic;
+      const diagnostic=status===409&&['RECORD_REVISION_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(code)
+        &&context&&/^vs-[a-f0-9]{32}$/.test(context.schoolId)&&[1,2].includes(context.syncProtocol)
+        ?{schoolId:context.schoolId,syncProtocol:context.syncProtocol,
+          ...(typeof context.operationId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(context.operationId)?{operationId:context.operationId}:{})}:{};
+      logger({event:'central_failure',action,...(operation?{operation}:{}),status,code,requestId,...diagnostic});
+      return send(status,{success:false,code,...diagnostic,message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
     }
   };
 }

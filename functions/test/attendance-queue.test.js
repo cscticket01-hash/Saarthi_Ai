@@ -70,3 +70,33 @@ test('active worker respects retry deadline and retains a wake arriving during u
  const worker=createAttendanceWorker({now:()=>1000,drain:async()=>{calls++;if(calls===1)await wait;return {processed:1,nextRetryAt:9000};},setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{}});
  const active=scheduled();worker.wake();release();await active;assert.equal(delay,0);await scheduled();assert.equal(delay,2000);worker.stop();
 });
+
+test('adaptive concurrency caps independent schools at two and serializes each school',async()=>{
+ const s=store();let active=0,peak=0,fail=false;const schools=new Set();
+ const q=createAttendanceQueue({store:s,batchSize:25,maxBatchSize:25,minBatchSize:25,now:()=>1000,deliver:async(school,items)=>{
+  assert(!schools.has(school));schools.add(school);active++;peak=Math.max(peak,active);
+  await new Promise(resolve=>setImmediate(resolve));active--;schools.delete(school);
+  return fail?[]:items.map(i=>({operationId:i.operationId,success:true}));
+ }});
+ for(let n=0;n<25;n++)await q.enqueue(event(A,'warm'+n));await q.drain();assert.equal(q.metrics.concurrency,2);
+ for(let n=0;n<12;n++){await q.enqueue(event(A,'next'+n));await q.enqueue(event(B,'next'+n));}
+ await q.drain();assert.equal(peak,2);assert.equal(q.metrics.completed,49);
+ fail=true;await q.enqueue(event(B,'retry'));await q.drain();assert.equal(q.metrics.concurrency,1);assert.equal(q.metrics.retried,1);
+ assert.throws(()=>createAttendanceQueue({store:s,deliver:async()=>[],maxConcurrency:3}),/Invalid bounded/);
+});
+
+test('a failed parallel store write cannot release the drain guard while another school is active',async()=>{
+ const s=store();let phase=0,release,started;const running=new Promise(r=>started=r),hold=new Promise(r=>release=r);
+ const finish=s.finish;s.finish=async(...args)=>{if(phase&&s.rows.get(args[0]).schoolId===A)throw Error('store unavailable');return finish(...args);};
+ const q=createAttendanceQueue({store:s,batchSize:25,minBatchSize:25,maxBatchSize:25,deliver:async(school,items)=>{
+  if(phase&&school===B){started();await hold;}
+  return items.map(i=>({operationId:i.operationId,success:true}));
+ }});
+ for(let n=0;n<25;n++)await q.enqueue(event(A,'warm'+n));await q.drain();phase=1;
+ await q.enqueue(event(A,'active'));await q.enqueue(event(B,'active'));
+ const draining=q.drain();const rejected=assert.rejects(draining,/store unavailable/);
+ await running;await new Promise(r=>setImmediate(r));assert.deepEqual(await q.drain(),{processed:0,nextRetryAt:null});
+ release();await rejected;
+ assert.equal([...s.rows.values()].find(r=>r.schoolId===B).state,'completed');
+ assert.equal([...s.rows.values()].find(r=>r.schoolId===A&&r.state==='processing').state,'processing');
+});

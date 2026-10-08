@@ -26,3 +26,14 @@ test('safe upstream category survives handler without a fake acknowledgement',as
  const r=await request(Object.assign(new Error('School script identity or operation failed'),{status:502,code:'SCRIPT_OPERATION_FAILED',publicMessage:true}));
  assert.equal(r.status,502);assert.equal(r.body.code,'SCRIPT_OPERATION_FAILED');assert.equal(r.body.success,false);
 });
+
+test('only verified allowlisted sync conflict context is exposed; raw request identity is never used',async()=>{
+ const context={schoolId:'vs-'+ 'a'.repeat(32),syncProtocol:2,operationId:'operation-123456789',password:'NEVER_LOG_THIS'};
+ const r=await request(Object.assign(new Error('Record revision conflict'),{status:409,code:'RECORD_REVISION_CONFLICT',publicMessage:true,syncDiagnostic:context}));
+ for(const value of [r.body,r.logs[0]]){assert.equal(value.schoolId,context.schoolId);assert.equal(value.operationId,context.operationId);assert.equal(value.syncProtocol,2);}
+ assert.equal(r.body.success,false);assert.equal(JSON.stringify(r).includes('NEVER_LOG_THIS'),false);
+ for(const change of [{code:'UNKNOWN'},{syncDiagnostic:{...context,schoolId:'../private'}},{status:403}]){
+  const blocked=await request(Object.assign(new Error('private'),{status:409,code:'RECORD_REVISION_CONFLICT',syncDiagnostic:context},change));
+  assert.equal(blocked.body.schoolId,undefined);assert.equal(blocked.logs[0].schoolId,undefined);
+ }
+});
