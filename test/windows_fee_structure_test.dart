@@ -26,9 +26,12 @@ void main() {
     await WindowsLocalSecurity.initialize();
     await WindowsLocalSecurity.create(adminId:'School admin', password:'app-lock-password');
   });
-  Future<void> io(WidgetTester tester) async {
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds:250)));
-    await tester.pump();
+  Future<void> waitFor(WidgetTester tester, Finder target) async {
+    for (var i = 0; i < 200 && target.evaluate().isEmpty; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds:25)));
+      await tester.pump(const Duration(milliseconds:50));
+    }
+    expect(target, findsOneWidget, reason: 'Fee UI operation did not complete');
   }
   test('session fee changes preserve unknown legacy heads and decimals; restart retains pending changes and other sessions', () async {
     final session=await WindowsFeeStructure.currentSession();
@@ -47,35 +50,35 @@ void main() {
   testWidgets('local save locks inputs and restart remains read-only; edit requires full wait and correct App Lock', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400,1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await io(tester);
+    await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await waitFor(tester, find.text('Save / Update Fee Structure'));
     expect(find.text('Save / Update Fee Structure'),findsOneWidget);
     await tester.enterText(find.byType(TextField).first,'125.5');
-    await tester.tap(find.text('Save / Update Fee Structure'));await io(tester);
+    await tester.tap(find.text('Save / Update Fee Structure'));await waitFor(tester, find.text('Edit Fee Structure'));
     expect(find.text('Edit Fee Structure'),findsOneWidget);
     expect(find.byType(TextField),findsNothing);expect(find.text('₹ 125.5'),findsOneWidget);
     await tester.pumpWidget(const SizedBox());
-    await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await io(tester);
+    await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await waitFor(tester, find.text('Edit Fee Structure'));
     expect(find.text('Edit Fee Structure'),findsOneWidget);expect(find.byType(TextField),findsNothing);
-    await tester.tap(find.text('Edit Fee Structure'));await io(tester);
+    await tester.tap(find.text('Edit Fee Structure'));await waitFor(tester, find.text('Security Waiting Period'));
     expect(find.text('Security Waiting Period'),findsOneWidget);
     expect(find.text('Verify & Continue'),findsNothing);
     final session=await tester.runAsync(() => WindowsFeeStructure.currentSession());
     final id=WindowsFeeStructure.documentId('Class 1',session!);
     final deadline=await tester.runAsync(() async => (await db.collection('_local_fee_edit_locks').doc(id).get()).data()?['unlockAt']);
     await tester.tap(find.text('Cancel'));await tester.pumpAndSettle();
-    await tester.tap(find.text('Edit Fee Structure'));await io(tester);
+    await tester.tap(find.text('Edit Fee Structure'));await waitFor(tester, find.text('Security Waiting Period'));
     final retained=await tester.runAsync(() async => (await db.collection('_local_fee_edit_locks').doc(id).get()).data()?['unlockAt']);
     expect(retained,deadline);
     await tester.pump(const Duration(seconds:30));await tester.pump();
     expect(find.text('App Lock Verification'),findsOneWidget);
     await tester.enterText(find.byType(TextField),'wrong-password');
-    await tester.tap(find.text('Verify & Continue'));await io(tester);
+    await tester.tap(find.text('Verify & Continue'));await waitFor(tester, find.text('Galat App Lock Password.'));
     expect(find.text('Galat App Lock Password.'),findsOneWidget);
     await tester.enterText(find.byType(TextField),'app-lock-password');
-    await tester.tap(find.text('Verify & Continue'));await io(tester);await tester.pumpAndSettle();
+    await tester.tap(find.text('Verify & Continue'));await waitFor(tester, find.text('Save / Update Fee Structure'));await tester.pumpAndSettle();
     expect(find.text('Save / Update Fee Structure'),findsOneWidget);
     await tester.enterText(find.byType(TextField).first,'200');
-    await tester.tap(find.text('Save / Update Fee Structure'));await io(tester);
+    await tester.tap(find.text('Save / Update Fee Structure'));await waitFor(tester, find.text('Edit Fee Structure'));
     expect(find.text('Edit Fee Structure'),findsOneWidget);expect(find.byType(TextField),findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
@@ -83,7 +86,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400,1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.runAsync(() async => WindowsFeeStructure.save('Class 1',await WindowsFeeStructure.currentSession(),{'Legacy Custom Fee':35.25,'Tuition Fees':125.5}));
-    await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await io(tester);
+    await tester.pumpWidget(const MaterialApp(home:FeeCollectionSettingsScreen()));await waitFor(tester, find.text('Edit Fee Structure'));
     expect(find.text('Edit Fee Structure'),findsOneWidget);
     await tester.scrollUntilVisible(find.text('Legacy Custom Fee'),300,scrollable:find.byType(Scrollable).last);
     expect(find.text('Legacy Custom Fee'),findsOneWidget);
