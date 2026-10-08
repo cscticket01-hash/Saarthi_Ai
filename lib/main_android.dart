@@ -1312,6 +1312,18 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
                 padding: const EdgeInsets.all(20),
                 children: [
                   if (_loading || _busy) const LinearProgressIndicator(),
+                  Text(switch (_s.connectionState) {
+                    SchoolConnectionState.connected => 'Connected — last dashboard verified',
+                    SchoolConnectionState.syncing => 'Syncing',
+                    SchoolConnectionState.cachedOffline => 'Cached / Offline',
+                    SchoolConnectionState.connectionError => 'Connection error — cached data retained',
+                  }, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  if (_s.lastDashboardVerifiedAt != null)
+                    Text('Verified: ${_s.lastDashboardVerifiedAt!.toLocal()}',
+                      style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                  if (SchoolSession.version.endsWith('-sync-test') && _s.lastDashboardRefreshDuration != null)
+                    Text('Dashboard refresh: ${_s.lastDashboardRefreshDuration!.inMilliseconds} ms',
+                      style: const TextStyle(color: Colors.white38, fontSize: 11)),
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 16),

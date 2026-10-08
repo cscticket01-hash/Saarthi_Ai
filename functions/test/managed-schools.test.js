@@ -364,9 +364,10 @@ test('verified protocol ACK precedes tenant-only content-free push hint; reads s
 });
 
 test('optional push outage never cancels a verified storage ACK',async()=>{
- const f=fixture(async(url,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:JSON.parse(opt.body).schoolId,syncProtocol:2,recordRevision:'persisted-revision'})}),{messaging:{sendEachForMulticast:async()=>{throw Error('FCM unavailable');}}});
+ const diagnostics=[];const f=fixture(async(url,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:JSON.parse(opt.body).schoolId,syncProtocol:2,recordRevision:'persisted-revision'})}),{pushDiagnostics:entry=>diagnostics.push(entry),messaging:{sendEachForMulticast:async()=>{throw Error('FCM unavailable');}}});
  await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_heartbeat',sessionToken:'school-verified',deviceId:'d'.repeat(64),fcmToken:'f'.repeat(40)}});
  const ack=await f.call({action:'managed/records',collection:'documents',operation:'write',id:'doc',data:{documentRevision:'rev'},expectedRevision:''});
  assert.equal(ack.recordRevision,'persisted-revision');
  await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(diagnostics,[{event:'managed_push_hint_failure',code:'FCM_UNAVAILABLE'}]);
 });

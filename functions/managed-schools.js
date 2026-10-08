@@ -9,7 +9,7 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,messaging,monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,messaging,pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
  const mobileStates=new Map(),storageStates=new Map();
  function invalidate(id){mobileStates.delete(id);storageStates.delete(id);}
  async function cachedRead(cache,id,read){
@@ -78,7 +78,10 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   const rows=await cachedRead(pushDevices,schoolId,()=>db.collection('managed_notification_devices').where('schoolId','==',schoolId).get());
   const tokens=[...new Set(rows.docs.filter(d=>d.data().schoolId===schoolId&&d.data().expiresAt>now()).map(d=>unprotect(d.data().token,encryptionKey)))];
   for(let offset=0;offset<tokens.length;offset+=500)
-   await messaging.sendEachForMulticast({tokens:tokens.slice(offset,offset+500),data:{schoolId,type:notice?'school_notice':'school_sync',operationId,...(notice?{noticeId:operationId}:{})},android:{priority:'high'}});
+   {
+    const sent=await messaging.sendEachForMulticast({tokens:tokens.slice(offset,offset+500),data:{schoolId,type:notice?'school_notice':'school_sync',operationId,...(notice?{noticeId:operationId}:{})},android:{priority:'high'}});
+    if(sent?.failureCount>0)try{pushDiagnostics({event:'managed_push_hint_failure',code:'FCM_PARTIAL_FAILURE',count:sent.failureCount});}catch{}
+   }
  }
  const pairingTickets=new Map();
  function presence(m,access){
@@ -278,7 +281,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   // Only verified durable Script ACK permits a hint. FCM is optional and never
   // changes the storage acknowledgement or sends private school content.
   if((b.syncProtocol===2||(b.collection==='documents'&&typeof b.expectedRevision==='string'))&&acknowledged.syncProtocol===2&&typeof acknowledged.recordRevision==='string'&&b.operation!=='read'&&['school_notices','school_config','students_directory','teachers_directory','exam_results','documents'].includes(b.collection))
-   void notifyChanged(m.schoolId,b.operationId||hash(m.schoolId+'/'+b.collection+'/'+b.id+'/'+acknowledged.recordRevision),b.collection==='school_notices'&&b.operation==='write').catch(()=>{});
+   void notifyChanged(m.schoolId,b.operationId||hash(m.schoolId+'/'+b.collection+'/'+b.id+'/'+acknowledged.recordRevision),b.collection==='school_notices'&&b.operation==='write').catch(error=>{const safe=['messaging/authentication-error','messaging/mismatched-credential','messaging/server-unavailable'];try{pushDiagnostics({event:'managed_push_hint_failure',code:safe.includes(error.code)?error.code:'FCM_UNAVAILABLE'});}catch{}});
   return acknowledged;
  }
  if(action==='managed/file/upload'){
