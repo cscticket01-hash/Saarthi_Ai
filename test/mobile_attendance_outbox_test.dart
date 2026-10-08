@@ -33,8 +33,9 @@ void main() {
     expect((await store.pending('owner')).single['state'], 'pending');
     expect((await store.claim('owner', 93001, 'restart'))!['capturedAt'], 1000);
     await store.finish('owner', id, 'restart', {'state':'needsAttention'});
+    expect(await store.hasDue('owner',100000),false);
     await store.retryReview('foreign');expect((await store.pending('owner')).single['state'],'needsAttention');
-    await store.retryReview('owner');expect((await store.pending('owner')).single['state'],'pending');
+    await store.retryReview('owner');expect(await store.hasDue('owner',100000),true);expect((await store.pending('owner')).single['state'],'pending');
   });
   test('SQLite pending count is exact beyond a bounded inventory page', () async {
     final db = await store.database;

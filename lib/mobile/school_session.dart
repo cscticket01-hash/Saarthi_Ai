@@ -33,6 +33,7 @@ class SchoolSession {
   final AttendanceStore _attendanceStore;
   Future<void>? _attendanceFlush;
   final attendanceChanges = ValueNotifier<int>(0);
+  bool attendanceStatusReady = false;
   int attendancePending = 0, attendanceAccepted = 0;
   String attendanceFailure = '';
   DateTime? lastAttendanceAck;
@@ -45,6 +46,7 @@ class SchoolSession {
     final rows = await _attendanceStore.pending(owner);
     final summary = await _attendanceStore.summary(owner);
     if (owner != _attendanceOwner) return;
+    attendanceStatusReady = true;
     attendancePending = (summary['pending'] as num).toInt();
     attendanceAccepted = (summary['accepted'] as num? ?? 0).toInt();
     if (summary['ack'] is num) lastAttendanceAck = DateTime.fromMillisecondsSinceEpoch((summary['ack'] as num).toInt());
@@ -75,7 +77,11 @@ class SchoolSession {
   Future<void> flushAttendance() {
     final running = _attendanceFlush;
     if (running != null) return running;
-    final pending = _flushAttendance();
+    final pending = _flushAttendance().catchError((Object error) {
+      attendanceFailure = 'Attendance storage unavailable. Existing captures are retained; retry after reopening the app.';
+      attendanceChanges.value++;
+      throw error;
+    });
     _attendanceFlush = pending;
     return pending.whenComplete(() { if (identical(_attendanceFlush, pending)) _attendanceFlush = null; });
   }
@@ -85,8 +91,9 @@ class SchoolSession {
     final owner = _attendanceOwner;
     final generation = _generation;
     if (current == null || owner == null) return;
-    final rows = await _attendanceStore.pending(owner);
-    if (rows.isEmpty) return;
+    if (!await _attendanceStore.hasDue(owner, DateTime.now().millisecondsSinceEpoch)) {
+      await refreshAttendanceStatus(); return;
+    }
     Map<String, dynamic> refreshed;
     try { refreshed = await schoolCall('mobile_refresh', {}); }
     catch (_) { await refreshAttendanceStatus(); return; }
@@ -679,6 +686,7 @@ class SchoolSession {
 
   Future<void> clear() async {
     _generation++;
+    attendanceStatusReady = false;
     attendancePending = 0; attendanceAccepted = 0; attendanceFailure = ''; lastAttendanceAck = null;
     attendanceChanges.value++;
     link = null;

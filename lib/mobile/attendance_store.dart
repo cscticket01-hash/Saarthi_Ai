@@ -48,6 +48,9 @@ class AttendanceStore {
         where: 'id=?', whereArgs: [row['id']]);
       return row;
     });
+  Future<bool> hasDue(String owner, int now) async => (await (await database).query(
+    'attendance', columns: ['id'], where: 'owner=? AND state IN (?,?) AND nextAt<=?',
+    whereArgs: [owner, 'pending', 'accepted', now], limit: 1)).isNotEmpty;
   Future<Map<String, Object?>> summary(String owner) async {
     final db = await database;
     final counts = (await db.rawQuery("SELECT COUNT(*) AS pending, SUM(CASE WHEN state='accepted' THEN 1 ELSE 0 END) AS accepted FROM attendance WHERE owner=? AND state<>'completed'", [owner])).single;

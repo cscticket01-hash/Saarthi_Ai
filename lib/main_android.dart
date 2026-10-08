@@ -1338,7 +1338,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
                     SchoolConnectionState.cachedOffline => 'Cached / Offline',
                     SchoolConnectionState.connectionError => 'Connection error — cached data retained',
                   }, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                  Text('Attendance pending: ${_s.attendancePending} (central accepted: ${_s.attendanceAccepted})'),
+                  Text(_s.attendanceStatusReady
+                    ? 'Attendance pending: ${_s.attendancePending} (central accepted: ${_s.attendanceAccepted})'
+                    : 'Loading local attendance queue…'),
                   if (_s.attendanceFailure.isNotEmpty) Text(_s.attendanceFailure),
                   if (_s.attendancePending > 0) TextButton(
                     onPressed: () async { try { await _s.retryAttendance(); } catch (_) {} },
