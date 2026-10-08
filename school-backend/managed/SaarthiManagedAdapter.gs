@@ -337,8 +337,18 @@ function VS_managedHandle(e) {
     // exceptions, payloads, identities, signatures, paths or credentials.
     const diagnostic=VS_managedDiagnostic(error);
     const site=String(error&&error.stack||'').match(/(?:Code|SaarthiManagedAll)(?:\.gs)?:(\d+)/);
-    if(typeof console!=='undefined')console.info(JSON.stringify({event:'managed_storage_failure',phase:verified?'authorized_operation':'request_verification',code:diagnostic,line:site?Number(site[1]):0}));
+    const trace={event:'managed_storage_failure',at:Date.now(),phase:verified?'authorized_operation':'request_verification',code:diagnostic,line:site?Number(site[1]):0};
+    if(typeof console!=='undefined')console.info(JSON.stringify(trace));
+    // Anonymous web-app executions may not expose logs in the default Cloud
+    // project. Keep only the same non-sensitive trace in a short-lived cache.
+    try{CacheService.getScriptCache().put('VS_SYNC_DIAGNOSTIC_V1',JSON.stringify(trace),1800);}catch(_){}
     const code=verified?diagnostic:'SCRIPT_OPERATION_FAILED';
     return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected',code:code});
   }
+}
+
+// Run manually in the owner editor only; not routed through doPost/doGet.
+function VS_readLastSyncDiagnostic() {
+  const trace=CacheService.getScriptCache().get('VS_SYNC_DIAGNOSTIC_V1');
+  Logger.log(trace||'No recent sync diagnostic captured');
 }

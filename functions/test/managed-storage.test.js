@@ -319,3 +319,15 @@ test('owner execution diagnostics classify swallowed rejection without exposing 
  const result=c.VS_managedHandle({postData:{contents:'{}'}});assert.equal(result.success,false);assert.equal(logs.at(-1).phase,'authorized_operation');assert.equal(logs.at(-1).code,'SCRIPT_OPERATION_FAILED');
  assert(!JSON.stringify(logs).includes('private'));assert(!JSON.stringify(logs).includes(A));
 });
+
+
+test('diagnostic owner cache is temporary metadata only and cache failure never changes request result',()=>{
+ const logs=[],cached=[];
+ const c=vm.createContext({console:{info:line=>logs.push(line)},Logger:{log:line=>logs.push(line)},CacheService:{getScriptCache:()=>({put:(...args)=>cached.push(args),get:()=>cached.at(-1)?.[1]})},PropertiesService:{getScriptProperties:()=>({getProperty:()=>A})},jsonResponse:x=>x});
+ vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),c);
+ c.VS_managedVerify=()=>{throw new Error('Invalid request signature');};
+ const before=c.VS_managedHandle({postData:{contents:'{}'}});assert.equal(cached[0][0],'VS_SYNC_DIAGNOSTIC_V1');assert.equal(cached[0][2],1800);assert(!cached[0][1].includes(A));
+ c.VS_readLastSyncDiagnostic();assert.equal(logs.at(-1),cached[0][1]);
+ c.CacheService.getScriptCache=()=>{throw Error('Unavailable');};
+ assert.deepEqual(c.VS_managedHandle({postData:{contents:'{}'}}),before);
+});
