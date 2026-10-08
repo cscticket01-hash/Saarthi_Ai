@@ -72,3 +72,9 @@ duplicate/lost records. Test offline restart, network recovery, minimized Window
 supported Android background execution and stale-revision conflicts. Do not
 promise upload from a terminated app or an exact Android background interval.
 No real-device or live migration PASS is recorded by this document.
+
+The existing operator-only `staging_attendance_acceptance.mjs` now targets this
+dedicated TEST service. Its explicit TEST-ID confirmation, authenticated profile
+label, 1,000 distinct synthetic identities and final-ACK gates remain required.
+It does not run automatically in CI. Tokens/fixtures stay local to the operator;
+do not put them in the repository or chat. Never run it against real students.

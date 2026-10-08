@@ -1,8 +1,0 @@
-[
-  {
-    "id": "school-id-v1",
-    "name": "School ID • Manifest Front + Back",
-    "manifest": "assets/school_id_manifest_v1.json",
-    "kinds": ["studentId", "teacherId", "otherStaffId"]
-  }
-]

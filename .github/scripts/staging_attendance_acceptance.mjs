@@ -1,7 +1,7 @@
 // Operator-only live staging workload. Never runs in CI or without TEST guards.
 import fs from 'node:fs/promises';
 import {performance} from 'node:perf_hooks';
-const endpoint='https://saarthi-oauth-staging.onrender.com/school-cloud';
+const endpoint='https://saarthi-sync-v2-test.onrender.com/school-cloud';
 const schoolId=process.env.VS_TEST_SCHOOL_ID,admin=process.env.VS_TEST_ADMIN_ID_TOKEN;
 if(!process.argv.includes('--run-isolated-test')||!/^vs-[a-f0-9]{32}$/.test(schoolId||'')||!admin||process.env.VS_TEST_ISOLATED_CONFIRM!==schoolId)throw Error('Explicit isolated TEST school, local ID token and confirmation required.');
 const fixtures=JSON.parse(await fs.readFile(process.env.VS_TEST_ATTENDANCE_FIXTURES,'utf8'));
