@@ -62,6 +62,7 @@ function fromEnvironment(env) {
   const {initializeApp,getApps,cert}=runtimeRequire('firebase-admin/app');
   const {getAuth}=runtimeRequire('firebase-admin/auth');
   const {getFirestore}=runtimeRequire('firebase-admin/firestore');
+  const {getMessaging}=runtimeRequire('firebase-admin/messaging');
   const key=JSON.parse(env.SAARTHI_FIREBASE_ADMIN_JSON || '{}');
   if(key.project_id!==PROJECT || !key.client_email?.endsWith('@'+PROJECT+'.iam.gserviceaccount.com') || !key.private_key) throw new Error('Invalid central staging credential configuration');
   const app=initializeApp({credential:cert(key),projectId:PROJECT},'central-render-staging');
@@ -74,7 +75,7 @@ function fromEnvironment(env) {
     const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
     return getAuth(legacy).verifyIdToken(String(token || '')); 
   }});
-  const managed=require('../functions/managed-schools').createManagedSchools({auth,db,projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
+  const managed=require('../functions/managed-schools').createManagedSchools({auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
   if(env.SAARTHI_ATTENDANCE_QUEUE_ENABLED!=='false'){
     const worker=require('../functions/attendance-queue').createAttendanceWorker({drain:managed.drainAttendance,onError:()=>console.info(JSON.stringify({event:'attendance_retry_pending'}))});
     managed.setAttendanceWake(worker.wake);

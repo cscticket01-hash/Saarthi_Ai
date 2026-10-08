@@ -66,6 +66,8 @@ class WindowsSyncEngine {
   bool _syncBlocked = false;
 
   DateTime? lastSuccessfulSync;
+  String? _protocolIdentity;
+  DateTime? _protocolVerifiedAt;
   final metrics = <String, int>{
     'recordReadRequests': 0,
     'recordWriteRequests': 0,
@@ -827,6 +829,9 @@ class WindowsSyncEngine {
           throw StateError(
             'School Drive connection pending. Local data retained.',
           );
+        final protocolIdentity = jsonEncode([_activeProfileId, _activeSchoolSyncId, _activeGoogleUrl, central['scriptUrl']]);
+        if (_manualSync || _protocolIdentity != protocolIdentity ||
+            _protocolVerifiedAt == null || DateTime.now().difference(_protocolVerifiedAt!) >= const Duration(minutes: 5)) {
         final health = await ManagedSchoolSession.callForSchool(
           _activeSchoolSyncId,
           'managed/storage/check',
@@ -838,12 +843,19 @@ class WindowsSyncEngine {
           throw StateError(
             'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
           );
-        await WindowsDocumentTemplates.publishChangedIdCards();
+          _protocolIdentity = protocolIdentity;
+          _protocolVerifiedAt = DateTime.now();
+        }
         try {
           await _pushManagedOutbox();
         } catch (e) {
           if (!e.toString().contains('conflict')) rethrow;
         }
+        await WindowsDocumentTemplates.publishChangedIdCards();
+        // ID preparation may create credential metadata; drain only those new
+        // durable operations before uploading their published files.
+        try { await _pushManagedOutbox(); }
+        catch (e) { if (!e.toString().contains('conflict')) rethrow; }
         try {
           await WindowsBackendBridge.flushDocumentPending();
         } catch (e) {
@@ -929,7 +941,7 @@ class WindowsSyncEngine {
       await refreshDetails();
       if (lastError != null || _rerunRequested) {
         _rerunRequested = false;
-        scheduleSoon(delay: const Duration(seconds: 30));
+        scheduleSoon(delay: lastError == null ? const Duration(milliseconds: 250) : const Duration(seconds: 30));
       }
     }
   }

@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import '../lib/mobile/school_session.dart';
+import '../lib/mobile/school_notifications.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +36,12 @@ void main() {
     'schoolName': 'Own school',
   });
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  test('content-free refresh hints are accepted only for the currently verified school', () {
+    expect(SchoolNotifications.belongsToSession({'schoolId':school,'type':'school_sync'},school),true);
+    expect(SchoolNotifications.belongsToSession({'schoolId':'foreign-school','type':'school_sync'},school),false);
+    expect(SchoolNotifications.belongsToSession({'schoolId':school,'type':'school_sync'},null),false);
+    expect(SchoolNotifications.belongsToSession({'schoolId':school,'type':'unknown'},school),false);
+  });
   test('live dashboard, optional Drive failure, server error and network recovery have distinct states', () async {
     var mode = 'online';
     final session = SchoolSession(client:MockClient((request) async {

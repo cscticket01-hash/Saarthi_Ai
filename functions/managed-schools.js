@@ -9,7 +9,7 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,messaging,monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
  const mobileStates=new Map(),storageStates=new Map();
  function invalidate(id){mobileStates.delete(id);storageStates.delete(id);}
  async function cachedRead(cache,id,read){
@@ -60,6 +60,26 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(!Array.isArray(result.acknowledgements))throw Error('Attendance acknowledgement missing');
   return result.acknowledgements;
  }});
+ const pushDevices=new Map();
+ async function registerDevice(schoolId,request) {
+  if(!messaging || request.action!=='mobile_heartbeat' || request.fcmToken===undefined)return;
+  if(typeof request.fcmToken!=='string'||request.fcmToken.length<20||request.fcmToken.length>4096||
+     typeof request.deviceId!=='string'||request.deviceId.length<32||request.deviceId.length>160)fail(400,'Invalid notification device');
+  const ref=db.doc('managed_notification_devices/'+hash(request.fcmToken)),deviceHash=hash(request.deviceId);
+  await db.runTransaction(async tx=>{const old=await tx.get(ref);
+   if(old.exists&&old.data().deviceHash!==deviceHash)fail(403,'Notification device binding rejected');
+   tx.set(ref,{schoolId,deviceHash,token:protect(request.fcmToken,encryptionKey),expiresAt:now()+30*86400000});
+   if(old.exists)pushDevices.delete(old.data().schoolId);
+  });
+  pushDevices.delete(schoolId);
+ }
+ async function notifyChanged(schoolId,operationId,notice) {
+  if(!messaging)return;
+  const rows=await cachedRead(pushDevices,schoolId,()=>db.collection('managed_notification_devices').where('schoolId','==',schoolId).get());
+  const tokens=[...new Set(rows.docs.filter(d=>d.data().schoolId===schoolId&&d.data().expiresAt>now()).map(d=>unprotect(d.data().token,encryptionKey)))];
+  for(let offset=0;offset<tokens.length;offset+=500)
+   await messaging.sendEachForMulticast({tokens:tokens.slice(offset,offset+500),data:{schoolId,type:notice?'school_notice':'school_sync',operationId,...(notice?{noticeId:operationId}:{})},android:{priority:'high'}});
+ }
  const pairingTickets=new Map();
  function presence(m,access){
   if(!access.allowed||access.status!=='trial'&&!access.activated)return undefined;
@@ -174,6 +194,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
    return {success:true,schoolId:b.schoolId,projectId:b.schoolId,...result};
   }
   const result=await signed(m,{action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
+  await registerDevice(b.schoolId,b.request);
   if(result.attendancePolicy) result.attendancePermit=attendancePermit(b.schoolId,b.request.sessionToken||result.sessionToken,result.attendancePolicy,e.expiresAt);
   delete result.attendancePolicy;
   return {...result,policyExpiresAt:Math.min(e.expiresAt,now()+72*3600000)};
@@ -252,8 +273,13 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(!COLLECTIONS.has(b.collection)||!['read','write','delete'].includes(b.operation))fail(400,'Invalid school collection operation');if(b.operation!=='read'&&(!/^[^/]{1,200}$/.test(b.id||'')||['.','..'].includes(b.id)))fail(400,'Invalid record ID');const data=b.operation==='write'?{...clean(b.data),schoolId:m.schoolId}:undefined;
   if(b.expectedRevision!==undefined&&(b.collection!=='documents'||typeof b.expectedRevision!=='string'||b.expectedRevision.length>100))fail(400,'Invalid document version');if(b.syncProtocol!==undefined&&b.syncProtocol!==2)fail(400,'Invalid sync protocol');
   if(b.syncProtocol===2&&b.operation!=='read'&&(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100))fail(400,'Invalid sync operation');
-  return signed(m,{action:'managed_records',operation:b.operation,collection:b.collection,
+  const acknowledged=await signed(m,{action:'managed_records',operation:b.operation,collection:b.collection,
     ...(b.syncProtocol===2?{syncProtocol:2,...(b.operation==='read'?{knownRevision:typeof b.knownRevision==='string'?b.knownRevision:''}:{operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision})}:{}),...(b.id?{id:b.id}:{}),...(data?{data}:{}),...(b.expectedRevision!==undefined?{expectedRevision:b.expectedRevision}:{}),...(Number.isFinite(b.expectedUploadedAt)?{expectedUploadedAt:b.expectedUploadedAt}:{})});
+  // Only verified durable Script ACK permits a hint. FCM is optional and never
+  // changes the storage acknowledgement or sends private school content.
+  if((b.syncProtocol===2||(b.collection==='documents'&&typeof b.expectedRevision==='string'))&&acknowledged.syncProtocol===2&&typeof acknowledged.recordRevision==='string'&&b.operation!=='read'&&['school_notices','school_config','students_directory','teachers_directory','exam_results','documents'].includes(b.collection))
+   void notifyChanged(m.schoolId,b.operationId||hash(m.schoolId+'/'+b.collection+'/'+b.id+'/'+acknowledged.recordRevision),b.collection==='school_notices'&&b.operation==='write').catch(()=>{});
+  return acknowledged;
  }
  if(action==='managed/file/upload'){
   if(typeof b.base64!=='string'||b.base64.length>28*1024*1024||!b.base64.length||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)fail(400,'Invalid school file');if(b.uploadKey!==undefined&&!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))fail(400,'Invalid upload key');return signed(m,{action:'managed_upload',name:b.name,mime:b.mime,base64:b.base64,...(b.uploadKey?{uploadKey:b.uploadKey}:{})});

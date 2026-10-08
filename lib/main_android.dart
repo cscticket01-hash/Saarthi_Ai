@@ -34,6 +34,15 @@ Future<void> _backgroundNotice(RemoteMessage message) async {
 }
 
 final _messenger = GlobalKey<ScaffoldMessengerState>();
+StreamSubscription<String>? _messagingTokenChanges;
+Future<void> _registerManagedNotifications() async {
+  if (!SchoolMessaging.ready || SchoolSession.instance.link?.managed != true) return;
+  _messagingTokenChanges ??= FirebaseMessaging.instance.onTokenRefresh.listen((token) {
+    unawaited(SchoolSession.instance.registerNotificationDevice(token).catchError((_) {}));
+  });
+  final token = await FirebaseMessaging.instance.getToken();
+  if (token != null) await SchoolSession.instance.registerNotificationDevice(token);
+}
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SchoolSession.instance.restore();
@@ -47,7 +56,9 @@ Future<void> main() async {
 Future<void> _initializeMobileNotifications() async {
   await SchoolNotifications.initialize();
   try {
-    await SchoolMessaging.configure(SchoolSession.instance.messaging);
+    await SchoolMessaging.configure(SchoolSession.instance.messaging,
+        centralSchool: SchoolSession.instance.link?.managed == true);
+    await _registerManagedNotifications();
   } catch (_) {}
   FirebaseMessaging.onBackgroundMessage(_backgroundNotice);
   try {
@@ -258,8 +269,9 @@ class _SchoolLoginState extends State<_SchoolLogin> {
           if (!same()) return;
           await SchoolNotifications.clear().timeout(const Duration(seconds: 5));
           if (!same()) return;
-          await SchoolMessaging.configure(messaging)
+          await SchoolMessaging.configure(messaging, centralSchool: account?.managed == true)
               .timeout(const Duration(seconds: 10));
+          if (same()) await _registerManagedNotifications();
         } catch (_) {
           _messenger.currentState?.showSnackBar(
             const SnackBar(
@@ -473,6 +485,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
           _error = null;
         });
       unawaited(_refreshPublishedCard().catchError((Object _) => null));
+      unawaited(_registerManagedNotifications().catchError((_) {}));
     } on SchoolAccessDenied catch (e) {
       if (mounted)
         setState(() {

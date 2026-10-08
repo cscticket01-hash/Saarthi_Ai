@@ -32,6 +32,8 @@ class SchoolSession {
   Map<String, dynamic> dashboard = {};
   SchoolConnectionState connectionState = SchoolConnectionState.cachedOffline;
   DateTime? lastDashboardVerifiedAt;
+  DateTime? _pushRegisteredAt;
+  String? _registeredPushToken;
   Duration? lastDashboardRefreshDuration;
   Map<String, dynamic> _pdfCache = {};
   Map<String, Uint8List> _pdfMemory = {};
@@ -188,6 +190,18 @@ class SchoolSession {
       throw SchoolAccessDenied('School identity mismatch. Login blocked.');
     }
     return Map<String, dynamic>.from(d);
+  }
+
+  Future<void> registerNotificationDevice(String token) async {
+    if (!loggedIn || link?.managed != true) return;
+    final origin = _generation;
+    if (_registeredPushToken == token && _pushRegisteredAt != null &&
+        DateTime.now().difference(_pushRegisteredAt!) < const Duration(days: 1)) return;
+    await schoolCall('mobile_heartbeat', {'fcmToken': token, 'deviceId': deviceId});
+    if (origin == _generation) {
+      _registeredPushToken = token;
+      _pushRegisteredAt = DateTime.now();
+    }
   }
 
   Future<http.Response> _redirect(String location) async {
@@ -530,6 +544,8 @@ class SchoolSession {
     link = null;
     schoolToken = '';
     messaging = null;
+    _registeredPushToken = null;
+    _pushRegisteredAt = null;
     person = {};
     schoolName = '';
     dashboard = {};

@@ -4,7 +4,7 @@ const {createManagedSchools,protect,unprotect,clean,scriptUrl}=require('../manag
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),key='c'.repeat(64),secret='d'.repeat(64),time=1800000000000;
 function fixture(fetchOverride,options={}){const docs=new Map(),users=new Map(),sent=[];
  const snap=p=>({exists:docs.has(p),data:()=>docs.get(p)});
- const db={doc:p=>({path:p,get:async()=>snap(p),set:async(v,o)=>docs.set(p,o?.merge?{...docs.get(p),...v}:v)}),collection:name=>({add:async()=>{},where:(field,op,value)=>({limit:()=>({get:async()=>({empty:![...docs.entries()].some(([path,data])=>path.startsWith(name+'/')&&data[field]===value)})})})}),batch:()=>{const queue=[];return {create:(r,v)=>queue.push(()=>{assert(!docs.has(r.path));docs.set(r.path,v)}),set:(r,v,o)=>queue.push(()=>docs.set(r.path,o?.merge?{...docs.get(r.path),...v}:v)),commit:async()=>queue.forEach(f=>f())}}};
+ const db={doc:p=>({path:p,get:async()=>snap(p),set:async(v,o)=>docs.set(p,o?.merge?{...docs.get(p),...v}:v)}),collection:name=>({add:async()=>{},where:(field,op,value)=>({get:async()=>({docs:[...docs.entries()].filter(([path,data])=>path.startsWith(name+'/')&&data[field]===value).map(([path,data])=>({id:path.split('/').pop(),data:()=>data}))}),limit:()=>({get:async()=>({empty:![...docs.entries()].some(([path,data])=>path.startsWith(name+'/')&&data[field]===value)})})})}),batch:()=>{const queue=[];return {create:(r,v)=>queue.push(()=>{assert(!docs.has(r.path));docs.set(r.path,v)}),set:(r,v,o)=>queue.push(()=>docs.set(r.path,o?.merge?{...docs.get(r.path),...v}:v)),commit:async()=>queue.forEach(f=>f())}}};
  db.runTransaction=async fn=>fn({get:async ref=>snap(ref.path),set:(ref,value,options)=>docs.set(ref.path,options?.merge?{...docs.get(ref.path),...value}:value)});
  const auth={verifyIdToken:async t=>{if(t==='developer')return {uid:'dev',developer:true};if(users.get(t)?.disabled)throw Error();if(!['A','B','forged','A-new-pc'].includes(t))throw Error();return {uid:['forged','A-new-pc'].includes(t)?'A':t,auth_time:time/1000-10,...(t==='forged'?{admin:true,schoolId:B}:{})}},createUser:async v=>{users.set('new',v);return {uid:'new'}},deleteUser:async u=>users.delete(u),generatePasswordResetLink:async e=>'https://reset.example/'+e,updateUser:async(u,v)=>users.set(u,{...users.get(u),...v}),revokeRefreshTokens:async()=>{}};
  for(const [uid,id]of [['A',A],['B',B]]){docs.set('school_memberships/'+uid,{schoolId:id,role:'school_admin',managed:true,active:true});docs.set('school_entitlements/'+id,{active:true,blocked:false,status:'trial',startsAt:time-1000,expiresAt:time+86400000});docs.set('platform_schools/'+id,{managed:true,authUid:uid,loginEmail:uid+'@school.example'});docs.set('school_storage_private/'+id,{url:'https://script.google.com/macros/s/'+id+'/exec',secret:protect(secret,key),ready:true});}
@@ -333,4 +333,40 @@ test('cloud mobile access remains available with PC offline while signed tenant/
  await assert.rejects(denied.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_document'}}),e=>e.status===403);
  const foreign=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:B})}));
  await assert.rejects(foreign.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_document',sessionToken:'existing'}}),e=>e.status===502&&e.code==='SCRIPT_IDENTITY_MISMATCH');
+});
+
+test('managed push device requires verified school session and same device proof across school changes',async()=>{
+ const f=fixture(undefined,{messaging:{sendEachForMulticast:async()=>{}}});
+ const request={action:'mobile_heartbeat',sessionToken:'verified-by-script',deviceId:'d'.repeat(64),fcmToken:'f'.repeat(40)};
+ await f.call({action:'managed/mobile',schoolId:A,request});
+ const id=crypto.createHash('sha256').update(request.fcmToken).digest('hex'),stored=f.docs.get('managed_notification_devices/'+id);
+ assert.equal(stored.schoolId,A);assert(!JSON.stringify(stored).includes(request.fcmToken));
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:B,request:{...request,deviceId:'other'.repeat(12)}}),e=>e.status===403);
+ assert.equal(f.docs.get('managed_notification_devices/'+id).schoolId,A);
+ await f.call({action:'managed/mobile',schoolId:B,request});
+ assert.equal(f.docs.get('managed_notification_devices/'+id).schoolId,B);
+ await f.call({action:'developer/managed/block',schoolId:A,blocked:true},'developer');
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request}),e=>e.status===403);
+ assert.equal(f.docs.get('managed_notification_devices/'+id).schoolId,B);
+});
+test('verified protocol ACK precedes tenant-only content-free push hint; reads send none and failed storage sends no hint',async()=>{
+ const pushes=[];const f=fixture(async(url,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:JSON.parse(opt.body).schoolId,syncProtocol:2,recordRevision:'verified-record-ACK'})}),{messaging:{sendEachForMulticast:async message=>pushes.push(message)}});
+ const device=(schoolId,token)=>f.call({action:'managed/mobile',schoolId,request:{action:'mobile_heartbeat',sessionToken:'school-verified',deviceId:token.repeat(64),fcmToken:token.repeat(40)}});
+ await device(A,'a');await device(B,'b');
+ await f.call({action:'managed/records',collection:'school_notices',operation:'write',id:'notice',data:{title:'Private notice'},syncProtocol:2,operationId:'operation-123456789',expectedRecordRevision:''});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(pushes.length,1);assert.deepEqual(pushes[0].tokens,['a'.repeat(40)]);
+ assert.equal(pushes[0].data.schoolId,A);assert(!JSON.stringify(pushes[0]).includes('Private notice'));
+ await f.call({action:'managed/records',collection:'school_notices',operation:'read',syncProtocol:2});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(pushes.length,1);
+ const bad=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:A})}),{messaging:{sendEachForMulticast:async()=>assert.fail('No ACK, no push')}});
+ await assert.rejects(bad.call({action:'managed/records',collection:'school_notices',operation:'write',id:'notice',data:{},syncProtocol:2,operationId:'operation-123456789',expectedRecordRevision:''}));
+});
+
+test('optional push outage never cancels a verified storage ACK',async()=>{
+ const f=fixture(async(url,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:JSON.parse(opt.body).schoolId,syncProtocol:2,recordRevision:'persisted-revision'})}),{messaging:{sendEachForMulticast:async()=>{throw Error('FCM unavailable');}}});
+ await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_heartbeat',sessionToken:'school-verified',deviceId:'d'.repeat(64),fcmToken:'f'.repeat(40)}});
+ const ack=await f.call({action:'managed/records',collection:'documents',operation:'write',id:'doc',data:{documentRevision:'rev'},expectedRevision:''});
+ assert.equal(ack.recordRevision,'persisted-revision');
+ await new Promise(resolve=>setImmediate(resolve));
 });
