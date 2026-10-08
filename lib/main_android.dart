@@ -1124,6 +1124,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
         style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 12),
+      if (_list(_data['examinations']).isNotEmpty)
+        _heading('Examinations', 'Published school examinations'),
+      for(final exam in _list(_data['examinations']))
+        _card(Text('${exam['examName'] ?? exam['name'] ?? exam['id']} • ${exam['academicSession'] ?? ''}')),
       if (_list(_data['reportCards']).isEmpty)
         _card(const Text('Your school has not published a report card yet.')),
       ..._list(_data['reportCards']).map(
@@ -1145,6 +1149,14 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       _heading('Fees', 'Your school fee ledger and payment history'),
+      for (final structure in _list(_data['feeStructures']))
+        if (structure['fees'] is Map)
+          _card(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Text('Fee Structure • ${structure['academicSession'] ?? 'Legacy'}',
+              style:const TextStyle(fontSize:18,fontWeight:FontWeight.w700)),
+            for(final head in (structure['fees'] as Map).entries)
+              Text('${head.key}: INR ${head.value}'),
+          ])),
       if (_list(_data['fees']).isEmpty)
         _card(const Text('Your school has not published a fee ledger yet.')),
       ..._list(_data['fees']).map((f) {

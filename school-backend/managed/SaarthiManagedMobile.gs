@@ -27,7 +27,7 @@ function VS_day(){return Utilities.formatDate(new Date(),'Asia/Kolkata','yyyy-MM
 function VS_isOpen(day){const d=VS_get('school_calendar',day);if(d&&typeof d.isOpen==='boolean')return d.isOpen;const config=VS_get('school_settings','calendar')||{};const closed=config.closedWeekdays||[0];return closed.indexOf(new Date(day+'T12:00:00+05:30').getUTCDay())<0;}
 function VS_person(b){const type=b.role||b.type;if(type!=='student'&&type!=='teacher')throw new Error('Invalid QR role');const col=type==='teacher'?'teachers_directory':'students_directory';const token=String(b.linkToken||'');if(token.length<20)throw new Error('This ID card needs a new secure school QR');let p=VS_get(col,String(b.personId||''));if(!p||p.mobileLinkToken!==token){const found=VS_query(col,'mobileLinkToken',token);p=found.length===1?found[0]:null;}if(!p||p.mobileLinkToken!==token)throw new Error('This QR does not belong to the active school');return {person:p,role:type};}
 function VS_session(b){const token=String(b.sessionToken||'');if(token.length<40)throw new Error('School login required');const doc=VS_get('mobile_sessions',VS_hash(token));if(!doc||(b.action!=='mobile_refresh'&&doc.expiresAt<=Date.now()))throw new Error('School session expired');let person=VS_get(doc.role==='teacher'?'teachers_directory':'students_directory',doc.documentId);if(!person||person.mobileLinkToken!==doc.linkToken){const found=VS_query(doc.role==='teacher'?'teachers_directory':'students_directory','mobileLinkToken',doc.linkToken);person=found.length===1?found[0]:null;}if(!person||person.mobileLinkToken!==doc.linkToken)throw new Error('School record or ID card was changed; scan again');return {doc:doc,person:person,role:doc.role,personId:person.mobileStableId||doc.personId};}
-function VS_own(col,session){const records=VS_query(col,'personId',session.personId).concat(VS_query(col,'studentId',session.person.id));const seen={};return records.filter(d=>{if(d.personId){if(d.personId!==session.personId)return false;}else{const name=String(d.studentName||d.name||'').trim().toLowerCase(),owner=String(session.person.name||'').trim().toLowerCase();if(!name||name!==owner)return false;if((d.dob||d.dateOfBirth)&&VS_dob(d.dob||d.dateOfBirth)!==VS_dob(session.person.dob||session.person.dateOfBirth))return false;}if(seen[d.id])return false;seen[d.id]=true;return true;});}
+function VS_own(col,session){const records=VS_query(col,'personId',session.personId).concat(VS_query(col,'studentId',session.person.id));const seen=Object.create(null);return records.filter(d=>{if(d.personId){if(d.personId!==session.personId)return false;}else{const name=String(d.studentName||d.name||'').trim().toLowerCase(),owner=String(session.person.name||'').trim().toLowerCase();if(!name||name!==owner)return false;if((d.dob||d.dateOfBirth)&&VS_dob(d.dob||d.dateOfBirth)!==VS_dob(session.person.dob||session.person.dateOfBirth))return false;}if(seen[d.id])return false;seen[d.id]=true;return true;});}
 function VS_safePerson(p){const allowed=['id','name','class','rollNo','dob','dateOfBirth','parentName','fatherName','parentContact','photoUrl','studentUid','teacherId','designation','subject','idCardUrl','mobileStableId'];const out={};allowed.forEach(k=>{if(p[k]!==undefined)out[k]=p[k];});return out;}
 function VS_distance(a,b,c,d){const rad=x=>x*Math.PI/180;const h=Math.sin(rad(c-a)/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(rad(d-b)/2)**2;return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));}
 function VS_mobileAction(b){
@@ -66,8 +66,8 @@ function VS_mobileAction(b){
    qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,open:VS_isOpen(day),
    latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200};
   const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy};
-  const groups={school:'school_config',templates:'school_settings',notices:'school_notices',calendar:'school_calendar',documents:'documents'};
-  if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments'});
+  const groups={school:'school_config',templates:'school_settings',notices:'school_notices',calendar:'school_calendar',documents:'documents',examinations:'exams'};
+  if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments',feeStructures:'fee_settings'});
   else groups.salary='teacher_salary';
   Object.keys(groups).forEach(key=>{
    const col=groups[key];if(props.getProperty('VS_SHEET_MIGRATED_'+col)!=='1')VS_managedSheet(col);
@@ -84,6 +84,8 @@ function VS_mobileAction(b){
     result.noticeIds=notices.map(n=>n.id);result.noticesDelta=true;
     result.notices=notices.filter(n=>prior[n.id]!==n._noticeRevision);
    }
+   else if(key==='examinations')result.examinations=VS_query(col);
+   else if(key==='feeStructures'){const normalize=value=>String(value||'').toLowerCase().replace(/[ _]/g,'').replace(/^class/,'');const assigned=normalize(session.person.class);result.feeStructures=VS_query(col).filter(row=>assigned&&normalize(row.className||row.class||String(row.id).split('__')[0])===assigned);}
    else if(key==='calendar')result.calendar=VS_query(col);
    else if(key==='salary')result.salary=VS_query(col,'teacherId',session.person.teacherId||session.person.id);
    else if(key==='documents'){
@@ -96,7 +98,7 @@ function VS_mobileAction(b){
     // suppresses its duplicate; do not revive results through the other writer.
     const canonical=VS_managedRecordUnlocked({operation:'read',collection:'exam_results',syncProtocol:2}).records;
     const centre=VS_managedRecordUnlocked({operation:'read',collection:'exam_center_results',syncProtocol:2}).records;
-    const rows={},removed={};
+    const rows=Object.create(null),removed=Object.create(null);
     [canonical,centre].forEach(records=>Object.keys(records).forEach(id=>{if(records[id]._syncDeleted||records[id].deleted)removed[id]=true;}));
     recordCache.exam_results={};recordCache.exam_center_results={};
     [[canonical,'exam_results'],[centre,'exam_center_results']].forEach(pair=>Object.keys(pair[0]).forEach(id=>{if(!removed[id])recordCache[pair[1]][id]=pair[0][id];}));

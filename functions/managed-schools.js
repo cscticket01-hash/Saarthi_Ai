@@ -10,8 +10,8 @@ function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed 
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
 function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
- const mobileStates=new Map(),storageStates=new Map();
- function invalidate(id){mobileStates.delete(id);storageStates.delete(id);}
+ const mobileStates=new Map(),storageStates=new Map(),developerViews=new Map();
+ function invalidate(id){mobileStates.delete(id);storageStates.delete(id);developerViews.delete(id);}
  async function cachedRead(cache,id,read){
   const old=cache.get(id);if(old&&old.until>now())return old.promise;
   if(cache.size>=5000)cache.delete(cache.keys().next().value);
@@ -147,7 +147,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   ticket.used=true;return {success:true,schoolId:m.schoolId};
  }
  if(action?.startsWith('developer/managed/')){
-  const admin=await developer(req),id=b.schoolId;invalidate(id);if(action==='developer/managed/create'){
+  const admin=await developer(req),id=b.schoolId;if(action==='developer/managed/create'){
    const email=String(b.email||'').trim().toLowerCase(),name=String(b.schoolName||'').trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||name.length<2||name.length>160)fail(400,'School name and valid login email required');
    const password=b.password;
    if(password!==undefined&&(typeof password!=='string'||password.length<12||password.length>128))fail(400,'Use an initial password of 12–128 characters');
@@ -169,7 +169,16 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
    await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,...(password===undefined?{passwordSetupLink:await auth.generatePasswordResetLink(email)}:{})};
   }
   if(action==='developer/managed/monitor'){const started=now();const metrics=await monitor();return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics};}
-  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');const school=await db.doc('platform_schools/'+id).get();if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
+  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
+  if(action==='developer/managed/view'){
+   const known=b.knownRevisions||{};if(!known||typeof known!=='object'||Array.isArray(known)||JSON.stringify(known).length>16000)fail(400,'Invalid school view checkpoint');
+   const out=await signed({schoolId:id},{action:'managed_view',knownRevisions:known});
+   if(!out.groups||typeof out.groups!=='object'||!out.revisions||typeof out.revisions!=='object')fail(502,'Invalid school view response');
+   const allowed=new Set(['exams','examResults','fee_settings','fee_ledger','fee_payments','school_notices','school_config','school_settings']);
+   for(const [key,group]of Object.entries(out.groups))if(!allowed.has(key)||!group||!Array.isArray(group.rows)||group.rows.length>100||!Number.isSafeInteger(group.count)||group.count<group.rows.length||group.rows.some(row=>!row||row.schoolId!==id))fail(502,'School view identity mismatch');
+   for(const [key,value]of Object.entries(out.revisions))if(!allowed.has(key)||typeof value!=='string'||value.length>1000)fail(502,'Invalid school view revision');
+   return {success:true,schoolId:id,groups:out.groups,revisions:out.revisions,previewLimit:100,verifiedAt:now()};
+  }
   if(action==='developer/managed/exams'){
    const groups={};
    for(const collection of ['exams','exam_center_results','exam_results']){
