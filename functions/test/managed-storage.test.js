@@ -305,3 +305,17 @@ test('health and storage readiness do not require optional owner email OAuth sco
  const out=f.call({action:'managed_health'});
  assert.equal(out.success,true);assert.equal(out.storageReady,true);assert.equal(out.recordSyncVersion,2);assert.equal(out.googleEmail,'');assert.equal(calls,0);
 });
+
+
+test('owner execution diagnostics classify swallowed rejection without exposing raw school payload or secrets',()=>{
+ const source=fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),logs=[];
+ const c=vm.createContext({console:{info:line=>logs.push(JSON.parse(line))},PropertiesService:{getScriptProperties:()=>({getProperty:()=>A})},jsonResponse:x=>x});vm.runInContext(source,c);
+ for(const [message,code] of [['Invalid request signature','SCRIPT_SIGNATURE_REJECTED'],['School Drive root mismatch','SCRIPT_ROOT_IDENTITY_MISMATCH'],['Invalid or duplicate legacy record; operator review required','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED'],['Versioned document requires a matching revision','SCRIPT_DOCUMENT_REVISION_REQUIRED']]){
+  c.VS_managedVerify=()=>{throw Object.assign(new Error(message),{stack:'Error private-secret\n at VS_managedVerify (Code:6521:7)'});};
+  const result=c.VS_managedHandle({postData:{contents:'{}'}});assert.equal(result.success,false);assert.equal(result.code,'SCRIPT_OPERATION_FAILED');
+  assert.equal(logs.at(-1).code,code);assert.equal(logs.at(-1).phase,'request_verification');assert.equal(logs.at(-1).line,6521);
+ }
+ c.VS_managedVerify=()=>({action:'managed_records'});c.VS_managedRecord=()=>{throw Object.assign(new Error('private student token path'),{stack:'Error private-secret\n at VS_sheetDecode (Code:6580:7)'});};
+ const result=c.VS_managedHandle({postData:{contents:'{}'}});assert.equal(result.success,false);assert.equal(logs.at(-1).phase,'authorized_operation');assert.equal(logs.at(-1).code,'SCRIPT_OPERATION_FAILED');
+ assert(!JSON.stringify(logs).includes('private'));assert(!JSON.stringify(logs).includes(A));
+});

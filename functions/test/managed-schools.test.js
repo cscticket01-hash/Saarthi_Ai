@@ -37,8 +37,8 @@ test('delete archives and disables only the selected account and retains school 
  assert.equal(f.docs.get('school_storage_private/'+A),storage);assert(f.docs.has('schools/'+A));assert.equal(f.docs.get('school_memberships/B').active,true);
  await assert.rejects(f.call({action:'managed/session'}),e=>e.status===401||e.status===403);
 });
-test('mobile cannot access Drive when Windows is offline, school is blocked, trial expires, or licence is revoked',async()=>{
- for(const mode of ['offline','blocked','expiry','revoked']){const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=mode==='offline'?time-90001:time;
+test('mobile cannot access Drive when school is blocked, trial expires, or licence is revoked',async()=>{
+ for(const mode of ['blocked','expiry','revoked']){const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=0;
  const e=f.docs.get('school_entitlements/'+A);if(mode==='blocked')e.blocked=true;if(mode==='expiry')e.expiresAt=time;if(mode==='revoked'){e.status='licensed';e.activated=true;e.licenseHash='revoked';}
  await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:'test'}}));assert.equal(f.sent.length,0);}
 });
@@ -298,7 +298,7 @@ test('verified attendance permit -> encrypted durable queue -> batched school Dr
    {projectId:A,attendancePolicy:{role:'student',personId:'stable-pupil',documentId:'pupil',qrHash:crypto.createHash('sha256').update('student/pupil/'+'x'.repeat(48)).digest('hex'),day,open:true,latitude:24,longitude:92,radiusMeters:200}};
   return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,...result})};
  },{attendanceStore:store});
- f.docs.get('platform_schools/'+A).lastSeenAt=time;
+ f.docs.get('platform_schools/'+A).lastSeenAt=0; // PC off: backend worker must still deliver.
  const session='s'.repeat(64),verified=await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:session}});
  const request={action:'mobile_mark_attendance',sessionToken:session,attendancePermit:verified.attendancePermit,role:'student',personId:'pupil',linkToken:'x'.repeat(48),latitude:24,longitude:92,accuracy:3,mode:'entry'};
  const first=await f.call({action:'managed/mobile',schoolId:A,request});assert.equal(first.accepted,true);assert.equal(f.sent.length,1);assert.equal(rows.size,1);
@@ -316,4 +316,21 @@ test('broker forwards only allowlisted Script diagnostic codes and never raw fai
   const f=fixture(async(_,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(opt.body).schoolId,success:false,message:'private exception secret-root-token',code})}));
   await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read'}),error=>error.status===502&&error.code===expected&&!error.message.includes('secret-root-token'));
  }
+});
+
+
+test('cloud mobile access remains available with PC offline while signed tenant/session authorization stays enforced',async()=>{
+ for(const seen of [undefined,0,time-86400000]) {
+  const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=seen;
+  for(const action of ['mobile_login','mobile_dashboard','mobile_notice','mobile_document','mobile_asset','mobile_refresh']) {
+   await f.call({action:'managed/mobile',schoolId:A,request:{action,sessionToken:'existing',documentId:'own'}});
+   const envelope=JSON.parse(f.sent.at(-1).opt.body),payload=JSON.parse(envelope.payload);
+   assert.equal(envelope.schoolId,A);assert.equal(payload.lease.schoolId,A);
+   assert.equal(f.docs.get('platform_schools/'+A).lastSeenAt,seen);
+  }
+ }
+ const denied=fixture(async(_,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:JSON.parse(opt.body).schoolId,message:'School login required'})}));
+ await assert.rejects(denied.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_document'}}),e=>e.status===403);
+ const foreign=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:B})}));
+ await assert.rejects(foreign.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_document',sessionToken:'existing'}}),e=>e.status===502&&e.code==='SCRIPT_IDENTITY_MISMATCH');
 });

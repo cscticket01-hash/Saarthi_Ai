@@ -249,6 +249,19 @@ function VS_managedConnect(b) {
 function VS_managedDiagnostic(error) {
   const message=String(error && error.message || '');
   const known={
+    'Signed school request required':'SCRIPT_SIGNED_REQUEST_REQUIRED',
+    'Invalid request signature':'SCRIPT_SIGNATURE_REJECTED',
+    'Request already used':'SCRIPT_REPLAY_REJECTED',
+    'Retry storage shortly':'SCRIPT_NONCE_CAPACITY',
+    'School Drive root mismatch':'SCRIPT_ROOT_IDENTITY_MISMATCH',
+    'School workbook identity mismatch':'SCRIPT_WORKBOOK_IDENTITY_MISMATCH',
+    'Pending workbook identity mismatch':'SCRIPT_WORKBOOK_IDENTITY_MISMATCH',
+    'School workbook requires operator review':'SCRIPT_WORKBOOK_REVIEW_REQUIRED',
+    'Invalid or duplicate legacy record; operator review required':'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
+    'Foreign school record':'SCRIPT_FOREIGN_RECORD_REJECTED',
+    'Invalid sync operation':'SCRIPT_INVALID_SYNC_OPERATION',
+    'Versioned document requires a matching revision':'SCRIPT_DOCUMENT_REVISION_REQUIRED',
+    'Newer cloud document retained; resolve version conflict':'SCRIPT_DOCUMENT_REVISION_CONFLICT',
     'Migration conflict; both versions retained':'SCRIPT_MIGRATION_CONFLICT',
     'Verified school tab is missing; operator recovery required':'SCRIPT_MISSING_MIGRATED_TAB',
     'School record verification failed':'SCRIPT_RECORD_VERIFY_FAILED',
@@ -320,7 +333,12 @@ function VS_managedHandle(e) {
       'School session expired':'School session expired. Scan your ID again.',
       'School record or ID card was changed; scan again':'School record or ID card was changed; scan again'
     };
-    const code=verified?VS_managedDiagnostic(error):'SCRIPT_OPERATION_FAILED';
+    // Owner-only execution diagnostics: constants and source line, never raw
+    // exceptions, payloads, identities, signatures, paths or credentials.
+    const diagnostic=VS_managedDiagnostic(error);
+    const site=String(error&&error.stack||'').match(/(?:Code|SaarthiManagedAll)(?:\.gs)?:(\d+)/);
+    if(typeof console!=='undefined')console.info(JSON.stringify({event:'managed_storage_failure',phase:verified?'authorized_operation':'request_verification',code:diagnostic,line:site?Number(site[1]):0}));
+    const code=verified?diagnostic:'SCRIPT_OPERATION_FAILED';
     return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected',code:code});
   }
 }

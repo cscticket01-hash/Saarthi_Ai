@@ -55,7 +55,6 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   }
   const m={schoolId,entitlement:e};
   if(!lease(m).allowed||e.status!=='trial'&&!e.activated)return items.map(i=>({operationId:i.operationId,success:false,authoritative:true}));
-  if(now()-Number(state.school.lastSeenAt||0)>90000)throw Error('School Windows app offline');
   const result=await signed(m,{action:'managed_attendance_batch',lease:{schoolId,expiresAt:lease(m).expiresAt},
    operations:items.map(i=>({operationId:i.operationId,request:{...JSON.parse(unprotect(i.payload,encryptionKey)),operationId:i.operationId,submittedAt:i.createdAt}}))});
   if(!Array.isArray(result.acknowledgements))throw Error('Attendance acknowledgement missing');
@@ -165,8 +164,8 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(e.status!=='trial'){const licence=state.licence;if(!licence||licence.revoked!==false||licence.schoolId!==b.schoolId)fail(403,'Unable to connect: school licence is inactive');const end=licence.expiresAt;e.expiresAt=typeof end?.toMillis==='function'?end.toMillis():Number(end||0);}
   const m={schoolId:b.schoolId,entitlement:e};
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
-  const seen=Number(school.lastSeenAt||0);
-  if(seen>now()||now()-seen>90000)fail(409,'Unable to connect: school Windows app is offline');
+  // Windows presence is monitoring only. Signed school storage and current licence
+  // authorize mobile access independently of the management PC's availability.
   if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
   if(b.request.action==='mobile_mark_attendance'&&b.request.attendancePermit){
    const permit=verifyAttendance(b.schoolId,b.request);
