@@ -21,6 +21,7 @@ import 'mobile/school_session.dart';
 import 'mobile/settings_screen.dart';
 import 'mobile/school_notifications.dart';
 import 'mobile/school_messaging.dart';
+import 'mobile/startup_gate.dart';
 import 'school_document_renderer.dart';
 
 @pragma('vm:entry-point')
@@ -45,12 +46,13 @@ Future<void> _registerManagedNotifications() async {
 }
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SchoolSession.instance.restore();
-  runApp(const SaarthiMobileApp());
-  // Optional notification/network work must never hold the native splash screen.
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(_initializeMobileNotifications().catchError((_) {}));
-  });
+  runApp(MobileStartupGate(
+    restore: SchoolSession.instance.restore,
+    readyBuilder: (_) => const SaarthiMobileApp(),
+    onReady: () {
+      unawaited(_initializeMobileNotifications().catchError((_) {}));
+    },
+  ));
 }
 
 Future<void> _initializeMobileNotifications() async {
