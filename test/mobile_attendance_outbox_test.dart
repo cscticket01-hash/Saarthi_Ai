@@ -53,7 +53,7 @@ void main() {
       final action = request['action'];
       if (offline) throw const SocketException('offline');
       Map<String,dynamic> out;
-      if (action=='mobile_login') out=reply({'sessionToken':'verified','expiresAt':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch});
+      if (action=='mobile_login') out=reply({'sessionToken':'verified','person':{'personId':fixture['personId']},'expiresAt':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch});
       else if (action=='mobile_refresh') out=reply({'attendancePermit':token,'expiresAt':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch});
       else if (action=='mobile_mark_attendance') { expect(request['clientCapturedAt'], isA<int>()); out=reply({'syncProtocol':2,'accepted':true,'operationId':operation}); }
       else if (action=='mobile_attendance_status') out=reply({'syncProtocol':2,'operations':[{'operationId':wrongAck?'wrong':operation,'state':completed?'completed':'retry','createdAt':1000,'completedAt':2000}]});
