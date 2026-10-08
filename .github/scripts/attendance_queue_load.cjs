@@ -18,7 +18,7 @@ async function run(count){
  };
  const q=createAttendanceQueue({store,batchSize:25,deliver:async(school,items)=>items.map(i=>{if(i.schoolId!==school)throw Error('Tenant mismatch');remoteApplied.add(i.operationId);processing.push(performance.now()-start);return {operationId:i.operationId,success:true};})});
  const event=i=>({schoolId:'vs-'+'a'.repeat(32),role:'student',personId:'test-'+i,day:'2026-10-07',mode:'entry',payload:{encrypted:'fixture'}});
- const start=performance.now();let accepted=0,failed=0;
+ const cpuStart=process.cpuUsage(),rssStart=process.memoryUsage().rss,start=performance.now();let accepted=0,failed=0;
  await Promise.all(Array.from({length:count},async(_,i)=>{const at=performance.now();try{const r=await q.enqueue(event(i));if(r.accepted)accepted++;}catch(_){failed++;}latencies.push(performance.now()-at);}));
  const depth=rows.size;
  await Promise.all(Array.from({length:Math.min(1000,count)},(_,i)=>q.enqueue(event(i))));
@@ -26,7 +26,7 @@ async function run(count){
  fs.closeSync(fd);
  const recovered=new Map();for(const line of fs.readFileSync(journal,'utf8').trim().split('\n')){const row=JSON.parse(line);recovered.set(row.operationId,row);}
  const completed=[...recovered.values()].filter(r=>r.state==='completed').length;
- const report={scope:'isolated fsync queue component; mocked Drive acknowledgement; NO live API/Firebase/Drive load',concurrentSubmissions:count,accepted,successful:completed,rejected:0,failed,duplicatePrevented,dataLost:accepted-completed,queueDepthAfterAccept:depth,queueDepthAfterDrain:count-completed,ackP50Ms:percentile(latencies,.5),ackP95Ms:percentile(latencies,.95),ackP99Ms:percentile(latencies,.99),processingP95Ms:percentile(processing,.95),totalMs:performance.now()-start,firebaseReads:'not measured: no live Firebase calls',firebaseWrites:'not measured: fsync fixture instead of Firestore'};
+ const report={scope:'isolated fsync queue component; mocked Drive acknowledgement; NO live API/Firebase/Drive load',concurrentSubmissions:count,accepted,successful:completed,rejected:0,failed,duplicatePrevented,dataLost:accepted-completed,queueDepthAfterAccept:depth,queueDepthAfterDrain:count-completed,ackP50Ms:percentile(latencies,.5),ackP95Ms:percentile(latencies,.95),ackP99Ms:percentile(latencies,.99),processingP95Ms:percentile(processing,.95),totalMs:performance.now()-start,componentSubmissionsPerSecond:count/((performance.now()-start)/1000),cpuUsageMicros:process.cpuUsage(cpuStart),rssStartBytes:rssStart,rssEndBytes:process.memoryUsage().rss,adaptiveBatchSize:q.metrics.batchSize,firebaseReads:'not measured: no live Firebase calls',firebaseWrites:'not measured: fsync fixture instead of Firestore'};
  fs.rmSync(dir,{recursive:true});if(report.dataLost||failed||remoteApplied.size!==count)throw Error(JSON.stringify(report));return report;
 }
-(async()=>{const result=[];for(const n of [1000,5000,15000,50000]){const r=await run(n);result.push(r);console.log(JSON.stringify(r));}const target=process.argv[2];if(target){fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,JSON.stringify(result,null,2));}})().catch(e=>{console.error(e.message);process.exitCode=1;});
+(async()=>{const result=[];for(const n of [1000,5000,10000,25000,50000]){const r=await run(n);result.push(r);console.log(JSON.stringify(r));}const target=process.argv[2];if(target){fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,JSON.stringify(result,null,2));}})().catch(e=>{console.error(e.message);process.exitCode=1;});
