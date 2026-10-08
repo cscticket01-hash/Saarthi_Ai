@@ -35,6 +35,34 @@ void main() {
     'schoolName': 'Own school',
   });
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  test('live dashboard, optional Drive failure, server error and network recovery have distinct states', () async {
+    var mode = 'online';
+    final session = SchoolSession(client:MockClient((request) async {
+      final action = (jsonDecode(request.body)['request'] as Map)['action'];
+      if(action=='mobile_login')return http.Response(jsonEncode(login()),200);
+      if(mode=='offline')throw const SocketException('disconnected');
+      if(mode=='server')return http.Response(jsonEncode({'success':false,'message':'School script unavailable'}),502);
+      if(action=='mobile_document')return http.Response(jsonEncode({'success':false,'message':'Optional file unavailable'}),502);
+      return http.Response(jsonEncode(response({'revision':mode,'notices':[{'id':'new-notice','title':mode}]})),200);
+    }));
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await session.refreshDashboard();
+    expect(session.connectionState,SchoolConnectionState.connected);
+    expect(session.lastDashboardVerifiedAt,isNotNull);
+    await expectLater(session.schoolCall('mobile_document',{}),throwsStateError);
+    expect(session.connectionState,SchoolConnectionState.connected);
+    mode='server';
+    await expectLater(session.refreshDashboard(),throwsStateError);
+    expect(session.connectionState,SchoolConnectionState.connectionError);
+    expect((session.dashboard['notices'] as List).single['title'],'online');
+    mode='offline';
+    await expectLater(session.refreshDashboard(),throwsA(isA<SocketException>()));
+    expect(session.connectionState,SchoolConnectionState.cachedOffline);
+    mode='recovered';
+    await session.refreshDashboard();
+    expect(session.connectionState,SchoolConnectionState.connected);
+    expect((session.dashboard['notices'] as List).single['title'],'recovered');
+  });
   test('expired saved login survives restart and outage; renews without QR; logout persists', () async {
     var offline = false;
     var renewals = 0;

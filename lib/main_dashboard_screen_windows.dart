@@ -20427,7 +20427,7 @@ class _StudentDocumentsScreenState
       setState(() {
         if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) _documents = [];
         _loading = false;
-        _error = e.toString();
+        _error = 'Documents could not be loaded. Retry; existing files are retained.';
       });
     }
   }

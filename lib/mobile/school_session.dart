@@ -1,6 +1,7 @@
 import '../qr_authentication_engine.dart';
 
 import 'dart:convert';
+import 'dart:async';
 import 'dart:math';
 import 'dart:io';
 import 'dart:typed_data';
@@ -21,12 +22,17 @@ class SchoolAccessDenied extends StateError {
   SchoolAccessDenied(super.message);
 }
 
+enum SchoolConnectionState { connected, syncing, cachedOffline, connectionError }
+
 class SchoolSession {
   SchoolSession({http.Client? client, this.cacheDirectory})
     : _client = client ?? http.Client();
   final http.Client _client;
   final Future<Directory> Function()? cacheDirectory;
   Map<String, dynamic> dashboard = {};
+  SchoolConnectionState connectionState = SchoolConnectionState.cachedOffline;
+  DateTime? lastDashboardVerifiedAt;
+  Duration? lastDashboardRefreshDuration;
   Map<String, dynamic> _pdfCache = {};
   Map<String, Uint8List> _pdfMemory = {};
   Future<Map<String, dynamic>>? _refresh;
@@ -299,13 +305,25 @@ class SchoolSession {
   Future<Map<String, dynamic>> refreshDashboard() {
     final running = _refresh;
     if (running != null) return running;
+    connectionState = SchoolConnectionState.syncing;
+    final watch = Stopwatch()..start();
     final pending = _refreshDashboard();
     _refresh = pending;
     pending.then(
       (_) {
+        watch.stop();
+        lastDashboardRefreshDuration = watch.elapsed;
+        lastDashboardVerifiedAt = DateTime.now();
+        connectionState = SchoolConnectionState.connected;
         if (identical(_refresh, pending)) _refresh = null;
       },
-      onError: (Object _, StackTrace __) {
+      onError: (Object error, StackTrace __) {
+        watch.stop();
+        lastDashboardRefreshDuration = watch.elapsed;
+        connectionState = error is SocketException || error is TimeoutException ||
+                error is http.ClientException
+            ? SchoolConnectionState.cachedOffline
+            : SchoolConnectionState.connectionError;
         if (identical(_refresh, pending)) _refresh = null;
       },
     );

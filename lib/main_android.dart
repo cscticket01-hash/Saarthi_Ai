@@ -469,7 +469,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
       if (mounted)
         setState(() {
           _blocked = !_s.cachedAccessAllowed;
-          _error = _blocked ? 'School access needs online verification.' : 'Offline — showing your last verified school data. Refresh will retry.';
+          _error = _blocked ? 'School access needs online verification.'
+              : _s.connectionState == SchoolConnectionState.cachedOffline
+                  ? 'Offline — showing cached school data. Refresh will retry.'
+                  : 'School connection error — showing cached school data. Refresh will retry.';
         });
     } finally {
       if (mounted) setState(() => _loading = false);

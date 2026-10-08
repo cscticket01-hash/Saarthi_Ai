@@ -186,7 +186,7 @@ class WindowsSyncEngine {
     }
   }
 
-  void scheduleSoon({Duration delay = const Duration(seconds: 2)}) {
+  void scheduleSoon({Duration delay = const Duration(milliseconds: 250)}) {
     if (!_initialized || _syncBlocked || _resetPaused) return;
     if (_syncing) {
       _rerunRequested = true;
@@ -196,7 +196,8 @@ class WindowsSyncEngine {
     if (lastError == null) state.value = SchoolCloudState.syncPending;
     if (_nextRetry != null && _nextRetry!.isAfter(DateTime.now()))
       delay = _nextRetry!.difference(DateTime.now());
-    _debounceTimer?.cancel();
+    // Coalesce a burst without postponing the first durable operation forever.
+    if (_debounceTimer?.isActive == true) return;
     _debounceTimer = Timer(delay, () {
       unawaited(syncNow());
     });
@@ -950,10 +951,21 @@ class WindowsSyncEngine {
     send: (c, id, op, data) async {},
     sendVersioned: (item) async {
       metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
+      final queuedAt = item['queuedAt'];
+      final queuedMillis = queuedAt is Timestamp ? queuedAt.millisecondsSinceEpoch
+          : queuedAt is num ? queuedAt.toInt() : null;
+      if (queuedMillis != null) metrics['lastQueueWaitMillis'] =
+          (DateTime.now().millisecondsSinceEpoch - queuedMillis).clamp(0, 1 << 53).toInt();
+      final watch = Stopwatch()..start();
       final reply = await WindowsFirebaseRemote.syncManagedRecord(
         item,
         _activeSchoolSyncId,
       );
+      watch.stop();
+      metrics['lastRecordAckMicros'] = watch.elapsedMicroseconds;
+      final timing = reply['syncTiming'];
+      if (timing is Map && timing['scriptRoundTripMillis'] is num)
+        metrics['lastScriptRoundTripMillis'] = (timing['scriptRoundTripMillis'] as num).toInt();
       return reply['recordRevision'] as String;
     },
   );
