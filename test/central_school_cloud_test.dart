@@ -19,6 +19,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
   test('request wrappers can share an explicitly caller-owned connection without closing it', () async {
+    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'schoolId':school,'uid':'owner'})});
     final transport=_CountingClient();
     for(var i=0;i<2;i++){
       final cloud=CentralSchoolCloud(client:transport,closeClient:false,endpoint:'https://saarthi-oauth-staging.onrender.com/school-cloud',expectedSchoolId:school);
