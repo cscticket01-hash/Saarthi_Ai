@@ -53,6 +53,14 @@ class SchoolSession {
     attendanceChanges.value++;
   }
 
+  Future<void> retryAttendance() async {
+    final owner = _attendanceOwner;
+    if (owner == null || !cachedAccessAllowed) throw SchoolAccessDenied('Verified school access required.');
+    await _attendanceStore.retryReview(owner);
+    await flushAttendance();
+    await refreshAttendanceStatus();
+  }
+
   Future<void> saveAttendance(Map<String, dynamic> gps, int capturedAt, String mode) async {
     final owner = _attendanceOwner;
     if (owner == null || !cachedAccessAllowed) throw SchoolAccessDenied('Verified school access required.');

@@ -54,6 +54,9 @@ class AttendanceStore {
     final last = (await db.rawQuery("SELECT MAX(completedAt) AS ack FROM attendance WHERE owner=? AND state='completed'", [owner])).single;
     return {...counts, ...last};
   }
+  Future<void> retryReview(String owner) async {
+    await (await database).rawUpdate("UPDATE attendance SET state=CASE WHEN operationId IS NULL THEN 'pending' ELSE 'accepted' END, nextAt=0, error='', claim=NULL WHERE owner=? AND state='needsAttention'", [owner]);
+  }
   Future<void> finish(String owner, String id, String lease, Map<String, Object?> values) async {
     await (await database).update('attendance', {...values, 'claim': null},
       where: 'id=? AND owner=? AND claim=? AND state<>?',

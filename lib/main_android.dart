@@ -1091,7 +1091,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
             Row(
               children: [
                 Expanded(child: Text(r['date'].toString())),
-                Text('${time(r['checkIn'])} → ${time(r['checkOut'])}'),
+                Text('${time(r['entryCapturedAt'] ?? r['checkIn'])} → ${time(r['exitCapturedAt'] ?? r['checkOut'])}'),
+                if (r['captureTimeSource'] == 'DEVICE_REPORTED') const Text('Device scan time; cloud receipt stored separately.'),
               ],
             ),
           ),
@@ -1337,6 +1338,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
                   }, style: const TextStyle(color: Colors.white54, fontSize: 12)),
                   Text('Attendance pending: ${_s.attendancePending} (central accepted: ${_s.attendanceAccepted})'),
                   if (_s.attendanceFailure.isNotEmpty) Text(_s.attendanceFailure),
+                  if (_s.attendancePending > 0) TextButton(
+                    onPressed: () async { try { await _s.retryAttendance(); } catch (_) {} },
+                    child: const Text('Retry retained attendance'),
+                  ),
                   if (_s.lastAttendanceAck != null) Text('Attendance cloud ACK: ${_s.lastAttendanceAck!.toLocal()}'),
                   if (_s.lastDashboardVerifiedAt != null)
                     Text('Verified: ${_s.lastDashboardVerifiedAt!.toLocal()}',
