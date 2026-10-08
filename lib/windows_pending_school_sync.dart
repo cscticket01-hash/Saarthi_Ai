@@ -39,7 +39,8 @@ class WindowsPendingSchoolSync {
       if(sendVersioned!=null && (item['operationId']==null || item['schoolId']==null)) {
         final ownSchool=db.activeProfileIdentity['schoolSyncId'];
         if(ownSchool is! String || ownSchool.isEmpty)throw StateError('School identity required for queue migration.');
-        item['operationId']='migration-${DateTime.now().microsecondsSinceEpoch}-${queued.id.hashCode.abs()}';
+        // Adding a missing school binding must never replace an existing retry ID.
+        item['operationId'] ??= 'migration-${DateTime.now().microsecondsSinceEpoch}-${queued.id.hashCode.abs()}';
         item['schoolId']=ownSchool;item['baseCloudRevision']=item['baseCloudRevision']??'';
         await queued.reference.update(item);
       }

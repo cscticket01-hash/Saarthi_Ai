@@ -28,6 +28,20 @@ void main(){
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('revision-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});
  });
+ test('legacy queue binding preserves its original operation ID across failed retries', () async {
+   final row=db.collection('_windows_firebase_outbox').doc('legacy-operation');
+   await row.set({'collection':'teachers_directory','documentId':'retained-teacher','operation':'set',
+     'operationId':'existing-operation-123','data':{'name':'Retained fixture'},'syncState':'pending'});
+   for(var n=0;n<2;n++) {
+     await expectLater(WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+       send:(a,b,c,d)async{},sendVersioned:(item)async{
+         expect(item['operationId'],'existing-operation-123');expect(item['schoolId'],school);
+         throw StateError('Isolated network failure');
+       }),throwsStateError);
+     expect((await row.get()).data()?['operationId'],'existing-operation-123');
+     expect((await row.get()).data()?['data'],{'name':'Retained fixture'});
+   }
+ });
  test('performance percentiles retain at most 256 real measurements', () {
    final engine=WindowsSyncEngine.instance;
    for(var n=0;n<300;n++)engine.recordLocalSave('boundedFixture',n);

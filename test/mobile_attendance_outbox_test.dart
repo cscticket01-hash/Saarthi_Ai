@@ -44,9 +44,9 @@ void main() {
   test('offline save survives logout/restart; accepted is pending until exact final cloud ACK', () async {
     var offline = false, wrongAck = false, completed = false;
     final day = DateTime.now().toUtc().add(const Duration(hours:5,minutes:30)).toIso8601String().substring(0,10);
-    final permit = {'schoolId':school,'role':fixture['role'],'documentId':fixture['personId'],'personId':'stable-pupil','day':day};
+    final permit = {'schoolId':school,'role':fixture['type'],'documentId':fixture['personId'],'personId':'stable-pupil','day':day};
     final token = '${base64UrlEncode(utf8.encode(jsonEncode(permit)))}.fixture';
-    final operation = sha256.convert(utf8.encode(jsonEncode([school,fixture['role'],'stable-pupil',day,'entry']))).toString();
+    final operation = sha256.convert(utf8.encode(jsonEncode([school,fixture['type'],'stable-pupil',day,'entry']))).toString();
     Map<String,dynamic> reply(Map<String,dynamic> fields) => {'success':true,'schoolId':school,'projectId':school,...fields};
     final transport = MockClient((r) async {
       final request = Map<String,dynamic>.from(jsonDecode(r.body)['request']);
