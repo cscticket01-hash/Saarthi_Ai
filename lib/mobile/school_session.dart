@@ -305,6 +305,7 @@ class SchoolSession {
   Future<Map<String, dynamic>> refreshDashboard() {
     final running = _refresh;
     if (running != null) return running;
+    final origin = _generation;
     connectionState = SchoolConnectionState.syncing;
     final watch = Stopwatch()..start();
     final pending = _refreshDashboard();
@@ -312,6 +313,7 @@ class SchoolSession {
     pending.then(
       (_) {
         watch.stop();
+        if (origin != _generation) return;
         lastDashboardRefreshDuration = watch.elapsed;
         lastDashboardVerifiedAt = DateTime.now();
         connectionState = SchoolConnectionState.connected;
@@ -319,6 +321,7 @@ class SchoolSession {
       },
       onError: (Object error, StackTrace __) {
         watch.stop();
+        if (origin != _generation) return;
         lastDashboardRefreshDuration = watch.elapsed;
         connectionState = error is SocketException || error is TimeoutException ||
                 error is http.ClientException
@@ -530,6 +533,8 @@ class SchoolSession {
     person = {};
     schoolName = '';
     dashboard = {};
+    connectionState = SchoolConnectionState.cachedOffline;
+    lastDashboardVerifiedAt = null;
     _pdfCache = {};
     _pdfMemory = {};
     _refresh = null;

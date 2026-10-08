@@ -37,6 +37,14 @@ final _messenger = GlobalKey<ScaffoldMessengerState>();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SchoolSession.instance.restore();
+  runApp(const SaarthiMobileApp());
+  // Optional notification/network work must never hold the native splash screen.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeMobileNotifications().catchError((_) {}));
+  });
+}
+
+Future<void> _initializeMobileNotifications() async {
   await SchoolNotifications.initialize();
   try {
     await SchoolMessaging.configure(SchoolSession.instance.messaging);
@@ -56,7 +64,6 @@ Future<void> main() async {
       unawaited(SchoolNotifications.show(m).catchError((_) {}));
     }
   });
-  runApp(const SaarthiMobileApp());
 }
 
 class SaarthiMobileApp extends StatelessWidget {
@@ -398,7 +405,7 @@ class _SchoolDashboard extends StatefulWidget {
   State<_SchoolDashboard> createState() => _SchoolDashboardState();
 }
 
-class _SchoolDashboardState extends State<_SchoolDashboard> {
+class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingObserver {
   StreamSubscription<void>? _noticeOpened;
   StreamSubscription<RemoteMessage>? _noticeReceived;
   final _s = SchoolSession.instance;
@@ -422,6 +429,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _data = Map<String, dynamic>.from(_s.dashboard);
     _loading = _data.isEmpty;
     _load();
@@ -435,10 +443,16 @@ class _SchoolDashboardState extends State<_SchoolDashboard> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _noticeOpened?.cancel();
     _noticeReceived?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_load());
   }
 
   Future<void> _presence([String? token]) async {
