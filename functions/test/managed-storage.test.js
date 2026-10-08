@@ -285,3 +285,16 @@ test('managed expired login renews indefinitely while token/person/licence remai
  assert.equal(mobile({action:'mobile_logout',sessionToken:login.sessionToken}).success,true);
  assert.equal(mobile({action:'mobile_refresh',sessionToken:login.sessionToken}).success,false);
 });
+
+test('authenticated Script diagnostics use fixed categories without leaking exception contents',()=>{
+ const f=storage();
+ for(const [message,code] of [['Permission denied secret-root-id','SCRIPT_PERMISSION_DENIED'],['Service invoked too many times: private-school','SCRIPT_QUOTA_EXCEEDED'],['Managed storage not prepared','SCRIPT_STORAGE_NOT_PREPARED']]) {
+  f.context.VS_managedRoot=()=>{throw new Error(message);};
+  const out=f.call({action:'managed_health'});
+  assert.equal(out.success,false);assert.equal(out.code,code);
+  assert.equal(JSON.stringify(out).includes(message),false);
+ }
+ const unauth=f.context.VS_managedHandle({postData:{contents:'malformed secret'}});
+ assert.equal(unauth.code,'SCRIPT_OPERATION_FAILED');
+ assert.equal(JSON.stringify(unauth).includes('malformed secret'),false);
+});

@@ -245,12 +245,32 @@ function VS_managedConnect(b) {
   const secret=p.getProperty('VS_MANAGED_SECRET');if(!/^[a-f0-9]{64}$/.test(secret||''))throw new Error('Managed storage not prepared');
   return jsonResponse({success:true,schoolId:school,storageReady:true,connectionSecret:secret});
 }
+// Fixed diagnostic categories only. Never return/log exception text, stack or record contents.
+function VS_managedDiagnostic(error) {
+  const message=String(error && error.message || '');
+  const known={
+    'Migration conflict; both versions retained':'SCRIPT_MIGRATION_CONFLICT',
+    'Verified school tab is missing; operator recovery required':'SCRIPT_MISSING_MIGRATED_TAB',
+    'School record verification failed':'SCRIPT_RECORD_VERIFY_FAILED',
+    'Managed storage not prepared':'SCRIPT_STORAGE_NOT_PREPARED',
+    'School data organization in progress; retry Sync. Pending data retained':'SCRIPT_MIGRATION_PENDING'
+  };
+  if(known[message])return known[message];
+  if(/permission|not authorized|authorization is required|access denied/i.test(message))return 'SCRIPT_PERMISSION_DENIED';
+  if(/quota|too many times|limit exceeded/i.test(message))return 'SCRIPT_QUOTA_EXCEEDED';
+  if(/lock|timed out|timeout/i.test(message))return 'SCRIPT_TIMEOUT';
+  if(error && error.name==='TypeError')return 'SCRIPT_TYPE_ERROR';
+  if(error && error.name==='SyntaxError')return 'SCRIPT_PARSE_ERROR';
+  return 'SCRIPT_OPERATION_FAILED';
+}
+
 function VS_managedHandle(e) {
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
+  let verified=false;
   try {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
-    const b=VS_managedVerify(e);let result;
+    const b=VS_managedVerify(e);verified=true;let result;
     if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordStorageVersion:1,scriptBundleVersion:'2026-10-07.1',googleEmail:typeof Session!=='undefined'?Session.getEffectiveUser().getEmail():''};}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
     else if(b.action==='managed_attendance_batch'){
@@ -300,6 +320,7 @@ function VS_managedHandle(e) {
       'School session expired':'School session expired. Scan your ID again.',
       'School record or ID card was changed; scan again':'School record or ID card was changed; scan again'
     };
-    return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected'});
+    const code=verified?VS_managedDiagnostic(error):'SCRIPT_OPERATION_FAILED';
+    return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected',code:code});
   }
 }

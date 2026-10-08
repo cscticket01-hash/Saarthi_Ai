@@ -310,3 +310,10 @@ test('verified attendance permit -> encrypted durable queue -> batched school Dr
  await assert.rejects(f.call({action:'managed/mobile',schoolId:B,request}),e=>e.status===409);
  await f.handle.drainAttendance();assert.equal([...rows.values()][0].state,'completed');assert.equal(f.sent.length,2);
 });
+
+test('broker forwards only allowlisted Script diagnostic codes and never raw failure details',async()=>{
+ for(const [code,expected] of [['SCRIPT_PERMISSION_DENIED','SCRIPT_PERMISSION_DENIED'],['SCRIPT_TYPE_ERROR','SCRIPT_TYPE_ERROR'],['secret-root-token','SCRIPT_OPERATION_FAILED']]) {
+  const f=fixture(async(_,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(opt.body).schoolId,success:false,message:'private exception secret-root-token',code})}));
+  await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read'}),error=>error.status===502&&error.code===expected&&!error.message.includes('secret-root-token'));
+ }
+});
