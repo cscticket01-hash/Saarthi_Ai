@@ -82,6 +82,39 @@ void main(){
   expect((await ref.get()).data()?['name'],'Local');
   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['syncState'],'retry');
  });
+ test('17 pending operations survive 503 and lost ACK; retry keeps IDs and deduplicates remote commits',()async{
+  for(var i=0;i<17;i++){
+   await db.collection('students_directory').doc('pending-$i').set({'name':'Test pupil $i'});
+  }
+  final profile=db.activeProfileId;
+  final before=(await db.collection('_windows_firebase_outbox').get()).docs;
+  expect(before.length,17);
+  final ids=before.map((d)=>d.data()['operationId']).toSet();
+  await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,
+   send:(a,b,c,d)async=>fail('versioned path only'),
+   sendVersioned:(item)async=>throw const HttpException('Central school API failed (HTTP 503)')),
+   throwsA(isA<HttpException>()));
+  await db.switchProfile('other-school',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+  expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  await db.switchProfile(profile,identity:{'schoolSyncId':school,'schoolId':school});
+  var retained=(await db.collection('_windows_firebase_outbox').get()).docs;
+  expect(retained.length,17);
+  expect(retained.map((d)=>d.data()['operationId']).toSet(),ids);
+  final remote=<String,String>{};var lostAck=true;var commits=0;
+  Future<String> publish(Map<String,dynamic> item)async{
+   expect(item['schoolId'],school);
+   final id=item['operationId'] as String;
+   if(!remote.containsKey(id)){remote[id]='ack-$id';commits++;}
+   if(lostAck){lostAck=false;throw const HttpException('ACK response lost');}
+   return remote[id]!;
+  }
+  await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async{},sendVersioned:publish),throwsA(isA<HttpException>()));
+  expect((await db.collection('_windows_firebase_outbox').get()).docs.length,17);
+  await WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async{},sendVersioned:publish);
+  expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  expect(commits,17);expect(remote.keys.toSet(),ids);
+  expect((await db.collection('students_directory').get()).docs.length,17);
+ });
  test('crash generations recover without silently overwriting irrecoverable school data',()async{
   await db.collection('students_directory').doc('retained').set({'name':'Retained'});
   final file=await WindowsLocalStorage.databaseFile(),pending=File('${(await WindowsLocalStorage.databaseFile()).path}.pending'),backup=File('${(await WindowsLocalStorage.databaseFile()).path}.bak');

@@ -349,6 +349,7 @@ jobs:
     - fix/local-first-template-engine
     - fix/mobile-smart-sync-20261007
     - fix/android-persistent-login-20261007
+    - fix/central-sync-503-20261007
   pull_request:
     branches:
     - main
