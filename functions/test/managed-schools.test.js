@@ -4,11 +4,11 @@ const {createManagedSchools,protect,unprotect,clean,scriptUrl}=require('../manag
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),key='c'.repeat(64),secret='d'.repeat(64),time=1800000000000;
 function fixture(fetchOverride,options={}){const docs=new Map(),users=new Map(),sent=[];
  const snap=p=>({exists:docs.has(p),data:()=>docs.get(p)});
- const db={doc:p=>({path:p,get:async()=>snap(p),set:async(v,o)=>docs.set(p,o?.merge?{...docs.get(p),...v}:v)}),collection:name=>({add:async()=>{},where:(field,op,value)=>({limit:()=>({get:async()=>({empty:![...docs.entries()].some(([path,data])=>path.startsWith(name+'/')&&data[field]===value)})})})}),batch:()=>{const queue=[];return {create:(r,v)=>queue.push(()=>{assert(!docs.has(r.path));docs.set(r.path,v)}),set:(r,v,o)=>queue.push(()=>docs.set(r.path,o?.merge?{...docs.get(r.path),...v}:v)),commit:async()=>queue.forEach(f=>f())}}};
+ const db={doc:p=>({path:p,get:async()=>snap(p),set:async(v,o)=>docs.set(p,o?.merge?{...docs.get(p),...v}:v)}),collection:name=>({add:async()=>{},where:(field,op,value)=>({get:async()=>({docs:[...docs.entries()].filter(([path,data])=>path.startsWith(name+'/')&&data[field]===value).map(([path,data])=>({id:path.split('/').pop(),data:()=>data}))}),limit:()=>({get:async()=>({empty:![...docs.entries()].some(([path,data])=>path.startsWith(name+'/')&&data[field]===value)})})})}),batch:()=>{const queue=[];return {create:(r,v)=>queue.push(()=>{assert(!docs.has(r.path));docs.set(r.path,v)}),set:(r,v,o)=>queue.push(()=>docs.set(r.path,o?.merge?{...docs.get(r.path),...v}:v)),commit:async()=>queue.forEach(f=>f())}}};
  db.runTransaction=async fn=>fn({get:async ref=>snap(ref.path),set:(ref,value,options)=>docs.set(ref.path,options?.merge?{...docs.get(ref.path),...value}:value)});
  const auth={verifyIdToken:async t=>{if(t==='developer')return {uid:'dev',developer:true};if(users.get(t)?.disabled)throw Error();if(!['A','B','forged','A-new-pc'].includes(t))throw Error();return {uid:['forged','A-new-pc'].includes(t)?'A':t,auth_time:time/1000-10,...(t==='forged'?{admin:true,schoolId:B}:{})}},createUser:async v=>{users.set('new',v);return {uid:'new'}},deleteUser:async u=>users.delete(u),generatePasswordResetLink:async e=>'https://reset.example/'+e,updateUser:async(u,v)=>users.set(u,{...users.get(u),...v}),revokeRefreshTokens:async()=>{}};
  for(const [uid,id]of [['A',A],['B',B]]){docs.set('school_memberships/'+uid,{schoolId:id,role:'school_admin',managed:true,active:true});docs.set('school_entitlements/'+id,{active:true,blocked:false,status:'trial',startsAt:time-1000,expiresAt:time+86400000});docs.set('platform_schools/'+id,{managed:true,authUid:uid,loginEmail:uid+'@school.example'});docs.set('school_storage_private/'+id,{url:'https://script.google.com/macros/s/'+id+'/exec',secret:protect(secret,key),ready:true});}
- const fetchImpl=async(url,opt)=>{sent.push({url,opt});if(fetchOverride)return fetchOverride(url,opt,body=>handle({method:'POST',headers:{},body}));const b=JSON.parse(opt.body);assert.equal(b.signature,crypto.createHmac('sha256',secret).update(b.schoolId+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex'));return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:b.schoolId,records:{},storageReady:true}),json:async()=>({success:true,schoolId:b.schoolId,storageReady:true})}};
+ const fetchImpl=async(url,opt)=>{sent.push({url,opt});if(fetchOverride)return fetchOverride(url,opt,body=>handle({method:'POST',headers:{},body}));const b=JSON.parse(opt.body);assert.equal(b.signature,crypto.createHmac('sha256',secret).update(b.schoolId+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex'));return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:b.schoolId,records:{},storageReady:true,personId:'verified-pupil',role:'student',expiresAt:time+30*86400000}),json:async()=>({success:true,schoolId:b.schoolId,storageReady:true})}};
  const handle=createManagedSchools({auth,db,projectId:'central',encryptionKey:key,fetchImpl,now:()=>time,...options});const call=(body,token='A')=>handle({method:'POST',headers:{authorization:'Bearer '+token},body});return {docs,users,sent,call,db,auth,handle};}
 test('only developer creates accounts; passwords never enter Firestore/dashboard',async()=>{const f=fixture(),b={action:'developer/managed/create',email:'new@school.example',schoolName:'New School'};await assert.rejects(f.call(b),e=>e.status===403);const r=await f.call(b,'developer');assert(r.passwordSetupLink);assert.equal(r.password,undefined);assert(!JSON.stringify([...f.docs.values()]).includes('password'));assert.equal(f.docs.get('school_memberships/new').schoolId,r.schoolId);assert.equal(f.docs.get('school_entitlements/'+r.schoolId).expiresAt,time+5*86400000);});
 test('forged tenant/developer claims never override membership',async()=>{const f=fixture();await assert.rejects(f.call({action:'managed/session',schoolId:B}),e=>e.status===403);await assert.rejects(f.call({action:'developer/managed/monitor'},'forged'),e=>e.status===403);assert.equal((await f.call({action:'managed/session'},'forged')).schoolId,A);});
@@ -18,7 +18,7 @@ test('nested secrets/media, unsafe IDs and endpoints are rejected',async()=>{ass
 test('school licence activation cannot use foreign key or revive revoked trial',async()=>{const f=fixture();const r=await f.call({action:'developer/managed/licence',schoolId:A,days:30,paid:true},'developer');await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read'}));await assert.rejects(f.call({action:'managed/licence/activate',key:'VS-OTHER'}));await f.call({action:'managed/licence/activate',key:r.key});await f.call({action:'managed/records',collection:'students_directory',operation:'read'});await f.call({action:'developer/managed/revoke',schoolId:A},'developer');await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read'}));});
 test('AES-GCM secret encryption fails with wrong or missing server key',()=>{const e=protect(secret,key);assert.equal(unprotect(e,key),secret);assert.throws(()=>unprotect(e,'e'.repeat(64)));assert.throws(()=>protect(secret,''));assert(!JSON.stringify(e).includes(secret));});
 test('storage replacement requires explicit permission',async()=>{const f=fixture();await assert.rejects(f.call({action:'developer/managed/storage',schoolId:A,scriptUrl:'https://script.google.com/macros/s/'+B+'/exec',secret,replace:false},'developer'));assert(f.docs.get('school_storage_private/'+A).url.includes(A));});
-test('GS signed request rejects foreign school, tampering, stale request and replay',()=>{const props=new Map([['VS_MANAGED_SCHOOL_ID',A],['VS_MANAGED_SECRET',secret]]);const p={getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v),getProperties:()=>Object.fromEntries(props),deleteProperty:k=>props.delete(k)};const c=vm.createContext({Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},Utilities:{computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})}});vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),c);const b={schoolId:A,timestamp:Date.now(),nonce:'a'.repeat(48),payload:JSON.stringify({action:'managed_health'})};b.signature=crypto.createHmac('sha256',secret).update(A+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex');const req=x=>({postData:{contents:JSON.stringify(x)}});assert.throws(()=>c.VS_managedVerify(req({...b,schoolId:B})));assert.throws(()=>c.VS_managedVerify(req({...b,payload:'{}'})));assert.throws(()=>c.VS_managedVerify(req({...b,timestamp:1})));assert.equal(c.VS_managedVerify(req(b)).action,'managed_health');assert.throws(()=>c.VS_managedVerify(req(b)));});
+test('GS signed request rejects foreign school, tampering, stale request and replay',()=>{const props=new Map([['VS_MANAGED_SCHOOL_ID',A],['VS_MANAGED_SECRET',secret]]);const p={getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v),getProperties:()=>Object.fromEntries(props),deleteProperty:k=>props.delete(k)};const c=vm.createContext({Date,JSON,Number,String,Object,Error,PropertiesService:{getScriptProperties:()=>p},Utilities:{Charset:{UTF_8:'UTF-8'},computeHmacSha256Signature:(s,k)=>[...crypto.createHmac('sha256',k).update(s).digest()]},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})}});vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),c);const b={schoolId:A,timestamp:Date.now(),nonce:'a'.repeat(48),payload:JSON.stringify({action:'managed_health'})};b.signature=crypto.createHmac('sha256',secret).update(A+'\n'+b.timestamp+'\n'+b.nonce+'\n'+b.payload).digest('hex');const req=x=>({postData:{contents:JSON.stringify(x)}});assert.throws(()=>c.VS_managedVerify(req({...b,schoolId:B})));assert.throws(()=>c.VS_managedVerify(req({...b,payload:'{}'})));assert.throws(()=>c.VS_managedVerify(req({...b,timestamp:1})));assert.equal(c.VS_managedVerify(req(b)).action,'managed_health');assert.throws(()=>c.VS_managedVerify(req(b)));});
 test('GS private file ancestry refuses another school root even with a valid file ID',()=>{const own={getId:()=>A,getDescription:()=> 'VIDYA_MANAGED_SCHOOL:'+A},foreign={getId:()=>B,getParents:()=>({hasNext:()=>false})};const files={own:{getParents:()=>({hasNext:()=>true,next:()=>own})},foreign:{getParents:()=>{let n=0;return {hasNext:()=>n++===0,next:()=>foreign}}}};const c=vm.createContext({PropertiesService:{getScriptProperties:()=>({getProperty:k=>k==='VS_MANAGED_SCHOOL_ID'?A:'root'})},DriveApp:{getFolderById:()=>own,getFileById:id=>files[id]},Error});vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),c);assert.equal(c.VS_managedFile('own'),files.own);assert.throws(()=>c.VS_managedFile('foreign'),/Foreign school/);});
 
 test('concurrent block or licence rotation cannot be overwritten by activation',async()=>{for(const change of ['block','rotate']){const f=fixture();const issued=await f.call({action:'developer/managed/licence',schoolId:A,days:30,paid:true},'developer');const transaction=f.db.runTransaction;f.db.runTransaction=async fn=>{const e=f.docs.get('school_entitlements/'+A);if(change==='block')e.blocked=true;else e.licenseHash='replacement';return transaction(fn);};await assert.rejects(f.call({action:'managed/licence/activate',key:issued.key}),e=>e.status===403);const e=f.docs.get('school_entitlements/'+A);assert.equal(e.activated,false);if(change==='block')assert.equal(e.blocked,true);else assert.equal(e.licenseHash,'replacement');}});
@@ -37,8 +37,8 @@ test('delete archives and disables only the selected account and retains school 
  assert.equal(f.docs.get('school_storage_private/'+A),storage);assert(f.docs.has('schools/'+A));assert.equal(f.docs.get('school_memberships/B').active,true);
  await assert.rejects(f.call({action:'managed/session'}),e=>e.status===401||e.status===403);
 });
-test('mobile cannot access Drive when Windows is offline, school is blocked, trial expires, or licence is revoked',async()=>{
- for(const mode of ['offline','blocked','expiry','revoked']){const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=mode==='offline'?time-90001:time;
+test('mobile cannot access Drive when school is blocked, trial expires, or licence is revoked',async()=>{
+ for(const mode of ['blocked','expiry','revoked']){const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=0;
  const e=f.docs.get('school_entitlements/'+A);if(mode==='blocked')e.blocked=true;if(mode==='expiry')e.expiresAt=time;if(mode==='revoked'){e.status='licensed';e.activated=true;e.licenseHash='revoked';}
  await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:'test'}}));assert.equal(f.sent.length,0);}
 });
@@ -298,7 +298,7 @@ test('verified attendance permit -> encrypted durable queue -> batched school Dr
    {projectId:A,attendancePolicy:{role:'student',personId:'stable-pupil',documentId:'pupil',qrHash:crypto.createHash('sha256').update('student/pupil/'+'x'.repeat(48)).digest('hex'),day,open:true,latitude:24,longitude:92,radiusMeters:200}};
   return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,...result})};
  },{attendanceStore:store});
- f.docs.get('platform_schools/'+A).lastSeenAt=time;
+ f.docs.get('platform_schools/'+A).lastSeenAt=0; // PC off: backend worker must still deliver.
  const session='s'.repeat(64),verified=await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:session}});
  const request={action:'mobile_mark_attendance',sessionToken:session,attendancePermit:verified.attendancePermit,role:'student',personId:'pupil',linkToken:'x'.repeat(48),latitude:24,longitude:92,accuracy:3,mode:'entry'};
  const first=await f.call({action:'managed/mobile',schoolId:A,request});assert.equal(first.accepted,true);assert.equal(f.sent.length,1);assert.equal(rows.size,1);
@@ -309,4 +309,75 @@ test('verified attendance permit -> encrypted durable queue -> batched school Dr
  f.docs.get('platform_schools/'+B).lastSeenAt=time;
  await assert.rejects(f.call({action:'managed/mobile',schoolId:B,request}),e=>e.status===409);
  await f.handle.drainAttendance();assert.equal([...rows.values()][0].state,'completed');assert.equal(f.sent.length,2);
+});
+
+test('broker forwards only allowlisted Script diagnostic codes and never raw failure details',async()=>{
+ for(const [code,expected] of [['SCRIPT_PERMISSION_DENIED','SCRIPT_PERMISSION_DENIED'],['SCRIPT_TYPE_ERROR','SCRIPT_TYPE_ERROR'],['secret-root-token','SCRIPT_OPERATION_FAILED']]) {
+  const f=fixture(async(_,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(opt.body).schoolId,success:false,message:'private exception secret-root-token',code})}));
+  await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read'}),error=>error.status===502&&error.code===expected&&!error.message.includes('secret-root-token'));
+ }
+});
+
+
+test('cloud mobile access remains available with PC offline while signed tenant/session authorization stays enforced',async()=>{
+ for(const seen of [undefined,0,time-86400000]) {
+  const f=fixture();f.docs.get('platform_schools/'+A).lastSeenAt=seen;
+  for(const action of ['mobile_login','mobile_dashboard','mobile_notice','mobile_document','mobile_asset','mobile_refresh']) {
+   await f.call({action:'managed/mobile',schoolId:A,request:{action,sessionToken:'existing',documentId:'own'}});
+   const envelope=JSON.parse(f.sent.at(-1).opt.body),payload=JSON.parse(envelope.payload);
+   assert.equal(envelope.schoolId,A);assert.equal(payload.lease.schoolId,A);
+   assert.equal(f.docs.get('platform_schools/'+A).lastSeenAt,seen);
+  }
+ }
+ const denied=fixture(async(_,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:JSON.parse(opt.body).schoolId,message:'School login required'})}));
+ await assert.rejects(denied.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_document'}}),e=>e.status===403);
+ const foreign=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:B})}));
+ await assert.rejects(foreign.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_document',sessionToken:'existing'}}),e=>e.status===502&&e.code==='SCRIPT_IDENTITY_MISMATCH');
+});
+
+test('managed push device requires verified school session and same device proof across school changes',async()=>{
+ const f=fixture(undefined,{messaging:{sendEachForMulticast:async()=>{}}});
+ const request={action:'mobile_refresh',sessionToken:'verified-by-script',deviceId:'d'.repeat(64),fcmToken:'f'.repeat(40)};
+ await f.call({action:'managed/mobile',schoolId:A,request});
+ const id=crypto.createHash('sha256').update(request.fcmToken).digest('hex'),stored=f.docs.get('managed_notification_devices/'+id);
+ assert.equal(stored.schoolId,A);assert(!JSON.stringify(stored).includes(request.fcmToken));
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:B,request:{...request,deviceId:'other'.repeat(12)}}),e=>e.status===403);
+ assert.equal(f.docs.get('managed_notification_devices/'+id).schoolId,A);
+ await f.call({action:'managed/mobile',schoolId:B,request});
+ assert.equal(f.docs.get('managed_notification_devices/'+id).schoolId,B);
+ await f.call({action:'developer/managed/block',schoolId:A,blocked:true},'developer');
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request}),e=>e.status===403);
+ assert.equal(f.docs.get('managed_notification_devices/'+id).schoolId,B);
+});
+test('verified protocol ACK precedes tenant-only content-free push hint; reads send none and failed storage sends no hint',async()=>{
+ const pushes=[];const f=fixture(async(url,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:JSON.parse(opt.body).schoolId,personId:'verified-pupil',role:'student',expiresAt:time+30*86400000,syncProtocol:2,recordRevision:'verified-record-ACK'})}),{messaging:{sendEachForMulticast:async message=>pushes.push(message)}});
+ const device=(schoolId,token)=>f.call({action:'managed/mobile',schoolId,request:{action:'mobile_refresh',sessionToken:'school-verified',deviceId:token.repeat(64),fcmToken:token.repeat(40)}});
+ await device(A,'a');await device(B,'b');
+ await f.call({action:'managed/records',collection:'school_notices',operation:'write',id:'notice',data:{title:'Private notice'},syncProtocol:2,operationId:'operation-123456789',expectedRecordRevision:''});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(pushes.length,1);assert.deepEqual(pushes[0].tokens,['a'.repeat(40)]);
+ assert.equal(pushes[0].data.schoolId,A);assert(!JSON.stringify(pushes[0]).includes('Private notice'));
+ await f.call({action:'managed/records',collection:'school_notices',operation:'read',syncProtocol:2});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(pushes.length,1);
+ const bad=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:A})}),{messaging:{sendEachForMulticast:async()=>assert.fail('No ACK, no push')}});
+ await assert.rejects(bad.call({action:'managed/records',collection:'school_notices',operation:'write',id:'notice',data:{},syncProtocol:2,operationId:'operation-123456789',expectedRecordRevision:''}));
+});
+
+test('optional push outage never cancels a verified storage ACK',async()=>{
+ const diagnostics=[];const f=fixture(async(url,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:JSON.parse(opt.body).schoolId,personId:'verified-pupil',role:'student',expiresAt:time+30*86400000,syncProtocol:2,recordRevision:'persisted-revision'})}),{pushDiagnostics:entry=>diagnostics.push(entry),messaging:{sendEachForMulticast:async()=>{throw Error('FCM unavailable');}}});
+ await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_refresh',sessionToken:'school-verified',deviceId:'d'.repeat(64),fcmToken:'f'.repeat(40)}});
+ const ack=await f.call({action:'managed/records',collection:'documents',operation:'write',id:'doc',data:{documentRevision:'rev'},expectedRevision:''});
+ assert.equal(ack.recordRevision,'persisted-revision');
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(diagnostics,[{event:'managed_push_hint_failure',code:'FCM_UNAVAILABLE'}]);
+});
+
+test('document refresh hint targets only the Script-verified person, not another student in the same school',async()=>{
+ const pushes=[];
+ const f=fixture(async(url,opt)=>{const envelope=JSON.parse(opt.body),body=JSON.parse(envelope.payload);return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:envelope.schoolId,personId:body.request?.sessionToken==='person-2'?'verified-2':'verified-1',role:'student',expiresAt:time+30*86400000,syncProtocol:2,recordRevision:'ACK'})};},{messaging:{sendEachForMulticast:async message=>pushes.push(message)}});
+ for(const n of [1,2])await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_refresh',sessionToken:'person-'+n,personId:'untrusted-victim',deviceId:String(n).repeat(64),fcmToken:String(n).repeat(40)}});
+ await f.call({action:'managed/records',collection:'documents',operation:'write',id:'doc',data:{personId:'verified-1',ownerRole:'student',documentRevision:'revision'},expectedRevision:''});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(pushes.length,1);assert.deepEqual(pushes[0].tokens,['1'.repeat(40)]);
+ assert(!JSON.stringify(pushes[0].data).includes('verified-1'));
 });
