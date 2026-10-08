@@ -1,4 +1,5 @@
-# User-authorized production release of verified school workflow fixes.
+# User-authorized live publication of regression-verified commit 61323fdb (2026-10-08).
+# Physical-device sync latency and isolated Google Sheets migration remain unverified.
 name: Build Vidya Saarthi Android APK
 permissions:
   contents: write

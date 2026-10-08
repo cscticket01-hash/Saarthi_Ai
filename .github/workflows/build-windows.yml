@@ -1,4 +1,5 @@
-# Legacy-school recovery backend is live at 6bc597aa; publish the verified Windows client.
+# User-authorized live publication of regression-verified commit 61323fdb (2026-10-08).
+# Existing backend 1383631a is live; school Apps Script migration is not executed.
 # Existing-school recovery and token reuse are verified before this installer release.
 # Website Windows downloads automatically select the latest published Windows release.
 name: Build Vidya Saarthi Windows Admin
@@ -354,11 +355,11 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
-            Local-first school settings, directory and photo saves work while Drive/network is unavailable. Durable school-specific sync retries preserve newer edits and retain offline image copies after upload.
-            Removes redundant Admin password gates; separate App Lock remains. Central authentication, licence/block enforcement and School A/B isolation remain enforced.
-            Shared Windows/Android student and teacher QR login format; install the matching latest Android update. Unsynced records need to sync before mobile login.
-            Staff Salary layout with real records, payment history, payslips and CSV. ID cards and payslips have local browser/native print preview. Analytics loads local expenses immediately.
-            Existing school IDs, licences, local data and Drive roots are preserved. Automated regression checks passed. Actual phone-camera, printer and live Google Drive acceptance tests remain pending.
+            User-authorized publication of the tested Windows sync improvements. Automatic queue reconciliation runs every four minutes, with immediate local-change triggers, durable pending records and verified cloud ACK handling.
+            Reuses the existing shared sync protocol, adds negotiated delta batching and bounded school-scoped read caches. Document compression preserves originals and targets readable output; 80 KB is a target, not a guarantee.
+            Fees save-and-lock behavior retains the full 30-second wait and authorized App Lock flow. Authentication, licence enforcement and school isolation remain enforced.
+            Full regression CI and Windows/Android/Web TEST builds passed on source commit 61323fdb85385f8bd51ce9b05d7be47a2e7206e3. Release workflow changes affect publication metadata only.
+            Actual Windows-to-Drive-to-Android/Web latency, physical QR scanning, second-PC restore and isolated Google Sheets migration remain pending acceptance. No real-school migration or pending-queue clearing is performed by this release.
           generate_release_notes: true
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
