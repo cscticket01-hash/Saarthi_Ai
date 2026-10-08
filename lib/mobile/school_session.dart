@@ -198,8 +198,14 @@ class SchoolSession {
     final origin = _generation;
     if (_registeredPushToken == token && _pushRegisteredAt != null &&
         DateTime.now().difference(_pushRegisteredAt!) < const Duration(days: 1)) return;
-    await schoolCall('mobile_heartbeat', {'fcmToken': token, 'deviceId': deviceId});
+    final verified=await schoolCall('mobile_refresh', {'fcmToken': token, 'deviceId': deviceId});
+    final expires=verified['expiresAt'];
+    if (expires is! num || expires <= DateTime.now().millisecondsSinceEpoch)
+      throw StateError('Verified notification session renewal failed.');
     if (origin == _generation) {
+      _expiresAt = expires.toInt();
+      await _persist();
+      if (origin != _generation) return;
       _registeredPushToken = token;
       _pushRegisteredAt = DateTime.now();
     }

@@ -1856,10 +1856,17 @@ class WindowsBackendBridge {
 
     if (FirebaseFirestore.instance.activeProfileId != originProfile)
       throw StateError('School changed. Reopen documents.');
+    final ownerRecord=body['documentKind']=='idCard'?null:
+        (await FirebaseFirestore.instance.collection('students_directory').doc(studentId).get()).data();
+    if (FirebaseFirestore.instance.activeProfileId != originProfile)
+      throw StateError('School changed. Reopen documents.');
     // Immutable generations preserve the original and previous copy until an
     // explicit retention policy removes them; a failed metadata write rolls back.
     final metadata = <String, dynamic>{
       'documentId': documentId,
+      if (ownerRecord?['mobileStableId'] is String) ...{
+        'personId':ownerRecord!['mobileStableId'], 'ownerRole':'student',
+      },
       if (body['documentKind'] == 'idCard') ...{
         'documentKind': 'idCard',
         'ownerRole': body['ownerRole'],

@@ -61,22 +61,23 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   return result.acknowledgements;
  }});
  const pushDevices=new Map();
- async function registerDevice(schoolId,request) {
-  if(!messaging || request.action!=='mobile_heartbeat' || request.fcmToken===undefined)return;
+ async function registerDevice(schoolId,request,verified) {
+  if(!messaging || request.action!=='mobile_refresh' || request.fcmToken===undefined)return;
   if(typeof request.fcmToken!=='string'||request.fcmToken.length<20||request.fcmToken.length>4096||
      typeof request.deviceId!=='string'||request.deviceId.length<32||request.deviceId.length>160)fail(400,'Invalid notification device');
+  if(typeof verified.personId!=='string'||!verified.personId.length||verified.personId.length>200||!['student','teacher'].includes(verified.role))fail(502,'Verified notification identity missing');
   const ref=db.doc('managed_notification_devices/'+hash(request.fcmToken)),deviceHash=hash(request.deviceId);
   await db.runTransaction(async tx=>{const old=await tx.get(ref);
    if(old.exists&&old.data().deviceHash!==deviceHash)fail(403,'Notification device binding rejected');
-   tx.set(ref,{schoolId,deviceHash,token:protect(request.fcmToken,encryptionKey),expiresAt:now()+30*86400000});
+   tx.set(ref,{schoolId,personId:verified.personId,role:verified.role,deviceHash,token:protect(request.fcmToken,encryptionKey),expiresAt:now()+30*86400000});
    if(old.exists)pushDevices.delete(old.data().schoolId);
   });
   pushDevices.delete(schoolId);
  }
- async function notifyChanged(schoolId,operationId,notice) {
+ async function notifyChanged(schoolId,operationId,notice,owner) {
   if(!messaging)return;
   const rows=await cachedRead(pushDevices,schoolId,()=>db.collection('managed_notification_devices').where('schoolId','==',schoolId).get());
-  const tokens=[...new Set(rows.docs.filter(d=>d.data().schoolId===schoolId&&d.data().expiresAt>now()).map(d=>unprotect(d.data().token,encryptionKey)))];
+  const tokens=[...new Set(rows.docs.filter(d=>d.data().schoolId===schoolId&&d.data().expiresAt>now()&&(!owner||(d.data().personId===owner.personId&&d.data().role===owner.role))).map(d=>unprotect(d.data().token,encryptionKey)))];
   for(let offset=0;offset<tokens.length;offset+=500)
    {
     const sent=await messaging.sendEachForMulticast({tokens:tokens.slice(offset,offset+500),data:{schoolId,type:notice?'school_notice':'school_sync',operationId,...(notice?{noticeId:operationId}:{})},android:{priority:'high'}});
@@ -197,7 +198,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
    return {success:true,schoolId:b.schoolId,projectId:b.schoolId,...result};
   }
   const result=await signed(m,{action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
-  await registerDevice(b.schoolId,b.request);
+  await registerDevice(b.schoolId,b.request,result);
   if(result.attendancePolicy) result.attendancePermit=attendancePermit(b.schoolId,b.request.sessionToken||result.sessionToken,result.attendancePolicy,e.expiresAt);
   delete result.attendancePolicy;
   return {...result,policyExpiresAt:Math.min(e.expiresAt,now()+72*3600000)};
@@ -280,8 +281,9 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
     ...(b.syncProtocol===2?{syncProtocol:2,...(b.operation==='read'?{knownRevision:typeof b.knownRevision==='string'?b.knownRevision:''}:{operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision})}:{}),...(b.id?{id:b.id}:{}),...(data?{data}:{}),...(b.expectedRevision!==undefined?{expectedRevision:b.expectedRevision}:{}),...(Number.isFinite(b.expectedUploadedAt)?{expectedUploadedAt:b.expectedUploadedAt}:{})});
   // Only verified durable Script ACK permits a hint. FCM is optional and never
   // changes the storage acknowledgement or sends private school content.
+  const owner=b.operation==='write'&&(b.collection==='students_directory'||b.collection==='teachers_directory')?{personId:data.mobileStableId||b.id,role:b.collection==='students_directory'?'student':'teacher'}:b.operation==='write'&&data?.personId?{personId:data.personId,role:data.ownerRole||'student'}:undefined;
   if((b.syncProtocol===2||(b.collection==='documents'&&typeof b.expectedRevision==='string'))&&acknowledged.syncProtocol===2&&typeof acknowledged.recordRevision==='string'&&b.operation!=='read'&&['school_notices','school_config','students_directory','teachers_directory','exam_results','documents'].includes(b.collection))
-   void notifyChanged(m.schoolId,b.operationId||hash(m.schoolId+'/'+b.collection+'/'+b.id+'/'+acknowledged.recordRevision),b.collection==='school_notices'&&b.operation==='write').catch(error=>{const safe=['messaging/authentication-error','messaging/mismatched-credential','messaging/server-unavailable'];try{pushDiagnostics({event:'managed_push_hint_failure',code:safe.includes(error.code)?error.code:'FCM_UNAVAILABLE'});}catch{}});
+   void notifyChanged(m.schoolId,b.operationId||hash(m.schoolId+'/'+b.collection+'/'+b.id+'/'+acknowledged.recordRevision),b.collection==='school_notices'&&b.operation==='write',owner).catch(error=>{const safe=['messaging/authentication-error','messaging/mismatched-credential','messaging/server-unavailable'];try{pushDiagnostics({event:'managed_push_hint_failure',code:safe.includes(error.code)?error.code:'FCM_UNAVAILABLE'});}catch{}});
   return acknowledged;
  }
  if(action==='managed/file/upload'){
