@@ -83,12 +83,12 @@ void main() {
    report['windowsToActualMobileReadMs']=clock.elapsedMilliseconds;
    final bytes=await mobile.publishedIdCard();expect(bytes,isNotNull);expect(bytes!.length,greaterThan(0));
    final existingAttendance=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'attendance_records','operation':'read','syncProtocol':2});
-   final priorRows=(existingAttendance['records'] as Map).values.where((row)=>row['personId']==person&&row['exitCapturedAt'] is int).toList();
-   final captured=priorRows.isEmpty?DateTime.now().millisecondsSinceEpoch:priorRows.single['exitCapturedAt'] as int;
-   report['exitAlreadyCompletedBeforeTest']=priorRows.isNotEmpty;
+   final priorRows=(existingAttendance['records'] as Map).values.where((row)=>row['personId']==person&&row['entryCapturedAt'] is int).toList();
+   final captured=priorRows.isEmpty?DateTime.now().millisecondsSinceEpoch:priorRows.single['entryCapturedAt'] as int;
+   report['attendanceAlreadyCompletedBeforeTest']=priorRows.isNotEmpty;
    expect(priorRows,isEmpty,reason:'Latency test must use a fresh attendance operation');
    transport.offline=true;
-   await mobile.saveAttendance({'latitude':24.8,'longitude':92.7,'accuracy':5},captured,'exit');await mobile.flushAttendance();
+   await mobile.saveAttendance({'latitude':24.8,'longitude':92.7,'accuracy':5},captured,'entry');await mobile.flushAttendance();
    final owner=AttendanceStore.owner(endpoint,school,'student',person);
    expect((await store.pending(owner)).single['capturedAt'],captured);
    await store.close();store=AttendanceStore(openDatabaseOverride:open);
@@ -100,7 +100,7 @@ void main() {
    for(var attempt=0;attempt<24;attempt++){await restored.flushAttendance();await restored.refreshAttendanceStatus();if(restored.attendancePending==0&&restored.lastAttendanceAck!=null)break;await Future<void>.delayed(const Duration(seconds:5));}
    expect(restored.attendancePending,0);expect(restored.lastAttendanceAck,isNotNull);
    final fromMobile=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'attendance_records','operation':'read','syncProtocol':2});
-   expect((fromMobile['records'] as Map).values.any((row)=>row['personId']==person&&row['exitCapturedAt']==captured),true);
+   expect((fromMobile['records'] as Map).values.any((row)=>row['personId']==person&&row['entryCapturedAt']==captured),true);
    report['actualMobileQueueToWindowsReadMs']=reverse.elapsedMilliseconds;report['mobilePending']=0;
    report['mobileRequests']=transport.samples;report['status']='PASS';
   }catch(_){report['status']='FAIL';rethrow;}
