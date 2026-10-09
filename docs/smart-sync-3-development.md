@@ -48,7 +48,7 @@ Recovered HEAD: `76c1291bd0fb0299a0c0710a62e513af77543f92`, existing PR #23. No 
 
 | Requirement | Actual recovery status |
 | --- | --- |
-| A control center | Partial: existing page preserved; guided restore and independent service health remain open. |
+| A control center | Partial: existing page preserved; guided restore remains open; authenticated school cloud-health control added, UI regression pending. |
 | B self-repair | Existing bounded recovery hosted-tested; original incident still blocked. |
 | C hourly sync | Implemented; physical sleep/wake and elapsed-hour verification pending. |
 | D bidirectional recovery | Local missing-cache inventory recovery added to existing manual/hourly managed pull; new SQLite tests pending. Cloud-row authoritative restoration incomplete. |
@@ -65,3 +65,5 @@ Missing-cache recovery excludes explicit tombstones, all pending edits/deletes a
 `VS_RECYCLE_VERSION=1` is an explicit owner configuration gate; default is zero. Versioned deletion captures and readback-verifies a content-hashed school snapshot before writing a tombstone. Document binaries stay intact during the 24-hour restore window. Signed school-admin restore requires the exact deletion revision, retains original timestamps, refuses newer edits and supports lost-ACK retries. Expired restores and early purges fail closed. Financial audit snapshots are never purged by this mechanism; tombstones and snapshots are retained. Eligible binary cleanup reuses existing immutable-upload ownership/shared-file protections. No live school flag or Script deployment was changed. Local hide/recover UI and scheduled purge are not yet complete; this is not a release-ready recycle bin.
 
 CI found the old default-target test still asserted 80 KB after the requirement changed to 50 KB (106 passed / 1 failed). Its expectation was updated to the specified target; original-preservation and readability checks remain unchanged.
+
+Cloud health is checked only on administrator request through the existing authenticated school session; failed/foreign responses remain unverified and do not gate local UI. This does not claim independent OS internet connectivity or full Drive inventory completeness.

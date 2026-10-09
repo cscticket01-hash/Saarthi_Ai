@@ -93,3 +93,10 @@ test('document binary stays recoverable for 24 hours, restores without upload an
  assert.equal(f.call({action:'managed_records',operation:'read',collection:'documents',syncProtocol:2}).records.row._syncDeleted,true);
  assert.equal(f.all.get(second.tomb._syncRecycleFileId).trash,undefined);
 });
+
+test('opt-in recycle rejects unversioned deletion instead of bypassing revision protection',()=>{
+ const f=storage();f.props.set('VS_RECYCLE_VERSION','1');
+ f.call({action:'managed_records',operation:'write',collection:'fee_payments',id:'row',data:{schoolId:A,amount:500}});
+ assert.equal(f.call({action:'managed_records',operation:'delete',collection:'fee_payments',id:'row'}).success,false);
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'fee_payments'}).records.row.amount,500);
+});

@@ -122,6 +122,22 @@ void main(){
    });
    await tester.pumpWidget(const SizedBox());
  });
+ testWidgets('cloud health requires authenticated own-school readiness and rejects a foreign result', (tester) async {
+   for(final own in [true,false]) {
+     await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(
+       key:ValueKey(own),refreshOnOpen:()async{},healthProbe:(requested)async{
+         expect(requested,school);
+         return {'success':true,'storageReady':true,'schoolId':own?school:'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'};
+       })));
+     await tester.pumpAndSettle();
+     await tester.ensureVisible(find.text('Check Cloud Health'));
+     await tester.tap(find.text('Check Cloud Health'));
+     await tester.pumpAndSettle();
+     expect(find.textContaining('Authenticated backend and school storage verified at'),own?findsOneWidget:findsNothing);
+     if(!own)expect(find.textContaining('cloud readiness unverified'),findsOneWidget);
+     await tester.pumpWidget(const SizedBox());
+   }
+ });
  test('legacy queue binding preserves its original operation ID across failed retries', () async {
    final row=db.collection('_windows_firebase_outbox').doc('legacy-operation');
    await row.set({'collection':'teachers_directory','documentId':'retained-teacher','operation':'set',
