@@ -49,7 +49,7 @@ dependencies:
   pdf: ^3.10.8
   printing: 5.14.3
   qr_flutter: ^4.1.0
-  mobile_scanner: 5.1.1
+  mobile_scanner: 7.3.0
 
 dev_dependencies:
   sqflite_common_ffi: 2.4.3
