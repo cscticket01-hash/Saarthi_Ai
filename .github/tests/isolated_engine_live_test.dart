@@ -57,7 +57,8 @@ void main() {
    final linkToken=sha256.convert(utf8.encode('hosted-fresh/$unique')).toString();
    await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken}});
    final existingDocuments=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'read','syncProtocol':2});
-   final fixture=(existingDocuments['records'] as Map).values.firstWhere((r)=>r['syntheticTest']==true&&r['personId']=='isolated-v2-20261009-student'&&r['documentKind']=='idCard') as Map;
+   final fixturePerson='isolated-v2-$unique-student';
+   final fixture=(existingDocuments['records'] as Map).values.firstWhere((r)=>r['syntheticTest']==true&&r['personId']==fixturePerson&&r['documentKind']=='idCard') as Map;
    await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'personId':person,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixture['sizeBytes'],'contentHash':fixture['contentHash'],'documentRevision':fixture['documentRevision']}});
    report['conditions']='Fresh synthetic person and attendance; authenticated/warmed TEST service; unchanged deployed backend/Script; no physical devices';
    final clock=Stopwatch()..start();
