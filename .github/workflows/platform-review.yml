@@ -230,9 +230,11 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw 'SQLite production screen/queue/startup regressions failed' }
     - name: Real OS SQLite process crash recovery and controlled local benchmark
       run: |
-        dart compile exe .github/tests/sqlite_crash_child.dart -o build/sqlite-crash-child.exe
+        dart build cli --target=.github/tests/sqlite_crash_child.dart --output=build/sqlite-crash-child
         if ($LASTEXITCODE -ne 0) { throw 'Crash harness compilation failed' }
-        python .github/scripts/test_sqlite_process_crash.py build/sqlite-crash-child.exe
+        $child = (Get-ChildItem build/sqlite-crash-child/bundle/bin/*.exe | Select-Object -First 1).FullName
+        if (!$child) { throw 'Bundled native crash harness executable missing' }
+        python .github/scripts/test_sqlite_process_crash.py $child
         if ($LASTEXITCODE -ne 0) { throw 'Process crash recovery failed' }
         dart run .github/tests/sqlite_benchmark.dart
         if ($LASTEXITCODE -ne 0) { throw 'Local benchmark/integrity failed' }
