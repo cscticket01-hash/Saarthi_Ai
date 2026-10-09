@@ -5,12 +5,17 @@ function VS_TEST_guard(){
  VS_managedRoot();return p;
 }
 function VS_TEST_ownership(){VS_TEST_guard();const root=VS_managedRoot();Logger.log(JSON.stringify({event:'TEST_root_ownership',schoolId:PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID'),rootId:root.getId(),rootName:root.getName(),ownerEmail:root.getOwner().getEmail(),marker:root.getDescription()}));}
-function VS_TEST_seedAndDryRun(){
+function VS_TEST_seedCategories(){
  const p=VS_TEST_guard();if(p.getProperty('VS_TEST_MIGRATION_BASELINE')){Logger.log('TEST migration baseline already retained');return;}
  const rows=[['students_directory','student'],['teachers_directory','teacher'],['teachers_directory','staff'],['attendance_logs','student'],['teacher_attendance','teacher'],['teacher_attendance','staff'],['fee_ledger',''],['fee_settings',''],['school_expenses',''],['exams',''],['exam_results',''],['teacher_salary',''],['school_notices',''],['school_config',''],['school_calendar',''],['documents',''],['scanner_devices','']];
  rows.forEach((row,n)=>{const id='synthetic-migration-category-'+String(n+1).padStart(2,'0');const old=VS_managedRecord({operation:'read',collection:row[0],syncProtocol:2}).records[id];if(old){if(old.syntheticTest!==true)throw new Error('Existing record retained');return;}
   VS_managedRecord({operation:'write',collection:row[0],id:id,syncProtocol:2,operationId:'synthetic-migration-20261009-'+n,expectedRecordRevision:'',data:{schoolId:p.getProperty('VS_MANAGED_SCHOOL_ID'),syntheticTest:true,name:'Synthetic TEST category '+(n+1),role:row[1],category:n+1,content:'Integrity fixture = literal JSON, not a formula'}});
  });
+ Logger.log(JSON.stringify({event:'TEST_migration_seed',schoolId:p.getProperty('VS_MANAGED_SCHOOL_ID'),seededCategories:17}));
+}
+function VS_TEST_seedAndDryRun(){
+ const p=VS_TEST_guard();if(p.getProperty('VS_TEST_MIGRATION_BASELINE')){Logger.log('TEST migration baseline already retained');return;}
+ VS_TEST_seedCategories();
  const baseline=VS_previewOrganizedStorageMigration();p.setProperty('VS_TEST_MIGRATION_BASELINE',JSON.stringify({collections:baseline.collections.map(c=>({collection:c.collection,count:c.count,hash:c.hash})),binaryCount:baseline.binaryCount,binaryBytes:baseline.binaryBytes}));
  Logger.log(JSON.stringify({event:'TEST_migration_dry_run',schoolId:baseline.schoolId,seededCategories:17,writesPerformed:baseline.writesPerformed,collections:baseline.collections.map(c=>({collection:c.collection,count:c.count})),binaryCount:baseline.binaryCount}));
  const started=VS_beginOrganizedStorageMigration();Logger.log(JSON.stringify({event:'TEST_migration_backup_started',phase:started.phase,migrationId:started.migrationId}));

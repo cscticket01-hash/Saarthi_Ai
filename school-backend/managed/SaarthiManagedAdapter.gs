@@ -98,8 +98,11 @@ function VS_managedVerify(e) {
   } finally {lock.releaseLock();}
   return JSON.parse(b.payload);
 }
-function VS_managedCollection(name) {
+function VS_validateManagedCollection(name) {
   if (!['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results','mobile_sessions','mobile_users','mobile_complaints'].includes(name)) throw new Error('Unknown collection');
+}
+function VS_managedCollection(name) {
+  VS_validateManagedCollection(name);
   const root=VS_managedRoot(), folders=root.getFoldersByName('records_'+name);
   if(folders.hasNext()) {const folder=folders.next();if(folders.hasNext())throw new Error('Duplicate collection folders; operator review required');return folder;}
   return root.createFolder('records_'+name);
@@ -111,12 +114,19 @@ function VS_managedFolder(parent,name) {
   if(matches.hasNext()){const folder=matches.next();if(matches.hasNext())throw new Error('Duplicate storage folder; operator review required');return folder;}
   return parent.createFolder(name);
 }
-function VS_legacySheet(collection) {
-  const legacy=VS_managedCollection(collection),p=PropertiesService.getScriptProperties();
+function VS_legacySheet(collection,readContext) {
+  VS_validateManagedCollection(collection);
+  const p=PropertiesService.getScriptProperties();
   const school=p.getProperty('VS_MANAGED_SCHOOL_ID');let id=p.getProperty('VS_MANAGED_SHEET_ID'),book;
+  // This context lives only inside one locked mobile request. Reuse the already
+  // ancestry/marker-verified workbook, never a persistent cross-request cache.
+  const verified=readContext&&readContext.legacyBook;
+  const reuse=verified&&verified.school===school&&verified.id===id;
+  const legacy=reuse&&p.getProperty('VS_SHEET_MIGRATED_'+collection)==='1'?null:VS_managedCollection(collection);
   const pending=p.getProperty('VS_MANAGED_SHEET_PENDING');
   if(!id&&pending){const file=DriveApp.getFileById(pending);if(file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('Pending workbook identity mismatch');file.moveTo(VS_managedFolder(VS_managedRoot(),'School Data'));p.setProperty('VS_MANAGED_SHEET_ID',pending);p.deleteProperty('VS_MANAGED_SHEET_PENDING');id=pending;}
-  if(id){const file=VS_managedFile(id);if(file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook identity mismatch');book=SpreadsheetApp.openById(id);}
+  if(reuse)book=verified.book;
+  else if(id){const file=VS_managedFile(id);if(file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook identity mismatch');book=SpreadsheetApp.openById(id);}
   else {
     // Recover a create/move crash without creating a second school workbook.
     const target=VS_managedFolder(VS_managedRoot(),'School Data');
@@ -130,6 +140,7 @@ function VS_legacySheet(collection) {
     }
     p.setProperty('VS_MANAGED_SHEET_ID',id);p.deleteProperty('VS_MANAGED_SHEET_PENDING');
   }
+  if(readContext)readContext.legacyBook={school:school,id:id,book:book};
   let sheet=book.getSheetByName(collection);
   if(!sheet&&p.getProperty('VS_SHEET_MIGRATED_'+collection)==='1')throw new Error('Verified school tab is missing; operator recovery required');
   if(!sheet){sheet=book.insertSheet(collection);if(sheet.getMaxColumns()<33)sheet.insertColumnsAfter(sheet.getMaxColumns(),33-sheet.getMaxColumns());sheet.getRange(1,1,1,33).setValues([['Record Key','School ID','Revision','Deleted','Operation ID','Display Name'].concat(Array.from({length:27},(_,n)=>'Data '+(n+1)))]);sheet.setFrozenRows(1);}
@@ -413,9 +424,9 @@ function VS_layoutState(collection) {
   return state;
 }
 function VS_layoutSave(state){PropertiesService.getScriptProperties().setProperty('VS_LAYOUT_'+state.collection,JSON.stringify(state));}
-function VS_managedSheet(collection) {
+function VS_managedSheet(collection,readContext) {
   const state=VS_layoutState(collection);
-  return state&&['active','rollingBack'].indexOf(state.phase)>=0?VS_layoutStore(state):VS_legacySheet(collection);
+  return state&&['active','rollingBack'].indexOf(state.phase)>=0?VS_layoutStore(state,readContext):VS_legacySheet(collection,readContext);
 }
 function VS_layoutTargets(collection) {
   if(collection==='teacher_attendance')return ['05_Teacher_Attendance','06_Staff_Attendance','17_Other_School_Records'];
@@ -455,11 +466,13 @@ function VS_layoutBook(name) {
   let own=false;const parents=file.getParents();while(parents.hasNext())if(parents.next().getId()===root.getId())own=true;
   if(!own)file.moveTo(root);VS_managedFile(id);p.deleteProperty(pendingKey);return id;
 }
-function VS_layoutStore(state) {
+function VS_layoutStore(state,readContext) {
   const school=state.schoolId;
   return {school:school,collection:state.collection,partitions:state.targets.map(target=>{
-    const f=VS_managedFile(target.id);if(f.getDescription()!=='VIDYA_LAYOUT:'+school+':'+target.name)throw new Error('Organized workbook identity mismatch');
-    const book=SpreadsheetApp.openById(target.id);let sheet=book.getSheetByName(state.collection);
+    const key=school+':'+target.id+':'+target.name,verified=readContext&&readContext.layoutBooks&&readContext.layoutBooks[key];let book;
+    if(verified)book=verified;
+    else{const f=VS_managedFile(target.id);if(f.getDescription()!=='VIDYA_LAYOUT:'+school+':'+target.name)throw new Error('Organized workbook identity mismatch');book=SpreadsheetApp.openById(target.id);if(readContext){if(!readContext.layoutBooks)readContext.layoutBooks=Object.create(null);readContext.layoutBooks[key]=book;}}
+    let sheet=book.getSheetByName(state.collection);
     if(!sheet){if(['active','rollingBack'].indexOf(state.phase)>=0)throw new Error('Active organized tab missing');sheet=book.insertSheet(state.collection);if(sheet.getMaxColumns()<33)sheet.insertColumnsAfter(sheet.getMaxColumns(),33-sheet.getMaxColumns());sheet.getRange(1,1,1,33).setValues([['Record Key','School ID','Revision','Deleted','Operation ID','Display Name'].concat(Array.from({length:27},(_,n)=>'Data '+(n+1)))]);sheet.setFrozenRows(1);}
     return {sheet:sheet,school:school};
   })};

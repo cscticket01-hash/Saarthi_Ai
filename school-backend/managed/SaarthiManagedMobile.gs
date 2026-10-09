@@ -9,11 +9,12 @@ function VS_managedMobileUnlocked(request,lease) {
  if(!lease||lease.schoolId!==school||lease.expiresAt<=Date.now())throw new Error('School licence is inactive');
  function VS_project(){return school;}
  function VS_requireLicense(){if(lease.expiresAt<=Date.now())throw new Error('School licence expired');}
- const recordCache={};
- function VS_records(col){return recordCache[col]||(recordCache[col]=VS_managedRecordUnlocked({operation:'read',collection:col}).records);}
- function VS_get(col,id){const item=VS_sheetItem(VS_managedSheet(col),String(id));if(!item||item.data._syncDeleted)return null;return Object.assign({},item.data,{id:String(id)});}
+ const recordCache={},storeCache={},readContext={};
+ function VS_store(col){return storeCache[col]||(storeCache[col]=VS_managedSheet(col,readContext));}
+ function VS_records(col){if(recordCache[col])return recordCache[col];const all=VS_sheetRecords(VS_store(col)),rows=Object.create(null);Object.keys(all).forEach(id=>{if(!all[id]._syncDeleted)rows[id]=all[id];});return recordCache[col]=rows;}
+ function VS_get(col,id){const item=VS_sheetItem(VS_store(col),String(id));if(!item||item.data._syncDeleted)return null;return Object.assign({},item.data,{id:String(id)});}
  function VS_query(col,field,value){const records=VS_records(col);return Object.keys(records).filter(id=>!field||records[id][field]===value).map(id=>Object.assign({},records[id],{id:id}));}
- function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecordUnlocked(request);return Object.assign({},data,{id:id});}
+ function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecordUnlocked(request);delete recordCache[col];return Object.assign({},data,{id:id});}
  function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecordUnlocked({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
  function VS_touchPresence(){} // Windows presence is central and cannot be renewed by mobile.
  function VS_messagingOptions(){return null;} // No per-school Firebase project is required.
@@ -94,8 +95,8 @@ function VS_mobileAction(b){
    } else if(key==='reportCards') {
     // Both existing writers remain authoritative. A tombstone in either store
     // suppresses its duplicate; do not revive results through the other writer.
-    const canonical=VS_managedRecordUnlocked({operation:'read',collection:'exam_results',syncProtocol:2}).records;
-    const centre=VS_managedRecordUnlocked({operation:'read',collection:'exam_center_results',syncProtocol:2}).records;
+    const canonical=VS_sheetRecords(VS_store('exam_results'));
+    const centre=VS_sheetRecords(VS_store('exam_center_results'));
     const rows=Object.create(null),removed=Object.create(null);
     [canonical,centre].forEach(records=>Object.keys(records).forEach(id=>{if(records[id]._syncDeleted||records[id].deleted)removed[id]=true;}));
     recordCache.exam_results={};recordCache.exam_center_results={};

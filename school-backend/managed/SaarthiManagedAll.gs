@@ -6559,8 +6559,11 @@ function VS_managedVerify(e) {
   } finally {lock.releaseLock();}
   return JSON.parse(b.payload);
 }
-function VS_managedCollection(name) {
+function VS_validateManagedCollection(name) {
   if (!['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results','mobile_sessions','mobile_users','mobile_complaints'].includes(name)) throw new Error('Unknown collection');
+}
+function VS_managedCollection(name) {
+  VS_validateManagedCollection(name);
   const root=VS_managedRoot(), folders=root.getFoldersByName('records_'+name);
   if(folders.hasNext()) {const folder=folders.next();if(folders.hasNext())throw new Error('Duplicate collection folders; operator review required');return folder;}
   return root.createFolder('records_'+name);
@@ -6572,12 +6575,19 @@ function VS_managedFolder(parent,name) {
   if(matches.hasNext()){const folder=matches.next();if(matches.hasNext())throw new Error('Duplicate storage folder; operator review required');return folder;}
   return parent.createFolder(name);
 }
-function VS_legacySheet(collection) {
-  const legacy=VS_managedCollection(collection),p=PropertiesService.getScriptProperties();
+function VS_legacySheet(collection,readContext) {
+  VS_validateManagedCollection(collection);
+  const p=PropertiesService.getScriptProperties();
   const school=p.getProperty('VS_MANAGED_SCHOOL_ID');let id=p.getProperty('VS_MANAGED_SHEET_ID'),book;
+  // This context lives only inside one locked mobile request. Reuse the already
+  // ancestry/marker-verified workbook, never a persistent cross-request cache.
+  const verified=readContext&&readContext.legacyBook;
+  const reuse=verified&&verified.school===school&&verified.id===id;
+  const legacy=reuse&&p.getProperty('VS_SHEET_MIGRATED_'+collection)==='1'?null:VS_managedCollection(collection);
   const pending=p.getProperty('VS_MANAGED_SHEET_PENDING');
   if(!id&&pending){const file=DriveApp.getFileById(pending);if(file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('Pending workbook identity mismatch');file.moveTo(VS_managedFolder(VS_managedRoot(),'School Data'));p.setProperty('VS_MANAGED_SHEET_ID',pending);p.deleteProperty('VS_MANAGED_SHEET_PENDING');id=pending;}
-  if(id){const file=VS_managedFile(id);if(file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook identity mismatch');book=SpreadsheetApp.openById(id);}
+  if(reuse)book=verified.book;
+  else if(id){const file=VS_managedFile(id);if(file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook identity mismatch');book=SpreadsheetApp.openById(id);}
   else {
     // Recover a create/move crash without creating a second school workbook.
     const target=VS_managedFolder(VS_managedRoot(),'School Data');
@@ -6591,6 +6601,7 @@ function VS_legacySheet(collection) {
     }
     p.setProperty('VS_MANAGED_SHEET_ID',id);p.deleteProperty('VS_MANAGED_SHEET_PENDING');
   }
+  if(readContext)readContext.legacyBook={school:school,id:id,book:book};
   let sheet=book.getSheetByName(collection);
   if(!sheet&&p.getProperty('VS_SHEET_MIGRATED_'+collection)==='1')throw new Error('Verified school tab is missing; operator recovery required');
   if(!sheet){sheet=book.insertSheet(collection);if(sheet.getMaxColumns()<33)sheet.insertColumnsAfter(sheet.getMaxColumns(),33-sheet.getMaxColumns());sheet.getRange(1,1,1,33).setValues([['Record Key','School ID','Revision','Deleted','Operation ID','Display Name'].concat(Array.from({length:27},(_,n)=>'Data '+(n+1)))]);sheet.setFrozenRows(1);}
@@ -6874,9 +6885,9 @@ function VS_layoutState(collection) {
   return state;
 }
 function VS_layoutSave(state){PropertiesService.getScriptProperties().setProperty('VS_LAYOUT_'+state.collection,JSON.stringify(state));}
-function VS_managedSheet(collection) {
+function VS_managedSheet(collection,readContext) {
   const state=VS_layoutState(collection);
-  return state&&['active','rollingBack'].indexOf(state.phase)>=0?VS_layoutStore(state):VS_legacySheet(collection);
+  return state&&['active','rollingBack'].indexOf(state.phase)>=0?VS_layoutStore(state,readContext):VS_legacySheet(collection,readContext);
 }
 function VS_layoutTargets(collection) {
   if(collection==='teacher_attendance')return ['05_Teacher_Attendance','06_Staff_Attendance','17_Other_School_Records'];
@@ -6916,11 +6927,13 @@ function VS_layoutBook(name) {
   let own=false;const parents=file.getParents();while(parents.hasNext())if(parents.next().getId()===root.getId())own=true;
   if(!own)file.moveTo(root);VS_managedFile(id);p.deleteProperty(pendingKey);return id;
 }
-function VS_layoutStore(state) {
+function VS_layoutStore(state,readContext) {
   const school=state.schoolId;
   return {school:school,collection:state.collection,partitions:state.targets.map(target=>{
-    const f=VS_managedFile(target.id);if(f.getDescription()!=='VIDYA_LAYOUT:'+school+':'+target.name)throw new Error('Organized workbook identity mismatch');
-    const book=SpreadsheetApp.openById(target.id);let sheet=book.getSheetByName(state.collection);
+    const key=school+':'+target.id+':'+target.name,verified=readContext&&readContext.layoutBooks&&readContext.layoutBooks[key];let book;
+    if(verified)book=verified;
+    else{const f=VS_managedFile(target.id);if(f.getDescription()!=='VIDYA_LAYOUT:'+school+':'+target.name)throw new Error('Organized workbook identity mismatch');book=SpreadsheetApp.openById(target.id);if(readContext){if(!readContext.layoutBooks)readContext.layoutBooks=Object.create(null);readContext.layoutBooks[key]=book;}}
+    let sheet=book.getSheetByName(state.collection);
     if(!sheet){if(['active','rollingBack'].indexOf(state.phase)>=0)throw new Error('Active organized tab missing');sheet=book.insertSheet(state.collection);if(sheet.getMaxColumns()<33)sheet.insertColumnsAfter(sheet.getMaxColumns(),33-sheet.getMaxColumns());sheet.getRange(1,1,1,33).setValues([['Record Key','School ID','Revision','Deleted','Operation ID','Display Name'].concat(Array.from({length:27},(_,n)=>'Data '+(n+1)))]);sheet.setFrozenRows(1);}
     return {sheet:sheet,school:school};
   })};
@@ -7125,11 +7138,12 @@ function VS_managedMobileUnlocked(request,lease) {
  if(!lease||lease.schoolId!==school||lease.expiresAt<=Date.now())throw new Error('School licence is inactive');
  function VS_project(){return school;}
  function VS_requireLicense(){if(lease.expiresAt<=Date.now())throw new Error('School licence expired');}
- const recordCache={};
- function VS_records(col){return recordCache[col]||(recordCache[col]=VS_managedRecordUnlocked({operation:'read',collection:col}).records);}
- function VS_get(col,id){const item=VS_sheetItem(VS_managedSheet(col),String(id));if(!item||item.data._syncDeleted)return null;return Object.assign({},item.data,{id:String(id)});}
+ const recordCache={},storeCache={},readContext={};
+ function VS_store(col){return storeCache[col]||(storeCache[col]=VS_managedSheet(col,readContext));}
+ function VS_records(col){if(recordCache[col])return recordCache[col];const all=VS_sheetRecords(VS_store(col)),rows=Object.create(null);Object.keys(all).forEach(id=>{if(!all[id]._syncDeleted)rows[id]=all[id];});return recordCache[col]=rows;}
+ function VS_get(col,id){const item=VS_sheetItem(VS_store(col),String(id));if(!item||item.data._syncDeleted)return null;return Object.assign({},item.data,{id:String(id)});}
  function VS_query(col,field,value){const records=VS_records(col);return Object.keys(records).filter(id=>!field||records[id][field]===value).map(id=>Object.assign({},records[id],{id:id}));}
- function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecordUnlocked(request);return Object.assign({},data,{id:id});}
+ function VS_set(col,id,data){const request={operation:'write',collection:col,id:id,data:Object.assign({},data,{schoolId:school})};if(col==='attendance_records'){request.syncProtocol=2;request.operationId=Utilities.getUuid();request.expectedRecordRevision=data._syncRevision||'';}VS_managedRecordUnlocked(request);delete recordCache[col];return Object.assign({},data,{id:id});}
  function VS_firestore(method,path){if(method!=='DELETE'||path.indexOf('mobile_sessions/')!==0)throw new Error('Unsupported mobile operation');VS_managedRecordUnlocked({operation:'delete',collection:'mobile_sessions',id:path.slice(16)});}
  function VS_touchPresence(){} // Windows presence is central and cannot be renewed by mobile.
  function VS_messagingOptions(){return null;} // No per-school Firebase project is required.
@@ -7210,8 +7224,8 @@ function VS_mobileAction(b){
    } else if(key==='reportCards') {
     // Both existing writers remain authoritative. A tombstone in either store
     // suppresses its duplicate; do not revive results through the other writer.
-    const canonical=VS_managedRecordUnlocked({operation:'read',collection:'exam_results',syncProtocol:2}).records;
-    const centre=VS_managedRecordUnlocked({operation:'read',collection:'exam_center_results',syncProtocol:2}).records;
+    const canonical=VS_sheetRecords(VS_store('exam_results'));
+    const centre=VS_sheetRecords(VS_store('exam_center_results'));
     const rows=Object.create(null),removed=Object.create(null);
     [canonical,centre].forEach(records=>Object.keys(records).forEach(id=>{if(records[id]._syncDeleted||records[id].deleted)removed[id]=true;}));
     recordCache.exam_results={};recordCache.exam_center_results={};

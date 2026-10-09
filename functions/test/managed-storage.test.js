@@ -53,6 +53,18 @@ test('managed mobile reuses existing QR verification and never exposes another p
  assert.equal(f.call({action:'managed_mobile',lease:{schoolId:B,expiresAt:Date.now()+60000},request:login}).success,false);
  write('students_directory','pupil',{name:'Own pupil',mobileLinkToken:'z'.repeat(48)});assert.equal(mobile({action:'mobile_dashboard',sessionToken:session.sessionToken}).success,false);
 });
+test('mobile dashboard reuses verified workbook only within its locked request and revalidates next request',()=>{
+ const f=storage();const write=(collection,id,data)=>f.call({action:'managed_records',operation:'write',collection,id,data:{...data,schoolId:A}});
+ write('students_directory','pupil',{name:'Own pupil',class:'1',rollNo:'1',dob:'2015-01-01',mobileLinkToken:'x'.repeat(48)});
+ const mobile=request=>f.call({action:'managed_mobile',lease:{schoolId:A,expiresAt:Date.now()+60000},request});
+ const login=mobile({action:'mobile_login',role:'student',personId:'pupil',linkToken:'x'.repeat(48),studentClass:'1',rollNo:'1',dob:'2015-01-01'});
+ const request={action:'mobile_dashboard',sessionToken:login.sessionToken};assert.equal(mobile(request).success,true);
+ const open=f.context.SpreadsheetApp.openById;let opens=0;f.context.SpreadsheetApp.openById=id=>{opens++;return open(id);};
+ assert.equal(mobile(request).success,true);assert.equal(opens,1,'one ancestry/marker verified shared workbook per legacy dashboard');
+ write('school_notices','new',{title:'New cloud notice'});assert.equal(mobile(request).notices[0].title,'New cloud notice');
+ f.all.get(f.props.get('VS_MANAGED_SHEET_ID')).setDescription('VIDYA_SCHOOL_DATA:'+B);
+ assert.equal(mobile(request).success,false,'never reuse verification across requests');
+});
 test('exam centre result delta reaches only its pupil, deduplicates dual writes and retains deletion',()=>{
  const f=storage();
  const write=(collection,id,data)=>f.call({action:'managed_records',operation:'write',collection,id,data:{...data,schoolId:A}});
