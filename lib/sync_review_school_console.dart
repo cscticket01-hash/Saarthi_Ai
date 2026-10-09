@@ -1,4 +1,6 @@
 import 'dart:math';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -27,6 +29,66 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
   Map<String, dynamic>? pendingPayload;
   String? pendingId;
   bool logged = false, busy = false;
+  static const draftKey = 'isolated_sync_review_v1';
+  @override
+  void initState() {
+    super.initState();
+    restoreDraft();
+  }
+
+  Future<void> restoreDraft() async {
+    if (!enabled || CentralSchoolCloud.apiUrl != endpoint) return;
+    try {
+      final session = await CentralSchoolCloud.saved();
+      if (session['schoolId'] != school ||
+          session['endpoint'] != endpoint ||
+          session['managed'] != true) return;
+      logged = true;
+      final raw = (await SharedPreferences.getInstance()).getString(draftKey);
+      if (raw != null) {
+        final draft = jsonDecode(raw) as Map;
+        final payload = Map<String, dynamic>.from(draft['payload'] as Map);
+        if (draft['schoolId'] != school ||
+            draft['endpoint'] != endpoint ||
+            !RegExp(r'^synthetic-web-notice-[0-9]+$')
+                .hasMatch(draft['id'] as String) ||
+            !RegExp(r'^web-review-[a-f0-9]{48}$')
+                .hasMatch(draft['operationId'] as String) ||
+            payload['schoolId'] != school ||
+            payload['syntheticTest'] != true ||
+            !(payload['title'] as String)
+                .startsWith('Synthetic website exchange ')) {
+          throw StateError('Invalid isolated draft');
+        }
+        pendingPayload = payload;
+        pendingId = draft['id'] as String;
+        operationId = draft['operationId'] as String;
+        noticeId.text = pendingId!;
+        title.text = payload['title'] as String;
+      }
+      if (mounted)
+        setState(() => status =
+            'Local TEST session restored; refresh or retry pending sync');
+    } catch (_) {
+      if (mounted)
+        setState(
+            () => status = 'TEST draft recovery failed; no cloud ACK claimed');
+    }
+  }
+
+  Future<void> persistDraft() async {
+    final stored = await (await SharedPreferences.getInstance()).setString(
+        draftKey,
+        jsonEncode({
+          'schoolId': school,
+          'endpoint': endpoint,
+          'id': pendingId,
+          'operationId': operationId,
+          'payload': pendingPayload
+        }));
+    if (!stored) throw StateError('TEST draft persistence failed');
+  }
+
   @override
   void dispose() {
     email.dispose();
@@ -46,7 +108,7 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
     } catch (_) {
       if (mounted)
         setState(() => status =
-            'Verification failed. Retry with the same TEST record; no ACK claimed.');
+            'Cloud unavailable or verification failed; Sync pending. Retry unchanged; no ACK claimed.');
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -106,6 +168,7 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
     pendingId ??= noticeId.text;
     if (pendingId != noticeId.text || pendingPayload!['title'] != title.text)
       throw StateError('Retry unchanged pending TEST operation');
+    await persistDraft();
     final ack =
         await ManagedSchoolSession.callForSchool(school, 'managed/records', {
       'operation': 'write',

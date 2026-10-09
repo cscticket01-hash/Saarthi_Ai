@@ -7,12 +7,29 @@ import 'package:image/image.dart' as img;
 import 'package:http/http.dart' as http;
 
 import '../lib/windows_backend_bridge.dart';
+import '../lib/storage/windows_sqlite_store.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_local_storage.dart';
 import '../lib/windows_connect/managed_school_session.dart';
 import '../lib/platform/platform_config.dart';
+
+Future<Map<String, dynamic>> persistedRoot() async {
+  final sqlite = await WindowsLocalStorage.sqliteFile();
+  if (WindowsLocalStorage.sqliteEnabled && await sqlite.exists()) {
+    final store = await WindowsSqliteStore.open(sqlite.path);
+    try {
+      return await store.readAllRoot();
+    } finally {
+      await store.close();
+    }
+  }
+  final file = await WindowsLocalStorage.databaseFile();
+  return await file.exists()
+      ? Map<String, dynamic>.from(jsonDecode(await file.readAsString()))
+      : {'profiles': {}};
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -38,38 +55,60 @@ void main() {
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
   });
-  test('synced multilingual inventory JSON is decoded without treating metadata as paths', () async {
-    final metadata = <String,dynamic>{
-      'schoolId':school, 'studentId':'S-1', 'documentId':'doc-unicode',
-      'documentName':'জন্ম সনদ – विद्यालय', 'fileId':'existing-drive-file',
-      'fileUrl':'https://drive.google.com/file/d/existing-drive-file/view',
-      'localPath':r'C:\School\documents\scan.pdf',
-      'documentRevision':'preserved-revision', 'syncState':'Synced',
-      'mimeType':'application/pdf', 'sizeBytes':12345,
+  test(
+      'synced multilingual inventory JSON is decoded without treating metadata as paths',
+      () async {
+    final metadata = <String, dynamic>{
+      'schoolId': school,
+      'studentId': 'S-1',
+      'documentId': 'doc-unicode',
+      'documentName': 'জন্ম সনদ – विद्यालय',
+      'fileId': 'existing-drive-file',
+      'fileUrl': 'https://drive.google.com/file/d/existing-drive-file/view',
+      'localPath': r'C:\School\documents\scan.pdf',
+      'documentRevision': 'preserved-revision',
+      'syncState': 'Synced',
+      'mimeType': 'application/pdf',
+      'sizeBytes': 12345,
     };
-    expect(() => http.Response(jsonEncode({'documents':[metadata]}),200),throwsArgumentError);
+    expect(
+        () => http.Response(
+            jsonEncode({
+              'documents': [metadata]
+            }),
+            200),
+        throwsArgumentError);
     await db.collection('documents').doc('doc-unicode').set(metadata);
     final response = await WindowsBackendBridge.post(Uri.parse(''),
-      body:jsonEncode({'action':'list_student_documents','studentId':'S-1'}));
-    expect(response.statusCode,200);
+        body: jsonEncode(
+            {'action': 'list_student_documents', 'studentId': 'S-1'}));
+    expect(response.statusCode, 200);
     final rows = jsonDecode(response.body)['documents'] as List;
-    expect(rows.single['documentName'],metadata['documentName']);
-    expect(rows.single['fileId'],metadata['fileId']);
-    expect(rows.single['localPath'],metadata['localPath']);
-    expect(WindowsBackendBridge.normalizedDocumentPath(response.body),isNull);
-    expect(WindowsBackendBridge.normalizedDocumentPath(metadata),isNull);
-    expect(WindowsBackendBridge.normalizedDocumentPath(metadata['fileUrl']),isNull);
-    expect(WindowsBackendBridge.normalizedDocumentPath('bad\u0000path'),isNull);
-    final record = (await db.collection('documents').doc('doc-unicode').get()).data();
-    expect(record!['documentRevision'],'preserved-revision');
-    final origin=db.activeProfileId;
+    expect(rows.single['documentName'], metadata['documentName']);
+    expect(rows.single['fileId'], metadata['fileId']);
+    expect(rows.single['localPath'], metadata['localPath']);
+    expect(WindowsBackendBridge.normalizedDocumentPath(response.body), isNull);
+    expect(WindowsBackendBridge.normalizedDocumentPath(metadata), isNull);
+    expect(WindowsBackendBridge.normalizedDocumentPath(metadata['fileUrl']),
+        isNull);
+    expect(
+        WindowsBackendBridge.normalizedDocumentPath('bad\u0000path'), isNull);
+    final record =
+        (await db.collection('documents').doc('doc-unicode').get()).data();
+    expect(record!['documentRevision'], 'preserved-revision');
+    final origin = db.activeProfileId;
     await db.switchProfile('inventory-restart-away');
-    await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
-    final reopened=await WindowsBackendBridge.post(Uri.parse(''),
-      body:jsonEncode({'action':'list_student_documents','studentId':'S-1'}));
-    expect(jsonDecode(reopened.body)['documents'].single['fileId'],'existing-drive-file');
+    await db.switchProfile(origin,
+        identity: {'schoolId': school, 'schoolSyncId': school});
+    final reopened = await WindowsBackendBridge.post(Uri.parse(''),
+        body: jsonEncode(
+            {'action': 'list_student_documents', 'studentId': 'S-1'}));
+    expect(jsonDecode(reopened.body)['documents'].single['fileId'],
+        'existing-drive-file');
   });
-  test('offline replacement is durable, retains originals and queues only the newest generation', () async {
+  test(
+      'offline replacement is durable, retains originals and queues only the newest generation',
+      () async {
     final image = img.Image(width: 300, height: 400);
     img.fill(image, color: img.ColorRgb8(255, 255, 255));
     final bytes = img.encodeJpg(image);
@@ -103,21 +142,25 @@ void main() {
     expect(queue.single.data()['localPath'], current);
     final origin = db.activeProfileId;
     // Read the persisted file, then discard session RAM and reopen the tenant.
-    final disk = jsonDecode(await (await WindowsLocalStorage.databaseFile()).readAsString());
-    expect(disk['profiles'][origin]['collections']['_windows_document_outbox'], isNotEmpty);
+    final disk = await persistedRoot();
+    expect(disk['profiles'][origin]['collections']['_windows_document_outbox'],
+        isNotEmpty);
     await db.resetVolatileSession();
     await db.switchProfile(
       'foreign-documents',
       identity: {'schoolSyncId': 'other'},
     );
-    expect((await db.collection('_local_student_documents').get()).docs, isEmpty);
+    expect(
+        (await db.collection('_local_student_documents').get()).docs, isEmpty);
     await expectLater(save(), throwsStateError);
     await db.switchProfile(
       origin,
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
     expect(
-      (await db.collection('_windows_document_outbox').get()).docs.single
+      (await db.collection('_windows_document_outbox').get())
+          .docs
+          .single
           .data()['localPath'],
       current,
     );
@@ -126,12 +169,23 @@ void main() {
           .data()?['syncState'],
       'Pending',
     );
-    for (final outage in ['offline', 'Firebase unavailable', 'Google Drive unavailable']) {
-      await expectLater(WindowsBackendBridge.flushDocumentPending(
-        send: (_) async => throw StateError(outage)), throwsStateError);
-      expect((await db.collection('_windows_document_outbox').get()).docs, hasLength(1));
-      final retry=(await db.collection('_windows_document_outbox').get()).docs.single.data();
-      expect(retry['syncState'],'retry');expect(retry['retryCount'],greaterThan(0));
+    for (final outage in [
+      'offline',
+      'Firebase unavailable',
+      'Google Drive unavailable'
+    ]) {
+      await expectLater(
+          WindowsBackendBridge.flushDocumentPending(
+              send: (_) async => throw StateError(outage)),
+          throwsStateError);
+      expect((await db.collection('_windows_document_outbox').get()).docs,
+          hasLength(1));
+      final retry = (await db.collection('_windows_document_outbox').get())
+          .docs
+          .single
+          .data();
+      expect(retry['syncState'], 'retry');
+      expect(retry['retryCount'], greaterThan(0));
     }
     expect(
       (await db.collection('_windows_document_outbox').get()).docs.length,
@@ -191,53 +245,85 @@ void main() {
       true,
     );
   });
-  test('malformed image and truncated PDF cannot create managed documents or outbox records', () async {
+  test(
+      'malformed image and truncated PDF cannot create managed documents or outbox records',
+      () async {
     for (final item in [
-      {'mime': 'image/jpeg', 'bytes': [1, 2, 3]},
-      {'mime': 'application/pdf', 'bytes': utf8.encode('%PDF-1.7 incomplete body')},
+      {
+        'mime': 'image/jpeg',
+        'bytes': [1, 2, 3]
+      },
+      {
+        'mime': 'application/pdf',
+        'bytes': utf8.encode('%PDF-1.7 incomplete body')
+      },
     ]) {
-      await expectLater(WindowsBackendBridge.post(Uri.parse('https://unreachable.example'),
-        body: jsonEncode({'action': 'upload_student_document', 'studentId': 'S-1',
-          'documentName': 'Bad', 'fileName': 'bad', 'mimeType': item['mime'],
-          'fileBase64': base64Encode(item['bytes'] as List<int>)})), throwsFormatException);
-      expect((await db.collection('_local_student_documents').get()).docs, isEmpty);
-      expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+      await expectLater(
+          WindowsBackendBridge.post(Uri.parse('https://unreachable.example'),
+              body: jsonEncode({
+                'action': 'upload_student_document',
+                'studentId': 'S-1',
+                'documentName': 'Bad',
+                'fileName': 'bad',
+                'mimeType': item['mime'],
+                'fileBase64': base64Encode(item['bytes'] as List<int>)
+              })),
+          throwsFormatException);
+      expect((await db.collection('_local_student_documents').get()).docs,
+          isEmpty);
+      expect((await db.collection('_windows_document_outbox').get()).docs,
+          isEmpty);
     }
   });
 
-  test('blocked and foreign school context cannot persist or save documents', () async {
+  test('blocked and foreign school context cannot persist or save documents',
+      () async {
     for (final identity in [
       {'schoolSyncId': school, 'schoolId': school, 'blocked': true},
-      {'schoolSyncId': school, 'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
+      {
+        'schoolSyncId': school,
+        'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+      },
     ]) {
       await db.switchProfile('invalid-document-context', identity: identity);
       expect(await db.localPersistenceEnabled(), false);
-      await expectLater(WindowsBackendBridge.post(Uri.parse('https://unreachable.example'),
-        body: jsonEncode({'action': 'upload_student_document', 'studentId': 'S-1',
-          'fileBase64': base64Encode([1, 2, 3])})), throwsStateError);
-      expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+      await expectLater(
+          WindowsBackendBridge.post(Uri.parse('https://unreachable.example'),
+              body: jsonEncode({
+                'action': 'upload_student_document',
+                'studentId': 'S-1',
+                'fileBase64': base64Encode([1, 2, 3])
+              })),
+          throwsStateError);
+      expect((await db.collection('_windows_document_outbox').get()).docs,
+          isEmpty);
     }
   });
 
-  test('standalone legacy OFF remains RAM-only without a managed school identity', () async {
+  test(
+      'standalone legacy OFF remains RAM-only without a managed school identity',
+      () async {
     FlutterSecureStorage.setMockInitialValues({});
     final profile = 'standalone-${DateTime.now().microsecondsSinceEpoch}';
     await db.switchProfile(profile);
     expect(await db.localPersistenceEnabled(), false);
-    await db.collection('notices').doc('temporary').set({'text': 'session-only'});
-    final file = await WindowsLocalStorage.databaseFile();
-    final disk = await file.exists() ? jsonDecode(await file.readAsString()) : {'profiles': {}};
+    await db
+        .collection('notices')
+        .doc('temporary')
+        .set({'text': 'session-only'});
+    final disk = await persistedRoot();
     expect((disk['profiles'] as Map).containsKey(profile), false);
     await db.resetVolatileSession();
     expect((await db.collection('notices').get()).docs, isEmpty);
   });
 
-  test('managed logout/session change invalidates the storage binding without changing legacy preference', () async {
+  test(
+      'managed logout/session change invalidates the storage binding without changing legacy preference',
+      () async {
     expect(await db.localPersistenceEnabled(), true);
     FlutterSecureStorage.setMockInitialValues({});
     ManagedSchoolSession.changed.value++;
     expect(await db.localPersistenceEnabled(), false);
     expect(await WindowsRuntimeFlags.localStorageEnabled(), false);
   });
-
 }
