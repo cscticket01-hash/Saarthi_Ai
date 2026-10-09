@@ -49,6 +49,7 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
     final image = UriData.parse(raw);
     own();
     var bytes = image.contentAsBytes(), mime = image.mimeType;
+    final originalDigest = sha256.convert(bytes).toString();
     if (prefix == 'photo') {
       final processed = await compute(DocumentProcessingEngine.process, {
         'bytes': bytes,
@@ -61,10 +62,18 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
     }
     final digest = sha256.convert(bytes).toString();
     final upload = await call('managed/file/upload', {
-      'name': '${prefix}_$digest.${mime == 'image/jpeg' ? 'jpg' : 'png'}',
+      'name': prefix == 'photo'
+          ? '${prefix}_optimized_${originalDigest}_$digest.${mime == 'image/jpeg' ? 'jpg' : 'png'}'
+          : '${prefix}_$digest.${mime == 'image/jpeg' ? 'jpg' : 'png'}',
       'mime': mime,
       'uploadKey': sha256
-          .convert(utf8.encode('$school:$prefix:$mime:$digest'))
+          .convert(
+            utf8.encode(
+              prefix == 'photo'
+                  ? '$school:$prefix:$mime:$originalDigest:$digest'
+                  : '$school:$prefix:$mime:$digest',
+            ),
+          )
           .toString(),
       'base64': base64Encode(bytes),
     });

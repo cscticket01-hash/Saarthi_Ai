@@ -199,6 +199,29 @@ void main() {
     await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
   });
 
+  test('identical optimized portraits retain each distinct original and stable retry upload keys', () async {
+    final a=img.Image(width:64,height:96)..textData={'Original':'A'};
+    final b=img.Image(width:64,height:96)..textData={'Original':'B'};
+    final originalA=img.encodePng(a),originalB=img.encodePng(b);
+    expect(originalA,isNot(originalB));
+    final requests=<Map<String,dynamic>>[];
+    Future<Map<String,dynamic>> upload(String action,Map<String,dynamic> body) async {
+      requests.add(Map<String,dynamic>.from(body));
+      return {'success':true,'schoolId':school,'fileId':'own-${body['uploadKey']}',
+        'fileUrl':'https://drive.google.com/file/d/own-${body['uploadKey']}/view'};
+    }
+    final first=await prepareManagedRecord({'schoolId':school,'photoUrl':'data:image/png;base64,${base64Encode(originalA)}'},school,upload);
+    final second=await prepareManagedRecord({'schoolId':school,'photoUrl':'data:image/png;base64,${base64Encode(originalB)}'},school,upload);
+    final retry=await prepareManagedRecord({'schoolId':school,'photoUrl':'data:image/png;base64,${base64Encode(originalA)}'},school,upload);
+    expect(requests[0]['base64'],requests[1]['base64']);
+    expect(requests[0]['uploadKey'],isNot(requests[1]['uploadKey']));
+    expect(requests[0]['name'],isNot(requests[1]['name']));
+    expect(requests[0]['uploadKey'],requests[2]['uploadKey']);
+    expect(retry['photoFileId'],first['photoFileId']);
+    expect(await WindowsSchoolImageCache.read(school,first['photoFileId']),originalA);
+    expect(await WindowsSchoolImageCache.read(school,second['photoFileId']),originalB);
+  });
+
   test('malformed portrait remains local and never reaches cloud upload', () async {
     var uploads=0;
     final original={'schoolId':school,'photoUrl':'data:image/png;base64,YWJj'};
