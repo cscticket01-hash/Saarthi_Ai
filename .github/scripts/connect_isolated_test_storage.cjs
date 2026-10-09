@@ -29,6 +29,7 @@ async function run() {
   check('Approved TEST pairing',r,r.http===200&&r.data.success===true&&r.data.schoolId===schoolId&&r.data.storageReady===true);
   r=await post(endpoint,{action:'managed/storage/check',schoolId},token);
   check('Signed real TEST storage readback',r,r.http===200&&r.data.success===true&&r.data.schoolId===schoolId&&r.data.storageReady===true&&r.data.brokerRecordSyncVersion===2&&r.data.recordSyncVersion===2);
+  if(process.env.VS_TEST_REAL_SYNC==='true') await require('./isolated_live_sync.cjs')({post,check,endpoint,schoolId,token,report});
   report.status='PASS';
 }
 run().catch(()=>{report.status='FAIL';process.exitCode=1;}).finally(()=>{

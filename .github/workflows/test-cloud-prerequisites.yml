@@ -6,6 +6,7 @@ on:
     paths:
       - .github/scripts/test_cloud_readiness.cjs
       - .github/scripts/connect_isolated_test_storage.cjs
+      - .github/scripts/isolated_live_sync.cjs
       - .github/workflows/test-cloud-prerequisites.yml
 permissions:
   contents: read
@@ -22,6 +23,7 @@ jobs:
       - name: Pair owner-approved isolated TEST storage and verify signed readback
         env:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_REAL_SYNC: 'true'
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
         run: node .github/scripts/connect_isolated_test_storage.cjs
