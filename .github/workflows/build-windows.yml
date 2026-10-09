@@ -263,6 +263,7 @@ jobs:
             --build-name=${{ steps.app_version.outputs.version }} `
             -t lib/main_windows.dart `
             --dart-define=APP_VERSION=${{ steps.app_version.outputs.version }} `
+            --dart-define=SAARTHI_WINDOWS_SQLITE=true `
             --dart-define=SAARTHI_MANAGED_ACCOUNTS=true `
             --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID `
             --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true `
