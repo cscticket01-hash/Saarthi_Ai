@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'windows_local_storage.dart';
+import 'storage/windows_sqlite_store.dart';
 import 'windows_runtime_flags.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -84,8 +85,8 @@ class FirebaseFirestore {
   static final FirebaseFirestore instance =
       FirebaseFirestore._();
 
-  final _LocalJsonDatabase _database =
-      _LocalJsonDatabase();
+  final _LocalSchoolDatabase _database =
+      _LocalSchoolDatabase();
 
   String get activeProfileId =>
       _database.activeProfileId;
@@ -170,6 +171,8 @@ class FirebaseFirestore {
   }
 
   Future<void> resetVolatileSession() => _database.resetVolatileSession();
+  Future<Map<String,dynamic>> migrateLocalDatabaseToSqlite({required bool approved}) =>
+      _database.migrateToSqlite(approved:approved);
 
   CollectionReference<Map<String, dynamic>> collection(
     String path,
@@ -744,16 +747,47 @@ class _WriteOperation {
   final String? acknowledgedRevision;
 }
 
-class _LocalJsonDatabase {
+class _LocalSchoolDatabase {
   final Map<String, StreamController<void>> _signals =
       <String, StreamController<void>>{};
 
   Future<void> _writeTail = Future<void>.value();
 
+  WindowsSqliteStore? _sqlite;
+  Future<WindowsSqliteStore?>? _openingSqlite;
+  String? _sqlitePath;
+  Future<WindowsSqliteStore?> _sqliteStore() async {
+    if (!WindowsLocalStorage.sqliteEnabled) return null;
+    final directory = await WindowsLocalStorage.dataDirectory();
+    final path = '${directory.path}${Platform.pathSeparator}${WindowsSqliteStore.databaseName}';
+    if (_sqlitePath != path) {
+      await _sqlite?.close(); _sqlite=null; _openingSqlite=null; _sqlitePath=path;
+    }
+    return _openingSqlite ??= (() async {
+      // Existing installations stay on their original backend until explicit
+      // installation consent. A review build must never migrate a real PC.
+      final legacy=await _file();
+      if (!await File(path).exists() && (await legacy.exists() ||
+          await File('${legacy.path}.pending').exists() || await File('${legacy.path}.bak').exists())) return null;
+      try {return _sqlite=await WindowsSqliteStore.open(path);}
+      catch (_) {_openingSqlite=null;rethrow;}
+    })();
+  }
   Future<void> changeStorageLocation(String path) {
-    final migration=_writeTail.then((_)=>WindowsLocalStorage.changeLocation(path));
+    final migration=_writeTail.then((_) async {
+      await _sqlite?.close();_sqlite=null;_openingSqlite=null;_sqlitePath=null;
+      await WindowsLocalStorage.changeLocation(path);
+    });
     _writeTail=migration.then<void>((_) {},onError:(Object _,StackTrace __) {});
     return migration;
+  }
+  Future<Map<String,dynamic>> migrateToSqlite({required bool approved}) {
+    final next=_writeTail.then((_) async {
+      await _sqlite?.close();_sqlite=null;_openingSqlite=null;_sqlitePath=null;
+      return WindowsSqliteMigration.migrate(await WindowsLocalStorage.dataDirectory(),approved:approved);
+    });
+    _writeTail=next.then<void>((_) {},onError:(Object _,StackTrace __) {});
+    return next;
   }
   Future<File> _file() => WindowsLocalStorage.databaseFile();
 
@@ -854,6 +888,10 @@ class _LocalJsonDatabase {
     String collection,
     String documentId,
   ) async {
+    if (await FirebaseFirestore.instance.localPersistenceEnabled()) {
+      final sqlite=await _sqliteStore();
+      if(sqlite!=null)return sqlite.readDocument(_activeProfileId,collection,documentId);
+    }
     final root = await _readRoot();
 
     final collections =
@@ -878,6 +916,10 @@ class _LocalJsonDatabase {
       readCollection(
     String collection,
   ) async {
+    if (await FirebaseFirestore.instance.localPersistenceEnabled()) {
+      final sqlite=await _sqliteStore();
+      if(sqlite!=null)return sqlite.readCollection(_activeProfileId,collection);
+    }
     final root = await _readRoot();
 
     final raw =
@@ -963,7 +1005,11 @@ class _LocalJsonDatabase {
     _writeTail = _writeTail.then((_) async {
       try {
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed before queued write.');
-        final root = await _readRoot();
+        final root = await _readRoot(collections:{
+          ...operations.map((operation)=>operation.collection),
+          '_windows_firebase_outbox','_windows_sync_baselines','_windows_sync_receipts',
+          '_windows_sync_conflict_history','_windows_sync_resolution_history',
+        },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_')).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
         final touched = <String>{};
@@ -1267,11 +1313,13 @@ class _LocalJsonDatabase {
     }
   }
 
-  Future<Map<String, dynamic>> _readRoot() async {
+  Future<Map<String, dynamic>> _readRoot({Set<String>? collections,Map<String,List<String>>? recordScope}) async {
     if (!await FirebaseFirestore.instance.localPersistenceEnabled()) {
       return _cloneRoot(_memoryRoot);
     }
 
+    final sqlite = await _sqliteStore();
+    if (sqlite != null) return sqlite.readRoot(_activeProfileId, collections:collections,recordScope:recordScope);
     final file = await _file();
     try {
       if (!await file.exists() && await File('${file.path}.pending').exists()) {
@@ -1388,6 +1436,8 @@ class _LocalJsonDatabase {
   }
 
   Future<void> resetVolatileSession() async {
+    await _writeTail;
+    await _sqlite?.close();_sqlite=null;_openingSqlite=null;_sqlitePath=null;
     _memoryRoot = <String, dynamic>{
       'version': 2,
       'profiles': <String, dynamic>{},
@@ -1502,6 +1552,12 @@ class _LocalJsonDatabase {
       return;
     }
 
+    final sqlite = await _sqliteStore();
+    if(sqlite!=null){
+      await sqlite.writeRoot(root);
+      WindowsServiceStatus.instance.healthy(WindowsServiceType.localStorage,'Local SQLite transaction committed.');
+      return;
+    }
     final file = await _file();
     try {
       await file.parent.create(recursive: true);

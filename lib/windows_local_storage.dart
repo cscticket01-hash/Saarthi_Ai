@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'windows_service_status.dart';
+import 'storage/windows_sqlite_store.dart';
 
 class WindowsLocalStorage {
   WindowsLocalStorage._();
 
   static const String databaseName = 'local_database_v1.json';
+  static const bool sqliteEnabled = bool.fromEnvironment('SAARTHI_WINDOWS_SQLITE',defaultValue:false);
+  static Future<File> sqliteFile() async => File('${(await dataDirectory()).path}${Platform.pathSeparator}${WindowsSqliteStore.databaseName}');
   static String? _customDataPath;
 
   static Directory get _controlDirectory {
@@ -91,8 +94,13 @@ class WindowsLocalStorage {
       }
       await probe.delete();
 
+      final sqlite=await sqliteFile();
+      if (sqliteEnabled && await sqlite.exists()) {
+        final store=await WindowsSqliteStore.open(sqlite.path);
+        try {await store.verify();} finally {await store.close();}
+      }
       final db = await databaseFile();
-      if (await db.exists()) {
+      if ((!sqliteEnabled || !await sqlite.exists()) && await db.exists()) {
         final raw = await db.readAsString();
         if (raw.trim().isNotEmpty) {
           final decoded = jsonDecode(raw);
@@ -148,6 +156,12 @@ class WindowsLocalStorage {
     );
     await destination.create(recursive: true);
 
+    final sqlite=await sqliteFile();
+    if (await sqlite.exists()) {
+      final store=await WindowsSqliteStore.open(sqlite.path);
+      try {await store.snapshot('${destination.path}${Platform.pathSeparator}${WindowsSqliteStore.databaseName}');}
+      finally {await store.close();}
+    }
     final db = await databaseFile();
     if (await db.exists()) {
       await db.copy(
@@ -193,6 +207,7 @@ class WindowsLocalStorage {
     if(normalizedCurrent.startsWith('$normalizedTarget\\')||normalizedTarget.startsWith('$normalizedCurrent\\'))
       throw StateError('Select a separate folder outside the current school data folder.');
     final targetDb=File('${target.path}${Platform.pathSeparator}$databaseName');
+    if(await File('${target.path}${Platform.pathSeparator}${WindowsSqliteStore.databaseName}').exists())throw StateError('Selected folder already contains a SQLite school database.');
     if(await targetDb.exists()) throw StateError('Selected folder already contains a school database. Existing data retained; choose an empty folder.');
     final targetFiles=Directory('${target.path}${Platform.pathSeparator}LocalFiles');
     if(await targetFiles.exists() && !await targetFiles.list().isEmpty) throw StateError('Selected folder already contains school files. Existing data retained; choose an empty folder.');
@@ -208,6 +223,12 @@ class WindowsLocalStorage {
     await probe.delete();
 
     if (await current.exists()) {
+      final oldSqlite=await sqliteFile();
+      if(await oldSqlite.exists()) {
+        final store=await WindowsSqliteStore.open(oldSqlite.path);
+        try {await store.snapshot('${target.path}${Platform.pathSeparator}${WindowsSqliteStore.databaseName}');}
+        finally {await store.close();}
+      }
       final oldDb = File(
         '${current.path}${Platform.pathSeparator}$databaseName',
       );
@@ -254,6 +275,15 @@ class WindowsLocalStorage {
         }
       }
       return value;
+    }
+    final targetSqlite=File('${target.path}${Platform.pathSeparator}${WindowsSqliteStore.databaseName}');
+    if(await targetSqlite.exists()) {
+      final store=await WindowsSqliteStore.open(targetSqlite.path);
+      try {
+        final original=await store.readAllRoot();
+        await store.writeRoot(Map<String,dynamic>.from(rebase(original) as Map));
+        await store.verify();
+      } finally {await store.close();}
     }
     for(final file in [targetDb,File('${targetDb.path}.bak')]) {
       if(await file.exists()) {

@@ -218,6 +218,23 @@ jobs:
         open(p,'w').write(s)
         PY
     - run: flutter pub get
+    - name: SQLite migration, integrity, atomicity and production API regression
+      run: |
+        flutter test --concurrency=1 test/windows_sqlite_storage_test.dart test/windows_sqlite_api_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
+        if ($LASTEXITCODE -ne 0) { throw 'SQLite regressions failed' }
+    - name: Real OS SQLite process crash recovery and controlled local benchmark
+      run: |
+        dart compile exe .github/tests/sqlite_crash_child.dart -o build/sqlite-crash-child.exe
+        if ($LASTEXITCODE -ne 0) { throw 'Crash harness compilation failed' }
+        python .github/scripts/test_sqlite_process_crash.py build/sqlite-crash-child.exe
+        if ($LASTEXITCODE -ne 0) { throw 'Process crash recovery failed' }
+        dart run .github/tests/sqlite_benchmark.dart
+        if ($LASTEXITCODE -ne 0) { throw 'Local benchmark/integrity failed' }
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: windows-sqlite-migration-crash-performance
+        path: build/sqlite-evidence
     - name: Verify configured public OAuth client in compiled Dart
       env:
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
@@ -268,7 +285,7 @@ jobs:
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
         SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
-      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.105 --build-number=105 --dart-define=APP_VERSION=2.1.105-sync-test --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
+      run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.106 --build-number=106 --dart-define=APP_VERSION=2.1.106-sync-test --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
     - name: Execute Windows fresh-start duplicate-launch and restart smoke test
       shell: powershell
       run: .github/scripts/test_windows_executable.ps1
@@ -355,7 +372,7 @@ jobs:
     - name: Build unsigned Android preview
       env:
         SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
-      run: flutter build apk --debug -t lib/main_android.dart --build-name=1.0.499 --build-number=499 --dart-define=APP_VERSION=1.0.499-sync-test --dart-define=APP_BUILD=499 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
+      run: flutter build apk --debug -t lib/main_android.dart --build-name=1.0.500 --build-number=500 --dart-define=APP_VERSION=1.0.500-sync-test --dart-define=APP_BUILD=500 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
     - name: Record Android TEST source commit
       run: echo "$GITHUB_SHA" > build/app/outputs/flutter-apk/TEST-COMMIT.txt
     - uses: actions/upload-artifact@v4

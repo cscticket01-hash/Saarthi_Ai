@@ -19,6 +19,11 @@ on:
       - lib/windows_connect/managed_school_session.dart
       - lib/windows_pending_school_sync.dart
       - lib/windows_local_firestore.dart
+      - lib/storage/**
+      - lib/main_sync_review_web.dart
+      - lib/sync_review_school_console.dart
+      - .github/scripts/test_sync_review_web.cjs
+      - pubspec.yaml
 permissions:
   contents: read
 concurrency:
@@ -68,15 +73,48 @@ jobs:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
-        run: flutter test .github/tests/isolated_engine_live_test.dart --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+        run: flutter test .github/tests/isolated_engine_live_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: hosted-production-engines-real-cloud
           path: build/cloud-prerequisites/actual-engines.json
 
-  android-os-live:
+  website-ui-live:
     needs: actual-engines-live
+    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - run: flutter pub get
+    - name: Build isolated TEST school website, no production hosting
+      run: flutter build web --release --no-web-resources-cdn -t lib/main_sync_review_web.dart --dart-define=SAARTHI_SYNC_REVIEW_WEB=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+    - run: mv build/web build/sync-review-web
+    - run: npm install --no-save playwright@1.58.2
+    - run: npx playwright install --with-deps chromium
+    - name: Real browser login, Windows notice visibility, website CAS ACK/readback
+      env:
+        VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+        VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+        VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+      run: node .github/scripts/test_sync_review_web.cjs
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: isolated-test-website-ui-and-preview
+        path: |
+          build/cloud-prerequisites/website-ui.*
+          build/sync-review-web
+  android-os-live:
+    needs: website-ui-live
     if: github.ref == 'refs/heads/windows/easy-connect-draft'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -199,7 +237,7 @@ jobs:
         VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
         VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
         VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
-      run: flutter test .github/tests/native_android_windows_readback_test.dart --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+      run: flutter test .github/tests/native_android_windows_readback_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
     - uses: actions/upload-artifact@v4
       if: always()
       with:

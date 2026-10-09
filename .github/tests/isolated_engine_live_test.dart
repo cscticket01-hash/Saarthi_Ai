@@ -61,6 +61,8 @@ void main() {
    final clock=Stopwatch()..start();
    await db.collection('school_notices').doc(id).set({'schoolId':school,'syntheticTest':true,'title':'Actual Windows local-first TEST notice','timestamp':DateTime.now().millisecondsSinceEpoch});
    report['localSaveMs']=clock.elapsedMilliseconds;
+   expect(await File('${tmp.path}/windows/local_database_v2.sqlite').exists(),true);
+   report['windowsLocalBackend']='SQLite WAL/FULL';
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
    await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async=>throw const SocketException('Synthetic offline boundary')),throwsA(isA<SocketException>()));
    await db.switchProfile('TEST-unbound');await db.switchProfile(profile,identity:{'schoolId':school,'schoolSyncId':school});
