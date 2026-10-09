@@ -150,4 +150,17 @@ void main() {
         throwsA(isA<SchoolQrException>()
             .having((e) => e.code, 'code', 'WRONG_QR_KIND')));
   });
+  for(final token in ['abcdefghijklmnopqrst','abcdefghijklmnopqrstuvwxyz12345','abcdefghijklmnopqrstuvwx+legacy/token=']) {
+    test('valid issued v2 token remains usable when VS3 cannot represent it: ${token.length}',(){
+      final raw=SchoolLink.encodeCompact({...fixtures.first,'linkToken':token,'name':'Private fixture'});
+      expect(SchoolLink.detectVersion(raw),2);
+      expect(SchoolLink.parse(raw).linkToken,token);
+      expect(SchoolLink.parse(raw).personId,fixtures.first['personId']);
+      expect(raw,isNot(contains('Private fixture')));
+    });
+  }
+  test('v2 fallback cannot accept an invalid issued token',(){
+    expect(()=>SchoolLink.encodeCompact({...fixtures.first,'linkToken':'short'}),throwsFormatException);
+  });
+
 }

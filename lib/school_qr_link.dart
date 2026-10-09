@@ -29,7 +29,11 @@ class SchoolLink {
     if (!checked.managed) return encode(fields);
     final person = base64Url.encode(utf8.encode(checked.personId)).replaceAll('=', '');
     if (!RegExp(r'^[A-Za-z0-9_-]{32,128}$').hasMatch(checked.linkToken)) {
-      throw const SchoolQrException('Invalid issued QR token.');
+      // Previously issued v2 tokens remain valid; compact VS3 has stricter
+      // representation limits. Preserve identity/token with the v2 envelope.
+      return encode({'managed':true,'schoolId':checked.schoolId,
+        'centralEndpoint':checked.endpoint,'type':checked.role,
+        'personId':checked.personId,'linkToken':checked.linkToken});
     }
     return 'VS3|${checked.schoolId.substring(3)}|${checked.role == 'student' ? 's' : 't'}|$person|${checked.linkToken}';
   }
