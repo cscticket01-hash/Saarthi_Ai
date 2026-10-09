@@ -20,6 +20,7 @@ on:
       - lib/windows_connect/central_school_cloud.dart
       - lib/school_timestamp.dart
       - test/windows_sqlite_storage_test.dart
+      - oauth-broker/test/central-staging.test.cjs
       - lib/windows_pending_school_sync.dart
       - lib/windows_local_firestore.dart
       - .github/tests/sqlite_benchmark.dart

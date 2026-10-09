@@ -29,7 +29,8 @@ test('future central web origin must be explicitly allowlisted and preflight can
 test('real installed modular Admin SDK initializes staging with a disposable test key and rejects another project',async()=>{
  const {generateKeyPairSync}=require('node:crypto');
  const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs8',format:'pem'},publicKeyEncoding:{type:'spki',format:'pem'}});
- const env={SAARTHI_GOOGLE_DESKTOP_CLIENT_ID:'test.apps.googleusercontent.com',SAARTHI_FIREBASE_ADMIN_JSON:JSON.stringify({project_id:'saarthi-ai-df12b',client_email:'test-only@saarthi-ai-df12b.iam.gserviceaccount.com',private_key:privateKey})};
+ // SDK initialization test must never start a cloud-connected queue worker.
+ const env={SAARTHI_ATTENDANCE_QUEUE_ENABLED:'false',SAARTHI_GOOGLE_DESKTOP_CLIENT_ID:'test.apps.googleusercontent.com',SAARTHI_FIREBASE_ADMIN_JSON:JSON.stringify({project_id:'saarthi-ai-df12b',client_email:'test-only@saarthi-ai-df12b.iam.gserviceaccount.com',private_key:privateKey})};
  assert.throws(()=>fromEnvironment({...env,SAARTHI_FIREBASE_ADMIN_JSON:'{"project_id":"foreign-project"}'}),/Invalid central/);
  assert.equal(typeof fromEnvironment(env),'function');
  const {getApp,deleteApp}=require('firebase-admin/app');
