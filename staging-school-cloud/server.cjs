@@ -68,10 +68,14 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,logger
       // Log every failure without exception text, request payloads or credentials.
       // Upstream Script failures must not masquerade as a central-service outage.
       const context=e.syncDiagnostic;
-      const diagnostic=status===409&&['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(code)
+      const eligibleDiagnostic=(status===409&&['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(code))||([503,504].includes(status)&&['SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_TIMEOUT'].includes(code));
+      const diagnostic=eligibleDiagnostic
         &&context&&/^vs-[a-f0-9]{32}$/.test(context.schoolId)&&[1,2].includes(context.syncProtocol)
         ?{schoolId:context.schoolId,syncProtocol:context.syncProtocol,
-          ...(typeof context.operationId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(context.operationId)?{operationId:context.operationId}:{})}:{};
+          ...(typeof context.operationId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(context.operationId)?{operationId:context.operationId}:{}),
+          ...(['SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_TIMEOUT'].includes(code)&&
+            ['request','redirect','response'].includes(context.scriptStage)&&['timeout','socket','dns','connection','other'].includes(context.transportKind)
+            ?{scriptStage:context.scriptStage,transportKind:context.transportKind}:{})}:{};
       logger({event:'central_failure',action,...(operation?{operation}:{}),status,code,requestId,...diagnostic});
       return send(status,{success:false,code,...diagnostic,message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
     }

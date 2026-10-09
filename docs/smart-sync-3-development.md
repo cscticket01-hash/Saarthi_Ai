@@ -77,3 +77,34 @@ Run `37973826645` passed storage, isolation, real revision/idempotency 409 prote
 Portrait uploads include both original and optimized content hashes in the immutable upload identity. Different originals that compress to identical pixels therefore cannot reuse a cloud file/cache key and overwrite one retained original. Repeating the same original remains idempotent. Logo/seal/signature upload identities retain their existing behavior. A regression uses two valid PNG originals with different metadata and identical processed bytes, then verifies distinct originals and stable retry keys.
 
 The hosted production-class TEST-cloud harness now additionally exercises actual portrait processing/upload, duplicate cloud-file retry, exact private Drive image readback, aspect ratio, 30 KB representative target and retained original bytes after local SQLite reopen. These are synthetic-image storage checks, not human portrait-quality or physical-device acceptance.
+
+## Verification resumed 2026-10-10 (India)
+
+Recovery found the same `f7f113049f27b4d5a66c445418dea23f9d128bd5` HEAD, clean working tree, and open draft PR #23. Its complete platform run `37977589175` passed Windows EXE/build/restart checks, Android APK (54 regressions), Web, backend (226), OAuth (13), and Firestore isolation/security (25). Windows suite groups passed 24/84/2/165/3/12/1 tests and 13 final PDF QR decode assertions; groups overlap. Web groups passed 107/12/29/15/118/15/57 with one platform-specific skip. Existing results were inspected, not manually rerun.
+
+Real TEST run `37977581675`, attempt 1, passed authenticated storage, fresh attendance ACK (17.155 seconds), duplicate protection and original capture timestamps. Actual production-class photo upload/retry/readback/reopened SQLite original retention passed, but the subsequent managed-record request returned 503/UNKNOWN, reference `70f59761-150f-41d2-8ca0-042e098bb2a1`. Attempt 2 again passed auth, storage, notice ACK and Drive upload/retry, then failed documents read with 503/UNKNOWN, reference `09c3bd7c-894f-48b7-b09d-00e5bf108e3b`. Downstream Chromium, Android OS and Android-to-Windows jobs were skipped; they are not current-HEAD real-cloud passes. Earlier successful isolated/native evidence remains historical and is not relabeled.
+
+Confirmed code gap fixed on this draft branch: network/redirect/response-stream exceptions at the signed Script boundary previously escaped as generic UNKNOWN. They now produce bounded safe SCRIPT_TRANSPORT_ERROR, SCRIPT_RESPONSE_READ_FAILED or SCRIPT_TIMEOUT categories, verified school/operation identity and fixed stage/kind fields. No internal POST replay, fabricated ACK, raw exception/URL/token disclosure, or new record mutation is introduced. Six new regression cases cover socket failure, redirect DNS failure, timeout, truncated stream, unrelated database exceptions/foreign identity, and gateway diagnostic sanitization. These are injected boundary tests, not a diagnosis of the historical real 503's exact upstream cause.
+
+The TEST Render service is auto-deploy OFF on `windows/easy-connect-draft`, deployed `33320babb0e026a9c9e5e65c9434015945e61bb8`. A redeploy of that configured branch would not deploy the reviewed Smart Sync 3 change. No deployment, original-school access or production configuration change was made.
+
+### Fourteen-requirement inventory
+
+| Requirement | Classification | Evidence / remaining work |
+| --- | --- | --- |
+| Full control center | PARTIALLY COMPLETE | Queue/conflicts/ACK/health/backup tested; full storage/category/guided restore controls remain. |
+| Automatic diagnosis/self-repair | PARTIALLY COMPLETE | Policy, bounded retries and new sanitized transport regressions pass; new backend needs isolated deployment; real 503 source and original 502 unconfirmed. |
+| Hourly standby reconciliation | IMPLEMENTED BUT NOT VERIFIED | Timer/resume regression evidence exists; physical sleep/wake/full elapsed hour remains. |
+| Instant local-entry sync | COMPLETE AND TESTED | Local-first durable enqueue and actual TEST cloud ACK tested; infrastructure latency is measured, not guaranteed instant. |
+| Local/cloud recovery without duplicates | PARTIALLY COMPLETE | Missing local-cache restore, pending/newer edit/tombstone protections tested; authoritative missing cloud-row restore remains. |
+| Protected 24-hour recycle bin | PARTIALLY COMPLETE | Default-off signed snapshot/restore/audit protocol tested; local recoverable delete UI, scheduling and real TEST deployment remain. |
+| Android independent of Windows | IMPLEMENTED BUT NOT VERIFIED | Earlier native emulator/real cloud evidence preserved; fresh current-HEAD native chain blocked by TEST 503. |
+| Durable offline Android attendance | IMPLEMENTED BUT NOT VERIFIED | Current unit regressions plus earlier native SQLite/restart evidence; fresh current-HEAD emulator chain blocked. |
+| Massive simultaneous attendance | PARTIALLY COMPLETE | 15,000 local durable-queue benchmark is synthetic/mock delivery; massive real-cloud throughput unverified. |
+| Original photos / approximately 30 KB cloud | COMPLETE AND TESTED | Compression/aspect/quality-floor, distinct-original identities, cloud retry/readback and SQLite retention tested with synthetic images; representative human visual-quality checks remain. |
+| Original/enhanced approximately 50 KB documents | IMPLEMENTED BUT NOT VERIFIED | Processing/production-screen queue regressions and earlier real PDF readback exist; native Windows GUI/representative scan acceptance and fresh complete cloud chain remain. |
+| Disaster recovery / verified backups | PARTIALLY COMPLETE | Atomic SQLite, crash/integrity/local backup tested; full guided verified cloud restoration remains. |
+| School isolation / security | COMPLETE AND TESTED | Auth/broker/Firestore tests and actual TEST foreign-school rejection pass; this is bounded evidence, not a universal security guarantee. |
+| Accurate diagnostics / monitoring | PARTIALLY COMPLETE | Own-school health/recovery history exists; new stage diagnostics tested, deployment and central monitoring integration remain. |
+
+Strict completion metric: 3 of 14 full inventory rows marked COMPLETE AND TESTED, approximately 21%. This intentionally excludes partially implemented rows; it is not a claim that only 21% of the code exists. Production readiness remains BLOCKED. Original-school fee/document pending records remain untouched and their current resolution is unverified.
