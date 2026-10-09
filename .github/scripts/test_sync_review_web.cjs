@@ -19,22 +19,28 @@ const fs=require('node:fs'),path=require('node:path');
  });
  fs.mkdirSync('build/cloud-prerequisites',{recursive:true});
  const network=[];
+ context.on('request',request=>{const url=new URL(request.url());if(url.hostname==='identitytoolkit.googleapis.com'&&url.pathname.endsWith('signInWithPassword')){try{const body=JSON.parse(request.postData());network.push({stage:'auth-input-validation',emailMatches:body.email===process.env.VS_TEST_LOGIN_EMAIL.trim(),passwordMatches:body.password===process.env.VS_TEST_LOGIN_PASSWORD});}catch(_){network.push({stage:'auth-input-validation',validJson:false});}}});
  context.on('response',response=>{const url=new URL(response.url());if(['saarthi-sync-v2-test.onrender.com','identitytoolkit.googleapis.com','securetoken.googleapis.com'].includes(url.hostname))network.push({host:url.hostname,path:url.pathname,http:response.status()});});
  context.on('requestfailed',request=>{const url=new URL(request.url());if(['saarthi-sync-v2-test.onrender.com','identitytoolkit.googleapis.com','securetoken.googleapis.com'].includes(url.hostname))network.push({host:url.hostname,path:url.pathname,http:0});});
  const page=await context.newPage();
+ async function typeField(label,value){
+  const input=page.getByRole('textbox',{name:label,exact:true});
+  await input.click();await input.press('ControlOrMeta+A');
+  await input.pressSequentially(value,{delay:5});await input.press('Tab');
+ }
  const proof={scope:'Hosted Chromium actual TEST school review UI, locally intercepted static build; authenticated TEST backend',schoolId:school,status:'RUNNING',stage:'load UI'};
  try {
   await page.goto('https://vidyasaarthi.web.app/',{waitUntil:'domcontentloaded'});
   proof.stage='TEST login';
-  await page.getByRole('textbox',{name:'TEST email',exact:true}).fill(process.env.VS_TEST_LOGIN_EMAIL);
-  await page.getByRole('textbox',{name:'TEST password',exact:true}).fill(process.env.VS_TEST_LOGIN_PASSWORD);
+  await typeField('TEST email',process.env.VS_TEST_LOGIN_EMAIL);
+  await typeField('TEST password',process.env.VS_TEST_LOGIN_PASSWORD);
   await page.getByRole('button',{name:'Connect TEST school',exact:true}).click();
   await page.getByText('Cloud records verified',{exact:true}).waitFor({timeout:150000});
   await page.getByText(`synthetic-hosted-notice-${run} | Actual Windows local-first TEST notice`,{exact:true}).waitFor({timeout:30000});
   proof.windowsNoticeReadOnWebsite=true;
   const id=`synthetic-web-notice-${run}`,title=`Synthetic website exchange ${run}`;
-  await page.getByRole('textbox',{name:'Synthetic notice ID',exact:true}).fill(id);
-  await page.getByRole('textbox',{name:'Synthetic notice title',exact:true}).fill(title);
+  await typeField('Synthetic notice ID',id);
+  await typeField('Synthetic notice title',title);
   proof.stage='offline draft save';
   proof.syntheticInputBeforeSave={id:await page.getByRole('textbox',{name:'Synthetic notice ID',exact:true}).inputValue(),title:await page.getByRole('textbox',{name:'Synthetic notice title',exact:true}).inputValue()};
   await context.setOffline(true);
@@ -68,9 +74,9 @@ const fs=require('node:fs'),path=require('node:path');
   proof.status='FAIL';proof.network=network;
   proof.uiDiagnostic=await page.getByText(/^TEST diagnostic: /).allTextContents();
   // Never capture login credentials in failure screenshots.
-  await page.getByRole('textbox',{name:'TEST password',exact:true}).fill('').catch(()=>{});
-  await page.getByRole('textbox',{name:'TEST email',exact:true}).fill('').catch(()=>{});
-  await page.screenshot({path:'build/cloud-prerequisites/website-ui.png',fullPage:true}).catch(()=>{});
+  let cleared=true;
+  for(const label of ['TEST password','TEST email']){const input=page.getByRole('textbox',{name:label,exact:true});if(await input.count())await input.fill('',{timeout:1000}).catch(()=>{cleared=false;});}
+  if(cleared)await page.screenshot({path:'build/cloud-prerequisites/website-ui.png',fullPage:true}).catch(()=>{});
   console.log(JSON.stringify(proof));throw e;
  }
  finally {
