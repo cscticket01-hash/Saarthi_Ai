@@ -14,6 +14,12 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: '22'
+    - name: Prepare reviewed owner-authorized TEST Apps Script bundle
+      run: python .github/scripts/prepare_isolated_test_script.py
+    - uses: actions/upload-artifact@v4
+      with:
+        name: owner-authorized-isolated-test-apps-script
+        path: build/isolated-test-script
     - name: Isolated TEST cloud prerequisites
       env:
         VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
