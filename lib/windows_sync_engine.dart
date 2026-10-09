@@ -210,7 +210,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     WindowsLocalFirestoreSyncControl.onTrackedMutation = () async {
-      scheduleSoon();
+      scheduleSoon(localMutation: true);
       unawaited(refreshDetails());
     };
 
@@ -219,7 +219,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     };
 
     WindowsBackendBridge.onLocalDocumentCommitted = () {
-      scheduleSoon();
+      scheduleSoon(localMutation: true);
       unawaited(refreshDetails());
     };
     WindowsBackendBridge.onRemoteAvailable = () async {
@@ -281,9 +281,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
   }
 
-  void scheduleSoon({Duration delay = const Duration(milliseconds: 250)}) {
+  void scheduleSoon({Duration delay = const Duration(milliseconds: 250), bool localMutation = false}) {
     if (!_initialized || _syncBlocked || _resetPaused || !automaticSyncEnabled) return;
-    if (recoveryDecision != null && !recoveryDecision!.retry) return;
+    if (recoveryDecision != null && !recoveryDecision!.retry) {
+      if (!localMutation || !recoveryDecision!.independentRecords) return;
+      recoveryDecision = null;
+      _failures = 0;
+    }
     if (_syncing) {
       _rerunRequested = true;
       return;
@@ -1075,8 +1079,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _syncing = false;
       await refreshDetails();
       if ((lastError != null && recoveryDecision?.retry == true && _failures <= 5) || _rerunRequested) {
+        final independentMutation = _rerunRequested && recoveryDecision?.independentRecords == true;
         _rerunRequested = false;
-        scheduleSoon(delay: lastError == null ? const Duration(milliseconds: 250) : schoolRetryDelay(_failures));
+        scheduleSoon(localMutation: independentMutation, delay: lastError == null ? const Duration(milliseconds: 250) : schoolRetryDelay(_failures));
       }
     }
   }

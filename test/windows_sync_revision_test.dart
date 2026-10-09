@@ -62,6 +62,13 @@ void main(){
    expect(queue,hasLength(1));expect(queue.single.data()['documentId'],'a-broken');
    expect(queue.single.data()['syncState'],'needsAttention');
    expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(1));
+   await db.collection('school_notices').doc('later-notice').set({'message':'New independent edit'});
+   await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+     send:(a,b,c,d)async{},sendVersioned:(item)async {
+       expect(item['documentId'],'later-notice');return 'verified-later-revision';
+     });
+   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['documentId'],'a-broken');
+   expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(2));
  });
  test('shared storage identity error stops the batch after one failed request', () async {
    for (var i=0;i<3;i++) await db.collection('students_directory').doc('identity-$i').set({'name':'Retained'});

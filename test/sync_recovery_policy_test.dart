@@ -28,6 +28,10 @@ void main() {
     }
     expect(SyncRecoveryDecision.classify(status: 409).kind, SyncFailureKind.conflict);
     expect(SyncRecoveryDecision.classify(status: 403).kind, SyncFailureKind.authorization);
+    expect(SyncRecoveryDecision.classify(status: 409, code: 'SCHOOL_STORAGE_NOT_CONNECTED').kind, SyncFailureKind.configuration);
+    expect(SyncRecoveryDecision.classify(status: 409).independentRecords, true);
+    expect(SyncRecoveryDecision.classify(status: 403).independentRecords, false);
+    expect(SyncRecoveryDecision.classify(status: 502, code: 'SCRIPT_WORKBOOK_IDENTITY_MISMATCH').independentRecords, false);
     expect(SyncRecoveryDecision.classify().retry, false);
   });
   test('retry jitter stays bounded and quota recovery waits longer', () {
