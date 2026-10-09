@@ -7,9 +7,13 @@ on:
       - .github/scripts/test_cloud_readiness.cjs
       - .github/scripts/connect_isolated_test_storage.cjs
       - .github/scripts/isolated_live_sync.cjs
+      - .github/tests/isolated_engine_live_test.dart
       - .github/workflows/test-cloud-prerequisites.yml
 permissions:
   contents: read
+concurrency:
+  group: isolated-sync-v2-real-cloud
+  cancel-in-progress: false
 jobs:
   windows-live-prerequisites:
     if: github.ref == 'refs/heads/windows/easy-connect-draft'
@@ -36,4 +40,27 @@ jobs:
         if: always()
         with:
           name: hosted-windows-live-cloud-prerequisites
-          path: build/cloud-prerequisites/report.json
+          path: build/cloud-prerequisites
+  actual-engines-live:
+    needs: windows-live-prerequisites
+    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Run existing Windows outbox and mobile session classes against real TEST cloud
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: flutter test .github/tests/isolated_engine_live_test.dart --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosted-production-engines-real-cloud
+          path: build/cloud-prerequisites/actual-engines.json

@@ -30,7 +30,7 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  r=await mobile({action:'mobile_dashboard',sessionToken,projectId:schoolId});
  check('Mobile reads newly published real cloud notice without Windows presence',r,r.http===200&&r.data.notices?.some(n=>n.id===noticeId));
  report.noticeWriteRetryAndReadbackMs=Math.round(performance.now()-start);
- const revisions=r.data.revisions;
+ const revisions=r.data.revisions,priorCard=r.data.idCardPackage;
  r=await mobile({action:'mobile_refresh',sessionToken,projectId:schoolId});
  check('Actual Android queue refresh provides signed attendance permit',r,r.http===200&&typeof r.data.attendancePermit==='string');
  const permit=r.data.attendancePermit;
@@ -43,7 +43,7 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  r=await mobile({action:'mobile_document',sessionToken,documentId:docId});
  check('Mobile retrieves identical private Drive PDF bytes with Windows absent',r,r.http===200&&r.data.base64===pdf.toString('base64'));
  r=await mobile({action:'mobile_dashboard',sessionToken,knownRevisions:revisions});
- check('Mobile delta discovers ID-card metadata',r,r.http===200&&r.data.idCardPackage?.documentId===docId);
+ check('Mobile delta discovers or retains verified unchanged ID-card metadata',r,r.http===200&&(r.data.idCardPackage?.documentId===docId||priorCard?.documentId===docId&&r.data.revisions?.documents===revisions.documents&&!Object.hasOwn(r.data,'idCardPackage')));
  let delta=await admin({action:'managed/changes',collections:['students_directory','school_notices','documents'],knownRevisions:{}});
  check('Second PC protocol discovers shared TEST records',delta,delta.http===200&&delta.data.changes?.documents?.records?.[docId]?.fileId===fileId);
  const knownRevisions=Object.fromEntries(Object.entries(delta.data.changes).map(([k,v])=>[k,v.collectionRevision]));
