@@ -5,8 +5,16 @@ import 'package:flutter/services.dart';
 class SchoolMessaging {
   static const _channel=MethodChannel('vidyasaarthi/school_messaging');
   static bool get ready => Firebase.apps.isNotEmpty;
-  static Future<bool> configure(Map<String,dynamic>? config) async {
-    if(config==null) return false;
+  static Future<bool> configure(Map<String,dynamic>? config, {bool centralSchool=false}) async {
+    if(config==null) {
+      if (!centralSchool) return false;
+      if (Firebase.apps.isEmpty) await Firebase.initializeApp();
+      if (Firebase.app().options.projectId != 'saarthi-ai-df12b')
+        throw StateError('Central school messaging identity mismatch');
+      await FirebaseMessaging.instance.setAutoInitEnabled(true);
+      await FirebaseMessaging.instance.requestPermission(alert:true,badge:true,sound:true);
+      return false;
+    }
     final project=config['projectId'].toString(),sender=config['messagingSenderId'].toString();
     if(!RegExp(r'^[a-z][a-z0-9-]{4,61}[a-z0-9]$').hasMatch(project) ||
         !RegExp(r'^\d+$').hasMatch(sender) ||

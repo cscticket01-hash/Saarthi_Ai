@@ -1,0 +1,252 @@
+name: Isolated TEST cloud prerequisites
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows/easy-connect-draft]
+    paths:
+      - .github/scripts/test_cloud_readiness.cjs
+      - .github/scripts/connect_isolated_test_storage.cjs
+      - .github/scripts/isolated_live_sync.cjs
+      - .github/scripts/run_android_live_test.sh
+      - .github/tests/isolated_engine_live_test.dart
+      - .github/tests/native_android_windows_readback_test.dart
+      - integration_test/sync_v2_android_live_test.dart
+      - lib/school_qr_link.dart
+      - .github/workflows/test-cloud-prerequisites.yml
+      - school-backend/managed/**
+      - lib/mobile/school_session.dart
+      - lib/mobile/attendance_store.dart
+      - lib/windows_connect/managed_school_session.dart
+      - lib/windows_connect/central_school_cloud.dart
+      - lib/school_timestamp.dart
+      - test/windows_sqlite_storage_test.dart
+      - oauth-broker/test/central-staging.test.cjs
+      - lib/windows_pending_school_sync.dart
+      - lib/windows_local_firestore.dart
+      - .github/tests/sqlite_benchmark.dart
+      - .github/workflows/platform-review.yml
+      - lib/storage/**
+      - lib/main_sync_review_web.dart
+      - lib/sync_review_school_console.dart
+      - .github/scripts/test_sync_review_web.cjs
+      - pubspec.yaml
+permissions:
+  contents: read
+concurrency:
+  group: isolated-sync-v2-real-cloud
+  cancel-in-progress: true
+jobs:
+  windows-live-prerequisites:
+    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Pair owner-approved isolated TEST storage and verify signed readback
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_REAL_SYNC: 'true'
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/connect_isolated_test_storage.cjs
+      - name: Check real TEST cloud without changing school records
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_cloud_readiness.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosted-windows-live-cloud-prerequisites
+          path: build/cloud-prerequisites
+  actual-engines-live:
+    needs: windows-live-prerequisites
+    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Run existing Windows outbox and mobile session classes against real TEST cloud
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: flutter test .github/tests/isolated_engine_live_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosted-production-engines-real-cloud
+          path: build/cloud-prerequisites/actual-engines.json
+
+  website-ui-live:
+    needs: actual-engines-live
+    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - run: flutter create --platforms=web --project-name saarthi_ai .
+    - run: flutter pub get
+    - name: Build isolated TEST school website, no production hosting
+      run: flutter build web --release --no-web-resources-cdn -t lib/main_sync_review_web.dart --dart-define=SAARTHI_SYNC_REVIEW_WEB=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+    - run: mv build/web build/sync-review-web
+    - run: npm install --no-save playwright@1.58.2
+    - run: npx playwright install --with-deps chromium
+    - name: Real browser login, Windows notice visibility, website CAS ACK/readback
+      env:
+        VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+        VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+        VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+      run: node .github/scripts/test_sync_review_web.cjs
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: isolated-test-website-ui-and-preview
+        path: |
+          build/cloud-prerequisites/website-ui.*
+          build/sync-review-web
+  android-os-live:
+    needs: website-ui-live
+    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - run: flutter create --platforms=android --project-name saarthi_ai --org com.saarthi .
+    - name: Configure public Firebase app and permissions
+      env:
+        GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+      run: |
+        python - <<'PY'
+        import os,json,base64,re,pathlib
+        raw=os.environ.get('GOOGLE_SERVICES_JSON_BASE64','')
+        if not raw: raise SystemExit('Public Firebase Android configuration is missing')
+        data=json.loads(base64.b64decode(raw))
+        pathlib.Path('android/app/google-services.json').write_text(json.dumps(data))
+        package=data['client'][0]['client_info']['android_client_info']['package_name']+'.syncreview'
+        data['client'][0]['client_info']['android_client_info']['package_name']=package
+        pathlib.Path('android/app/google-services.json').write_text(json.dumps(data))
+        p=pathlib.Path('android/app/build.gradle.kts')
+        s=p.read_text()
+        s=s.replace('plugins {','plugins {\n    id("com.google.gms.google-services")',1)
+        s=re.sub(r'applicationId = "[^"]+"','applicationId = "'+package+'"',s)
+        s=re.sub(r'compileSdk = [^\n]+','compileSdk = 36',s)
+        p.write_text(s)
+        p=pathlib.Path('android/settings.gradle.kts')
+        s=p.read_text().replace('plugins {','plugins {\n    id("com.google.gms.google-services") version "4.4.4" apply false',1)
+        p.write_text(s)
+        p=pathlib.Path('android/app/src/main/AndroidManifest.xml')
+        s=p.read_text()
+        for permission in ['INTERNET','CAMERA','ACCESS_FINE_LOCATION','ACCESS_COARSE_LOCATION','POST_NOTIFICATIONS','REQUEST_INSTALL_PACKAGES']:
+          s=s.replace('<application','<uses-permission android:name="android.permission.'+permission+'" />\n    <application',1)
+        p.write_text(s)
+        PY
+    - name: Configure notification desugaring
+      run: python .github/scripts/configure_android_notifications.py
+    - name: Configure school-owned Firebase messaging
+      run: |
+        python .github/scripts/test_school_messaging.py
+        python .github/scripts/configure_school_messaging.py
+    - name: Use dedicated Android dependencies
+      run: |
+        python - <<'PY'
+        import re
+        p='pubspec.yaml'
+        s=open(p).read()
+        for name in ['agora_rtc_engine','flutter_contacts','google_sign_in','googleapis','google_generative_ai','image_picker','permission_handler','firebase_auth','cloud_firestore','font_awesome_flutter']:
+          s=re.sub(r'^  '+name+r':[^\n]*\n','',s,flags=re.M)
+        open(p,'w').write(s)
+        PY
+    - run: flutter pub add mobile_scanner:7.3.0
+    - name: Align resolved Android plugin SDKs
+      run: python .github/scripts/configure_android_plugins.py
+    - name: Install TEST-only integration binding
+      run: |-
+        python - <<'PYCODE'
+        p='pubspec.yaml';s=open(p).read().replace('dev_dependencies:', 'dev_dependencies:\n  integration_test:\n    sdk: flutter');open(p,'w').write(s)
+        PYCODE
+        flutter pub get
+    - name: Enable hosted Android emulator acceleration
+      run: |-
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+    - name: Prepare ephemeral TEST credentials (never upload the test APK)
+      env:
+        VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+        VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+      run: |-
+        python - <<'PYCODE'
+        import os,json,pathlib
+        p=pathlib.Path(os.environ['RUNNER_TEMP'])/'vs-android-test.json'
+        p.write_text(json.dumps({'VS_TEST_LOGIN_EMAIL':os.environ['VS_TEST_LOGIN_EMAIL'],'VS_TEST_LOGIN_PASSWORD':os.environ['VS_TEST_LOGIN_PASSWORD'],'VS_TEST_CONNECT_CONFIRM':'vs-db8afb01a3be46a983c8284714d06e5d','VS_TEST_RUN_ID':os.environ['GITHUB_RUN_ID']}));p.chmod(0o600)
+        PYCODE
+    - name: Actual Android OS / production dashboard / real TEST cloud
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 35
+        arch: x86_64
+        target: google_apis
+        disable-animations: true
+        script: bash .github/scripts/run_android_live_test.sh
+    - name: Remove ephemeral credential-bearing TEST files
+      if: always()
+      run: |-
+        rm -f "$RUNNER_TEMP/vs-android-test.json"
+        rm -rf build/app .dart_tool/flutter_build
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: android-os-real-cloud-evidence
+        path: build/cloud-prerequisites/android-os.json
+
+  native-android-windows-readback:
+    needs: android-os-live
+    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - run: flutter pub get
+    - uses: actions/download-artifact@v4
+      with:
+        name: android-os-real-cloud-evidence
+        path: build/native-evidence
+    - name: Native Android record -> real TEST cloud -> existing Windows local store
+      env:
+        VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+        VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+        VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+      run: flutter test .github/tests/native_android_windows_readback_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: native-android-hosted-windows-readback
+        path: build/cloud-prerequisites/native-windows-readback.json

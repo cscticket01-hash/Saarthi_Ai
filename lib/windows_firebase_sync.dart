@@ -2,13 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'windows_secure_storage.dart';
 
 import 'windows_local_settings.dart';
 import 'windows_local_firestore.dart';
 import 'school_text_data.dart';
 import 'school_backend_transport.dart';
 import 'platform/platform_config.dart';
+import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
+import 'windows_connect/managed_record_media.dart';
 
 class WindowsFirebaseRemoteStatus {
   const WindowsFirebaseRemoteStatus({
@@ -16,12 +19,15 @@ class WindowsFirebaseRemoteStatus {
     required this.authenticated,
     required this.projectId,
     required this.email,
+    this.schoolId = '',
   });
 
   final bool configSaved;
   final bool authenticated;
   final String projectId;
   final String email;
+  final String schoolId;
+  String get schoolIdentity => schoolId.isNotEmpty ? schoolId : projectId;
 }
 
 class WindowsFirebaseConnectResult {
@@ -37,8 +43,7 @@ class WindowsFirebaseConnectResult {
 class WindowsFirebaseRemote {
   WindowsFirebaseRemote._();
 
-  static FutureOr<void> Function()?
-      onConnectionChanged;
+  static FutureOr<void> Function()? onConnectionChanged;
 
   static Future<void> _notifyConnectionChanged() async {
     final callback = onConnectionChanged;
@@ -46,44 +51,35 @@ class WindowsFirebaseRemote {
     await callback();
   }
 
-  static const FlutterSecureStorage _secure =
-      FlutterSecureStorage();
+  static const WindowsSecureStorage _secure = WindowsSecureStorage();
 
-  static const String _emailKey =
-      'vidya_saarthi_firebase_email_v1';
+  static const String _emailKey = 'vidya_saarthi_firebase_email_v1';
 
   static const String _refreshTokenKey =
       'vidya_saarthi_firebase_refresh_token_v1';
 
-  static const String _projectIdKey =
-      'vidya_saarthi_firebase_project_id_v1';
+  static const String _projectIdKey = 'vidya_saarthi_firebase_project_id_v1';
 
   static Future<WindowsFirebaseRemoteStatus> status() async {
-    final local =
-        await WindowsExternalConnections.load();
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty)
+      return WindowsFirebaseRemoteStatus(
+        configSaved: true,
+        authenticated: true,
+        projectId: platformProjectId,
+        email: central['email'],
+        schoolId: central['schoolId'],
+      );
+    final local = await WindowsExternalConnections.load();
 
-    final link =
-        local['firebaseLink']
-            ?.toString()
-            .trim() ??
-        '';
+    final link = local['firebaseLink']?.toString().trim() ?? '';
 
-    final email =
-        (await _secure.read(key: _emailKey))
-                ?.trim() ??
-            '';
+    final email = (await _secure.read(key: _emailKey))?.trim() ?? '';
 
     final refreshToken =
-        (await _secure.read(
-              key: _refreshTokenKey,
-            ))
-                ?.trim() ??
-            '';
+        (await _secure.read(key: _refreshTokenKey))?.trim() ?? '';
 
-    final projectId =
-        (await _secure.read(key: _projectIdKey))
-                ?.trim() ??
-            '';
+    final projectId = (await _secure.read(key: _projectIdKey))?.trim() ?? '';
 
     return WindowsFirebaseRemoteStatus(
       configSaved: link.isNotEmpty,
@@ -91,14 +87,14 @@ class WindowsFirebaseRemote {
           link.isNotEmpty &&
           email.isNotEmpty &&
           refreshToken.isNotEmpty &&
-          projectId.isNotEmpty && projectId != platformProjectId,
+          projectId.isNotEmpty &&
+          projectId != platformProjectId,
       projectId: projectId,
       email: email,
     );
   }
 
-  static Future<WindowsFirebaseConnectResult>
-      connectAndVerify({
+  static Future<WindowsFirebaseConnectResult> connectAndVerify({
     required String firebaseLink,
     required String email,
     required String password,
@@ -107,37 +103,23 @@ class WindowsFirebaseRemote {
     final cleanEmail = email.trim();
 
     if (cleanEmail.isEmpty) {
-      throw StateError(
-        'Firebase Admin Email daalein.',
-      );
+      throw StateError('Firebase Admin Email daalein.');
     }
 
     if (password.isEmpty) {
-      throw StateError(
-        'Firebase Password daalein.',
-      );
+      throw StateError('Firebase Password daalein.');
     }
 
-    final config =
-        WindowsExternalConnections
-            .decodeFirebaseLink(cleanLink);
+    final config = WindowsExternalConnections.decodeFirebaseLink(cleanLink);
 
-    final apiKey =
-        config['apiKey']?.toString().trim() ??
-        '';
+    final apiKey = config['apiKey']?.toString().trim() ?? '';
 
-    final projectId =
-        config['projectId']
-                ?.toString()
-                .trim() ??
-            '';
+    final projectId = config['projectId']?.toString().trim() ?? '';
 
     requireSchoolProjectId(projectId);
 
     if (apiKey.isEmpty || projectId.isEmpty) {
-      throw StateError(
-        'Firebase config incomplete hai.',
-      );
+      throw StateError('Firebase config incomplete hai.');
     }
 
     final auth = await _signIn(
@@ -146,48 +128,26 @@ class WindowsFirebaseRemote {
       password: password,
     );
 
-    final idToken =
-        auth['idToken']?.toString() ?? '';
+    final idToken = auth['idToken']?.toString() ?? '';
 
-    final refreshToken =
-        auth['refreshToken']?.toString() ??
-        '';
+    final refreshToken = auth['refreshToken']?.toString() ?? '';
 
-    final verifiedEmail =
-        auth['email']?.toString().trim() ??
-        cleanEmail;
+    final verifiedEmail = auth['email']?.toString().trim() ?? cleanEmail;
 
-    if (idToken.isEmpty ||
-        refreshToken.isEmpty) {
-      throw StateError(
-        'Firebase login token nahi mila.',
-      );
+    if (idToken.isEmpty || refreshToken.isEmpty) {
+      throw StateError('Firebase login token nahi mila.');
     }
 
-    await _verifyFirestore(
-      projectId: projectId,
-      idToken: idToken,
-    );
+    await _verifyFirestore(projectId: projectId, idToken: idToken);
 
     // Save only AFTER Auth + Firestore verification succeed.
-    await WindowsExternalConnections.save(
-      firebaseLink: cleanLink,
-    );
+    await WindowsExternalConnections.save(firebaseLink: cleanLink);
 
-    await _secure.write(
-      key: _emailKey,
-      value: verifiedEmail,
-    );
+    await _secure.write(key: _emailKey, value: verifiedEmail);
 
-    await _secure.write(
-      key: _refreshTokenKey,
-      value: refreshToken,
-    );
+    await _secure.write(key: _refreshTokenKey, value: refreshToken);
 
-    await _secure.write(
-      key: _projectIdKey,
-      value: projectId,
-    );
+    await _secure.write(key: _projectIdKey, value: projectId);
 
     await _notifyConnectionChanged();
 
@@ -197,246 +157,256 @@ class WindowsFirebaseRemote {
     );
   }
 
-  static Future<WindowsFirebaseConnectResult>
-      testSavedConnection() async {
-    final local =
-        await WindowsExternalConnections.load();
-
-    final link =
-        local['firebaseLink']
-            ?.toString()
-            .trim() ??
-        '';
-
-    if (link.isEmpty) {
-      throw StateError(
-        'Firebase link saved nahi hai.',
+  static Future<WindowsFirebaseConnectResult> testSavedConnection() async {
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty) {
+      await CentralSchoolCloud.firebaseToken();
+      return WindowsFirebaseConnectResult(
+        projectId: platformProjectId,
+        email: central['email'],
       );
     }
+    final local = await WindowsExternalConnections.load();
 
-    final config =
-        WindowsExternalConnections
-            .decodeFirebaseLink(link);
+    final link = local['firebaseLink']?.toString().trim() ?? '';
 
-    final apiKey =
-        config['apiKey']?.toString().trim() ??
-        '';
+    if (link.isEmpty) {
+      throw StateError('Firebase link saved nahi hai.');
+    }
 
-    final projectId =
-        config['projectId']
-                ?.toString()
-                .trim() ??
-            '';
+    final config = WindowsExternalConnections.decodeFirebaseLink(link);
+
+    final apiKey = config['apiKey']?.toString().trim() ?? '';
+
+    final projectId = config['projectId']?.toString().trim() ?? '';
 
     requireSchoolProjectId(projectId);
 
     final savedProjectId =
-        (await _secure.read(
-              key: _projectIdKey,
-            ))
-                ?.trim() ??
-            '';
+        (await _secure.read(key: _projectIdKey))?.trim() ?? '';
 
-    final email =
-        (await _secure.read(key: _emailKey))
-                ?.trim() ??
-            '';
+    final email = (await _secure.read(key: _emailKey))?.trim() ?? '';
 
     final refreshToken =
-        (await _secure.read(
-              key: _refreshTokenKey,
-            ))
-                ?.trim() ??
-            '';
+        (await _secure.read(key: _refreshTokenKey))?.trim() ?? '';
 
-    if (refreshToken.isEmpty ||
-        email.isEmpty) {
+    if (refreshToken.isEmpty || email.isEmpty) {
       throw StateError(
         'Firebase authentication saved nahi hai. '
         'Connect & Verify dobara karein.',
       );
     }
 
-    if (savedProjectId.isNotEmpty &&
-        savedProjectId != projectId) {
+    if (savedProjectId.isNotEmpty && savedProjectId != projectId) {
       throw StateError(
         'Saved Firebase authentication dusre project ka hai. '
         'Connect & Verify dobara karein.',
       );
     }
 
-    final refreshed =
-        await _refreshIdToken(
+    final refreshed = await _refreshIdToken(
       apiKey: apiKey,
       refreshToken: refreshToken,
     );
 
-    final idToken =
-        refreshed['id_token']?.toString() ??
-        '';
+    final idToken = refreshed['id_token']?.toString() ?? '';
 
     final newRefreshToken =
-        refreshed['refresh_token']
-                ?.toString()
-                .trim() ??
-            refreshToken;
+        refreshed['refresh_token']?.toString().trim() ?? refreshToken;
 
     if (idToken.isEmpty) {
-      throw StateError(
-        'Firebase session refresh nahi hua.',
-      );
+      throw StateError('Firebase session refresh nahi hua.');
     }
 
-    await _verifyFirestore(
-      projectId: projectId,
-      idToken: idToken,
-    );
+    await _verifyFirestore(projectId: projectId, idToken: idToken);
 
-    await _secure.write(
-      key: _refreshTokenKey,
-      value: newRefreshToken,
-    );
+    await _secure.write(key: _refreshTokenKey, value: newRefreshToken);
 
-    await _secure.write(
-      key: _projectIdKey,
-      value: projectId,
-    );
+    await _secure.write(key: _projectIdKey, value: projectId);
 
-    return WindowsFirebaseConnectResult(
-      projectId: projectId,
-      email: email,
-    );
+    return WindowsFirebaseConnectResult(projectId: projectId, email: email);
   }
 
   static Future<String> freshIdToken() async {
-    final local =
-        await WindowsExternalConnections.load();
+    if ((await CentralSchoolCloud.saved()).isNotEmpty)
+      return CentralSchoolCloud.firebaseToken();
+    final local = await WindowsExternalConnections.load();
 
-    final link =
-        local['firebaseLink']
-            ?.toString()
-            .trim() ??
-        '';
+    final link = local['firebaseLink']?.toString().trim() ?? '';
 
     if (link.isEmpty) {
-      throw StateError(
-        'Firebase connected nahi hai.',
-      );
+      throw StateError('Firebase connected nahi hai.');
     }
 
-    final config =
-        WindowsExternalConnections
-            .decodeFirebaseLink(link);
+    final config = WindowsExternalConnections.decodeFirebaseLink(link);
 
     requireSchoolProjectId(config['projectId']?.toString().trim() ?? '');
 
-    final apiKey =
-        config['apiKey']?.toString().trim() ??
-        '';
+    final apiKey = config['apiKey']?.toString().trim() ?? '';
 
     final refreshToken =
-        (await _secure.read(
-              key: _refreshTokenKey,
-            ))
-                ?.trim() ??
-            '';
+        (await _secure.read(key: _refreshTokenKey))?.trim() ?? '';
 
     if (refreshToken.isEmpty) {
-      throw StateError(
-        'Firebase session saved nahi hai.',
-      );
+      throw StateError('Firebase session saved nahi hai.');
     }
 
-    final refreshed =
-        await _refreshIdToken(
+    final refreshed = await _refreshIdToken(
       apiKey: apiKey,
       refreshToken: refreshToken,
     );
 
-    final idToken =
-        refreshed['id_token']?.toString() ??
-        '';
+    final idToken = refreshed['id_token']?.toString() ?? '';
 
     final newRefreshToken =
-        refreshed['refresh_token']
-                ?.toString()
-                .trim() ??
-            refreshToken;
+        refreshed['refresh_token']?.toString().trim() ?? refreshToken;
 
     if (idToken.isEmpty) {
-      throw StateError(
-        'Firebase session refresh nahi hua.',
-      );
+      throw StateError('Firebase session refresh nahi hua.');
     }
 
-    await _secure.write(
-      key: _refreshTokenKey,
-      value: newRefreshToken,
-    );
+    await _secure.write(key: _refreshTokenKey, value: newRefreshToken);
 
     return idToken;
   }
 
   static Future<void> disconnect() async {
+    if ((await CentralSchoolCloud.saved()).isNotEmpty) {
+      await _secure.delete(key: CentralSchoolCloud.key);
+      await _notifyConnectionChanged();
+      return;
+    }
     await _secure.delete(key: _emailKey);
-    await _secure.delete(
-      key: _refreshTokenKey,
-    );
+    await _secure.delete(key: _refreshTokenKey);
     await _secure.delete(key: _projectIdKey);
 
-    await WindowsExternalConnections.save(
-      firebaseLink: '',
-    );
+    await WindowsExternalConnections.save(firebaseLink: '');
 
     await _notifyConnectionChanged();
   }
 
-  static Future<Map<String, Map<String, dynamic>>>
-      readCollection({
+  static Future<Map<String, dynamic>> _managedRecords(
+    String token,
+    Map<String, dynamic> body, {
+    String? expectedSchoolId,
+  }) async {
+    final school =
+        FirebaseFirestore.instance.activeProfileIdentity['schoolId']
+            ?.toString() ??
+        '';
+    final saved = await CentralSchoolCloud.saved();
+    if (!validSchoolId(school) ||
+        saved['schoolId'] != school ||
+        expectedSchoolId != null && school != expectedSchoolId)
+      throw StateError('School changed during sync.');
+    final cloud = CentralSchoolCloud(
+      endpoint: saved['endpoint'],
+      expectedSchoolId: school,
+    );
+    try {
+      return await cloud.api({
+        'action': 'managed/records',
+        ...body,
+        'schoolId': school,
+      }, token: token);
+    } finally {
+      cloud.close();
+    }
+  }
+
+  static Future<Map<String,dynamic>> syncManagedRecord(Map<String,dynamic> item, String school) async {
+    if(item['schoolId'] != school) throw StateError('Pending record belongs to another school.');
+    final collection=item['collection'].toString(), id=item['documentId'].toString();
+    final data=item['operation']=='delete'?null:await prepareManagedRecord(
+      Map<String,dynamic>.from(item['data'] as Map), school,
+      (action, body)=>ManagedSchoolSession.callForSchool(school,action,body));
+    final result=await ManagedSchoolSession.callForSchool(school,'managed/records',{
+      'operation':item['operation']=='delete'?'delete':'write','collection':collection,'id':id,
+      'syncProtocol':2,'operationId':item['operationId'],
+      'expectedRecordRevision':item['baseCloudRevision']??'',if(data!=null)'data':migrationJsonValue(data),
+    });
+    if(result['schoolId'] != school || result['syncProtocol']!=2 || result['recordRevision'] is! String)
+      throw StateError('Version-safe acknowledgement missing. Pending operation retained.');
+    return result;
+  }
+
+  static Future<Map<String,dynamic>> readManagedBatch(String school, Map<String,String> revisions) async {
+    final result=await ManagedSchoolSession.callForSchool(school,'managed/changes',{
+      'collections':revisions.keys.toList(),'knownRevisions':revisions});
+    if(result['schoolId']!=school||result['syncProtocol']!=2||result['changes'] is! Map)
+      throw StateError('Version-safe school delta unavailable.');
+    final changes=Map<String,dynamic>.from(result['changes'] as Map);
+    if(changes.length!=revisions.length)throw StateError('Incomplete school delta.');
+    for(final collection in revisions.keys){
+      final group=Map<String,dynamic>.from(changes[collection] as Map);
+      if(group['syncProtocol']!=2||group['collectionRevision'] is! String||group['records'] is! Map)
+        throw StateError('Invalid school delta checkpoint.');
+      group['records']=(group['records'] as Map).map((key,value)=>MapEntry(key.toString(),
+        Map<String,dynamic>.from(_restoreManagedValue(value) as Map)));
+      if((group['records'] as Map).values.any((row)=>row['schoolId']!=school))
+        throw StateError('Foreign school delta rejected.');
+      changes[collection]=group;
+    }
+    return changes;
+  }
+
+  static Future<Map<String,dynamic>> readManagedChanges(String school,String collection,String revision) async {
+    final result=await ManagedSchoolSession.callForSchool(school,'managed/records',{
+      'operation':'read','collection':collection,'syncProtocol':2,'knownRevision':revision});
+    if(result['schoolId']!=school || result['syncProtocol']!=2 || result['collectionRevision'] is! String)
+      throw StateError('Version-safe school manifest unavailable.');
+    return {...result,'records':(result['records'] as Map).map((k,v)=>MapEntry(k.toString(),
+      Map<String,dynamic>.from(_restoreManagedValue(v) as Map)))};
+  }
+
+  static Future<Map<String, Map<String, dynamic>>> readCollection({
     required String projectId,
     required String idToken,
     required String collection,
   }) async {
-    requireSchoolProjectId(projectId);
-    final output =
-        <String, Map<String, dynamic>>{};
+    if ((await CentralSchoolCloud.saved())['managed'] == true) {
+      final result = await _managedRecords(idToken, {
+        'operation': 'read',
+        'collection': collection,
+      });
+      return (result['records'] as Map).map(
+        (k, v) => MapEntry(
+          k.toString(),
+          Map<String, dynamic>.from(_restoreManagedValue(v) as Map),
+        ),
+      );
+    }
+    final remoteCollection = await _remoteCollection(projectId, collection);
+    final output = <String, Map<String, dynamic>>{};
 
     String? pageToken;
 
     do {
       final query = <String, String>{
         'pageSize': '500',
-        if (pageToken != null &&
-            pageToken!.isNotEmpty)
-          'pageToken': pageToken!,
+        if (pageToken != null && pageToken!.isNotEmpty) 'pageToken': pageToken!,
       };
 
       final uri = Uri.https(
         'firestore.googleapis.com',
         '/v1/projects/'
-        '${Uri.encodeComponent(projectId)}/'
-        'databases/(default)/documents/'
-        '${Uri.encodeComponent(collection)}',
+            '${Uri.encodeComponent(projectId)}/'
+            'databases/(default)/documents/'
+            '$remoteCollection',
         query,
       );
 
-      final response = await _request(
-        'GET',
-        uri,
-        bearerToken: idToken,
-      );
+      final response = await _request('GET', uri, bearerToken: idToken);
 
       if (response.statusCode == 404) {
         return output;
       }
 
-      if (response.statusCode < 200 ||
-          response.statusCode >= 300) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         throw StateError(
           _firebaseErrorMessage(
             response.body,
-            fallback:
-                'Firestore collection read failed: $collection',
+            fallback: 'Firestore collection read failed: $collection',
           ),
         );
       }
@@ -448,9 +418,7 @@ class WindowsFirebaseRemote {
       final decoded = jsonDecode(response.body);
 
       if (decoded is! Map) {
-        throw StateError(
-          'Firestore collection response invalid hai.',
-        );
+        throw StateError('Firestore collection response invalid hai.');
       }
 
       final documents = decoded['documents'];
@@ -459,35 +427,25 @@ class WindowsFirebaseRemote {
         for (final raw in documents) {
           if (raw is! Map) continue;
 
-          final document =
-              Map<String, dynamic>.from(raw);
+          final document = Map<String, dynamic>.from(raw);
 
-          final name =
-              document['name']?.toString() ?? '';
+          final name = document['name']?.toString() ?? '';
 
           if (name.isEmpty) continue;
 
-          final id = Uri.decodeComponent(
-            name.split('/').last,
-          );
+          final id = Uri.decodeComponent(name.split('/').last);
 
           final fields = document['fields'];
 
           output[id] = fields is Map
-              ? _decodeFirestoreFields(
-                  Map<String, dynamic>.from(fields),
-                )
+              ? _decodeFirestoreFields(Map<String, dynamic>.from(fields))
               : <String, dynamic>{};
         }
       }
 
-      pageToken =
-          decoded['nextPageToken']
-              ?.toString()
-              .trim();
+      pageToken = decoded['nextPageToken']?.toString().trim();
 
-      if (pageToken != null &&
-          pageToken!.isEmpty) {
+      if (pageToken != null && pageToken!.isEmpty) {
         pageToken = null;
       }
     } while (pageToken != null);
@@ -501,12 +459,63 @@ class WindowsFirebaseRemote {
     required String collection,
     required String documentId,
     required Map<String, dynamic> data,
+    String? expectedRevision,
+    num? expectedUploadedAt,
   }) async {
-    requireSchoolProjectId(projectId);
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    final school =
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+            ?.toString() ??
+        '';
+    void unchanged() {
+      if (FirebaseFirestore.instance.activeProfileId != origin ||
+          FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] !=
+              school)
+        throw StateError('School changed during sync.');
+    }
+
+    final saved = await CentralSchoolCloud.saved();
+    unchanged();
+    if (saved['managed'] == true) {
+      if (saved['schoolId'] != school)
+        throw StateError('School identity mismatch.');
+      final safe = await prepareManagedRecord(data, school, (action, body) {
+        unchanged();
+        return ManagedSchoolSession.callForSchool(school, action, body);
+      });
+      unchanged();
+      await _managedRecords(idToken, {
+        'operation': 'write',
+        'collection': collection,
+        'id': documentId,
+        'data': migrationJsonValue(safe),
+        if (expectedRevision != null) 'expectedRevision': expectedRevision,
+        if (expectedUploadedAt != null)
+          'expectedUploadedAt': expectedUploadedAt,
+      }, expectedSchoolId: school);
+      if (collection == 'school_config' &&
+          documentId == 'school_profile_cache' &&
+          (data['schoolName']?.toString().length ?? 0) >= 2 &&
+          (data['principalName']?.toString().length ?? 0) >= 2) {
+        unchanged();
+        await ManagedSchoolSession.callForSchool(school, 'managed/profile', {
+          'operation': 'initialize',
+          'schoolName': data['schoolName'],
+          'principalName': data['principalName'],
+        });
+      }
+      return;
+    }
+    final remoteCollection = await _remoteCollection(projectId, collection);
+    if (documentId.isEmpty ||
+        documentId.contains('/') ||
+        documentId == '.' ||
+        documentId == '..')
+      throw StateError('Invalid school document ID.');
     final documentName =
         'projects/$projectId/'
         'databases/(default)/documents/'
-        '$collection/$documentId';
+        '$remoteCollection/$documentId';
 
     final uri = Uri.parse(
       'https://firestore.googleapis.com/v1/'
@@ -514,23 +523,25 @@ class WindowsFirebaseRemote {
       'databases/(default)/documents:commit',
     );
 
-    final response = await _postJson(
-      uri,
-      <String, dynamic>{
-        'writes': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'update': <String, dynamic>{
-              'name': documentName,
-              'fields': _encodeFirestoreFields(schoolTextData(data)),
-            },
+    final response = await _postJson(uri, <String, dynamic>{
+      'writes': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'update': <String, dynamic>{
+            'name': documentName,
+            'fields': _encodeFirestoreFields(
+              projectId == platformProjectId
+                  ? centralSchoolData(
+                      data,
+                      (await CentralSchoolCloud.saved())['schoolId'],
+                    )
+                  : schoolTextData(data),
+            ),
           },
-        ],
-      },
-      bearerToken: idToken,
-    );
+        },
+      ],
+    }, bearerToken: idToken);
 
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(
         _firebaseErrorMessage(
           response.body,
@@ -547,12 +558,30 @@ class WindowsFirebaseRemote {
     required String idToken,
     required String collection,
     required String documentId,
+    String? expectedRevision,
+    num? expectedUploadedAt,
   }) async {
-    requireSchoolProjectId(projectId);
+    if ((await CentralSchoolCloud.saved())['managed'] == true) {
+      await _managedRecords(idToken, {
+        'operation': 'delete',
+        'collection': collection,
+        'id': documentId,
+        if (expectedRevision != null) 'expectedRevision': expectedRevision,
+        if (expectedUploadedAt != null)
+          'expectedUploadedAt': expectedUploadedAt,
+      });
+      return;
+    }
+    final remoteCollection = await _remoteCollection(projectId, collection);
+    if (documentId.isEmpty ||
+        documentId.contains('/') ||
+        documentId == '.' ||
+        documentId == '..')
+      throw StateError('Invalid school document ID.');
     final documentName =
         'projects/$projectId/'
         'databases/(default)/documents/'
-        '$collection/$documentId';
+        '$remoteCollection/$documentId';
 
     final uri = Uri.parse(
       'https://firestore.googleapis.com/v1/'
@@ -560,20 +589,13 @@ class WindowsFirebaseRemote {
       'databases/(default)/documents:commit',
     );
 
-    final response = await _postJson(
-      uri,
-      <String, dynamic>{
-        'writes': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'delete': documentName,
-          },
-        ],
-      },
-      bearerToken: idToken,
-    );
+    final response = await _postJson(uri, <String, dynamic>{
+      'writes': <Map<String, dynamic>>[
+        <String, dynamic>{'delete': documentName},
+      ],
+    }, bearerToken: idToken);
 
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(
         _firebaseErrorMessage(
           response.body,
@@ -585,33 +607,55 @@ class WindowsFirebaseRemote {
     }
   }
 
-  static Map<String, dynamic>
-      _encodeFirestoreFields(
+  static dynamic _restoreManagedValue(dynamic value) {
+    if (value is List) return value.map(_restoreManagedValue).toList();
+    if (value is Map) {
+      if (value.length == 1 && value['__vsTimestamp'] is String)
+        return Timestamp.fromDate(DateTime.parse(value['__vsTimestamp']));
+      return value.map(
+        (k, v) => MapEntry(k.toString(), _restoreManagedValue(v)),
+      );
+    }
+    return value;
+  }
+
+  static Future<String> _remoteCollection(
+    String projectId,
+    String collection,
+  ) async {
+    if (projectId == platformProjectId) {
+      final central = await CentralSchoolCloud.saved();
+      if (central.isEmpty)
+        throw StateError('Verified school cloud connection is required.');
+      return tenantCollectionPath(central['schoolId'], collection);
+    }
+    requireSchoolProjectId(projectId);
+    if (!RegExp(r'^[a-z][a-z0-9_]{0,79}$').hasMatch(collection))
+      throw StateError('Invalid school collection.');
+    return collection;
+  }
+
+  static Map<String, dynamic> _encodeFirestoreFields(
     Map<String, dynamic> data,
   ) {
     final output = <String, dynamic>{};
 
     for (final entry in data.entries) {
-      output[entry.key] =
-          _encodeFirestoreValue(entry.value);
+      output[entry.key] = _encodeFirestoreValue(entry.value);
     }
 
     return output;
   }
 
-  static Map<String, dynamic>
-      _decodeFirestoreFields(
+  static Map<String, dynamic> _decodeFirestoreFields(
     Map<String, dynamic> fields,
   ) {
     final output = <String, dynamic>{};
 
     for (final entry in fields.entries) {
       if (entry.value is Map) {
-        output[entry.key] =
-            _decodeFirestoreValue(
-          Map<String, dynamic>.from(
-            entry.value as Map,
-          ),
+        output[entry.key] = _decodeFirestoreValue(
+          Map<String, dynamic>.from(entry.value as Map),
         );
       }
     }
@@ -619,89 +663,63 @@ class WindowsFirebaseRemote {
     return output;
   }
 
-  static Map<String, dynamic>
-      _encodeFirestoreValue(
-    dynamic value,
-  ) {
+  static Map<String, dynamic> _encodeFirestoreValue(dynamic value) {
     if (value == null) {
-      return <String, dynamic>{
-        'nullValue': null,
-      };
+      return <String, dynamic>{'nullValue': null};
     }
 
     if (value is bool) {
-      return <String, dynamic>{
-        'booleanValue': value,
-      };
+      return <String, dynamic>{'booleanValue': value};
     }
 
     if (value is int) {
-      return <String, dynamic>{
-        'integerValue': value.toString(),
-      };
+      return <String, dynamic>{'integerValue': value.toString()};
     }
 
     if (value is double) {
-      return <String, dynamic>{
-        'doubleValue': value,
-      };
+      return <String, dynamic>{'doubleValue': value};
     }
 
     if (value is num) {
-      return <String, dynamic>{
-        'doubleValue': value.toDouble(),
-      };
+      return <String, dynamic>{'doubleValue': value.toDouble()};
     }
 
     if (value is Timestamp) {
       return <String, dynamic>{
-        'timestampValue':
-            value.toDate().toUtc().toIso8601String(),
+        'timestampValue': value.toDate().toUtc().toIso8601String(),
       };
     }
 
     if (value is DateTime) {
       return <String, dynamic>{
-        'timestampValue':
-            value.toUtc().toIso8601String(),
+        'timestampValue': value.toUtc().toIso8601String(),
       };
     }
 
     if (value is String) {
-      return <String, dynamic>{
-        'stringValue': value,
-      };
+      return <String, dynamic>{'stringValue': value};
     }
 
     if (value is Iterable) {
       return <String, dynamic>{
         'arrayValue': <String, dynamic>{
-          'values': value
-              .map(_encodeFirestoreValue)
-              .toList(),
+          'values': value.map(_encodeFirestoreValue).toList(),
         },
       };
     }
 
     if (value is Map) {
-      final map =
-          Map<String, dynamic>.from(value);
+      final map = Map<String, dynamic>.from(value);
 
       return <String, dynamic>{
-        'mapValue': <String, dynamic>{
-          'fields': _encodeFirestoreFields(map),
-        },
+        'mapValue': <String, dynamic>{'fields': _encodeFirestoreFields(map)},
       };
     }
 
-    return <String, dynamic>{
-      'stringValue': value.toString(),
-    };
+    return <String, dynamic>{'stringValue': value.toString()};
   }
 
-  static dynamic _decodeFirestoreValue(
-    Map<String, dynamic> value,
-  ) {
+  static dynamic _decodeFirestoreValue(Map<String, dynamic> value) {
     if (value.containsKey('nullValue')) {
       return null;
     }
@@ -711,52 +729,37 @@ class WindowsFirebaseRemote {
     }
 
     if (value.containsKey('integerValue')) {
-      final raw =
-          value['integerValue']?.toString() ?? '';
+      final raw = value['integerValue']?.toString() ?? '';
       return int.tryParse(raw) ?? 0;
     }
 
     if (value.containsKey('doubleValue')) {
       final raw = value['doubleValue'];
       if (raw is num) return raw.toDouble();
-      return double.tryParse(
-            raw?.toString() ?? '',
-          ) ??
-          0.0;
+      return double.tryParse(raw?.toString() ?? '') ?? 0.0;
     }
 
     if (value.containsKey('timestampValue')) {
-      final raw =
-          value['timestampValue']?.toString() ?? '';
+      final raw = value['timestampValue']?.toString() ?? '';
       final parsed = DateTime.tryParse(raw);
-      return parsed == null
-          ? raw
-          : Timestamp.fromDate(parsed);
+      return parsed == null ? raw : Timestamp.fromDate(parsed);
     }
 
     if (value.containsKey('stringValue')) {
-      return value['stringValue']
-              ?.toString() ??
-          '';
+      return value['stringValue']?.toString() ?? '';
     }
 
     if (value.containsKey('bytesValue')) {
-      return value['bytesValue']
-              ?.toString() ??
-          '';
+      return value['bytesValue']?.toString() ?? '';
     }
 
     if (value.containsKey('referenceValue')) {
-      return value['referenceValue']
-              ?.toString() ??
-          '';
+      return value['referenceValue']?.toString() ?? '';
     }
 
     if (value.containsKey('geoPointValue')) {
       final raw = value['geoPointValue'];
-      return raw is Map
-          ? Map<String, dynamic>.from(raw)
-          : <String, dynamic>{};
+      return raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
     }
 
     if (value.containsKey('arrayValue')) {
@@ -769,11 +772,8 @@ class WindowsFirebaseRemote {
           return values
               .whereType<Map>()
               .map(
-                (item) => _decodeFirestoreValue(
-                  Map<String, dynamic>.from(
-                    item,
-                  ),
-                ),
+                (item) =>
+                    _decodeFirestoreValue(Map<String, dynamic>.from(item)),
               )
               .toList();
         }
@@ -785,12 +785,9 @@ class WindowsFirebaseRemote {
     if (value.containsKey('mapValue')) {
       final raw = value['mapValue'];
 
-      if (raw is Map &&
-          raw['fields'] is Map) {
+      if (raw is Map && raw['fields'] is Map) {
         return _decodeFirestoreFields(
-          Map<String, dynamic>.from(
-            raw['fields'] as Map,
-          ),
+          Map<String, dynamic>.from(raw['fields'] as Map),
         );
       }
 
@@ -811,42 +808,31 @@ class WindowsFirebaseRemote {
       '?key=${Uri.encodeQueryComponent(apiKey)}',
     );
 
-    final response = await _postJson(
-      uri,
-      <String, dynamic>{
-        'email': email,
-        'password': password,
-        'returnSecureToken': true,
-      },
-    );
+    final response = await _postJson(uri, <String, dynamic>{
+      'email': email,
+      'password': password,
+      'returnSecureToken': true,
+    });
 
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(
         _firebaseErrorMessage(
           response.body,
-          fallback:
-              'Firebase Admin login failed.',
+          fallback: 'Firebase Admin login failed.',
         ),
       );
     }
 
-    final decoded =
-        jsonDecode(response.body);
+    final decoded = jsonDecode(response.body);
 
     if (decoded is! Map) {
-      throw StateError(
-        'Firebase login response invalid hai.',
-      );
+      throw StateError('Firebase login response invalid hai.');
     }
 
-    return Map<String, dynamic>.from(
-      decoded,
-    );
+    return Map<String, dynamic>.from(decoded);
   }
 
-  static Future<Map<String, dynamic>>
-      _refreshIdToken({
+  static Future<Map<String, dynamic>> _refreshIdToken({
     required String apiKey,
     required String refreshToken,
   }) async {
@@ -859,8 +845,7 @@ class WindowsFirebaseRemote {
     final client = HttpClient();
 
     try {
-      final request =
-          await client.postUrl(uri);
+      final request = await client.postUrl(uri);
 
       request.headers.set(
         HttpHeaders.contentTypeHeader,
@@ -873,37 +858,26 @@ class WindowsFirebaseRemote {
 
       request.write(body);
 
-      final response =
-          await request.close();
+      final response = await request.close();
 
-      final responseBody =
-          await utf8.decoder
-              .bind(response)
-              .join();
+      final responseBody = await utf8.decoder.bind(response).join();
 
-      if (response.statusCode < 200 ||
-          response.statusCode >= 300) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         throw StateError(
           _firebaseErrorMessage(
             responseBody,
-            fallback:
-                'Firebase session refresh failed.',
+            fallback: 'Firebase session refresh failed.',
           ),
         );
       }
 
-      final decoded =
-          jsonDecode(responseBody);
+      final decoded = jsonDecode(responseBody);
 
       if (decoded is! Map) {
-        throw StateError(
-          'Firebase token response invalid hai.',
-        );
+        throw StateError('Firebase token response invalid hai.');
       }
 
-      return Map<String, dynamic>.from(
-        decoded,
-      );
+      return Map<String, dynamic>.from(decoded);
     } finally {
       client.close(force: true);
     }
@@ -920,28 +894,20 @@ class WindowsFirebaseRemote {
       'databases/(default)/documents:runQuery',
     );
 
-    final response = await _postJson(
-      uri,
-      <String, dynamic>{
-        'structuredQuery': <String, dynamic>{
-          'from': <Map<String, dynamic>>[
-            <String, dynamic>{
-              'collectionId': 'school_config',
-            },
-          ],
-          'limit': 1,
-        },
+    final response = await _postJson(uri, <String, dynamic>{
+      'structuredQuery': <String, dynamic>{
+        'from': <Map<String, dynamic>>[
+          <String, dynamic>{'collectionId': 'school_config'},
+        ],
+        'limit': 1,
       },
-      bearerToken: idToken,
-    );
+    }, bearerToken: idToken);
 
-    if (response.statusCode < 200 ||
-        response.statusCode >= 300) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(
         _firebaseErrorMessage(
           response.body,
-          fallback:
-              'Firestore access verify nahi hua.',
+          fallback: 'Firestore access verify nahi hua.',
         ),
       );
     }
@@ -957,11 +923,9 @@ class WindowsFirebaseRemote {
     final client = HttpClient();
 
     try {
-      final request =
-          await client.openUrl(method, uri);
+      final request = await client.openUrl(method, uri);
 
-      if (bearerToken != null &&
-          bearerToken.isNotEmpty) {
+      if (bearerToken != null && bearerToken.isNotEmpty) {
         request.headers.set(
           HttpHeaders.authorizationHeader,
           'Bearer $bearerToken',
@@ -970,10 +934,7 @@ class WindowsFirebaseRemote {
 
       if (headers != null) {
         for (final entry in headers.entries) {
-          request.headers.set(
-            entry.key,
-            entry.value,
-          );
+          request.headers.set(entry.key, entry.value);
         }
       }
 
@@ -981,22 +942,16 @@ class WindowsFirebaseRemote {
         request.write(body);
       }
 
-      final response =
-          await request.close();
+      final response = await request.close();
 
-      final responseBody =
-          await utf8.decoder
-              .bind(response)
-              .join();
+      final responseBody = await utf8.decoder.bind(response).join();
 
       return _SimpleHttpResponse(
         statusCode: response.statusCode,
         body: responseBody,
       );
     } on SocketException {
-      throw StateError(
-        'Internet connection nahi mil raha.',
-      );
+      throw StateError('Internet connection nahi mil raha.');
     } finally {
       client.close(force: true);
     }
@@ -1010,51 +965,35 @@ class WindowsFirebaseRemote {
     final client = HttpClient();
 
     try {
-      final request =
-          await client.postUrl(uri);
+      final request = await client.postUrl(uri);
 
       request.headers.set(
         HttpHeaders.contentTypeHeader,
         'application/json; charset=utf-8',
       );
 
-      if (bearerToken != null &&
-          bearerToken.isNotEmpty) {
+      if (bearerToken != null && bearerToken.isNotEmpty) {
         request.headers.set(
           HttpHeaders.authorizationHeader,
           'Bearer $bearerToken',
         );
       }
 
-      request.write(
-        jsonEncode(data),
-      );
+      request.write(jsonEncode(data));
 
-      final response =
-          await request.close();
+      final response = await request.close();
 
-      final body =
-          await utf8.decoder
-              .bind(response)
-              .join();
+      final body = await utf8.decoder.bind(response).join();
 
-      return _SimpleHttpResponse(
-        statusCode: response.statusCode,
-        body: body,
-      );
+      return _SimpleHttpResponse(statusCode: response.statusCode, body: body);
     } on SocketException {
-      throw StateError(
-        'Internet connection nahi mil raha.',
-      );
+      throw StateError('Internet connection nahi mil raha.');
     } finally {
       client.close(force: true);
     }
   }
 
-  static String _firebaseErrorMessage(
-    String body, {
-    required String fallback,
-  }) {
+  static String _firebaseErrorMessage(String body, {required String fallback}) {
     try {
       final decoded = jsonDecode(body);
 
@@ -1062,11 +1001,7 @@ class WindowsFirebaseRemote {
         final error = decoded['error'];
 
         if (error is Map) {
-          final message =
-              error['message']
-                      ?.toString()
-                      .trim() ??
-                  '';
+          final message = error['message']?.toString().trim() ?? '';
 
           if (message.isNotEmpty) {
             switch (message) {
@@ -1082,9 +1017,7 @@ class WindowsFirebaseRemote {
                 return 'Firebase API key invalid hai.';
 
               default:
-                if (message.contains(
-                  'PERMISSION_DENIED',
-                )) {
+                if (message.contains('PERMISSION_DENIED')) {
                   return 'Firebase login hua, lekin Firestore permission denied hai.';
                 }
 
@@ -1092,15 +1025,10 @@ class WindowsFirebaseRemote {
             }
           }
 
-          final status =
-              error['status']
-                      ?.toString()
-                      .trim() ??
-                  '';
+          final status = error['status']?.toString().trim() ?? '';
 
           if (status.isNotEmpty) {
-            if (status ==
-                'PERMISSION_DENIED') {
+            if (status == 'PERMISSION_DENIED') {
               return 'Firebase login hua, lekin Firestore permission denied hai.';
             }
 
@@ -1115,10 +1043,7 @@ class WindowsFirebaseRemote {
 }
 
 class _SimpleHttpResponse {
-  const _SimpleHttpResponse({
-    required this.statusCode,
-    required this.body,
-  });
+  const _SimpleHttpResponse({required this.statusCode, required this.body});
 
   final int statusCode;
   final String body;

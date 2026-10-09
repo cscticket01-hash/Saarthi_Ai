@@ -3,7 +3,9 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function developer() {
       return request.auth != null &&
-        (request.auth.token.get('admin', false) == true || request.auth.token.get('developer', false) == true);
+        (request.auth.token.get('developer', false) == true ||
+          (request.auth.token.get('admin', false) == true && request.auth.token.get('schoolId', '') == '' &&
+            !exists(/databases/$(database)/documents/school_memberships/$(request.auth.uid))));
     }
     function anonymous() {
       return request.auth != null && request.auth.token.firebase.sign_in_provider == 'anonymous';
@@ -18,9 +20,48 @@ service cloud.firestore {
         getAfter(/databases/$(database)/documents/platform_trial_claims/$(request.auth.uid)).data.createdAt == request.time;
     }
     function count(value) { return value is int && value >= 0 && value <= 1000000; }
+    function schoolAdmin(school) {
+      let membership = get(/databases/$(database)/documents/school_memberships/$(request.auth.uid));
+      return request.auth != null && membership.data.active == true &&
+        membership.data.schoolId == school && membership.data.role == 'school_admin' &&
+        membership.data.get('managed', false) == false;
+    }
+    function operational(collection) {
+      return collection in ['students_directory','teachers_directory','attendance_logs',
+        'teacher_attendance','attendance_records','teacher_schedules','school_notices',
+        'school_calendar','exam_results','teacher_salary','school_config','school_settings',
+        'fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index',
+        'scanner_devices','documents','backups','exams','exam_center_results'];
+    }
+    // Membership and tenant metadata are server-created. Client claims cannot
+    // enroll a school, move it, or grant access to a different tenant.
+    match /school_memberships/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid;
+    }
+    match /schools/{school} {
+      allow get: if schoolAdmin(school);
+      match /{collection}/{record} {
+        allow read, delete: if schoolAdmin(school) && operational(collection);
+        allow create, update: if schoolAdmin(school) && operational(collection) &&
+          request.resource.data.schoolId == school &&
+          !request.resource.data.keys().hasAny(['password','adminPassword','accessToken',
+            'refreshToken','private_key','photoBase64','fileBase64','pdfBase64',
+            'logoBase64','sealBase64','principalSignatureBase64','localPath']);
+      }
+      match /audit_logs/{record} {
+        allow read: if schoolAdmin(school);
+        allow create: if schoolAdmin(school) && request.resource.data.schoolId == school &&
+          !request.resource.data.keys().hasAny(['password','adminPassword','accessToken','refreshToken','private_key']);
+      }
+    }
     // Exact capability reads: status only, no keys, amounts or school records.
     match /platform_license_status/{hash} {
       allow get: if hash.matches('^[a-f0-9]{64}$');
+    }
+    // Public exact lookup contains only the developer-controlled block flag.
+    // Listing and non-developer writes remain denied.
+    match /platform_school_blocks/{school} {
+      allow get: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$');
     }
     match /platform_school_trials/{school} {
       allow get: if school.matches('^[a-z][a-z0-9-]{4,61}[a-z0-9]$');

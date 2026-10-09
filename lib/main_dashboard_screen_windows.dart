@@ -1,3 +1,18 @@
+import 'windows_fee_structure.dart';
+import 'fitted_document_preview.dart';
+import 'document_upload_dialog.dart';
+import 'qr_authentication_engine.dart';
+import 'windows_admin_avatar.dart';
+import 'windows_other_staff.dart';
+import 'windows_school_image_cache.dart';
+import 'school_qr_link.dart';
+import 'windows_school_profile_store.dart';
+import 'windows_browser_print.dart';
+import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
+import 'windows_school_map.dart';
+import 'windows_school_map_dialog.dart';
+import 'windows_connect/school_drive_images.dart';
 import 'dart:async';
 import 'windows_admin_sidebar.dart';
 import 'windows_monthly_attendance.dart';
@@ -8,6 +23,7 @@ import 'windows_school_operations.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
+import 'windows_save_pdf.dart';
 import 'windows_platform_client.dart';
 import 'dart:io';
 import 'dart:math';
@@ -26,7 +42,7 @@ import 'package:pdf/pdf.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_auth.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'windows_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -48,6 +64,16 @@ import 'windows_mobile_scanner_shim.dart';
 /// school_config/google_drive_account document.
 Future<String> _windowsGoogleScriptUrl({bool required = true}) {
   return WindowsConnectionCenter.googleScriptUrl(required: required);
+}
+
+/// Directory mutations commit locally; Drive readiness is needed only for sync.
+Future<String> _windowsDirectoryMutationUrl() async {
+  final saved=await CentralSchoolCloud.saved();
+  if(saved['managed']==true) {
+    if(FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=saved['schoolId']) throw StateError('School changed. Reopen the directory.');
+    return _windowsGoogleScriptUrl(required:false);
+  }
+  return _windowsGoogleScriptUrl();
 }
 
 String _windowsLanguage() => WindowsUiLanguage.current;
@@ -106,6 +132,7 @@ Future<String> _windowsBuildPersonQrPayload({
   required String documentId,
   required Map<String, dynamic> person,
 }) async {
+  final origin=FirebaseFirestore.instance.activeProfileId;
   final connections = await WindowsConnectionCenter.reload();
   final firebaseLink = connections.firebaseLink;
   final googleScriptUrl = connections.googleScriptUrl;
@@ -116,9 +143,16 @@ Future<String> _windowsBuildPersonQrPayload({
     documentId: documentId,
     data: person,
   );
+  final managed = await CentralSchoolCloud.saved();
+  if (managed['managed'] == true) {
+    if (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != managed['schoolId']) throw StateError('School changed before QR creation.');
+    WindowsSyncEngine.instance.scheduleSoon();
+  }
+  if(FirebaseFirestore.instance.activeProfileId != origin) throw StateError('School changed before QR creation.');
   final payload = <String, dynamic>{
     'app': 'VIDYA_SAARTHI',
     'v': 2,
+    if(managed['managed']==true)...{'managed':true,'schoolId':managed['schoolId'],'centralEndpoint':managed['endpoint']},
     'type': type,
     'schoolProfileId': profileId,
     'firebaseProjectId': connections.firebaseProjectId,
@@ -135,42 +169,28 @@ Future<String> _windowsBuildPersonQrPayload({
     'schoolLng': location['longitude'],
     'attendanceRadiusMeters': location['radiusMeters'] ?? 200,
   };
-  return jsonEncode(payload);
+  return SchoolLink.encodeCompact(payload);
 }
 
 Map<String, dynamic>? _windowsParsePersonQr(String raw) {
   final clean = raw.trim();
   if (clean.isEmpty) return null;
   try {
-    final decoded = jsonDecode(clean);
-    if (decoded is Map && decoded['app'] == 'VIDYA_SAARTHI') {
-      return Map<String, dynamic>.from(decoded);
-    }
-  } catch (_) {}
+    // Use the same version-aware identity codec as Android. A compact QR is
+    // never JSON, and malformed credentials must not escape the UI callback.
+    final link = SchoolLink.parse(clean);
+    final metadata = clean.startsWith('{')
+        ? Map<String,dynamic>.from(jsonDecode(clean) as Map)
+        : <String,dynamic>{};
+    return {...metadata,'app':'VIDYA_SAARTHI','v':2,'managed':link.managed,
+      'schoolId':link.schoolId,'firebaseProjectId':link.projectId,
+      'type':link.role,'personId':link.personId,'linkToken':link.linkToken};
+  } on FormatException { return null; }
 
-  // Legacy Student ID card fallback.
-  if (clean.contains('SVN_STUDENT_CARD') ||
-      clean.contains('VIDYA_SAARTHI_STUDENT_CARD')) {
-    final out = <String, dynamic>{
-      'app': 'VIDYA_SAARTHI',
-      'v': 1,
-      'type': 'student',
-    };
-    for (final line in clean.split(RegExp(r'\r?\n'))) {
-      final value = line.trim();
-      if (value.toLowerCase().startsWith('record id:')) {
-        out['personId'] = value.substring('record id:'.length).trim();
-      }
-      if (value.toLowerCase().startsWith('student uid:')) {
-        out['studentUid'] = value.substring('student uid:'.length).trim();
-      }
-    }
-    return out['personId']?.toString().isNotEmpty == true ? out : null;
-  }
-  return null;
+
 }
 
-Future<({double latitude, double longitude})> _windowsCurrentPosition() async {
+Future<({double latitude, double longitude, double accuracy})> _windowsCurrentPosition() async {
   const script = r'''$ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 [Windows.Devices.Geolocation.Geolocator,Windows.Devices.Geolocation,ContentType=WindowsRuntime] | Out-Null
@@ -190,8 +210,9 @@ if ($null -eq $asTaskMethod) {
   throw 'Windows Runtime AsTask method unavailable.'
 }
 $task = $asTaskMethod.MakeGenericMethod([Windows.Devices.Geolocation.Geoposition]).Invoke($null, [object[]]@($op))
-$pos = $task.GetAwaiter().GetResult().Coordinate.Point.Position
-Write-Output ($pos.Latitude.ToString([System.Globalization.CultureInfo]::InvariantCulture) + "," + $pos.Longitude.ToString([System.Globalization.CultureInfo]::InvariantCulture))''';
+$coordinate = $task.GetAwaiter().GetResult().Coordinate
+$pos = $coordinate.Point.Position
+Write-Output ($pos.Latitude.ToString([System.Globalization.CultureInfo]::InvariantCulture) + "," + $pos.Longitude.ToString([System.Globalization.CultureInfo]::InvariantCulture) + "," + $coordinate.Accuracy.ToString([System.Globalization.CultureInfo]::InvariantCulture))''';
   final result = await Process.run(
     'powershell.exe',
     const ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
@@ -200,54 +221,15 @@ Write-Output ($pos.Latitude.ToString([System.Globalization.CultureInfo]::Invaria
     throw StateError('Windows Location access fail: ${result.stderr}');
   }
   final parts = result.stdout.toString().trim().split(',');
-  if (parts.length != 2) throw StateError('Windows GPS response invalid hai.');
+  if (parts.length != 3) throw StateError('Windows GPS response invalid hai.');
   final lat = double.tryParse(parts[0]);
   final lng = double.tryParse(parts[1]);
-  if (lat == null || lng == null) throw StateError('Windows GPS coordinates invalid hain.');
-  return (latitude: lat, longitude: lng);
-}
-
-({double latitude, double longitude})? _windowsParseCoordinates(String raw) {
-  final values = RegExp(r'[-+]?(?:\d+(?:\.\d+)?|\.\d+)')
-      .allMatches(raw)
-      .map((match) => double.tryParse(match.group(0)!))
-      .whereType<double>()
-      .toList();
-
-  for (var index = 0; index + 1 < values.length; index++) {
-    final latitude = values[index];
-    final longitude = values[index + 1];
-    if (latitude >= -90 && latitude <= 90 &&
-        longitude >= -180 && longitude <= 180) {
-      return (latitude: latitude, longitude: longitude);
-    }
+  final accuracy = double.tryParse(parts[2]);
+  if (lat == null || lng == null || accuracy == null ||
+      !SchoolMapPin(lat, lng).valid || !accuracy.isFinite || accuracy < 0) {
+    throw StateError('Windows GPS coordinates/accuracy invalid hain.');
   }
-
-  return null;
-}
-
-Future<void> _openGoogleMapsForSchoolLocation(String query) async {
-  final cleanQuery = query.trim().isEmpty ? 'school' : query.trim();
-  final uri = Uri.https(
-    'www.google.com',
-    '/maps/search/',
-    <String, String>{
-      'api': '1',
-      'query': cleanQuery,
-    },
-  );
-
-  await Process.start('explorer.exe', <String>[uri.toString()]);
-}
-
-double _windowsDistanceMeters(double lat1, double lng1, double lat2, double lng2) {
-  const earth = 6371000.0;
-  double rad(double value) => value * pi / 180.0;
-  final dLat = rad(lat2 - lat1);
-  final dLng = rad(lng2 - lng1);
-  final a = sin(dLat / 2) * sin(dLat / 2) +
-      cos(rad(lat1)) * cos(rad(lat2)) * sin(dLng / 2) * sin(dLng / 2);
-  return earth * 2 * atan2(sqrt(a), sqrt(1 - a));
+  return (latitude: lat, longitude: lng, accuracy: accuracy);
 }
 
 // ============================================================
@@ -280,13 +262,6 @@ class _WindowsSectionLockDefinition {
 
 const List<_WindowsSectionLockDefinition> _windowsSectionLockDefinitions = [
   _WindowsSectionLockDefinition(
-    key: _windowsAdminSectionLock,
-    title: 'Admin Section',
-    subtitle: 'App open hone ke baad full management panel unlock karein.',
-    icon: Icons.admin_panel_settings_rounded,
-    color: Color(0xFF00D9A5),
-  ),
-  _WindowsSectionLockDefinition(
     key: _windowsStudentRecordsLock,
     title: 'Student Records',
     subtitle: 'Students, profiles aur ID cards ko protect karein.',
@@ -316,28 +291,40 @@ const List<_WindowsSectionLockDefinition> _windowsSectionLockDefinitions = [
   ),
 ];
 
+/// Central school authentication and the separate App Lock guard the app.
+/// Existing legacy Admin-section preferences no longer add another password.
+class WindowsAdminAccessGate extends StatelessWidget {
+  const WindowsAdminAccessGate({super.key,required this.child});
+  final Widget child;
+  @override Widget build(BuildContext context)=>child;
+}
+
 class WindowsSectionLocks {
   WindowsSectionLocks._();
 
-  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const WindowsSecureStorage _secure = WindowsSecureStorage();
 
-  static String _passwordKey(String sectionKey) {
-    return 'vidya_saarthi_windows_section_password_v1_$sectionKey';
+  static Future<String> _passwordKey(String sectionKey) async {
+    final saved=await CentralSchoolCloud.saved();
+    final suffix=saved['managed']==true?'_${saved['schoolId']}':'';
+    return 'vidya_saarthi_windows_section_password_v1_$sectionKey$suffix';
   }
 
-  static String _enabledKey(String sectionKey) {
-    return 'vidya_saarthi_windows_section_password_enabled_v1_$sectionKey';
+  static Future<String> _enabledKey(String sectionKey) async {
+    final saved=await CentralSchoolCloud.saved();
+    final suffix=saved['managed']==true?'_${saved['schoolId']}':'';
+    return 'vidya_saarthi_windows_section_password_enabled_v1_$sectionKey$suffix';
   }
 
   static Future<bool> configured(String sectionKey) async {
-    final value = await _secure.read(key: _passwordKey(sectionKey));
+    final value = await _secure.read(key: await _passwordKey(sectionKey));
     return value?.trim().isNotEmpty ?? false;
   }
 
   static Future<bool> enabled(String sectionKey) async {
     if (!await configured(sectionKey)) return false;
 
-    final value = await _secure.read(key: _enabledKey(sectionKey));
+    final value = await _secure.read(key: await _enabledKey(sectionKey));
     // A configured lock without an old enabled flag remains protected.
     return value == null || value == 'true';
   }
@@ -346,7 +333,7 @@ class WindowsSectionLocks {
     required String sectionKey,
     required String password,
   }) async {
-    final stored = await _secure.read(key: _passwordKey(sectionKey));
+    final stored = await _secure.read(key: await _passwordKey(sectionKey));
     return stored != null && stored.isNotEmpty && stored == password;
   }
 
@@ -357,12 +344,12 @@ class WindowsSectionLocks {
     _validatePassword(password);
 
     await _secure.write(
-      key: _passwordKey(sectionKey),
+      key: await _passwordKey(sectionKey),
       value: password,
     );
     // Adding a password turns that section lock ON by default.
     await _secure.write(
-      key: _enabledKey(sectionKey),
+      key: await _enabledKey(sectionKey),
       value: 'true',
     );
   }
@@ -373,7 +360,7 @@ class WindowsSectionLocks {
     required String newPassword,
   }) async {
     final storedPassword = await _secure.read(
-      key: _passwordKey(sectionKey),
+      key: await _passwordKey(sectionKey),
     );
 
     if (storedPassword == null || storedPassword.isEmpty) {
@@ -386,11 +373,11 @@ class WindowsSectionLocks {
 
     _validatePassword(newPassword);
     await _secure.write(
-      key: _passwordKey(sectionKey),
+      key: await _passwordKey(sectionKey),
       value: newPassword,
     );
     await _secure.write(
-      key: _enabledKey(sectionKey),
+      key: await _enabledKey(sectionKey),
       value: 'true',
     );
   }
@@ -404,7 +391,7 @@ class WindowsSectionLocks {
     }
 
     await _secure.write(
-      key: _enabledKey(sectionKey),
+      key: await _enabledKey(sectionKey),
       value: value ? 'true' : 'false',
     );
   }
@@ -424,7 +411,7 @@ const String _windowsAcademicYearRolloverMonthKey =
 class WindowsAcademicYearSettings {
   WindowsAcademicYearSettings._();
 
-  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const WindowsSecureStorage _secure = WindowsSecureStorage();
 
   static int _normalizeMonth(int month) => month == 4 ? 4 : 1;
 
@@ -474,7 +461,7 @@ const String _windowsLicenseSavedAtStorageKey =
 class WindowsLicenseStore {
   WindowsLicenseStore._();
 
-  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const WindowsSecureStorage _secure = WindowsSecureStorage();
 
   static Future<Map<String, String>> load() async {
     try {
@@ -495,8 +482,8 @@ class WindowsLicenseStore {
 
   static Future<void> save(String key) async {
     final normalized = key.trim();
-    await WindowsPlatformClient.instance.refresh();
-    await WindowsPlatformClient.instance.activate(normalized);
+    if((await CentralSchoolCloud.saved())['managed']==true){await ManagedSchoolSession.call('managed/licence/activate',{'key':normalized});ManagedSchoolSession.changed.value++;}
+    else {await WindowsPlatformClient.instance.refresh();await WindowsPlatformClient.instance.activate(normalized);}
     await _secure.write(key: _windowsLicenseKeyStorageKey, value: normalized);
     await _secure.write(
       key: _windowsLicenseStatusStorageKey,
@@ -531,6 +518,7 @@ class _WindowsLicenseSettingsPanelState
   String _savedKey = '';
   String _status = '';
   String _savedAt = '';
+  bool _centralManaged=false;
 
   @override
   void initState() {
@@ -552,6 +540,7 @@ class _WindowsLicenseSettingsPanelState
 
   Future<void> _load() async {
     final data = await WindowsLicenseStore.load();
+    _centralManaged=(await CentralSchoolCloud.saved())['managed']==true;
     if (!mounted) return;
     setState(() {
       _savedKey = data['key'] ?? '';
@@ -567,6 +556,8 @@ class _WindowsLicenseSettingsPanelState
   }
 
   String _statusText() {
+    final real=WindowsPlatformClient.instance.state.value;
+    if (_centralManaged) return real.status=='licensed' && real.allowed && real.activated ? 'License Activated ✓' : real.status=='trial' ? 'Trial active' : real.allowed && !real.activated ? 'License activation required' : 'License ${real.status}';
     if (_savedKey.isEmpty) return 'License Key not added';
     final state = WindowsPlatformClient.instance.state.value;
     if (state.allowed && state.status == 'licensed') return 'License Active';
@@ -575,6 +566,7 @@ class _WindowsLicenseSettingsPanelState
   }
 
   Color _statusColor() {
+    if (_centralManaged) return WindowsPlatformClient.instance.state.value.allowed?const Color(0xFF00D9A5):Colors.redAccent;
     if (_savedKey.isEmpty) return Colors.white54;
     final state = WindowsPlatformClient.instance.state.value;
     if (state.allowed && state.status == 'licensed') return const Color(0xFF00D9A5);
@@ -657,6 +649,8 @@ class _WindowsLicenseSettingsPanelState
     });
   }
 
+  String _licenceDate(DateTime d) {const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];final v=d.toLocal();return '${v.day.toString().padLeft(2,'0')} ${months[v.month-1]} ${v.year}';}
+
   String _savedAtText() {
     final date = DateTime.tryParse(_savedAt);
     if (date == null) return 'Not saved yet';
@@ -715,6 +709,7 @@ class _WindowsLicenseSettingsPanelState
             style: TextStyle(color: Colors.white60, fontSize: 11, height: 1.4),
           ),
           const SizedBox(height: 14),
+          if(_centralManaged) Padding(padding:const EdgeInsets.only(bottom:14),child:Text('Expiry / renewal: ${_licenceDate(WindowsPlatformClient.instance.state.value.expiresAt)}\nDays remaining: ${WindowsPlatformClient.instance.state.value.daysLeft}')),
           if (_savedKey.isNotEmpty) ...[
             Container(
               width: double.infinity,
@@ -761,6 +756,7 @@ class _WindowsLicenseSettingsPanelState
             ),
             const SizedBox(height: 12),
           ],
+          if (!_centralManaged || WindowsPlatformClient.instance.state.value.status != 'licensed' || !WindowsPlatformClient.instance.state.value.allowed || !WindowsPlatformClient.instance.state.value.activated) ...[
           TextField(
             controller: _licenseKey,
             textCapitalization: TextCapitalization.characters,
@@ -799,6 +795,7 @@ class _WindowsLicenseSettingsPanelState
               label: Text(_saving ? 'Saving...' : 'Save Licensing Key'),
             ),
           ),
+          ],
           const SizedBox(height: 10),
           const Text(
             'Keys are verified by the developer platform and bound to this school.',
@@ -815,6 +812,7 @@ Future<bool> _requireWindowsSectionPassword(
   String sectionKey,
   String sectionTitle,
 ) async {
+  if (sectionKey == _windowsAdminSectionLock) return true;
   if (!await WindowsSectionLocks.enabled(sectionKey)) return true;
   if (!context.mounted) return false;
 
@@ -1336,8 +1334,15 @@ String _feeIdentityForStudent(
 const String _schoolProfileCacheDocId = 'school_profile_cache';
 
 // Memory cache keeps School Settings / branding instant inside the current session.
-Map<String, dynamic>? _schoolProfileMemoryCache;
+Map<String, dynamic>? _schoolProfileMemoryValue;
+String? _schoolProfileMemoryTenant;
 String? _schoolProfileScriptUrlMemoryCache;
+void _ensureSchoolProfileMemoryTenant(){
+  final tenant=FirebaseFirestore.instance.activeProfileId;
+  if(_schoolProfileMemoryTenant!=tenant){_schoolProfileMemoryValue=null;_schoolProfileScriptUrlMemoryCache=null;_schoolProfileMemoryTenant=tenant;}
+}
+Map<String,dynamic>? get _schoolProfileMemoryCache{_ensureSchoolProfileMemoryTenant();return _schoolProfileMemoryValue;}
+set _schoolProfileMemoryCache(Map<String,dynamic>? value){_ensureSchoolProfileMemoryTenant();_schoolProfileMemoryValue=value;}
 
 Map<String, dynamic> _defaultSchoolProfile() => <String, dynamic>{
       // Fresh installations must start unbound. The school identity is filled
@@ -1367,11 +1372,14 @@ Map<String, dynamic> _mergeSchoolProfile(Map<String, dynamic>? raw) {
 }
 
 Future<String> _schoolProfileScriptUrl() async {
+  _ensureSchoolProfileMemoryTenant();
+  final tenant=FirebaseFirestore.instance.activeProfileId;
   final cachedUrl = _schoolProfileScriptUrlMemoryCache?.trim() ?? '';
   if (cachedUrl.isNotEmpty) return cachedUrl;
 
   final url = await _windowsGoogleScriptUrl();
 
+  if(FirebaseFirestore.instance.activeProfileId!=tenant)throw StateError('School changed while loading its storage connection.');
   _schoolProfileScriptUrlMemoryCache = url;
   return url;
 }
@@ -1403,16 +1411,20 @@ Future<Map<String, dynamic>> _schoolProfileBackendPost(
 }
 
 Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
+  _ensureSchoolProfileMemoryTenant();
+  final tenant=FirebaseFirestore.instance.activeProfileId;
   if (_schoolProfileMemoryCache != null) {
     return _mergeSchoolProfile(_schoolProfileMemoryCache);
   }
 
   try {
     final doc = await _schoolProfileCacheRef().get();
+    if(FirebaseFirestore.instance.activeProfileId!=tenant)throw StateError('School changed while loading its profile.');
     final profile = _mergeSchoolProfile(doc.data());
     _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
     return profile;
   } catch (_) {
+    if(FirebaseFirestore.instance.activeProfileId!=tenant)rethrow;
     final profile = _defaultSchoolProfile();
     _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
     return profile;
@@ -1420,10 +1432,12 @@ Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
 }
 
 Future<Map<String, dynamic>> _refreshSchoolProfileFromDrive() async {
+  final reference=_schoolProfileCacheRef();
   final result = await _schoolProfileBackendPost(
     const {'action': 'get_school_profile'},
   );
 
+  reference.requireOriginProfile();
   final raw = result['profile'];
   final profile = raw is Map
       ? _mergeSchoolProfile(Map<String, dynamic>.from(raw))
@@ -1431,7 +1445,7 @@ Future<Map<String, dynamic>> _refreshSchoolProfileFromDrive() async {
 
   _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
 
-  await _schoolProfileCacheRef().set(
+  await reference.set(
     {
       ...profile,
       'cachedAt': FieldValue.serverTimestamp(),
@@ -1473,10 +1487,7 @@ Future<Uint8List?> _downloadImageBytes(String url) async {
     if (clean.startsWith('data:image/')) {
       return Uint8List.fromList(UriData.parse(clean).contentAsBytes());
     }
-    final response = await http.get(Uri.parse(clean));
-    if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
-      return response.bodyBytes;
-    }
+    return await schoolImageBytes(clean);
   } catch (e) {
     debugPrint('Image download warning: $e');
   }
@@ -1491,7 +1502,7 @@ Widget _windowsSchoolProfileImage(String source, {BoxFit fit = BoxFit.contain, r
           fit: fit, errorBuilder: (_, __, ___) => fallback);
     } catch (_) { return fallback; }
   }
-  return Image.network(source, fit: fit, errorBuilder: (_, __, ___) => fallback);
+  return schoolNetworkImage(source, fit: fit, errorBuilder: (_, __, ___) => fallback);
 }
 
 // ============================================================
@@ -1503,7 +1514,7 @@ Widget _windowsAdminModule(WindowsAdminPage page) => switch (page) {
   WindowsAdminPage.students => const AllStudentsListScreen(),
   WindowsAdminPage.fees => const FeesCollectionScreen(),
   WindowsAdminPage.exams => const ExamCenterScreen(),
-  WindowsAdminPage.teachers => const TeachersDirectoryScreen(),
+  WindowsAdminPage.teachers => const SchoolStaffDirectory(teachers:TeachersDirectoryScreen()),
   WindowsAdminPage.salary => const StaffSalaryScreen(),
   WindowsAdminPage.support => const WindowsSupportScreen(),
   WindowsAdminPage.expenses => const WindowsSchoolExpensesScreen(),
@@ -1538,7 +1549,7 @@ Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<W
       }));
 Future<void> _windowsConfirmLogout(BuildContext context) async {
   final confirmed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-    title: const Text('Logout Admin?'), content: const Text('Logout karne ke baad School Login screen dikhegi.'),
+    title: const Text('Logout Admin?'), content: const Text('Logout karne ke baad App Lock dikhega.'),
     actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
       FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Logout'))]));
   if (confirmed != true) return;
@@ -2341,7 +2352,7 @@ void _startInlineScanner() {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: photoUrl.isNotEmpty
-                  ? Image.network(
+                  ? schoolNetworkImage(
                       photoUrl,
                       fit: BoxFit.cover,
 errorBuilder: (context, error, stackTrace) {
@@ -3970,7 +3981,7 @@ void _handleLoginBack(bool didPop) {
                           child: Center(child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5, color: Color(0xFF00A884)))),
                         )
                       : photoUrl.isNotEmpty
-                          ? Image.network(
+                          ? schoolNetworkImage(
                               photoUrl,
                               fit: BoxFit.cover,
 errorBuilder: (context, error, stackTrace) {
@@ -4684,6 +4695,17 @@ void _handleLoginBack(bool didPop) {
   Future<void> _autoLogoutAdmin() async {
     if (_autoLogoutInProgress) return;
     _autoLogoutInProgress = true;
+    // Managed identity persists; inactivity uses only explicitly enabled local locks.
+    try {
+      if((await CentralSchoolCloud.saved())['managed']==true){
+        await WindowsLocalSecurity.initialize();
+        final locked=WindowsLocalSecurity.configured||await WindowsSectionLocks.enabled(_windowsAdminSectionLock);
+        if(!locked){_touchPortalSession();_sessionSecondsRemaining.value=_portalInactivityLimit.inSeconds;_autoLogoutInProgress=false;return;}
+        _sessionTimer?.cancel();await _sessionClickSubscription?.cancel();_clearPortalSession();
+        if(mounted)Navigator.of(context).pushNamedAndRemoveUntil('/',(route)=>false);
+        return;
+      }
+    }catch(e){debugPrint('Local idle lock verification failed: $e');}
     _sessionTimer?.cancel();
     await _sessionClickSubscription?.cancel();
     _clearPortalSession();
@@ -4758,6 +4780,7 @@ void _handleLoginBack(bool didPop) {
   }
 
   void _openAddStudentDialog() {
+    final originProfile=FirebaseFirestore.instance.activeProfileId;
     final nameCtrl = TextEditingController();
     final parentCtrl = TextEditingController();
     final rollCtrl = TextEditingController();
@@ -4922,7 +4945,8 @@ void _handleLoginBack(bool didPop) {
                           // Class 1 + Roll 1/01/001 all use the SAME document ID.
                           final normalizedNewRoll = normalizeRoll(roll);
                           final docId = '${selectedClass}_Roll_$normalizedNewRoll';
-                          String finalPhotoUrl = '';
+                          final localPhoto = selectedPhotoBytes == null ? '' : WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!);
+                          String finalPhotoUrl = localPhoto;
                           bool driveSaved = false;
 
                           try {
@@ -5013,7 +5037,7 @@ void _handleLoginBack(bool didPop) {
                                 );
                               }
 
-                              driveSaved = true;
+                              driveSaved = responseJson['cloudSyncPending'] != true;
 
                               if (responseJson['photoUrl'] != null) {
                                 finalPhotoUrl =
@@ -5021,6 +5045,7 @@ void _handleLoginBack(bool didPop) {
                               }
                             }
 
+                            if(FirebaseFirestore.instance.activeProfileId!=originProfile) throw StateError('School changed. Reopen student entry.');
                             final studentRef = FirebaseFirestore.instance
                                 .collection('students_directory')
                                 .doc(docId);
@@ -5059,15 +5084,23 @@ void _handleLoginBack(bool didPop) {
                                 content: Text(
                                   (driveSaved
                                           ? 'Student Google Sheet, Drive aur Firestore me save ho gaya.'
-                                          : 'Student Firestore me save hua.') +
+                                          : 'Student saved on this PC. Cloud sync pending.') +
                                       (assignedTestUid != null
                                           ? ' Test UID: $assignedTestUid'
                                           : ''),
                                 ),
                               ),
                             );
+                            setState(() {
+                              _directoryClass = selectedClass;
+                              _rollController.text = normalizedNewRoll;
+                              _nameController.text = name;
+                              _parentContactController.text = contact;
+                              _studentPhotoUrl = finalPhotoUrl;
+                            });
+                            await _showIdCardPreview();
                           } catch (e) {
-                            setDlgState(() => isSaving = false);
+                            if (dialogContext.mounted) setDlgState(() => isSaving = false);
 
                             if (!mounted) return;
 
@@ -5103,23 +5136,22 @@ void _handleLoginBack(bool didPop) {
     }
     setState(() => _isSavingNotice = true);
     try {
-      final connection = await WindowsConnectionCenter.reload();
-      if (!connection.remoteReady) throw StateError('Notice not sent. Connect and verify this school Firebase and Google Script first.');
+
       final now = DateTime.now().millisecondsSinceEpoch;
-      final id = 'NOTICE-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
+      final id = _editingNoticeId ?? 'NOTICE-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
       // An edited announcement is a new notification, avoiding old FCM-job dedupe.
       final result = await WindowsPlatformClient.instance.publishNotice(id, {
         'title': title, 'description': description, 'category': _noticeCategory,
         'timestamp': now, 'lastEdited': now,
       });
-      if (_editingNoticeId != null) await FirebaseFirestore.instance.collection('school_notices').doc(_editingNoticeId).delete();
+
       if (!mounted) return;
       _cancelNoticeEdit();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        backgroundColor: result.notificationSent ? const Color(0xFF00A884) : Colors.orange,
+        backgroundColor: result.notificationSent || result.schoolPublished ? const Color(0xFF00A884) : Colors.orange,
         content: Text(result.notificationSent
           ? 'Published to the school student app. Notification accepted for ${result.recipients} registered students.'
-          : 'Published to the school portal. Notification pending: ${result.error}')));
+          : result.schoolPublished ? 'Notice published to this school dashboard.\n${result.info}${result.error}' : 'Notice saved locally. Background sync queued. ${result.error}')));
     } catch (e) {
       if (mounted) {
         setState(() => _isSavingNotice = false);
@@ -5435,7 +5467,7 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
     },
   );
 
-  final schoolProfile = await _loadSchoolProfile();
+  final schoolProfile = await _loadSchoolProfileCache();
 
   return {
     'name': name,
@@ -5444,6 +5476,10 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
     'contact': contact,
     'parentName': parentName,
     'address': fullAddress,
+    'streetAddress': address,
+    'district': district,
+    'state': state,
+    'pinCode': pinCode,
     'admissionDate': admissionDate,
     'dob': dob,
     'photoUrl': photoUrl,
@@ -5453,6 +5489,7 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
     'qrData': qrData,
     'class': _directoryClass,
     'schoolName': _schoolName(schoolProfile),
+    'schoolAddress': schoolProfile['address']?.toString() ?? '',
     'principalName': _principalName(schoolProfile),
     'schoolLogoUrl': schoolProfile['logoUrl']?.toString() ?? '',
     'schoolSealUrl': schoolProfile['sealUrl']?.toString() ?? '',
@@ -5466,1604 +5503,26 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
 // ============================================================
 
 Future<void> _showIdCardPreview() async {
-  final data = await _getIdCardStudentData();
-  final custom = await WindowsDocumentTemplates.selected('studentId', data, qr:data['qrData'].toString());
-  if(custom != null){if(mounted)await WindowsDocumentTemplates.preview(context,custom,title:'Student ID card');return;}
-
-  if (!mounted) return;
-
-  final name = data['name'].toString();
-  final roll = data['roll'].toString();
-  final parentName = data['parentName'].toString();
-  final contact = data['contact'].toString();
-  final dob = data['dob'].toString();
-  final address = data['address'].toString();
-  final studentId = data['studentId'].toString();
-  final studentUid = data['studentUid']?.toString() ?? '';
-  final showStudentUid = data['showStudentUid'] == true;
-  final qrData = data['qrData'].toString();
-  final photoUrl = data['photoUrl']?.toString() ?? '';
-  final schoolName = data['schoolName']?.toString().trim().isNotEmpty == true
-      ? data['schoolName'].toString().trim()
-      : '';
-  final principalName =
-      data['principalName']?.toString().trim().isNotEmpty == true
-          ? data['principalName'].toString().trim()
-          : '';
-  final schoolLogoUrl = data['schoolLogoUrl']?.toString().trim() ?? '';
-  final schoolSealUrl = data['schoolSealUrl']?.toString().trim() ?? '';
-  final principalSignatureUrl =
-      data['principalSignatureUrl']?.toString().trim() ?? '';
-
-  showDialog(
-    context: context,
-    builder: (dialogContext) {
-      return Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(20),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 610,
-                constraints: const BoxConstraints(
-                  maxWidth: 610,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEEF3F5),
-                  borderRadius: BorderRadius.circular(22),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.30),
-                      blurRadius: 30,
-                      offset: const Offset(0, 12),
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.all(18),
-                child: AspectRatio(
-                  aspectRatio: 85.60 / 53.98,
-                  child: Container(
-                    clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: const Color(0xFF0E7C67),
-                        width: 1.2,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color:
-                              const Color(0xFF0B3558)
-                                  .withOpacity(0.12),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Stack(
-                      children: [
-                        // BACKGROUND DECORATION
-                        Positioned(
-                          right: -65,
-                          top: -75,
-                          child: Container(
-                            width: 230,
-                            height: 230,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: const Color(0xFF00A884)
-                                  .withOpacity(0.07),
-                            ),
-                          ),
-                        ),
-
-                        Positioned(
-                          left: -55,
-                          bottom: -85,
-                          child: Container(
-                            width: 230,
-                            height: 180,
-                            decoration: BoxDecoration(
-                              borderRadius:
-                                  BorderRadius.circular(100),
-                              color: const Color(0xFF0B3558)
-                                  .withOpacity(0.04),
-                            ),
-                          ),
-                        ),
-
-                        Column(
-                          children: [
-                            // =================================
-                            // HEADER
-                            // =================================
-                            Container(
-                              height: 82,
-                              width: double.infinity,
-                              padding:
-                                  const EdgeInsets.symmetric(
-                                horizontal: 17,
-                                vertical: 10,
-                              ),
-                              decoration:
-                                  const BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Color(0xFF0B3558),
-                                    Color(0xFF07566A),
-                                    Color(0xFF008B75),
-                                  ],
-                                  begin: Alignment.topLeft,
-                                  end:
-                                      Alignment.bottomRight,
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 58,
-                                    height: 58,
-                                    padding:
-                                        const EdgeInsets.all(3),
-                                    decoration:
-                                        BoxDecoration(
-                                      color: Colors.white,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: Colors.white,
-                                        width: 2,
-                                      ),
-                                    ),
-                                    child: ClipOval(
-                                      child: schoolLogoUrl.isNotEmpty
-                                          ? Image.network(
-                                              schoolLogoUrl,
-                                              fit: BoxFit.contain,
-errorBuilder: (_, __, ___) =>
-                                                  const Icon(
-                                                Icons.school_rounded,
-                                                color: Color(0xFF0B3558),
-                                                size: 32,
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.school_rounded,
-                                              color: Color(0xFF0B3558),
-                                              size: 32,
-                                            ),
-                                    ),
-                                  ),
-
-                                  const SizedBox(width: 12),
-
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Text(
-                                          schoolName.toUpperCase(),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w800,
-                                            letterSpacing: .3,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 3),
-                                        const Text(
-                                          'STUDENT IDENTITY CARD',
-                                          style: TextStyle(
-                                            color: Color(0xFF98F3D6),
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: 1.3,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-
-                                  Container(
-                                    padding:
-                                        const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 5,
-                                    ),
-                                    decoration:
-                                        BoxDecoration(
-                                      color: Colors.white
-                                          .withOpacity(.13),
-                                      borderRadius:
-                                          BorderRadius.circular(
-                                              20),
-                                      border: Border.all(
-                                        color: Colors.white
-                                            .withOpacity(.20),
-                                      ),
-                                    ),
-                                    child: const Text(
-                                      'STUDENT',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 8,
-                                        fontWeight:
-                                            FontWeight.w800,
-                                        letterSpacing: 1,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            // GREEN ACCENT BAR
-                            Container(
-                              height: 5,
-                              decoration:
-                                  const BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Color(0xFF00A884),
-                                    Color(0xFF00D9A5),
-                                  ],
-                                ),
-                              ),
-                            ),
-
-                            // =================================
-                            // BODY
-                            // =================================
-                            Expanded(
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(
-                                  16,
-                                  10,
-                                  15,
-                                  8,
-                                ),
-                                child: Row(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
-                                  children: [
-                                    // LEFT INFORMATION
-                                    Expanded(
-                                      flex: 7,
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment
-                                                .start,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets
-                                                        .symmetric(
-                                                  horizontal: 10,
-                                                  vertical: 4,
-                                                ),
-                                                decoration:
-                                                    BoxDecoration(
-                                                  color:
-                                                      const Color(
-                                                          0xFF00A884),
-                                                  borderRadius:
-                                                      BorderRadius
-                                                          .circular(
-                                                              5),
-                                                ),
-                                                child:
-                                                    const Text(
-                                                  'STUDENT ID CARD',
-                                                  style:
-                                                      TextStyle(
-                                                    color:
-                                                        Colors.white,
-                                                    fontSize: 8.5,
-                                                    fontWeight:
-                                                        FontWeight
-                                                            .w800,
-                                                    letterSpacing:
-                                                        .6,
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(
-                                                  width: 8),
-                                              Expanded(
-                                                child:
-                                                    Container(
-                                                  height: 1,
-                                                  color:
-                                                      const Color(
-                                                              0xFF00A884)
-                                                          .withOpacity(
-                                                              .25),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-
-                                          const SizedBox(
-                                              height: 7),
-
-                                          _modernIdField(
-                                            'Name',
-                                            name,
-                                            important: true,
-                                          ),
-                                          _modernIdField(
-                                            'Father / Guardian',
-                                            parentName,
-                                          ),
-                                          _modernIdField(
-                                            'Class',
-                                            _directoryClass,
-                                          ),
-                                          _modernIdField(
-                                            'Roll No.',
-                                            roll,
-                                          ),
-                                          _modernIdField(
-                                            'Student ID',
-                                            studentId,
-                                          ),
-                                          _modernIdField(
-                                            'Date of Birth',
-                                            dob,
-                                          ),
-                                          _modernIdField(
-                                            'Contact',
-                                            contact,
-                                          ),
-                                          _modernIdField(
-                                            'Address',
-                                            address,
-                                            maxLines: 2,
-                                          ),
-
-                                          const Spacer(),
-
-                                          Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment
-                                                    .end,
-                                            children: [
-                                              // QR
-                                              Container(
-                                                width: 58,
-                                                height: 58,
-                                                padding:
-                                                    const EdgeInsets
-                                                        .all(3),
-                                                decoration:
-                                                    BoxDecoration(
-                                                  color:
-                                                      Colors.white,
-                                                  borderRadius:
-                                                      BorderRadius
-                                                          .circular(
-                                                              6),
-                                                  border:
-                                                      Border.all(
-                                                    color:
-                                                        const Color(
-                                                                0xFF0B3558)
-                                                            .withOpacity(
-                                                                .18),
-                                                  ),
-                                                ),
-                                                child:
-                                                    QrImageView(
-                                                  data: qrData,
-                                                  version:
-                                                      QrVersions
-                                                          .auto,
-                                                  padding:
-                                                      EdgeInsets
-                                                          .zero,
-                                                  backgroundColor:
-                                                      Colors.white,
-                                                  eyeStyle:
-                                                      const QrEyeStyle(
-                                                    eyeShape:
-                                                        QrEyeShape
-                                                            .square,
-                                                    color: Color(
-                                                        0xFF0B3558),
-                                                  ),
-                                                  dataModuleStyle:
-                                                      const QrDataModuleStyle(
-                                                    dataModuleShape:
-                                                        QrDataModuleShape
-                                                            .square,
-                                                    color: Color(
-                                                        0xFF0B3558),
-                                                  ),
-                                                ),
-                                              ),
-
-                                              const SizedBox(
-                                                  width: 8),
-                                              Padding(
-                                                padding:
-                                                    const EdgeInsets.only(
-                                                        bottom: 3),
-                                                child: Column(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    const Text(
-                                                      'SCAN FOR\nSTUDENT\nVERIFICATION',
-                                                      style: TextStyle(
-                                                        color: Color(0xFF0B3558),
-                                                        fontSize: 6.4,
-                                                        fontWeight: FontWeight.w800,
-                                                        height: 1.25,
-                                                        letterSpacing: .3,
-                                                      ),
-                                                    ),
-                                                    if (showStudentUid &&
-                                                        studentUid.isNotEmpty) ...[
-                                                      const SizedBox(height: 4),
-                                                      Container(
-                                                        padding: const EdgeInsets.symmetric(
-                                                          horizontal: 5,
-                                                          vertical: 2,
-                                                        ),
-                                                        decoration: BoxDecoration(
-                                                          color: const Color(0xFF00A884)
-                                                              .withOpacity(0.10),
-                                                          borderRadius:
-                                                              BorderRadius.circular(5),
-                                                        ),
-                                                        child: Text(
-                                                          'UID: $studentUid',
-                                                          style: const TextStyle(
-                                                            color: Color(0xFF0B6A5B),
-                                                            fontSize: 6.2,
-                                                            fontWeight: FontWeight.w900,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ],
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-
-                                    const SizedBox(width: 13),
-
-                                    // RIGHT PHOTO + SIGNATURE
-                                    SizedBox(
-                                      width: 132,
-                                      child: Column(
-                                        children: [
-                                          Container(
-                                            width: 105,
-                                            height: 123,
-                                            padding:
-                                                const EdgeInsets
-                                                    .all(3),
-                                            decoration:
-                                                BoxDecoration(
-                                              color:
-                                                  Colors.white,
-                                              borderRadius:
-                                                  BorderRadius
-                                                      .circular(12),
-                                              border:
-                                                  Border.all(
-                                                color:
-                                                    const Color(
-                                                        0xFF00A884),
-                                                width: 2,
-                                              ),
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: const Color(
-                                                          0xFF00A884)
-                                                      .withOpacity(
-                                                          .12),
-                                                  blurRadius: 8,
-                                                ),
-                                              ],
-                                            ),
-                                            child: ClipRRect(
-                                              borderRadius:
-                                                  BorderRadius
-                                                      .circular(8),
-                                              child: photoUrl
-                                                      .isNotEmpty
-                                                  ? Image.network(
-                                                      photoUrl,
-                                                      fit: BoxFit
-                                                          .cover,
-errorBuilder:
-                                                          (
-                                                        context,
-                                                        error,
-                                                        stackTrace,
-                                                      ) =>
-                                                              _studentPhotoFallback(
-                                                        name,
-                                                      ),
-                                                    )
-                                                  : _studentPhotoFallback(
-                                                      name,
-                                                    ),
-                                            ),
-                                          ),
-
-                                          const SizedBox(
-                                              height: 5),
-
-                                          Container(
-                                            padding:
-                                                const EdgeInsets
-                                                    .symmetric(
-                                              horizontal: 8,
-                                              vertical: 3,
-                                            ),
-                                            decoration:
-                                                BoxDecoration(
-                                              color:
-                                                  const Color(
-                                                      0xFFE6F8F2),
-                                              borderRadius:
-                                                  BorderRadius
-                                                      .circular(20),
-                                              border:
-                                                  Border.all(
-                                                color:
-                                                    const Color(
-                                                            0xFF00A884)
-                                                        .withOpacity(
-                                                            .25),
-                                              ),
-                                            ),
-                                            child: const Row(
-                                              mainAxisSize:
-                                                  MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  Icons
-                                                      .verified_rounded,
-                                                  color: Color(
-                                                      0xFF00A884),
-                                                  size: 11,
-                                                ),
-                                                SizedBox(width: 3),
-                                                Text(
-                                                  'ACTIVE',
-                                                  style:
-                                                      TextStyle(
-                                                    color: Color(
-                                                        0xFF00866C),
-                                                    fontWeight:
-                                                        FontWeight
-                                                            .w800,
-                                                    fontSize: 7,
-                                                    letterSpacing:
-                                                        .5,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-
-                                          const Spacer(),
-
-                                          SizedBox(
-                                            height: 43,
-                                            width: 105,
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                if (schoolSealUrl.isNotEmpty)
-                                                  SizedBox(
-                                                    width: 34,
-                                                    height: 34,
-                                                    child: Image.network(
-                                                      schoolSealUrl,
-                                                      fit: BoxFit.contain,
-errorBuilder:
-                                                          (_, __, ___) =>
-                                                              const SizedBox
-                                                                  .shrink(),
-                                                    ),
-                                                  ),
-                                                Expanded(
-                                                  child: principalSignatureUrl
-                                                          .isNotEmpty
-                                                      ? Image.network(
-                                                          principalSignatureUrl,
-                                                          fit: BoxFit.contain,
-errorBuilder:
-                                                              (_, __, ___) =>
-                                                                  const SizedBox
-                                                                      .shrink(),
-                                                        )
-                                                      : const SizedBox.shrink(),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-
-                                          Container(
-                                            width: 100,
-                                            height: 1,
-                                            color: const Color(0xFF0B3558),
-                                          ),
-
-                                          const SizedBox(height: 2),
-
-                                          Text(
-                                            principalName,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              color: Color(0xFF0B3558),
-                                              fontSize: 6.2,
-                                              fontWeight: FontWeight.w800,
-                                            ),
-                                          ),
-                                          const Text(
-                                            'PRINCIPAL',
-                                            style: TextStyle(
-                                              color: Color(0xFF0B3558),
-                                              fontSize: 5.6,
-                                              fontWeight: FontWeight.w700,
-                                              letterSpacing: .7,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-
-                            // =================================
-                            // BOTTOM STRIP
-                            // =================================
-                            Container(
-                              height: 24,
-                              width: double.infinity,
-                              padding:
-                                  const EdgeInsets.symmetric(
-                                horizontal: 15,
-                              ),
-                              decoration:
-                                  const BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Color(0xFF0B3558),
-                                    Color(0xFF086A70),
-                                  ],
-                                ),
-                              ),
-                              child: const Row(
-                                children: [
-                                  Icon(
-                                    Icons.school_rounded,
-                                    color: Color(0xFF6DE3BE),
-                                    size: 11,
-                                  ),
-                                  SizedBox(width: 5),
-                                  Text(
-                                    'Education for a Better Tomorrow',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 7,
-                                      fontWeight:
-                                          FontWeight.w600,
-                                      fontStyle:
-                                          FontStyle.italic,
-                                    ),
-                                  ),
-                                  Spacer(),
-                                  Text(
-                                    'LEARN • GROW • SUCCEED',
-                                    style: TextStyle(
-                                      color: Color(0xFF9EECD3),
-                                      fontSize: 6.5,
-                                      fontWeight:
-                                          FontWeight.w700,
-                                      letterSpacing: .7,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 14),
-
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                alignment: WrapAlignment.center,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () =>
-                        Navigator.pop(dialogContext),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white70,
-                      side: const BorderSide(
-                        color: Colors.white38,
-                      ),
-                    ),
-                    icon: const Icon(
-                      Icons.close_rounded,
-                      size: 18,
-                    ),
-                    label: const Text('Close'),
-                  ),
-
-                  ElevatedButton.icon(
-                    onPressed: _printIdCard,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          const Color(0xFF0B3558),
-                      foregroundColor: Colors.white,
-                    ),
-                    icon: const Icon(
-                      Icons.print_rounded,
-                      size: 18,
-                    ),
-                    label: const Text('Print ID Card'),
-                  ),
-
-                  ElevatedButton.icon(
-                    onPressed: _downloadIdCard,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          const Color(0xFF00A884),
-                      foregroundColor: Colors.white,
-                    ),
-                    icon: const Icon(
-                      Icons.download_rounded,
-                      size: 18,
-                    ),
-                    label:
-                        const Text('Download PDF'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      );
-    },
-  );
-}
-
-// ============================================================
-// STUDENT PHOTO FALLBACK
-// ============================================================
-
-Widget _studentPhotoFallback(String name) {
-  String initial = 'S';
-
-  if (name.trim().isNotEmpty) {
-    initial =
-        name.trim().substring(0, 1).toUpperCase();
+  try {
+    final data = await _getIdCardStudentData();
+    final bytes = await WindowsDocumentTemplates.selected('studentId', data,
+        qr: data['qrData'].toString());
+    if (mounted && bytes != null) {
+      await WindowsDocumentTemplates.preview(context, bytes, title: 'Student ID card • Front & back',
+        notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
+        onDownload: _downloadIdCard, onPrint: _printIdCard);
+    }
+  } catch (e) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('ID card preview unavailable: $e')));
   }
-
-  return Container(
-    color: const Color(0xFFE9EFF2),
-    child: Center(
-      child: Text(
-        initial,
-        style: const TextStyle(
-          color: Color(0xFF0B3558),
-          fontSize: 42,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    ),
-  );
 }
-
-// ============================================================
-// PREVIEW FIELD
-// ============================================================
-
-Widget _modernIdField(
-  String label,
-  String value, {
-  bool important = false,
-  int maxLines = 1,
-}) {
-  final displayValue =
-      value.trim().isEmpty ? 'N/A' : value.trim();
-
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 3.2),
-    child: Row(
-      crossAxisAlignment:
-          CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 88,
-          child: Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFF47707D),
-              fontSize: 7.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-
-        const Text(
-          ': ',
-          style: TextStyle(
-            color: Color(0xFF47707D),
-            fontSize: 7.5,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-
-        Expanded(
-          child: Text(
-            displayValue,
-            maxLines: maxLines,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: const Color(0xFF102A36),
-              fontSize: important ? 9.5 : 7.7,
-              fontWeight: important
-                  ? FontWeight.w800
-                  : FontWeight.w600,
-              height: 1.15,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-// ============================================================
-// BUILD ACTUAL ID CARD PDF
-// Standard CR80 Card: 85.60mm x 53.98mm
-// ============================================================
 
 Future<Uint8List> _buildIdCardPdf() async {
   final data = await _getIdCardStudentData();
-  final custom = await WindowsDocumentTemplates.selected('studentId', data, qr:data['qrData'].toString());
-  if(custom != null) return custom;
-
-  final name = data['name'].toString();
-  final roll = data['roll'].toString();
-  final parentName =
-      data['parentName'].toString();
-  final contact = data['contact'].toString();
-  final dob = data['dob'].toString();
-  final address = data['address'].toString();
-  final studentId =
-      data['studentId'].toString();
-  final studentUid =
-      data['studentUid']?.toString() ?? '';
-  final showStudentUid =
-      data['showStudentUid'] == true;
-  final qrData = data['qrData'].toString();
-  final photoUrl =
-      data['photoUrl']?.toString() ?? '';
-  final schoolName = data['schoolName']?.toString().trim().isNotEmpty == true
-      ? data['schoolName'].toString().trim()
-      : '';
-  final principalName =
-      data['principalName']?.toString().trim().isNotEmpty == true
-          ? data['principalName'].toString().trim()
-          : '';
-  final schoolLogoUrl = data['schoolLogoUrl']?.toString().trim() ?? '';
-  final schoolSealUrl = data['schoolSealUrl']?.toString().trim() ?? '';
-  final principalSignatureUrl =
-      data['principalSignatureUrl']?.toString().trim() ?? '';
-
-  final logoNetworkBytes = await _downloadImageBytes(schoolLogoUrl);
-  final signNetworkBytes =
-      await _downloadImageBytes(principalSignatureUrl);
-  final sealNetworkBytes = await _downloadImageBytes(schoolSealUrl);
-
-  final fallbackLogoBytes = await rootBundle.load('assets/school_logo.png');
-  final fallbackSignBytes =
-      await rootBundle.load('assets/principal_sign.png');
-
-  final logoImage = pw.MemoryImage(
-    logoNetworkBytes ??
-        fallbackLogoBytes.buffer.asUint8List(
-          fallbackLogoBytes.offsetInBytes,
-          fallbackLogoBytes.lengthInBytes,
-        ),
-  );
-
-  final signImage = pw.MemoryImage(
-    signNetworkBytes ??
-        fallbackSignBytes.buffer.asUint8List(
-          fallbackSignBytes.offsetInBytes,
-          fallbackSignBytes.lengthInBytes,
-        ),
-  );
-
-  final pw.MemoryImage? sealImage =
-      sealNetworkBytes == null ? null : pw.MemoryImage(sealNetworkBytes);
-
-  // ==========================================
-  // LOAD STUDENT PHOTO
-  // ==========================================
-
-  pw.MemoryImage? studentPhoto;
-
-  if (photoUrl.isNotEmpty) {
-    try {
-      final response =
-          await http.get(Uri.parse(photoUrl));
-
-      if (response.statusCode == 200 &&
-          response.bodyBytes.isNotEmpty) {
-        studentPhoto =
-            pw.MemoryImage(response.bodyBytes);
-      }
-    } catch (e) {
-      debugPrint(
-          'PDF student photo load error: $e');
-    }
-  }
-
-  const navy =
-      PdfColor(0.043, 0.208, 0.345);
-
-  const teal =
-      PdfColor(0.000, 0.659, 0.518);
-
-  const darkText =
-      PdfColor(0.063, 0.165, 0.212);
-
-  const muted =
-      PdfColor(0.278, 0.439, 0.490);
-
-  const paleGreen =
-      PdfColor(0.902, 0.973, 0.949);
-
-  final pdf = pw.Document();
-
-  pdf.addPage(
-    pw.Page(
-      pageFormat:
-          const PdfPageFormat(
-        243,
-        153,
-        marginAll: 0,
-      ),
-      build: (pw.Context context) {
-        return pw.Container(
-          width: 243,
-          height: 153,
-          decoration: pw.BoxDecoration(
-            color: PdfColors.white,
-            border: pw.Border.all(
-              color: teal,
-              width: 0.8,
-            ),
-            borderRadius:
-                pw.BorderRadius.circular(5),
-          ),
-          child: pw.Column(
-            children: [
-              // ==================================
-              // PDF HEADER
-              // ==================================
-              pw.Container(
-                height: 38,
-                width: double.infinity,
-                padding:
-                    const pw.EdgeInsets.symmetric(
-                  horizontal: 7,
-                  vertical: 4,
-                ),
-                decoration:
-                    const pw.BoxDecoration(
-                  color: navy,
-                  borderRadius:
-                      pw.BorderRadius.only(
-                    topLeft:
-                        pw.Radius.circular(4),
-                    topRight:
-                        pw.Radius.circular(4),
-                  ),
-                ),
-                child: pw.Row(
-                  children: [
-                    pw.Container(
-                      width: 29,
-                      height: 29,
-                      padding:
-                          const pw.EdgeInsets.all(1),
-                      decoration:
-                          const pw.BoxDecoration(
-                        color: PdfColors.white,
-                        shape: pw.BoxShape.circle,
-                      ),
-                      child: pw.ClipOval(
-                        child: pw.Image(
-                          logoImage,
-                          fit: pw.BoxFit.contain,
-                        ),
-                      ),
-                    ),
-
-                    pw.SizedBox(width: 6),
-
-                    pw.Expanded(
-                      child: pw.Column(
-                        mainAxisAlignment:
-                            pw.MainAxisAlignment
-                                .center,
-                        crossAxisAlignment:
-                            pw.CrossAxisAlignment
-                                .start,
-                        children: [
-                          pw.Text(
-                            schoolName.toUpperCase(),
-                            maxLines: 2,
-                            style: pw.TextStyle(
-                              color:
-                                  PdfColors.white,
-                              fontSize: 8.5,
-                              fontWeight:
-                                  pw.FontWeight.bold,
-                            ),
-                          ),
-
-                          pw.SizedBox(height: 1),
-
-                          pw.Text(
-                            'STUDENT IDENTITY CARD',
-                            style: pw.TextStyle(
-                              color: teal,
-                              fontSize: 5.4,
-                              fontWeight: pw.FontWeight.bold,
-                              letterSpacing: .8,
-                            ),
-                          ),
-
-                          pw.SizedBox(height: 1),
-
-                          pw.Text(
-                            'DISCIPLINE • KNOWLEDGE • VALUES',
-                            style:
-                                const pw.TextStyle(
-                              color:
-                                  PdfColors.grey300,
-                              fontSize: 3.8,
-                              letterSpacing: .25,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    pw.Container(
-                      padding:
-                          const pw.EdgeInsets
-                              .symmetric(
-                        horizontal: 5,
-                        vertical: 2,
-                      ),
-                      decoration:
-                          pw.BoxDecoration(
-                        color: paleGreen,
-                        borderRadius:
-                            pw.BorderRadius
-                                .circular(8),
-                      ),
-                      child: pw.Text(
-                        'STUDENT',
-                        style: pw.TextStyle(
-                          color: teal,
-                          fontSize: 5.2,
-                          fontWeight:
-                              pw.FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              pw.Container(
-                height: 2.5,
-                color: teal,
-              ),
-
-              // ==================================
-              // PDF BODY
-              // ==================================
-              pw.Expanded(
-                child: pw.Padding(
-                  padding:
-                      const pw.EdgeInsets.fromLTRB(
-                    7,
-                    4,
-                    7,
-                    3,
-                  ),
-                  child: pw.Row(
-                    crossAxisAlignment:
-                        pw.CrossAxisAlignment.start,
-                    children: [
-                      // LEFT DETAILS
-                      pw.Expanded(
-                        flex: 7,
-                        child: pw.Column(
-                          crossAxisAlignment:
-                              pw.CrossAxisAlignment
-                                  .start,
-                          children: [
-                            pw.Row(
-                              children: [
-                                pw.Container(
-                                  padding:
-                                      const pw.EdgeInsets
-                                          .symmetric(
-                                    horizontal: 5,
-                                    vertical: 1.5,
-                                  ),
-                                  decoration:
-                                      pw.BoxDecoration(
-                                    color: teal,
-                                    borderRadius:
-                                        pw.BorderRadius
-                                            .circular(2),
-                                  ),
-                                  child: pw.Text(
-                                    'STUDENT ID CARD',
-                                    style:
-                                        pw.TextStyle(
-                                      color:
-                                          PdfColors.white,
-                                      fontSize: 4.7,
-                                      fontWeight:
-                                          pw.FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-
-                            pw.SizedBox(height: 3),
-
-                            _pdfModernField(
-                              'Name',
-                              name,
-                              darkText,
-                              muted,
-                              important: true,
-                            ),
-
-                            _pdfModernField(
-                              'Father / Guardian',
-                              parentName,
-                              darkText,
-                              muted,
-                            ),
-
-                            _pdfModernField(
-                              'Class',
-                              _directoryClass,
-                              darkText,
-                              muted,
-                            ),
-
-                            _pdfModernField(
-                              'Roll No.',
-                              roll,
-                              darkText,
-                              muted,
-                            ),
-
-                            _pdfModernField(
-                              'Student ID',
-                              studentId,
-                              darkText,
-                              muted,
-                            ),
-
-                            _pdfModernField(
-                              'DOB',
-                              dob,
-                              darkText,
-                              muted,
-                            ),
-
-                            _pdfModernField(
-                              'Contact',
-                              contact,
-                              darkText,
-                              muted,
-                            ),
-
-                            _pdfModernField(
-                              'Address',
-                              address,
-                              darkText,
-                              muted,
-                              maxLines: 2,
-                            ),
-
-                            pw.Spacer(),
-
-                            pw.Row(
-                              crossAxisAlignment:
-                                  pw.CrossAxisAlignment
-                                      .end,
-                              children: [
-                                pw.Container(
-                                  width: 30,
-                                  height: 30,
-                                  padding:
-                                      const pw.EdgeInsets
-                                          .all(1),
-                                  decoration:
-                                      pw.BoxDecoration(
-                                    border: pw.Border.all(
-                                      color:
-                                          PdfColors.grey400,
-                                      width: .3,
-                                    ),
-                                  ),
-                                  child:
-                                      pw.BarcodeWidget(
-                                    barcode:
-                                        pw.Barcode
-                                            .qrCode(),
-                                    data: qrData,
-                                    drawText: false,
-                                  ),
-                                ),
-
-                                pw.SizedBox(width: 4),
-
-                                pw.Column(
-                                  crossAxisAlignment:
-                                      pw.CrossAxisAlignment.start,
-                                  children: [
-                                    pw.Text(
-                                      'SCAN FOR\nSTUDENT\nVERIFICATION',
-                                      style: pw.TextStyle(
-                                        color: navy,
-                                        fontSize: 3.3,
-                                        fontWeight:
-                                            pw.FontWeight.bold,
-                                        lineSpacing: 1,
-                                      ),
-                                    ),
-                                    if (showStudentUid &&
-                                        studentUid.isNotEmpty) ...[
-                                      pw.SizedBox(height: 2),
-                                      pw.Container(
-                                        padding: const pw.EdgeInsets.symmetric(
-                                          horizontal: 2.5,
-                                          vertical: 1,
-                                        ),
-                                        decoration: pw.BoxDecoration(
-                                          color: paleGreen,
-                                          borderRadius:
-                                              pw.BorderRadius.circular(2),
-                                        ),
-                                        child: pw.Text(
-                                          'UID: $studentUid',
-                                          style: pw.TextStyle(
-                                            color: teal,
-                                            fontSize: 3.1,
-                                            fontWeight: pw.FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      pw.SizedBox(width: 6),
-
-                      // RIGHT PHOTO/SIGN
-                      pw.SizedBox(
-                        width: 58,
-                        child: pw.Column(
-                          children: [
-                            pw.Container(
-                              width: 47,
-                              height: 57,
-                              padding:
-                                  const pw.EdgeInsets
-                                      .all(1.2),
-                              decoration:
-                                  pw.BoxDecoration(
-                                color:
-                                    PdfColors.white,
-                                border:
-                                    pw.Border.all(
-                                  color: teal,
-                                  width: 1,
-                                ),
-                                borderRadius:
-                                    pw.BorderRadius
-                                        .circular(4),
-                              ),
-                              child:
-                                  studentPhoto != null
-                                      ? pw.ClipRRect(
-                                          horizontalRadius:
-                                              3,
-                                          verticalRadius:
-                                              3,
-                                          child: pw.Image(
-                                            studentPhoto,
-                                            fit: pw
-                                                .BoxFit.cover,
-                                          ),
-                                        )
-                                      : pw.Container(
-                                          color:
-                                              PdfColors
-                                                  .grey200,
-                                          child:
-                                              pw.Center(
-                                            child:
-                                                pw.Text(
-                                              name
-                                                      .trim()
-                                                      .isNotEmpty
-                                                  ? name
-                                                      .trim()[0]
-                                                      .toUpperCase()
-                                                  : 'S',
-                                              style:
-                                                  pw.TextStyle(
-                                                color:
-                                                    navy,
-                                                fontSize:
-                                                    20,
-                                                fontWeight:
-                                                    pw.FontWeight
-                                                        .bold,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                            ),
-
-                            pw.SizedBox(height: 2),
-
-                            pw.Container(
-                              padding:
-                                  const pw.EdgeInsets
-                                      .symmetric(
-                                horizontal: 5,
-                                vertical: 1.5,
-                              ),
-                              decoration:
-                                  pw.BoxDecoration(
-                                color: paleGreen,
-                                borderRadius:
-                                    pw.BorderRadius
-                                        .circular(8),
-                              ),
-                              child: pw.Text(
-                                'ACTIVE',
-                                style: pw.TextStyle(
-                                  color: teal,
-                                  fontSize: 3.7,
-                                  fontWeight:
-                                      pw.FontWeight.bold,
-                                ),
-                              ),
-                            ),
-
-                            pw.Spacer(),
-
-                            pw.SizedBox(
-                              width: 52,
-                              height: 21,
-                              child: pw.Row(
-                                mainAxisAlignment:
-                                    pw.MainAxisAlignment.center,
-                                children: [
-                                  if (sealImage != null)
-                                    pw.SizedBox(
-                                      width: 17,
-                                      height: 17,
-                                      child: pw.Image(
-                                        sealImage,
-                                        fit: pw.BoxFit.contain,
-                                      ),
-                                    ),
-                                  pw.Expanded(
-                                    child: pw.Image(
-                                      signImage,
-                                      fit: pw.BoxFit.contain,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            pw.Container(
-                              width: 48,
-                              height: .5,
-                              color: navy,
-                            ),
-
-                            pw.SizedBox(height: 1),
-
-                            pw.Text(
-                              principalName,
-                              maxLines: 1,
-                              style: pw.TextStyle(
-                                color: navy,
-                                fontSize: 3.2,
-                                fontWeight: pw.FontWeight.bold,
-                              ),
-                            ),
-                            pw.Text(
-                              'PRINCIPAL',
-                              style: pw.TextStyle(
-                                color: navy,
-                                fontSize: 3.0,
-                                fontWeight: pw.FontWeight.bold,
-                                letterSpacing: .4,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // ==================================
-              // PDF BOTTOM
-              // ==================================
-              pw.Container(
-                height: 12,
-                width: double.infinity,
-                padding:
-                    const pw.EdgeInsets.symmetric(
-                  horizontal: 7,
-                ),
-                color: navy,
-                child: pw.Row(
-                  children: [
-                    pw.Text(
-                      'Education for a Better Tomorrow',
-                      style:
-                          const pw.TextStyle(
-                        color: PdfColors.white,
-                        fontSize: 3.8,
-                      ),
-                    ),
-
-                    pw.Spacer(),
-
-                    pw.Text(
-                      'LEARN • GROW • SUCCEED',
-                      style: pw.TextStyle(
-                        color: teal,
-                        fontSize: 3.4,
-                        fontWeight:
-                            pw.FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    ),
-  );
-
-  return pdf.save();
+  return (await WindowsDocumentTemplates.selected('studentId', data,
+      qr: data['qrData'].toString()))!;
 }
-
-// ============================================================
-// PDF FIELD
-// ============================================================
-
-pw.Widget _pdfModernField(
-  String label,
-  String value,
-  PdfColor darkText,
-  PdfColor muted, {
-  bool important = false,
-  int maxLines = 1,
-}) {
-  final displayValue =
-      value.trim().isEmpty ? 'N/A' : value.trim();
-
-  return pw.Padding(
-    padding:
-        const pw.EdgeInsets.only(bottom: 1.1),
-    child: pw.Row(
-      crossAxisAlignment:
-          pw.CrossAxisAlignment.start,
-      children: [
-        pw.SizedBox(
-          width: 43,
-          child: pw.Text(
-            label,
-            style: pw.TextStyle(
-              color: muted,
-              fontSize: 3.8,
-              fontWeight: pw.FontWeight.bold,
-            ),
-          ),
-        ),
-
-        pw.Text(
-          ': ',
-          style: pw.TextStyle(
-            color: muted,
-            fontSize: 3.8,
-          ),
-        ),
-
-        pw.Expanded(
-          child: pw.Text(
-            displayValue,
-            maxLines: maxLines,
-            style: pw.TextStyle(
-              color: darkText,
-              fontSize: important ? 4.8 : 4,
-              fontWeight: important
-                  ? pw.FontWeight.bold
-                  : pw.FontWeight.normal,
-              lineSpacing: .5,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-// ============================================================
-// DOWNLOAD PDF
-// ============================================================
 
 Future<void> _downloadIdCard() async {
   try {
@@ -7089,38 +5548,19 @@ Future<void> _downloadIdCard() async {
           '_',
         );
 
-    final blob = html.Blob(
-      [pdfBytes],
-      'application/pdf',
-    );
-
-    final url =
-        html.Url.createObjectUrlFromBlob(blob);
-
-    final anchor =
-        html.AnchorElement(href: url)
-          ..setAttribute(
-            'download',
-            'Vidya_Saarthi_ID_Card_${safeName}_Roll_$roll.pdf',
-          )
-          ..style.display = 'none';
-
-    html.document.body?.children.add(anchor);
-
-    anchor.click();
-    anchor.remove();
-
-    html.Url.revokeObjectUrl(url);
+    final savedPath = await WindowsSavePdf.save(
+      pdfBytes, 'Vidya_Saarthi_ID_Card_${safeName}_Roll_$roll.pdf');
+    if (savedPath == null) return;
 
     if (!mounted) return;
 
     ScaffoldMessenger.of(context)
         .showSnackBar(
-      const SnackBar(
+      SnackBar(
         backgroundColor:
             Color(0xFF00A884),
         content: Text(
-          'Student ID Card PDF download ho gaya.',
+          'Student ID Card PDF saved: $savedPath',
         ),
       ),
     );
@@ -7152,18 +5592,8 @@ Future<void> _printIdCard() async {
     final pdfBytes =
         await _buildIdCardPdf();
 
-    await Printing.layoutPdf(
-      name: 'Vidya Saarthi Student ID Card',
-      format: const PdfPageFormat(
-        243,
-        153,
-        marginAll: 0,
-      ),
-      onLayout:
-          (PdfPageFormat format) async {
-        return pdfBytes;
-      },
-    );
+    await WindowsBrowserPrint.open(pdfBytes);
+
   } catch (e) {
     debugPrint(
         'ID Card print error: $e');
@@ -7206,7 +5636,7 @@ Future<void> _printIdCard() async {
           ],
         ),
         content: const Text(
-          'Logout karne ke baad School Login screen dikhegi.',
+          'Logout karne ke baad App Lock dikhega.',
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -7250,213 +5680,8 @@ Future<void> _printIdCard() async {
   /// Opens the protected Analytics page only after the currently signed-in
   /// Firebase Admin re-authenticates successfully. No password is stored.
   Future<void> _openAdminAnalyticsGate() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final email = user?.email?.trim() ?? '';
-
-    if (user == null || email.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Admin login session nahi mila.'),
-        ),
-      );
-      return;
-    }
-
-    final passwordController = TextEditingController();
-    var obscurePassword = true;
-    var verifying = false;
-    String? errorMessage;
-
-    final verified = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            Future<void> verifyPassword() async {
-              final password = passwordController.text;
-              if (password.isEmpty || verifying) {
-                if (password.isEmpty) {
-                  setDialogState(() {
-                    errorMessage = 'Admin Password required hai.';
-                  });
-                }
-                return;
-              }
-
-              setDialogState(() {
-                verifying = true;
-                errorMessage = null;
-              });
-
-              try {
-                final credential = EmailAuthProvider.credential(
-                  email: email,
-                  password: password,
-                );
-                await user.reauthenticateWithCredential(credential);
-
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop(true);
-                }
-              } on FirebaseAuthException catch (e) {
-                if (!dialogContext.mounted) return;
-                setDialogState(() {
-                  verifying = false;
-                  errorMessage =
-                      e.code == 'too-many-requests'
-                          ? 'Bahut attempts ho gaye. Thodi der baad try karein.'
-                          : 'Galat Admin Password.';
-                });
-              } catch (_) {
-                if (!dialogContext.mounted) return;
-                setDialogState(() {
-                  verifying = false;
-                  errorMessage = 'Admin Password verify nahi hua.';
-                });
-              }
-            }
-
-            return AlertDialog(
-              backgroundColor: const Color(0xFF172229),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              title: const Row(
-                children: [
-                  Icon(
-                    Icons.analytics_rounded,
-                    color: Color(0xFF00D9A5),
-                  ),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Admin Password',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'School Analytics kholne ke liye Admin Password enter karein.',
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11.5,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-                    TextField(
-                      controller: passwordController,
-                      autofocus: true,
-                      obscureText: obscurePassword,
-                      enabled: !verifying,
-                      onSubmitted: (_) => verifyPassword(),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        labelText: 'Admin Password',
-                        labelStyle: const TextStyle(color: Colors.white54),
-                        prefixIcon: const Icon(
-                          Icons.lock_outline_rounded,
-                          color: Color(0xFF00D9A5),
-                        ),
-                        suffixIcon: IconButton(
-                          onPressed: verifying
-                              ? null
-                              : () => setDialogState(
-                                    () => obscurePassword = !obscurePassword,
-                                  ),
-                          icon: Icon(
-                            obscurePassword
-                                ? Icons.visibility_off_rounded
-                                : Icons.visibility_rounded,
-                            color: Colors.white54,
-                          ),
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFF0F191F),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: errorMessage == null
-                                ? Colors.white10
-                                : Colors.redAccent,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(
-                            color: Color(0xFF00D9A5),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (errorMessage != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        errorMessage!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: verifying
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: verifying ? null : verifyPassword,
-                  icon: verifying
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.lock_open_rounded, size: 18),
-                  label: Text(verifying ? 'Verifying...' : 'Continue'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    passwordController.dispose();
-
-    if (verified != true || !mounted) return;
-
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => const AdminAnalyticsScreen(),
-      ),
-    );
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => const AdminAnalyticsScreen()));
   }
 
   void _openAdminDrawerPage(
@@ -8197,7 +6422,7 @@ Widget _buildOverviewCards() {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const TeachersDirectoryScreen(),
+                  builder: (context) => const SchoolStaffDirectory(teachers:TeachersDirectoryScreen()),
                 ),
               );
             },
@@ -8492,7 +6717,7 @@ Widget _buildOverviewCards() {
                           ),
                         ),
                         child: ClipOval(
-                          child: Image.network(
+                          child: schoolNetworkImage(
                             _studentPhotoUrl!,
                             fit: BoxFit.cover,
 errorBuilder: (_, __, ___) => const ColoredBox(
@@ -9381,30 +7606,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _analyticsLoadExpenses() async {
-    try {
-      final connection = await WindowsConnectionCenter.reload();
-      if (!connection.remoteReady) return <Map<String, dynamic>>[];
-      final url = connection.googleScriptUrl;
-      final response = await WindowsBackendBridge.post(
-        Uri.parse(url),
-        headers: const {'Content-Type': 'text/plain;charset=utf-8'},
-        body: jsonEncode(const {'action': 'list_school_expenses'}),
-      );
-
-      if (response.statusCode != 200) return <Map<String, dynamic>>[];
-      final decoded = jsonDecode(response.body);
-      if (decoded is! Map || decoded['expenses'] is! List) {
-        return <Map<String, dynamic>>[];
-      }
-
-      return (decoded['expenses'] as List)
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList();
-    } catch (e) {
-      debugPrint('Analytics expenses read skipped: $e');
-      return <Map<String, dynamic>>[];
-    }
+    final snapshot = await FirebaseFirestore.instance.collection('school_expenses').get();
+    return snapshot.docs.map((d) => <String,dynamic>{...d.data(), 'id': d.id}).toList();
   }
 
   double _analyticsNumber(dynamic value) {
@@ -9699,7 +7902,9 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
 
       _ExamCenterSnapshot? examSnapshot;
       try {
-        examSnapshot = await _ExamCenterDataCache.refresh(force: true);
+        final localExams=await WindowsBackendBridge.localExamAction({'action':'list_exam_center'});
+        examSnapshot=_ExamCenterSnapshot(exams:(localExams['exams'] as List? ?? []).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList(),results:(localExams['results'] as List? ?? []).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList(),studentCounts:const {},loadedAt:DateTime.now());
+        WindowsSyncEngine.instance.scheduleSoon();
       } catch (e) {
         debugPrint('Analytics exam data skipped: $e');
       }
@@ -10323,7 +8528,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-                        if (_loading)
+                        if (_loading && data == null)
                           const Padding(
                             padding: EdgeInsets.symmetric(vertical: 100),
                             child: Center(
@@ -10971,39 +9176,23 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     _schoolLatitudeController.text = profile['latitude']?.toString() ?? '';
     _schoolLongitudeController.text = profile['longitude']?.toString() ?? '';
     _attendanceRadiusController.text =
-        profile['attendanceRadiusMeters']?.toString() ?? '200';
+        (profile['attendanceRadiusMeters'] ?? schoolAttendanceRadiusMeters).toString();
   }
 
-  Future<void> _pasteGoogleMapsCoordinates() async {
-    final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
-    final raw = clipboard?.text?.trim() ?? '';
-    final coordinates = _windowsParseCoordinates(raw);
-
-    if (coordinates == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
-          content: Text(
-            'Google Maps se latitude, longitude copy karke paste karein.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    if (!mounted) return;
+  Future<void> _selectSchoolMapPin() async {
+    final latitude = double.tryParse(_schoolLatitudeController.text);
+    final longitude = double.tryParse(_schoolLongitudeController.text);
+    final current = latitude == null || longitude == null ? null : SchoolMapPin(latitude, longitude);
+    final pin = await selectWindowsSchoolMapPin(context,
+        schoolName: _schoolNameController.text, current: current,
+        radiusMeters: parseSchoolAttendanceRadius(_attendanceRadiusController.text) ?? schoolAttendanceRadiusMeters);
+    if (pin == null || !mounted) return;
     setState(() {
-      _schoolLatitudeController.text = coordinates.latitude.toStringAsFixed(7);
-      _schoolLongitudeController.text = coordinates.longitude.toStringAsFixed(7);
+      _schoolLatitudeController.text = pin.latitude.toStringAsFixed(7);
+      _schoolLongitudeController.text = pin.longitude.toStringAsFixed(7);
     });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        backgroundColor: Color(0xFF00A884),
-        content: Text('Google Maps coordinates fill ho gaye. Ab Save karein.'),
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('School exact location selected. Save School Settings to apply your chosen attendance range.')));
   }
 
   Future<void> _load() async {
@@ -11021,213 +9210,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
       debugPrint('School profile cache load warning: $e');
     }
 
-    // Google Drive is source-of-truth, but refresh does not block opening.
-    Future<void>(() async {
-      try {
-        final fresh = await _refreshSchoolProfileFromDrive();
-        if (!mounted) return;
-        setState(() {
-          _applyProfile(fresh);
-          _error = null;
-        });
-      } catch (e) {
-        debugPrint('School profile background refresh warning: $e');
-      }
-    });
-  }
 
-  Future<bool> _confirmAdminPasswordBeforeSave() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final email = user?.email?.trim() ?? '';
-
-    if (user == null || email.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('Admin login session nahi mila.'),
-          ),
-        );
-      }
-      return false;
-    }
-
-    final passwordController = TextEditingController();
-    bool obscure = true;
-    bool verifying = false;
-    String? errorMessage;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF172229),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
-              ),
-              title: const Row(
-                children: [
-                  Icon(
-                    Icons.lock_rounded,
-                    color: Color(0xFF00D9A5),
-                  ),
-                  SizedBox(width: 10),
-                  Text(
-                    'Confirm Admin Password',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'School Settings save karne se pehle Admin Password verify karein.',
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontSize: 11.5,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: passwordController,
-                      obscureText: obscure,
-                      autofocus: true,
-                      onSubmitted: verifying
-                          ? null
-                          : (_) async {
-                              final password = passwordController.text;
-                              if (password.isEmpty) {
-                                setDialogState(() {
-                                  errorMessage = 'Admin Password required hai.';
-                                });
-                                return;
-                              }
-                              setDialogState(() {
-                                verifying = true;
-                                errorMessage = null;
-                              });
-                              try {
-                                final credential = EmailAuthProvider.credential(
-                                  email: email,
-                                  password: password,
-                                );
-                                await user.reauthenticateWithCredential(credential);
-                                if (dialogContext.mounted) {
-                                  Navigator.pop(dialogContext, true);
-                                }
-                              } catch (_) {
-                                setDialogState(() {
-                                  verifying = false;
-                                  errorMessage = 'Galat Admin Password.';
-                                });
-                              }
-                            },
-                      style: const TextStyle(color: Colors.white),
-                      decoration: _field(
-                        'Admin Password',
-                        Icons.password_rounded,
-                      ).copyWith(
-                        suffixIcon: IconButton(
-                          onPressed: verifying
-                              ? null
-                              : () => setDialogState(() => obscure = !obscure),
-                          icon: Icon(
-                            obscure
-                                ? Icons.visibility_off_rounded
-                                : Icons.visibility_rounded,
-                            color: Colors.white54,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (errorMessage != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        errorMessage!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: verifying
-                      ? null
-                      : () => Navigator.pop(dialogContext, false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: verifying
-                      ? null
-                      : () async {
-                          final password = passwordController.text;
-                          if (password.isEmpty) {
-                            setDialogState(() {
-                              errorMessage = 'Admin Password required hai.';
-                            });
-                            return;
-                          }
-                          setDialogState(() {
-                            verifying = true;
-                            errorMessage = null;
-                          });
-                          try {
-                            final credential = EmailAuthProvider.credential(
-                              email: email,
-                              password: password,
-                            );
-                            await user.reauthenticateWithCredential(credential);
-                            if (dialogContext.mounted) {
-                              Navigator.pop(dialogContext, true);
-                            }
-                          } catch (_) {
-                            setDialogState(() {
-                              verifying = false;
-                              errorMessage = 'Galat Admin Password.';
-                            });
-                          }
-                        },
-                  icon: verifying
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.verified_user_rounded, size: 18),
-                  label: Text(verifying ? 'Verifying...' : 'Verify & Save'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    passwordController.dispose();
-    return confirmed == true;
   }
 
   Future<void> _pickAsset(String type) async {
@@ -11272,26 +9255,22 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     final schoolContactNo = _schoolContactController.text.trim();
     final schoolLatitude = double.tryParse(_schoolLatitudeController.text.trim());
     final schoolLongitude = double.tryParse(_schoolLongitudeController.text.trim());
-    final attendanceRadius =
-        double.tryParse(_attendanceRadiusController.text.trim()) ?? 200.0;
+    final attendanceRadius = parseSchoolAttendanceRadius(_attendanceRadiusController.text.trim());
+    if (attendanceRadius == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        backgroundColor: Colors.orangeAccent,
+        content: Text('Attendance range 25 se 200 metre ke beech select karein.')));
+      return;
+    }
 
     if (schoolLatitude == null || schoolLongitude == null ||
+        !schoolLatitude.isFinite || !schoolLongitude.isFinite ||
         schoolLatitude < -90 || schoolLatitude > 90 ||
         schoolLongitude < -180 || schoolLongitude > 180) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Colors.orangeAccent,
           content: Text('Valid School Latitude aur Longitude required hai.'),
-        ),
-      );
-      return;
-    }
-
-    if (attendanceRadius < 50 || attendanceRadius > 2000) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
-          content: Text('Attendance radius 50 se 2000 meter ke beech rakhein.'),
         ),
       );
       return;
@@ -11307,8 +9286,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
       return;
     }
 
-    final passwordConfirmed = await _confirmAdminPasswordBeforeSave();
-    if (!passwordConfirmed || !mounted) return;
+    if (!mounted) return;
 
     setState(() {
       _saving = true;
@@ -11352,40 +9330,9 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
         });
       }
 
-      final result = await _schoolProfileBackendPost(payload);
-      final raw = result['profile'];
-      if (raw is! Map) {
-        throw Exception('School profile response invalid hai.');
-      }
-
-      final profile = _mergeSchoolProfile(Map<String, dynamic>.from(raw));
+      final profile = await WindowsSchoolProfileStore.saveLocal(payload);
       _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
-
-      await FirebaseFirestore.instance
-          .collection('school_settings')
-          .doc('school_location')
-          .set({
-            'latitude': schoolLatitude,
-            'longitude': schoolLongitude,
-            'radiusMeters': attendanceRadius,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-
-      // Drive save is already complete. Firestore is only the fast cache,
-      // so do not keep the Save button waiting for a second network round-trip.
-      unawaited(
-        _schoolProfileCacheRef()
-            .set(
-              {
-                ...profile,
-                'cachedAt': FieldValue.serverTimestamp(),
-              },
-              SetOptions(merge: true),
-            )
-            .catchError((e) {
-              debugPrint('School profile Firestore cache warning: $e');
-            }),
-      );
+      WindowsSyncEngine.instance.scheduleSoon();
 
       if (!mounted) return;
       setState(() {
@@ -11400,7 +9347,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
         const SnackBar(
           backgroundColor: Color(0xFF00A884),
           content: Text(
-            'School Settings Google Drive me save ho gaya.',
+            'School settings saved on this PC. Cloud sync pending.',
           ),
         ),
       );
@@ -11591,7 +9538,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   ),
                                   SizedBox(height: 4),
                                   Text(
-                                    'Ye details aur files Google Drive me save hongi. School change karne ke liye code edit nahi karna padega.',
+                                    'Details and images save on this PC immediately. Background sync sends them to this school’s connected Drive.',
                                     style: TextStyle(
                                       color: Colors.white54,
                                       fontSize: 11,
@@ -11738,9 +9685,10 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   width: 180,
                                   child: TextField(
                                     controller: _attendanceRadiusController,
+                                    enabled: !_saving,
                                     keyboardType: TextInputType.number,
                                     style: const TextStyle(color: Colors.white),
-                                    decoration: _field('Radius (meter)', Icons.radar_rounded),
+                                    decoration: _field('Range (25–200 m)', Icons.radar_rounded),
                                   ),
                                 ),
                               ],
@@ -11751,60 +9699,16 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                               runSpacing: 8,
                               children: [
                                 OutlinedButton.icon(
-                                  onPressed: _saving
-                                      ? null
-                                      : () async {
-                                          try {
-                                            await _openGoogleMapsForSchoolLocation(
-                                              _schoolNameController.text,
-                                            );
-                                          } catch (e) {
-                                            if (!mounted) return;
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              SnackBar(
-                                                backgroundColor: Colors.redAccent,
-                                                content: Text('Google Maps open nahi hua: $e'),
-                                              ),
-                                            );
-                                          }
-                                        },
+                                  key: const ValueKey('select-school-map-pin'),
+                                  onPressed: _saving ? null : _selectSchoolMapPin,
                                   icon: const Icon(Icons.map_rounded),
-                                  label: const Text('Open Google Maps'),
-                                ),
-                                OutlinedButton.icon(
-                                  onPressed: _saving ? null : _pasteGoogleMapsCoordinates,
-                                  icon: const Icon(Icons.content_paste_rounded),
-                                  label: const Text('Paste Map Coordinates'),
-                                ),
-                                OutlinedButton.icon(
-                                  onPressed: _saving
-                                      ? null
-                                      : () async {
-                                          try {
-                                            final pos = await _windowsCurrentPosition();
-                                            if (!mounted) return;
-                                            setState(() {
-                                              _schoolLatitudeController.text = pos.latitude.toStringAsFixed(7);
-                                              _schoolLongitudeController.text = pos.longitude.toStringAsFixed(7);
-                                            });
-                                          } catch (e) {
-                                            if (!mounted) return;
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              SnackBar(
-                                                backgroundColor: Colors.redAccent,
-                                                content: Text('$e'),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                  icon: const Icon(Icons.gps_fixed_rounded),
-                                  label: const Text('Use This Windows PC Location'),
+                                  label: const Text('Pinpoint school location in Google Maps'),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'Google Maps me school point par right-click karke coordinates copy karein, phir “Paste Map Coordinates” dabayein.',
+                              'Google Maps par school ki exact location select karein. School apni attendance range 25–200 metre choose kar sakta hai. Save karne par selected range apply hogi.',
                               style: TextStyle(
                                 color: Colors.white38,
                                 fontSize: 10,
@@ -11894,7 +9798,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                           label: Text(
                             _saving
                                 ? 'Saving to Google Drive...'
-                                : 'SAVE SCHOOL SETTINGS TO GOOGLE DRIVE',
+                                : 'SAVE SCHOOL SETTINGS',
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
                             ),
@@ -11936,7 +9840,7 @@ class SettingsScreen extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 920),
-            child: const WindowsAppUpdateCard(),
+            child: const Column(children: [WindowsAppUpdateCard(), SizedBox(height:16), WindowsSyncStatusCard()]),
           ),
         ),
       ),
@@ -12293,7 +10197,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                       child: Text(
                         secondsLeft > 0
                             ? 'Student Directory verify karein... Password option $secondsLeft sec baad unlock hoga.'
-                            : 'Verification time complete. Ab Admin Password enter karein.',
+                            : 'Verification time complete. Ab App Lock Password enter karein.',
                         style: TextStyle(
                           color: secondsLeft > 0
                               ? Colors.orangeAccent
@@ -12311,7 +10215,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                       style: const TextStyle(color: Colors.white),
                       onChanged: (_) => setDialogState(() {}),
                       decoration: InputDecoration(
-                        labelText: 'Admin Password',
+                        labelText: 'App Lock Password',
                         labelStyle: const TextStyle(color: Colors.white54),
                         prefixIcon: const Icon(
                           Icons.lock_outline_rounded,
@@ -12532,7 +10436,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           backgroundColor: Colors.redAccent,
           content: Text(
             e.code == 'wrong-password' || e.code == 'invalid-credential'
-                ? 'Admin Password galat hai.'
+                ? 'App Lock Password galat hai.'
                 : 'Admin verification failed: ${e.message ?? e.code}',
           ),
         ),
@@ -12681,14 +10585,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                               ],
                             ),
                             alignment: Alignment.center,
-                            child: Text(
-                              _profileInitial(user),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 25,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
+                            child: WindowsAdminAvatar(key:ValueKey('${FirebaseFirestore.instance.activeProfileId}:${user?.email}'),initial:_profileInitial(user)),
                           ),
                           const SizedBox(width: 15),
                           Expanded(
@@ -13583,18 +11480,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
 Future<Map<String, dynamic>> _getClassFeeSettings(
   String studentClass,
 ) async {
-  final cached = _feeSettingsCache[studentClass];
-
-  if (cached != null) {
-    return cached;
-  }
-
-  final doc = await FirebaseFirestore.instance
-      .collection('fee_settings')
-      .doc(_settingsDocId(studentClass))
-      .get();
-
-  final data = doc.data() ?? <String, dynamic>{};
+  final data = await WindowsFeeStructure.load(studentClass);
   final rawFees =
       Map<String, dynamic>.from(data['fees'] ?? {});
 
@@ -13657,7 +11543,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       return;
     }
 
-        final cachedSettings = _feeSettingsCache[studentClass];
+        final cachedSettings = await _getClassFeeSettings(studentClass);
+        if (!mounted) return;
     
         _activeStudentId = studentDoc.id;
         _selectedClass = studentClass;
@@ -13871,7 +11758,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     setState(() => _isSavingPayment = true);
 
     final now = DateTime.now();
-    final schoolProfile = await _loadSchoolProfile();
+    final schoolProfile = await _loadSchoolProfileCache();
     final receiptNo =
         'VS-${now.year}${now.month.toString().padLeft(2, '0')}-${now.millisecondsSinceEpoch}';
     final totalPaid = oldPaid + amount;
@@ -13913,6 +11800,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'status': status,
       'paymentMode': _paymentMode,
       'schoolName': _schoolName(schoolProfile),
+    'schoolAddress': schoolProfile['address']?.toString() ?? '',
       'principalName': _principalName(schoolProfile),
       'schoolLogoUrl': schoolProfile['logoUrl']?.toString() ?? '',
       'schoolSealUrl': schoolProfile['sealUrl']?.toString() ?? '',
@@ -14085,110 +11973,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
   }
 
   Future<Uint8List> _buildReceiptPdf(Map<String, dynamic> data) async {
-    final custom=await WindowsDocumentTemplates.selected('receipt',data);
-    if(custom!=null)return custom;
-    final pdf = pw.Document();
-    final items = Map<String, dynamic>.from(data['feeItems'] ?? {});
-    final itemEntries = items.entries.where((e) => _toDouble(e.value) > 0).toList();
-
-    pw.TableRow row(String left, String right, {bool bold = false}) {
-      final style = pw.TextStyle(fontSize: 9, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal);
-      return pw.TableRow(
-        children: [
-          pw.Padding(
-            padding: const pw.EdgeInsets.all(5),
-            child: pw.Text(left, style: style),
-          ),
-          pw.Padding(
-            padding: const pw.EdgeInsets.all(5),
-            child: pw.Text(right, style: style, textAlign: pw.TextAlign.right),
-          ),
-        ],
-      );
-    }
-
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(34),
-        build: (context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-            children: [
-              pw.Text(
-                data['schoolName']?.toString().trim().isNotEmpty == true
-                    ? data['schoolName'].toString().trim()
-                    : '',
-                textAlign: pw.TextAlign.center,
-                style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
-              ),
-              pw.SizedBox(height: 3),
-              pw.Text(
-                'VIDYA SAARTHI • FEES RECEIPT',
-                textAlign: pw.TextAlign.center,
-                style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold),
-              ),
-              pw.SizedBox(height: 14),
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Text('Receipt No: ${data['receiptNo'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
-                  pw.Text('Date: ${data['dateText'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
-                ],
-              ),
-              pw.SizedBox(height: 6),
-              pw.Text('Name: ${data['studentName'] ?? ''}', style: const pw.TextStyle(fontSize: 10)),
-              if (data['studentUid']?.toString().trim().isNotEmpty == true) ...[
-                pw.SizedBox(height: 3),
-                pw.Text(
-                  'Student UID: ${data['studentUid']}',
-                  style: pw.TextStyle(
-                    fontSize: 9,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
-              ],
-              pw.SizedBox(height: 4),
-              pw.Text(
-                'Class: ${data['class'] ?? ''}    Roll No: ${data['rollNo'] ?? ''}    Month: ${_monthName(data['month']?.toString() ?? _selectedMonth)}',
-                style: const pw.TextStyle(fontSize: 10),
-              ),
-              pw.SizedBox(height: 12),
-              pw.Table(
-                border: pw.TableBorder.all(width: 0.5),
-                columnWidths: const {
-                  0: pw.FlexColumnWidth(3),
-                  1: pw.FlexColumnWidth(1),
-                },
-                children: [
-                  row('Description', 'Rs.', bold: true),
-                  ...itemEntries.map((e) => row(e.key, _toDouble(e.value).toStringAsFixed(0))),
-                  row('Amount Received', _toDouble(data['installmentAmount']).toStringAsFixed(0), bold: true),
-                  row('Total Paid', _toDouble(data['totalPaid']).toStringAsFixed(0), bold: true),
-                  row('Balance Due', _toDouble(data['balance']).toStringAsFixed(0), bold: true),
-                ],
-              ),
-              pw.SizedBox(height: 10),
-              pw.Text('Payment Mode: ${data['paymentMode'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
-              pw.Spacer(),
-              pw.Align(
-                alignment: pw.Alignment.centerRight,
-                child: pw.Column(
-                  children: [
-                    pw.SizedBox(height: 25),
-                    pw.Container(width: 110, height: 0.5, color: PdfColors.black),
-                    pw.SizedBox(height: 4),
-                    pw.Text('Signature', style: const pw.TextStyle(fontSize: 9)),
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-
-    return pdf.save();
+    final bytes = await WindowsDocumentTemplates.selected('receipt', data);
+    if (bytes == null) throw StateError('School receipt could not be generated.');
+    return bytes;
   }
 
   Future<Map<String, dynamic>?> _loadLastPayment(Map<String, dynamic>? ledger) async {
@@ -15339,7 +13126,7 @@ class FeeCollectionSettingsScreen extends StatefulWidget {
 
 class _FeeCollectionSettingsScreenState
     extends State<FeeCollectionSettingsScreen> {
-  static const List<String> _feeHeads = [
+  static const List<String> _standardFeeHeads = [
     'Tuition Fees',
     'Admission Fees',
     'Registration Fees',
@@ -15361,14 +13148,46 @@ class _FeeCollectionSettingsScreenState
     'Late Fees',
     'Vehicle Fees',
   ];
+  List<String> _customFeeHeads = [];
+  List<String> get _feeHeads => [..._standardFeeHeads, ..._customFeeHeads];
 
   final List<String> _classes =
       List.generate(12, (index) => 'Class ${index + 1}');
   final Map<String, TextEditingController> _controllers = {};
 
   String _selectedClass = 'Class 1';
+  String _academicSession = '';
+  List<String> get _sessions {
+    final year = int.tryParse(_academicSession.split('-').first) ?? DateTime.now().year;
+    return List.generate(7, (i) => '${year - 3 + i}-${year - 2 + i}');
+  }
   bool _loading = true;
   bool _saving = false;
+  bool _editing = true;
+  final _profile = FirebaseFirestore.instance.activeProfileId;
+
+  Future<void> _editSettings() async {
+    if (_saving || _loading || _editing) return;
+    await WindowsLocalSecurity.initialize();
+    if (!WindowsLocalSecurity.configured) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Set App Lock before editing saved fees.')));
+      return;
+    }
+    final selected = _selectedClass;
+    await FirebaseFirestore.instance.ensureDurableSchoolRecords();
+    if (!mounted || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    final lock = FirebaseFirestore.instance.collection('_local_fee_edit_locks').doc(_docId(selected));
+    final old = (await lock.get()).data();
+    final deadline = old?['unlockAt'] is num
+        ? DateTime.fromMillisecondsSinceEpoch((old!['unlockAt'] as num).toInt())
+        : DateTime.now().add(const Duration(seconds: 30));
+    if (old == null) await lock.set({'unlockAt': deadline.millisecondsSinceEpoch});
+    if (!mounted || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    final authorized = await showDialog<bool>(context: context, barrierDismissible: false,
+      builder: (_) => _DriveUnlinkSecurityDialog(deadline: deadline));
+    if (authorized != true || !mounted || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    setState(() => _editing = true);
+  }
 
   @override
   void initState() {
@@ -15387,7 +13206,7 @@ class _FeeCollectionSettingsScreenState
     super.dispose();
   }
 
-  String _docId(String className) => className.replaceAll(' ', '_');
+  String _docId(String className) => WindowsFeeStructure.documentId(className, _academicSession);
 
   double _toDouble(dynamic value) {
     if (value is num) return value.toDouble();
@@ -15404,18 +13223,23 @@ class _FeeCollectionSettingsScreenState
   }
 
   Future<void> _loadSettings() async {
+    final selected = _selectedClass;
     setState(() => _loading = true);
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('fee_settings')
-          .doc(_docId(_selectedClass))
-          .get();
-      final data = doc.data() ?? <String, dynamic>{};
+      if (_academicSession.isEmpty) _academicSession = await WindowsFeeStructure.currentSession();
+      final session = _academicSession;
+      final data = await WindowsFeeStructure.load(selected, session: session);
+      if (!mounted || session != _academicSession || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
       final fees = Map<String, dynamic>.from(data['fees'] ?? {});
+      _customFeeHeads = fees.keys.where((head) => !_standardFeeHeads.contains(head)).toList();
+      for (final head in _customFeeHeads) {
+        _controllers.putIfAbsent(head, () => TextEditingController());
+      }
+      _editing = data['configured'] != true && fees.values.every((v) => _toDouble(v) == 0);
 
       for (final head in _feeHeads) {
         final amount = _toDouble(fees[head]);
-        _controllers[head]!.text = amount > 0 ? amount.toStringAsFixed(0) : '';
+        _controllers[head]!.text = amount > 0 ? (amount == amount.roundToDouble() ? amount.toStringAsFixed(0) : amount.toString()) : '';
       }
     } catch (e) {
       if (mounted) {
@@ -15429,13 +13253,14 @@ class _FeeCollectionSettingsScreenState
   }
 
   Future<void> _saveSettings() async {
-    if (_saving) return;
+    if (_saving || !_editing || _loading || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    final selected = _selectedClass;
 
     final fees = <String, double>{};
     for (final head in _feeHeads) {
       final raw = _controllers[head]!.text.trim();
       final amount = raw.isEmpty ? 0.0 : double.tryParse(raw);
-      if (amount == null || amount < 0) {
+      if (amount == null || !amount.isFinite || amount < 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.redAccent,
@@ -15462,24 +13287,19 @@ class _FeeCollectionSettingsScreenState
 
     setState(() => _saving = true);
     try {
-      await FirebaseFirestore.instance
-          .collection('fee_settings')
-          .doc(_docId(_selectedClass))
-          .set({
-        'className': _selectedClass,
-        'fees': fees,
-        'configured': true,
-        'configuredHeads': configuredHeads,
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-      }, SetOptions(merge: true));
+      await FirebaseFirestore.instance.ensureDurableSchoolRecords();
+      if (selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) throw StateError('School or class changed.');
+      await WindowsFeeStructure.save(selected, _academicSession, fees);
+      if (!mounted || FirebaseFirestore.instance.activeProfileId != _profile) return;
+      setState(() => _editing = false);
+
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF00A884),
           content: Text(
-            '$_selectedClass fee structure saved. ${configuredHeads.length} fee types collection ke liye active hain.',
+            '$selected fee structure saved locally and locked. Cloud sync queued.',
           ),
         ),
       );
@@ -15507,10 +13327,11 @@ class _FeeCollectionSettingsScreenState
       ),
       body: Row(
         children: [
-          Container(
+          SizedBox(
             width: 190,
-            color: const Color(0xFF121B22),
-            child: ListView.builder(
+            child: Material(
+              color: const Color(0xFF121B22),
+              child: ListView.builder(
               padding: const EdgeInsets.all(10),
               itemCount: _classes.length,
               itemBuilder: (context, index) {
@@ -15543,6 +13364,7 @@ class _FeeCollectionSettingsScreenState
                   ),
                 );
               },
+              ),
             ),
           ),
           Expanded(
@@ -15590,6 +13412,13 @@ class _FeeCollectionSettingsScreenState
                             ),
                           ),
                         ),
+                        if (_academicSession.isNotEmpty)
+                          DropdownButtonFormField<String>(
+                            value: _academicSession,
+                            decoration: const InputDecoration(labelText: 'Academic session'),
+                            items: _sessions.map((session) => DropdownMenuItem(value: session, child: Text(session))).toList(),
+                            onChanged: _saving ? null : (session) { if (session != null) { setState(() => _academicSession = session); _loadSettings(); } },
+                          ),
                         const SizedBox(height: 12),
                         Expanded(
                           child: ListView.separated(
@@ -15616,7 +13445,10 @@ class _FeeCollectionSettingsScreenState
                                     ),
                                     SizedBox(
                                       width: 190,
-                                      child: TextField(
+                                      child: !_editing
+                                          ? Text('₹ ${_controllers[head]!.text.isEmpty ? '0' : _controllers[head]!.text}', textAlign: TextAlign.right, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))
+                                          : TextField(
+                                        enabled: !_saving,
                                         controller: _controllers[head],
                                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                         style: const TextStyle(color: Colors.white),
@@ -15649,16 +13481,16 @@ class _FeeCollectionSettingsScreenState
                               backgroundColor: const Color(0xFF00A884),
                               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 15),
                             ),
-                            onPressed: _saving ? null : _saveSettings,
+                            onPressed: _saving ? null : _editing ? _saveSettings : _editSettings,
                             icon: _saving
                                 ? const SizedBox(
                                     width: 18,
                                     height: 18,
                                     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                   )
-                                : const Icon(Icons.save_rounded, color: Colors.white),
+                                : Icon(_editing ? Icons.save_rounded : Icons.edit_rounded, color: Colors.white),
                             label: Text(
-                              _saving ? 'Saving...' : 'Save / Update Fee Structure',
+                              _saving ? 'Saving...' : _editing ? 'Save / Update Fee Structure' : 'Edit Fee Structure',
                               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
                             ),
                           ),
@@ -15688,6 +13520,7 @@ class TeachersDirectoryScreen extends StatefulWidget {
 
 class _TeachersDirectoryScreenState
     extends State<TeachersDirectoryScreen> {
+  final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   final TextEditingController _searchController =
       TextEditingController();
 
@@ -15704,12 +13537,13 @@ class _TeachersDirectoryScreenState
   // ============================================================
 
   Future<String> _getTeacherScriptUrl() async {
-    return _windowsGoogleScriptUrl();
+    return _windowsDirectoryMutationUrl();
   }
 
   Future<Map<String, dynamic>> _callTeacherApi(
     Map<String, dynamic> body,
   ) async {
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final scriptUrl = await _getTeacherScriptUrl();
 
     final response = await WindowsBackendBridge.post(
@@ -15727,6 +13561,7 @@ class _TeachersDirectoryScreenState
       );
     }
 
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final decoded = jsonDecode(response.body);
 
     if (decoded is! Map) {
@@ -15751,7 +13586,7 @@ class _TeachersDirectoryScreenState
         data['photoBase64']?.toString().trim() ?? '';
 
     if (photoUrl.isNotEmpty) {
-      return Image.network(
+      return schoolNetworkImage(
         photoUrl,
         width: double.infinity,
         height: double.infinity,
@@ -16335,7 +14170,7 @@ errorBuilder: (
               }
 
               if (existingPhotoUrl.isNotEmpty) {
-                return Image.network(
+                return schoolNetworkImage(
                   existingPhotoUrl,
                   width: double.infinity,
                   height: double.infinity,
@@ -17088,7 +14923,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 backgroundColor:
                                     Color(0xFF00A884),
                                 content: Text(
-                                  'Teacher Google Sheet aur Firestore dono me update ho gaya!',
+                                  'Teacher saved on this PC. Background school sync queued.',
                                 ),
                               ),
                             );
@@ -17220,7 +15055,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    'Admin Password daalein:',
+                    'App Lock Password daalein:',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 12,
@@ -17238,7 +15073,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                     decoration:
                         InputDecoration(
                       hintText:
-                          'Admin Password',
+                          'App Lock Password',
                       hintStyle:
                           const TextStyle(
                         color:
@@ -17339,7 +15174,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             setDialogState(
                               () {
                                 errorText =
-                                    'Admin Password daalein.';
+                                    'App Lock Password daalein.';
                               },
                             );
                             return;
@@ -17395,7 +15230,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 deleting =
                                     false;
                                 errorText =
-                                    'Galat Admin Password!';
+                                    'Galat App Lock Password!';
                               },
                             );
                           }
@@ -17471,7 +15306,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
           backgroundColor:
               Colors.redAccent,
           content: Text(
-            'Teacher Google Sheet, Drive aur Firestore se delete ho gaya!',
+            'Teacher removed on this PC. Background school sync queued.',
           ),
         ),
       );
@@ -17506,90 +15341,21 @@ errorBuilder: (_, __, ___) => _teacherFallback(
       documentId: docId,
       person: data,
     );
-    final custom=await WindowsDocumentTemplates.selected('teacherId',{...data,'teacherId':data['teacherId'] ?? docId},qr:qrData);
-    if(custom!=null){if(mounted)await WindowsDocumentTemplates.preview(context,custom,title:'Teacher ID card');return;}
-    if (!mounted) return;
-    final name = data['name']?.toString().trim() ?? 'Teacher';
-    final teacherId = data['teacherId']?.toString().trim().isNotEmpty == true
-        ? data['teacherId'].toString().trim()
-        : docId;
-    final designation = data['designation']?.toString().trim() ?? 'Teacher';
-    final subject = data['subject']?.toString().trim() ?? '';
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Container(
-          width: 560,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF4F7FA),
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF4A148C), Color(0xFF7B1FA2)],
-                  ),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.school_rounded, color: Colors.white),
-                    SizedBox(width: 10),
-                    Text('VIDYA SAARTHI • TEACHER ID',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 120,
-                    height: 145,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFECEFF1),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: _teacherPhoto(data, name),
-                  ),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(name, style: const TextStyle(color: Color(0xFF4A148C), fontSize: 22, fontWeight: FontWeight.w900)),
-                        const SizedBox(height: 8),
-                        Text('$designation${subject.isEmpty ? '' : ' • $subject'}', style: const TextStyle(color: Colors.black87)),
-                        const SizedBox(height: 6),
-                        Text('Teacher ID: $teacherId', style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 12),
-                        const Text('QR: Attendance + School Mobile Linking', style: TextStyle(color: Colors.black45, fontSize: 11)),
-                      ],
-                    ),
-                  ),
-                  QrImageView(data: qrData, size: 135),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'This QR is school-isolated and contains the active school connection identity + attendance geofence metadata.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.black45, fontSize: 10),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    final bytes = await WindowsDocumentTemplates.selected('teacherId',
+        {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData);
+    if (bytes != null && mounted) {
+      await WindowsDocumentTemplates.preview(context, bytes,
+          title: 'Teacher ID card • Front & back',
+          notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
+          onPrint: () async {
+            try { await WindowsBrowserPrint.open(bytes); }
+            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Print preview unavailable: $e'))); }
+          },
+          onDownload: () async {
+            try { await WindowsSavePdf.save(bytes,'teacher-id.pdf'); }
+            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('PDF save failed: $e'))); }
+          });
+    }
   }
 
   @override
@@ -18334,6 +16100,7 @@ class AddTeacherScreen extends StatefulWidget {
 
 class _AddTeacherScreenState
     extends State<AddTeacherScreen> {
+  final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   final _nameCtrl =
       TextEditingController();
 
@@ -18433,13 +16200,14 @@ class _AddTeacherScreenState
   }
 
   Future<String> _getTeacherScriptUrl() async {
-    return _windowsGoogleScriptUrl();
+    return _windowsDirectoryMutationUrl();
   }
 
   Future<Map<String, dynamic>>
       _callTeacherApi(
     Map<String, dynamic> body,
   ) async {
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final scriptUrl =
         await _getTeacherScriptUrl();
 
@@ -18462,6 +16230,7 @@ class _AddTeacherScreenState
       );
     }
 
+    if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
     final decoded =
         jsonDecode(response.body);
 
@@ -18700,6 +16469,7 @@ class _AddTeacherScreenState
         );
       }
 
+      if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen teacher entry.');
       // SECOND:
       // Firestore
       final ref =
@@ -18766,7 +16536,7 @@ class _AddTeacherScreenState
           backgroundColor:
               Color(0xFF00A884),
           content: Text(
-            'Teacher Google Sheet, Drive aur Firestore me save ho gaya!',
+            'Teacher saved on this PC. Background school sync queued.',
           ),
         ),
       );
@@ -19378,6 +17148,7 @@ class AllStudentsListScreen extends StatefulWidget {
 }
 
 class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
+  final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   String _selectedClassFilter = 'All Classes';
 
   final List<String> _classes = [
@@ -19514,6 +17285,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     final roll = _normalizeStudentRoll(student['rollNo']);
 
     final matches = _studentExamResults.where((result) {
+      if(result['isFinal']!=true)return false;
       final resultStudentId = result['studentId']?.toString().trim() ?? '';
       if (resultStudentId.isNotEmpty && resultStudentId == docId) {
         return true;
@@ -19535,7 +17307,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       return <String, dynamic>{
         'result': storedResult,
         'examId': student['promotionExamId'] ?? '',
-        'isFinal': student['promotionExamId'] != null,
+        'isFinal': student['promotionExamId']?.toString().isNotEmpty==true,
         'examName': student['lastExamName']?.toString() ?? 'Previous Exam',
         'percentage': student['lastExamPercentage'] ?? 0,
         'timestamp': student['lastExamTimestamp'] ?? 0,
@@ -19546,7 +17318,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
   }
 
   Future<String> _studentBackendScriptUrl() async {
-    return _windowsGoogleScriptUrl();
+    return _windowsDirectoryMutationUrl();
   }
 
   Future<Map<String, dynamic>> _postStudentClassChange({
@@ -19600,18 +17372,21 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Enter the final exam result before promotion or retention.')));
       return;
     }
+    if(result['isFinal']!=true)return;
     final status = result['result']?.toString().toUpperCase() ?? '';
     final force = direction > 0 && status == 'FAIL';
     final decision = direction < 0 ? 'FAIL' : status;
-    final yes = await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+    var overrideReason='';
+    final yes = await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setDialog)=>AlertDialog(
       title:Text(direction < 0 ? 'Retain in the same class?' : force ? 'Force promote this student?' : 'Apply final exam decision?'),
-      content:Text('${student['name']} • ${student['class']}\nFinal result: $status'),
-      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]));
+      content:Column(mainAxisSize:MainAxisSize.min,children:[Text('${student['name']} • ${student['class']}\nFinal result: $status'),
+        if(force)TextField(maxLength:500,onChanged:(v)=>setDialog(()=>overrideReason=v.trim()),decoration:const InputDecoration(labelText:'Required reason for administrator override'))]),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))])));
     if(yes!=true||!mounted)return;
     setState(()=>_movingStudentIds.add(docId));
     try {
       if(direction < 0 && status != 'FAIL')throw StateError('Retention is only for a final-exam FAIL result.');
-      final message=await SchoolPromotionService.apply(studentId:docId,student:student,exam:result,result:decision,force:force);
+      final message=await SchoolPromotionService.apply(studentId:docId,student:student,exam:result,result:decision,force:force,reason:overrideReason);
       if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(message)));
     }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('$e')));}
     finally{if(mounted)setState(()=>_movingStudentIds.remove(docId));}
@@ -19648,14 +17423,14 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                     style: TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                   const SizedBox(height: 18),
-                  const Text('Admin Password daalein:', style: TextStyle(color: Colors.white, fontSize: 12)),
+                  const Text('App Lock Password daalein:', style: TextStyle(color: Colors.white, fontSize: 12)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: passwordController,
                     obscureText: obscureText,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      hintText: 'Enter Admin Password',
+                      hintText: 'Enter App Lock Password',
                       hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
                       filled: true,
                       fillColor: const Color(0xFF121B22),
@@ -19767,7 +17542,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         }
       }
 
-      final scriptUrl = await _windowsGoogleScriptUrl();
+      final scriptUrl = await _windowsDirectoryMutationUrl();
 
       Future<Map<String, dynamic>> deleteFromGoogle() async {
         final response = await WindowsBackendBridge.post(
@@ -19802,7 +17577,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
             result['message'] ?? 'Student Google Sheet delete failed.',
           );
         }
-        if (result['alreadyDeleted'] == true) {
+        if (result['alreadyDeleted'] == true || result['cloudSyncPending'] == true) {
           googleFullyDeleted = true;
           break;
         }
@@ -19815,6 +17590,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       // Same student ke saare legacy aliases (Roll_1 / Roll_01 / etc.)
       // local profile se delete karo. Tracked delete Firebase ke saare alias
       // documents ko bhi next sync me delete karega.
+      if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
       final allStudents = await studentsRef.get();
       var deletedCount = 0;
 
@@ -19839,7 +17615,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text('Student permanently delete ho gaya!'),
+            content: Text('Student removed on this PC. Background school sync queued.'),
           ),
         );
       }
@@ -19882,7 +17658,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
               }
 
               if (existingPhotoUrl.isNotEmpty) {
-                return Image.network(
+                return schoolNetworkImage(
                   existingPhotoUrl,
                   width: double.infinity,
                   height: double.infinity,
@@ -20147,7 +17923,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
 
                               try {
                                 final scriptUrl =
-                                    await _windowsGoogleScriptUrl();
+                                    await _windowsDirectoryMutationUrl();
 
                                 final studentClass =
                                     data['class']?.toString() ?? '';
@@ -20220,6 +17996,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                                   updateData['photoUrl'] = returnedPhotoUrl;
                                 }
 
+                                if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
                                 await FirebaseFirestore.instance
                                     .collection('students_directory')
                                     .doc(docId)
@@ -20233,8 +18010,8 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                                     backgroundColor: const Color(0xFF00A884),
                                     content: Text(
                                       selectedPhotoBytes == null
-                                          ? 'Student Firestore aur Google Sheet dono me update ho gaya!'
-                                          : 'Student details aur photo successfully update ho gaye!',
+                                          ? 'Student saved on this PC. Background school sync queued.'
+                                          : 'Student details and photo saved on this PC. Background school sync queued.',
                                     ),
                                   ),
                                 );
@@ -20429,7 +18206,7 @@ errorBuilder: (_, __, ___) => const ColoredBox(
                             height: 56,
                             child: ClipOval(
                               child: (photoUrl != null && photoUrl.isNotEmpty)
-                                  ? Image.network(
+                                  ? schoolNetworkImage(
                                       photoUrl,
                                       fit: BoxFit.cover,
 errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF121B22), child: Icon(Icons.person, size: 30, color: Color(0xFF00A884))),
@@ -20594,7 +18371,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                           borderRadius: BorderRadius.circular(9),
                                         ),
                                       ),
-                                      onPressed: isMoving || classNumber >= 12
+                                      onPressed: isMoving || classNumber >= 12 || latestResult?['isFinal']!=true || resultStatus.toUpperCase()!='FAIL' || student['classMovement']!='RETAINED'
                                           ? null
                                           : () => _changeStudentClass(
                                                 doc.id,
@@ -20636,7 +18413,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                           borderRadius: BorderRadius.circular(9),
                                         ),
                                       ),
-                                      onPressed: isMoving || classNumber <= 1
+                                      onPressed: isMoving || latestResult?['isFinal']!=true || resultStatus.toUpperCase()!='FAIL'
                                           ? null
                                           : () => _changeStudentClass(
                                                 doc.id,
@@ -20648,7 +18425,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                         size: 16,
                                       ),
                                       label: const Text(
-                                        'Demote',
+                                        'Retain',
                                         style: TextStyle(
                                           fontSize: 10.5,
                                           fontWeight: FontWeight.w800,
@@ -20690,7 +18467,7 @@ errorBuilder: (context, error, stackTrace) => const ColoredBox(color: Color(0xFF
                                       size: 16,
                                     ),
                                     label: const Text(
-                                      'Student All Documents',
+                                      'Student Inventory',
                                       style: TextStyle(
                                         fontSize: 10.5,
                                         fontWeight: FontWeight.w700,
@@ -20791,8 +18568,6 @@ class PasswordManagementScreen extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 900),
             child: Column(
               children: const [
-                WindowsSettingsPanel(),
-                SizedBox(height: 14),
                 _WindowsSectionPasswordLocksPanel(),
               ],
             ),
@@ -20818,10 +18593,11 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   String? _linkedScript;
   bool _loading = true;
   bool _saving = false;
+  bool _managedConnection=false;
+  bool _editingDrive=false;
 
   bool get _linked =>
-      (_linkedGmail?.trim().isNotEmpty ?? false) &&
-      (_linkedScript?.trim().isNotEmpty ?? false);
+      !_editingDrive && (_linkedScript?.trim().isNotEmpty ?? false);
 
   @override
   void initState() {
@@ -20839,8 +18615,11 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   Future<void> _load() async {
     try {
       final data = await WindowsExternalConnections.load();
+      final managed=await CentralSchoolCloud.saved();
+      if(managed['managed']==true){data['googleEmail']=managed['googleEmail']??'';data['googleScriptUrl']=managed['scriptUrl'];}
       if (!mounted) return;
       setState(() {
+        _managedConnection=managed['managed']==true;
         _linkedGmail = data['googleEmail']?.toString().trim();
         _linkedScript = data['googleScriptUrl']?.toString().trim();
         _gmail.text = _linkedGmail ?? '';
@@ -20851,7 +18630,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       final loadedUrl = _linkedScript?.trim() ?? '';
       if (loadedUrl.isNotEmpty) {
         unawaited(
-          WindowsBackendBridge.testRemote(Uri.parse(loadedUrl)),
+          _verifyDrive(loadedUrl),
         );
       } else {
         WindowsServiceStatus.instance.unhealthy(
@@ -20868,12 +18647,37 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     }
   }
 
+  Future<void> _verifyDrive(String url) async {
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    WindowsServiceStatus.instance.checking(WindowsServiceType.googleDrive,'Checking the actual school Drive / Apps Script connection…');
+    try {
+      final saved=await CentralSchoolCloud.saved();
+      if (saved['managed']==true) {
+        final result=await ManagedSchoolSession.callForSchool(saved['schoolId'],'managed/storage/check',{});
+        if(FirebaseFirestore.instance.activeProfileId!=origin) return;
+        final account=result['googleEmail']?.toString()??'';
+        if(account.isNotEmpty) {
+          await CentralSchoolCloud.updateSession(saved['schoolId'],{'googleEmail':account},expectedUid:saved['uid']);
+          if(mounted)setState(()=>_linkedGmail=account);
+        }
+        WindowsServiceStatus.instance.healthy(WindowsServiceType.googleDrive,'School Drive / GS actual verification succeeded.');
+      } else {
+        final healthy=await WindowsBackendBridge.testRemote(Uri.parse(url));
+        if(FirebaseFirestore.instance.activeProfileId!=origin)return;
+        if(!healthy)throw StateError('School Drive health check failed.');
+      }
+    } catch (e) {
+      if(FirebaseFirestore.instance.activeProfileId==origin) WindowsServiceStatus.instance.unhealthy(WindowsServiceType.googleDrive,'School Drive / GS error: $e');
+    }
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     final email = _gmail.text.trim();
     final url = _script.text.trim();
 
-    if (email.isEmpty || !email.toLowerCase().endsWith('@gmail.com')) {
+    final managedSession=await CentralSchoolCloud.saved();
+    if (managedSession['managed']!=true && (email.isEmpty || !email.toLowerCase().endsWith('@gmail.com'))) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: Colors.redAccent,
@@ -20893,19 +18697,26 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     }
 
     setState(() => _saving = true);
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    var connectedEmail=email;
     try {
-      await WindowsSyncEngine.instance.changeGoogleConnection(
-        email: email,
-        scriptUrl: url,
-      );
-      if (!mounted) return;
+      final managed=await CentralSchoolCloud.saved();
+      if(managed['managed']==true){
+        final result=await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url,if(_editingDrive)'replace':true,if(_editingDrive)'expectedScriptUrl':_linkedScript});
+        if(result['googleEmail'] is String) await CentralSchoolCloud.updateSession(managed['schoolId'],{'googleEmail':result['googleEmail']},expectedUid:managed['uid']);
+        connectedEmail=result['googleEmail']?.toString()??'';
+        await CentralSchoolCloud.updateSession(managed['schoolId'],{'scriptUrl':url},expectedUid:managed['uid']);
+        await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
+      }else{await WindowsSyncEngine.instance.changeGoogleConnection(email:email,scriptUrl:url);}
+      if (!mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
       setState(() {
-        _linkedGmail = email;
+        _linkedGmail = connectedEmail;
+        _editingDrive=false;
         _linkedScript = url;
         _saving = false;
       });
       unawaited(
-        WindowsBackendBridge.testRemote(Uri.parse(url)),
+        _verifyDrive(url),
       );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -20925,7 +18736,22 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     }
   }
 
+  Future<void> _backupDrive() async {
+    if(_saving)return;setState(()=>_saving=true);
+    final saved=await CentralSchoolCloud.saved();
+    final cloud=CentralSchoolCloud(endpoint:saved['endpoint']??CentralSchoolCloud.apiUrl);
+    try {
+      await WindowsSyncEngine.instance.prepareDriveBackup();
+      if(WindowsSyncEngine.instance.syncBlocked)throw StateError('Resolve school sync before creating a Drive backup.');
+      await cloud.backup();
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Backup saved to this school Google Drive.')));
+    }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Drive backup failed: $e')));}
+    finally{cloud.close();if(mounted)setState(()=>_saving=false);}
+  }
+
   Future<void> _unlink() async {
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    if(!WindowsLocalSecurity.configured){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Set App Lock in Password Management before changing Drive.')));return;}
     final sure = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -20936,7 +18762,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           style: TextStyle(color: Colors.white),
         ),
         content: const Text(
-          'Google Drive / Apps Script connection remove hoga. Existing Drive files delete nahi honge.',
+          'Change the saved Drive connection? Your existing files remain preserved. A 30-second delay and App Lock verification are required.',
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -20962,39 +18788,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       barrierDismissible: false,
       builder: (_) => const _DriveUnlinkSecurityDialog(),
     );
-    if (verified != true || !mounted) return;
+    if (verified != true || !mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
 
-    setState(() => _saving = true);
-    try {
-      await WindowsSyncEngine.instance.disconnectGoogle();
-      if (!mounted) return;
-      setState(() {
-        _linkedGmail = null;
-        _linkedScript = null;
-        _gmail.clear();
-        _script.clear();
-        _saving = false;
-      });
-      WindowsServiceStatus.instance.unhealthy(
-        WindowsServiceType.googleDrive,
-        'Google Drive / Apps Script disconnected.',
-      );
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
-          content: Text('Google Drive configuration unlink ho gayi.'),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Unlink error: $e'),
-        ),
-      );
-    }
+    // Editing does not disconnect or erase the existing school storage.
+    setState(() => _editingDrive=true);
   }
 
   InputDecoration _input(String text, IconData icon) => InputDecoration(
@@ -21118,7 +18915,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                             ),
                             const SizedBox(height: 14),
                             if (_linked) ...[
-                              _info('Linked Gmail ID', _linkedGmail ?? '',
+                              _info('Linked Gmail ID', (_linkedGmail?.isNotEmpty??false)?_linkedGmail!:'Account unavailable from this deployment',
                                   Icons.mail_outline_rounded),
                               const SizedBox(height: 10),
                               _info('Google Apps Script URL',
@@ -21132,13 +18929,13 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                                     height: 1.4),
                               ),
                               const SizedBox(height: 14),
+
                               SizedBox(
                                 width: double.infinity,
                                 child: OutlinedButton.icon(
                                   onPressed: _saving ? null : _unlink,
                                   icon: const Icon(Icons.sync_alt_rounded),
-                                  label: const Text(
-                                      'Unlink / Change Google Drive Account'),
+                                  label: const Text('Change'),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: Colors.orangeAccent,
                                     side: BorderSide(
@@ -21662,13 +19459,14 @@ class _WindowsSectionPasswordLocksPanelState
           ),
           const SizedBox(height: 7),
           const Text(
-            'Ye passwords App Open/Firebase password aur Local Settings Lock se completely independent hain. Password ON hone par section kholte waqt alag password maanga jayega.',
+            'App Lock protects app opening. Other section passwords remain independent and keep their existing values.',
             style: TextStyle(
               color: Colors.white54,
               fontSize: 10.5,
               height: 1.45,
             ),
           ),
+          const WindowsSettingsPanel(lockRowOnly:true),
           if (_loading)
             const Padding(
               padding: EdgeInsets.only(top: 18),
@@ -21834,7 +19632,7 @@ class _AdvancedStudentUidSettingsPanelState
                       child: Text(
                         secondsLeft > 0
                             ? 'Student Directory verify karein... Password option $secondsLeft sec baad unlock hoga.'
-                            : 'Verification time complete. Ab Admin Password enter karein.',
+                            : 'Verification time complete. Ab App Lock Password enter karein.',
                         style: TextStyle(
                           color: secondsLeft > 0
                               ? Colors.orangeAccent
@@ -21852,7 +19650,7 @@ class _AdvancedStudentUidSettingsPanelState
                       style: const TextStyle(color: Colors.white),
                       onChanged: (_) => setDialogState(() {}),
                       decoration: InputDecoration(
-                        labelText: 'Admin Password',
+                        labelText: 'App Lock Password',
                         labelStyle: const TextStyle(color: Colors.white54),
                         prefixIcon: const Icon(
                           Icons.lock_outline_rounded,
@@ -22073,7 +19871,7 @@ class _AdvancedStudentUidSettingsPanelState
           backgroundColor: Colors.redAccent,
           content: Text(
             e.code == 'wrong-password' || e.code == 'invalid-credential'
-                ? 'Admin Password galat hai.'
+                ? 'App Lock Password galat hai.'
                 : 'Admin verification failed: ${e.message ?? e.code}',
           ),
         ),
@@ -22344,7 +20142,7 @@ class _AdvancedStudentUidSettingsPanelState
               title: 'Enable Student UID',
               subtitle: _uidMasterEnabled
                   ? 'TEST UID assignment active hai.'
-                  : 'ON karne par 20 sec warning + Admin Password verification hoga.',
+                  : 'ON karne par 20 sec warning + App Lock Password verification hoga.',
               value: _uidMasterEnabled,
               onChanged: _setUidMasterEnabled,
             ),
@@ -22375,7 +20173,8 @@ class _AdvancedStudentUidSettingsPanelState
   }
 }
 class _DriveUnlinkSecurityDialog extends StatefulWidget {
-  const _DriveUnlinkSecurityDialog();
+  const _DriveUnlinkSecurityDialog({this.deadline});
+  final DateTime? deadline;
 
   @override
   State<_DriveUnlinkSecurityDialog> createState() =>
@@ -22384,6 +20183,7 @@ class _DriveUnlinkSecurityDialog extends StatefulWidget {
 
 class _DriveUnlinkSecurityDialogState
     extends State<_DriveUnlinkSecurityDialog> {
+  final _profile=FirebaseFirestore.instance.activeProfileId;
   final _password = TextEditingController();
   Timer? _timer;
   int _seconds = 30;
@@ -22394,6 +20194,9 @@ class _DriveUnlinkSecurityDialogState
   @override
   void initState() {
     super.initState();
+    if (widget.deadline != null) {
+      _seconds = ((widget.deadline!.difference(DateTime.now()).inMilliseconds + 999) ~/ 1000).clamp(0, 30).toInt();
+    }
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         timer.cancel();
@@ -22419,7 +20222,7 @@ class _DriveUnlinkSecurityDialogState
     if (_seconds > 0 || _busy) return;
     final pass = _password.text.trim();
     if (pass.isEmpty) {
-      setState(() => _error = 'Admin Password daalein.');
+      setState(() => _error = 'App Lock Password daalein.');
       return;
     }
     setState(() {
@@ -22427,9 +20230,10 @@ class _DriveUnlinkSecurityDialogState
       _error = null;
     });
     try {
+      if(FirebaseFirestore.instance.activeProfileId!=_profile)throw StateError('School changed. Reopen settings.');
       await WindowsLocalSecurity.initialize();
       if (!WindowsLocalSecurity.verifyPassword(pass)) {
-        throw Exception('Invalid Local Admin password');
+        throw Exception('Invalid Local App Lock password');
       }
       if (!mounted) return;
       Navigator.pop(context, true);
@@ -22437,7 +20241,7 @@ class _DriveUnlinkSecurityDialogState
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = 'Galat Admin Password.';
+        _error = 'Galat App Lock Password.';
       });
     }
   }
@@ -22448,7 +20252,7 @@ class _DriveUnlinkSecurityDialogState
     return AlertDialog(
       backgroundColor: const Color(0xFF172229),
       title: Text(
-        waiting ? 'Security Waiting Period' : 'Admin Verification',
+        waiting ? 'Security Waiting Period' : 'App Lock Verification',
         style: const TextStyle(color: Colors.white),
       ),
       content: SizedBox(
@@ -22471,7 +20275,7 @@ class _DriveUnlinkSecurityDialogState
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Countdown complete hone ke baad Admin Password maanga jayega.',
+                    'Countdown complete hone ke baad App Lock Password maanga jayega.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white60),
                   ),
@@ -22486,7 +20290,7 @@ class _DriveUnlinkSecurityDialogState
                     obscureText: _obscure,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      hintText: 'Admin Password',
+                      hintText: 'App Lock Password',
                       hintStyle: const TextStyle(color: Colors.white30),
                       filled: true,
                       fillColor: const Color(0xFF0F191F),
@@ -22541,7 +20345,7 @@ class _DriveUnlinkSecurityDialogState
 
 // ============================================================
 // STUDENT ALL DOCUMENTS
-// PDF/JPG/JPEG only. Combined per-student limit = 2 MB.
+// JPG/JPEG/PNG/PDF; original retained, optimized copies queued locally.
 // ============================================================
 class StudentDocumentsScreen extends StatefulWidget {
   final String studentId;
@@ -22560,7 +20364,9 @@ class StudentDocumentsScreen extends StatefulWidget {
 
 class _StudentDocumentsScreenState
     extends State<StudentDocumentsScreen> {
-  static const int _maxBytes = 2 * 1024 * 1024;
+  late final String _schoolProfile;
+  final List<StreamSubscription> _localSubscriptions=[];
+  int _loadGeneration=0;
   bool _loading = true;
   bool _uploading = false;
   String? _error;
@@ -22582,19 +20388,39 @@ class _StudentDocumentsScreenState
   @override
   void initState() {
     super.initState();
+    _schoolProfile=FirebaseFirestore.instance.activeProfileId;
     _load();
+    for(final collection in ['documents','_local_student_documents']) {
+      _localSubscriptions.add(FirebaseFirestore.instance.collection(collection).snapshots().listen((_){
+        if(mounted&&!_uploading&&!_loading)unawaited(_load());
+      }));
+    }
   }
 
+  @override
+  void dispose(){for(final subscription in _localSubscriptions)subscription.cancel();super.dispose();}
+
   Future<String> _scriptUrl() async {
+    final saved = await CentralSchoolCloud.saved();
+    if (saved['managed'] == true) {
+      if (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != saved['schoolId']) {
+        throw StateError('School changed. Reopen documents.');
+      }
+      // Managed document operations are routed locally by the bridge. Do not
+      // require a verified Drive URL before reaching that local-first path.
+      return '';
+    }
     return _windowsGoogleScriptUrl();
   }
 
   Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
+    if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile) throw StateError('School changed. Reopen documents.');
     final response = await WindowsBackendBridge.post(
       Uri.parse(await _scriptUrl()),
       headers: {'Content-Type': 'text/plain;charset=utf-8'},
       body: jsonEncode(body),
     );
+    if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile) throw StateError('School changed while loading documents.');
     if (response.statusCode != 200) {
       throw Exception('Google backend error: ${response.statusCode}');
     }
@@ -22610,6 +20436,8 @@ class _StudentDocumentsScreenState
   }
 
   Future<void> _load() async {
+    if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile){if(mounted)setState((){_documents=[];_loading=false;_error='School changed. Reopen documents.';});return;}
+    final generation=++_loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
@@ -22629,124 +20457,39 @@ class _StudentDocumentsScreenState
               .map((e) => Map<String, dynamic>.from(e))
               .toList()
           : <Map<String, dynamic>>[];
-      if (!mounted) return;
+      if (!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_schoolProfile) return;
       setState(() {
         _documents = docs;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
+        if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) _documents = [];
         _loading = false;
-        _error = e.toString();
+        _error = 'Documents could not be loaded. Retry; existing files are retained.';
       });
     }
   }
 
-  Future<String?> _askName(String? current) async {
-    final controller = TextEditingController(text: current ?? '');
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF172229),
-        title: const Text('Document Name',
-            style: TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            hintText: 'Aadhaar Card / Birth Certificate / Marksheet',
-            hintStyle: const TextStyle(color: Colors.white30),
-            filled: true,
-            fillColor: const Color(0xFF0F191F),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final value = controller.text.trim();
-              if (value.isNotEmpty) Navigator.pop(ctx, value);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00A884),
-            ),
-            child: const Text('Continue',
-                style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    return result;
-  }
+  Future<String?> _askName(String? current) => showDialog<String>(
+    context: context, builder: (_) => DocumentNameDialog(current: current ?? ''));
 
   Future<void> _upload({Map<String, dynamic>? replace}) async {
     if (_uploading) return;
     final docName = await _askName(replace?['documentName']?.toString());
     if (docName == null || !mounted) return;
 
-    final input = html.FileUploadInputElement()
-      ..accept = '.pdf,.jpg,.jpeg,application/pdf,image/jpeg';
-    input.click();
-    await input.onChange.first;
-
-    final files = input.files;
-    if (files == null || files.isEmpty || !mounted) return;
-
-    final file = files.first;
-    var mime = file.type.toLowerCase().trim();
-    final lower = file.name.toLowerCase();
-
-    if (mime.isEmpty) {
-      if (lower.endsWith('.pdf')) {
-        mime = 'application/pdf';
-      } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-        mime = 'image/jpeg';
-      }
-    }
-
-    if (mime != 'application/pdf' &&
-        mime != 'image/jpeg' &&
-        mime != 'image/jpg') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text('Sirf PDF/JPG/JPEG document allowed hai.'),
-        ),
-      );
-      return;
-    }
-
-    final oldSize = (replace?['sizeBytes'] as num?)?.toInt() ?? 0;
-    if (_totalBytes - oldSize + file.size > _maxBytes) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.redAccent,
-          content: Text(
-              '2 MB total limit exceed hoga. Used ${_formatBytes(_totalBytes)}.'),
-        ),
-      );
-      return;
-    }
-
     setState(() => _uploading = true);
     try {
-      final reader = html.FileReader();
-      reader.readAsDataUrl(file);
-      await reader.onLoad.first;
-      final dataUrl = reader.result?.toString() ?? '';
-      if (dataUrl.isEmpty) throw Exception('File read nahi ho paya.');
-
-      await _post({
+      final file = await showDialog<SelectedDocument>(context: context,
+        builder: (_) => DocumentUploadDialog(name: docName, scope: _schoolProfile,
+          isCurrent: () => FirebaseFirestore.instance.activeProfileId == _schoolProfile));
+      if (file == null || !mounted) return;
+      if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) throw StateError('School changed. Reopen documents.');
+      final mime = file.mime;
+      final dataUrl = 'data:$mime;base64,${base64Encode(file.bytes)}';
+      final saved = await _post({
         'action': 'upload_student_document',
         'studentId': widget.studentId,
         'studentName': _name,
@@ -22765,9 +20508,7 @@ class _StudentDocumentsScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF00A884),
-          content: Text(replace == null
-              ? 'Document Google Drive me upload ho gaya.'
-              : 'Document Google Drive me replace ho gaya.'),
+          content: Text(saved['cloudSyncPending']==true ? 'Saved locally • Sync pending. Original preserved.' : saved['windowsLocalFallback']==true ? 'Saved locally • Cloud upload not confirmed.' : 'Document upload confirmed.'),
         ),
       );
     } catch (e) {
@@ -22791,7 +20532,7 @@ class _StudentDocumentsScreenState
         title: const Text('Delete Document?',
             style: TextStyle(color: Colors.white)),
         content: Text(
-          '${document['documentName'] ?? 'Document'} Google Drive se delete hoga.',
+          'Remove ${document['documentName'] ?? 'Document'} from the document list? Original files are retained for recovery.',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -22827,6 +20568,25 @@ class _StudentDocumentsScreenState
     }
   }
 
+  Future<void> _view(Map<String,dynamic> document) async {
+    try {
+      final saved=await CentralSchoolCloud.saved();
+      if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile)throw StateError('School changed. Reopen documents.');
+      if(saved['managed']!=true){
+        final url=document['fileUrl']?.toString()??'';
+        if(url.isEmpty)throw StateError('Document file is not available.');
+        html.window.open(url,'_blank');return;
+      }
+      final bytes=await WindowsBackendBridge.documentBytes(document);
+      if(!mounted || FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
+      final mime=(document['optimizedMimeType']??document['mimeType']??'').toString();
+      await showDialog<void>(context:context,builder:(ctx)=>Dialog(child:SizedBox(
+        width:900,height:650,child:Column(children:[
+          Expanded(child:mime.contains('pdf')?FittedDocumentPreview(bytes:bytes):Image.memory(bytes,fit:BoxFit.contain)),
+          TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]))));
+    } catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Document preview unavailable: $e')));}
+  }
+
   String _formatBytes(int bytes) {
     if (bytes >= 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
@@ -22837,14 +20597,15 @@ class _StudentDocumentsScreenState
 
   @override
   Widget build(BuildContext context) {
-    final ratio = (_totalBytes / _maxBytes).clamp(0.0, 1.0).toDouble();
+    final ratio = (_totalBytes / (300*1024)).clamp(0.0, 1.0).toDouble();
     return Scaffold(
       backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Student All Documents'),
+        title: const Text('Student Inventory'),
       ),
       floatingActionButton: FloatingActionButton.extended(
+        key: const ValueKey('student-document-upload'),
         onPressed: _uploading ? null : () => _upload(),
         backgroundColor: const Color(0xFF00A884),
         foregroundColor: Colors.white,
@@ -22910,9 +20671,10 @@ class _StudentDocumentsScreenState
                               color: Colors.white,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Text('${_formatBytes(_totalBytes)} / 2.00 MB',
+                      Expanded(child:Text('${_documents.length} documents • ${_documents.every((d)=>d['sourceBytes'] is num) ? _formatBytes(_documents.fold<int>(0,(sum,d)=>sum+(d['sourceBytes'] as num).toInt())) : 'Not fully recorded'} original • ${_formatBytes(_totalBytes)} optimized • target ~300 KB • ${_uploading ? 'Optimizing / pending' : _totalBytes > 300*1024 ? 'Readability Protected' : _documents.isEmpty ? 'Awaiting documents' : 'Optimized'}',
+                          textAlign:TextAlign.right,maxLines:3,
                           style: const TextStyle(
-                              color: Colors.white54, fontSize: 10.5)),
+                              color: Colors.white54, fontSize: 10.5))),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -22921,18 +20683,14 @@ class _StudentDocumentsScreenState
                     minHeight: 7,
                     backgroundColor: Colors.white10,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      ratio >= .9
-                          ? Colors.redAccent
-                          : ratio >= .7
-                              ? Colors.orangeAccent
-                              : const Color(0xFF00A884),
+                      _uploading ? Colors.amber : _totalBytes > 300*1024 ? Colors.orangeAccent : const Color(0xFF00A884),
                     ),
                   ),
                   const SizedBox(height: 7),
                   const Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'PDF/JPG/JPEG only • sab documents mila kar maximum 2 MB.',
+                      'PDF/JPG/JPEG/PNG • source up to 50 MB. Target: about 300 KB for 7–8 normal scans; quality takes priority. Preview uses original. Actual optimized sizes shown.',
                       style: TextStyle(color: Colors.white38, fontSize: 10),
                     ),
                   ),
@@ -22940,13 +20698,12 @@ class _StudentDocumentsScreenState
               ),
             ),
             const SizedBox(height: 12),
+            if (_error != null)
+              Text(_documents.isEmpty ? _error! : 'Offline / Sync pending. Showing saved documents.', style: const TextStyle(color: Colors.orange)),
             if (_loading)
               const Center(
                   child:
                       CircularProgressIndicator(color: Color(0xFF00A884)))
-            else if (_error != null)
-              Text(_error!,
-                  style: const TextStyle(color: Colors.redAccent))
             else if (_documents.isEmpty)
               Container(
                 padding: const EdgeInsets.all(28),
@@ -22996,19 +20753,17 @@ class _StudentDocumentsScreenState
                                     color: Colors.white,
                                     fontWeight: FontWeight.w800)),
                             Text(
-                              '${document['fileName'] ?? ''} • ${_formatBytes(size)}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              'Original: ${document['sourceBytes'] is num ? _formatBytes((document['sourceBytes'] as num).toInt()) : 'Not recorded'} • Optimized: ${_formatBytes(size)} • Savings: ${document['sourceBytes'] is num && (document['sourceBytes'] as num)>0 ? (100*(1-size/(document['sourceBytes'] as num))).toStringAsFixed(1)+'%' : 'Not recorded'} • ${document['syncState']??'Cloud copy'}',
+                              maxLines: 3,
                               style: const TextStyle(
                                   color: Colors.white38, fontSize: 9.5),
                             ),
+                            if(document['cleanupStatus']!=null) Text('${document['cleanupStatus']} • ${document['targetMet']==true?'Within per-document target':'Quality preserved; target may be exceeded'}',style:const TextStyle(color:Colors.white54,fontSize:10)),
                           ],
                         ),
                       ),
                       TextButton.icon(
-                        onPressed: url.isEmpty
-                            ? null
-                            : () => html.window.open(url, '_blank'),
+                        onPressed: () => _view(document),
                         icon: const Icon(Icons.visibility_rounded, size: 16),
                         label: const Text('View'),
                       ),
@@ -24958,7 +22713,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     padding: const EdgeInsets.fromLTRB(18, 18, 18, 100),
                     children: [
                       if (_error != null) ListTile(leading: const Icon(Icons.cloud_off, color: Colors.orange), title: Text(_error!), trailing: TextButton(onPressed: _load, child: const Text('Retry'))),
-                      const Text('Exam tools work offline. With Local Data OFF, offline edits last only for this session. Enable Local Data to keep them on this PC.', style: TextStyle(color: Colors.orangeAccent)),
+                      const Text('Exam records save durably on this PC. Cloud changes sync automatically; offline changes stay pending until acknowledged.', style: TextStyle(color: Colors.white60)),
                       const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.all(20),
@@ -25383,12 +23138,17 @@ class _ExamMarksEntryScreenState
                       });
 
                       try {
+                        doc.reference.requireOriginProfile();
                         final resultStatus=marks.values.every((m)=>m>=_passMarks)?'PASS':'FAIL';
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
                         final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
+                        final reportBytes = await WindowsDocumentTemplates.selected('reportCard', resultData);
+                        if (reportBytes == null) throw StateError('Report card could not be generated.');
+                        doc.reference.requireOriginProfile();
                         final savedResult = await _post({
                           'action': 'save_exam_result',
+                          'pdfBase64': base64Encode(reportBytes),
                           ...resultData,
                           'examId': _examId,
                           'studentId': doc.id,
@@ -25401,11 +23161,13 @@ class _ExamMarksEntryScreenState
                               FirebaseAuth.instance.currentUser?.email ??
                                   'Admin',
                         });
+                        doc.reference.requireOriginProfile();
+                        if (savedResult['reportCardUrl'] != null) resultData['reportCardUrl'] = savedResult['reportCardUrl'];
                         await FirebaseFirestore.instance.collection('exam_results').doc('${_examId}_${doc.id}').set(resultData);
                         savedOffline = savedResult['windowsLocalFallback'] == true;
                         if(isFinal){
                           try{await SchoolPromotionService.apply(studentId:doc.id,student:student,exam:{...widget.exam,'isFinal':true},result:resultStatus);}
-                          catch(e){await FirebaseFirestore.instance.collection('students_directory').doc(doc.id).set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
+                          catch(e){doc.reference.requireOriginProfile();if((await doc.reference.get()).exists) await doc.reference.set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
                         }
                         if (!ctx.mounted) return;
                         Navigator.pop(ctx, true);
@@ -25903,7 +23665,9 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
   void dispose(){ _qr.dispose(); super.dispose(); }
 
   Future<Map<String,dynamic>> _call(Map<String,dynamic> body) async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
     final scriptUrl = await _windowsGoogleScriptUrl();
+    if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
     final response = await WindowsBackendBridge.post(
       Uri.parse(scriptUrl),
       headers: const {'Content-Type':'text/plain;charset=utf-8'},
@@ -25920,9 +23684,16 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
     if(_busy) return;
     final payload = _windowsParsePersonQr(_qr.text);
     if(payload == null){ setState(()=>_status='Invalid Vidya Saarthi QR.'); return; }
+    final origin = FirebaseFirestore.instance.activeProfileId;
     setState((){_busy=true; _distance=null; _status='School + GPS verify ho raha hai...';});
     try{
       final activeProfile = await _windowsActiveSchoolProfileId();
+      final configured = await CentralSchoolCloud.saved();
+      if(configured['managed']==true &&
+          (payload['managed']!=true || payload['schoolId']!=configured['schoolId'])) {
+        throw StateError('This QR belongs to another school. Attendance blocked.');
+      }
+      if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
       final qrProfile = payload['schoolProfileId']?.toString().trim() ?? '';
       if(qrProfile.isNotEmpty && qrProfile != activeProfile){
         throw StateError('Ye QR kisi doosre school ka hai. Attendance blocked.');
@@ -25957,23 +23728,29 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
       final location = await _windowsSchoolLocationData();
       final schoolLat = double.tryParse(location['latitude']?.toString() ?? '');
       final schoolLng = double.tryParse(location['longitude']?.toString() ?? '');
-      final radius = double.tryParse(location['radiusMeters']?.toString() ?? '') ?? 200.0;
+      final radius = parseSchoolAttendanceRadius(location['radiusMeters'] ?? schoolAttendanceRadiusMeters);
+      if (radius == null) {
+        throw StateError('School Settings me attendance range 25–200 metre save karein.');
+      }
       if(schoolLat == null || schoolLng == null){
         throw StateError('School Settings me school location save karein.');
       }
       final current = await _windowsCurrentPosition();
-      final distance = _windowsDistanceMeters(current.latitude,current.longitude,schoolLat,schoolLng);
+      final distance = schoolDistanceMeters(SchoolMapPin(current.latitude, current.longitude), SchoolMapPin(schoolLat, schoolLng));
       _distance = distance;
-      if(distance > radius){
-        throw StateError('Attendance blocked: school se ${distance.toStringAsFixed(0)}m door. Allowed ${radius.toStringAsFixed(0)}m.');
+      if (!schoolAttendancePositionAllowed(SchoolMapPin(schoolLat, schoolLng),
+          SchoolMapPin(current.latitude, current.longitude), accuracyMeters: current.accuracy, radiusMeters: radius)) {
+        throw StateError('Attendance blocked: school se ${distance.toStringAsFixed(0)}m, GPS accuracy ±${current.accuracy.toStringAsFixed(0)}m. Allowed ${radius.toStringAsFixed(0)}m. Accurate GPS location lekar retry karein.');
       }
 
+      if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
       Map<String,dynamic> body;
       if(type == 'teacher'){
         body={
           'action':'mark_teacher_attendance',
-          'teacherId':payload['teacherId']?.toString().trim().isNotEmpty == true ? payload['teacherId'] : personId,
-          'teacherName':payload['name'] ?? '',
+          if(payload['managed']==true) 'schoolId':payload['schoolId'],
+          'teacherId':personDoc.data()?['teacherId'] ?? personId,
+          'teacherName':personDoc.data()?['name'] ?? '',
           'mode':_mode,
           'source':'WINDOWS_QR_GEOFENCE',
           'markedBy':'Windows Admin',
@@ -25984,10 +23761,11 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
       } else if(type == 'student'){
         body={
           'action':'mark_student_attendance',
+          if(payload['managed']==true) 'schoolId':payload['schoolId'],
           'studentId':personId,
-          'studentName':payload['name'] ?? '',
-          'studentClass':payload['class'] ?? '',
-          'rollNo':payload['rollNo'] ?? '',
+          'studentName':personDoc.data()?['name'] ?? '',
+          'studentClass':personDoc.data()?['class'] ?? '',
+          'rollNo':personDoc.data()?['rollNo'] ?? '',
           'mode':_mode,
           'source':'WINDOWS_QR_GEOFENCE',
           'markedBy':'Windows Admin',
@@ -26027,7 +23805,7 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
                 child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
                   const Text('Student / Teacher QR Attendance',style:TextStyle(color:Colors.white,fontSize:20,fontWeight:FontWeight.w900)),
                   const SizedBox(height:6),
-                  const Text('USB QR scanner se scan karein ya QR text paste karein. Active school identity + Windows GPS 200m geofence verify hoga.',style:TextStyle(color:Colors.white54,height:1.4)),
+                  const Text('USB QR scanner se scan karein ya QR text paste karein. Active school identity + Windows GPS school ki saved attendance range verify karega.',style:TextStyle(color:Colors.white54,height:1.4)),
                   const SizedBox(height:16),
                   SegmentedButton<String>(
                     segments: const [
@@ -26067,61 +23845,10 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
   }
 }
 
-class WindowsTemplatesScreen extends StatefulWidget {
+class WindowsTemplatesScreen extends StatelessWidget {
   const WindowsTemplatesScreen({super.key});
   @override
-  State<WindowsTemplatesScreen> createState()=>_WindowsTemplatesScreenState();
-}
-
-class _WindowsTemplatesScreenState extends State<WindowsTemplatesScreen>{
-  int _section=0;
-  final List<String> _studentIdTemplates = const ['Portrait Classic','Portrait Modern','Portrait Green','Portrait Purple','Landscape Classic','Landscape Modern','Landscape Blue','Landscape Premium'];
-  final List<String> _reportTemplates = const ['Academic Classic','Modern Result','Compact Marks','Formal Board'];
-  final List<String> _receiptTemplates = const ['Compact Receipt','A4 Receipt','Thermal Style','Premium Receipt'];
-
-  @override
-  Widget build(BuildContext context){
-    final items=_section==0?_studentIdTemplates:_section==1?_reportTemplates:_receiptTemplates;
-    return Scaffold(
-      backgroundColor:const Color(0xFF0B141A),
-      appBar:AppBar(title:Text(windowsTr('templates'))),
-      body:Padding(
-        padding:const EdgeInsets.all(16),
-        child:Column(children:[
-          SegmentedButton<int>(
-            segments:const [
-              ButtonSegment(value:0,label:Text('ID Cards'),icon:Icon(Icons.badge_rounded)),
-              ButtonSegment(value:1,label:Text('Report Cards'),icon:Icon(Icons.description_rounded)),
-              ButtonSegment(value:2,label:Text('Receipts'),icon:Icon(Icons.receipt_long_rounded)),
-            ],
-            selected:{_section},onSelectionChanged:(v)=>setState(()=>_section=v.first),
-          ),
-          const SizedBox(height:16),
-          Expanded(child:GridView.builder(
-            gridDelegate:const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent:320,mainAxisExtent:210,crossAxisSpacing:12,mainAxisSpacing:12),
-            itemCount:items.length + (_section==0?2:0),
-            itemBuilder:(context,index){
-              final isTeacher=_section==0 && index>=items.length;
-              final title=isTeacher?'Teacher ID ${index-items.length+1}':items[index];
-              final accent=isTeacher?Colors.purpleAccent:_section==1?Colors.orangeAccent:_section==2?Colors.greenAccent:const Color(0xFF69C2FF);
-              return Container(
-                padding:const EdgeInsets.all(14),
-                decoration:BoxDecoration(color:const Color(0xFF111B21),borderRadius:BorderRadius.circular(16),border:Border.all(color:accent.withOpacity(.25))),
-                child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-                  Row(children:[Icon(isTeacher?Icons.school_rounded:_section==0?Icons.badge_rounded:_section==1?Icons.description_rounded:Icons.receipt_long_rounded,color:accent),const Spacer(),Container(padding:const EdgeInsets.symmetric(horizontal:8,vertical:3),decoration:BoxDecoration(color:accent.withOpacity(.12),borderRadius:BorderRadius.circular(20)),child:Text('LIVE',style:TextStyle(color:accent,fontSize:9,fontWeight:FontWeight.w900)))]),
-                  const Spacer(),
-                  Container(height:86,width:double.infinity,decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(10)),child:Center(child:Icon(_section==0?Icons.qr_code_2_rounded:_section==1?Icons.auto_stories_rounded:Icons.receipt_rounded,color:accent,size:50))),
-                  const Spacer(),
-                  Text(title,style:const TextStyle(color:Colors.white,fontWeight:FontWeight.w800)),
-                  Text(isTeacher?'Dedicated Teacher QR ID template':_section==0?'Student QR ID template':_section==1?'Report card layout ready':'Fee receipt layout ready',style:const TextStyle(color:Colors.white38,fontSize:9.5)),
-                ]),
-              );
-            },
-          )),
-        ]),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => const SchoolDocumentTemplatesScreen();
 }
 
 class _WindowsMetricCard extends StatelessWidget{

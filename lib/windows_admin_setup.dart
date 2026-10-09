@@ -1,3 +1,6 @@
+import 'windows_school_profile_restore.dart';
+import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,15 +12,14 @@ import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_session.dart';
 
-/// Local-first initial school/admin setup shown after the licence screen is
-/// skipped on a fresh install. It never touches Firebase, Google Drive or any
-/// network service: everything is written to this PC only.
+/// School-scoped registration cache. Managed enrollment is verified centrally;
+/// branding and operational data remain local or in the school's own Drive.
 class WindowsAdminSetup {
   WindowsAdminSetup._();
 
   static const fileVersion = 'admin_setup_v1';
 
-  static File get _file {
+  static File _fileForSchool(String schoolId) {
     final base = Platform.environment['APPDATA'] ??
         Platform.environment['LOCALAPPDATA'];
     if (base == null) {
@@ -25,7 +27,7 @@ class WindowsAdminSetup {
     }
     return File(
       '$base${Platform.pathSeparator}VidyaSaarthi${Platform.pathSeparator}'
-      '$fileVersion.json',
+      '$fileVersion${schoolId.isEmpty?'':'_$schoolId'}.json',
     );
   }
 
@@ -37,13 +39,27 @@ class WindowsAdminSetup {
   static bool? completedOverride;
 
   static Future<Map<String, dynamic>> read() async {
+    final saved = await CentralSchoolCloud.saved();
+    final managed = saved['managed'] == true;
+    final school = managed ? saved['schoolId'].toString() : '';
+    final target = _fileForSchool(school);
+    Map<String, dynamic> data;
     try {
-      final text = await _file.readAsString();
-      _data = Map<String, dynamic>.from(jsonDecode(text));
+      data = Map<String, dynamic>.from(jsonDecode(await target.readAsString()));
     } catch (_) {
-      _data = const {};
+      data = {};
     }
-    return _data;
+    if (managed) {
+      final current = await CentralSchoolCloud.saved();
+      if (current['schoolId'] != school || current['uid'] != saved['uid']) {
+        throw StateError('School changed while reading registration. Retry login.');
+      }
+      // Older local files omitted schoolId. Bind their provenance to the exact
+      // tenant filename, without relabelling a foreign declared identity.
+      if (data.isNotEmpty) data.putIfAbsent('schoolId', () => school);
+    }
+    _data = data;
+    return data;
   }
 
   /// True when an admin/school setup already exists — either saved by this
@@ -52,20 +68,91 @@ class WindowsAdminSetup {
   /// users are therefore never forced through this page again.
   static Future<bool> completed() async {
     if (completedOverride != null) return completedOverride!;
-    if (_cachedCompleted == true && WindowsLocalSecurity.configured) return true;
-    final data = await read();
-    final basic = (data['schoolName']?.toString().isNotEmpty ?? false) &&
+    if (_cachedCompleted == true && WindowsLocalSecurity.configured && (await CentralSchoolCloud.saved())['managed']!=true) return true;
+    var data = await read();
+    final identity = await CentralSchoolCloud.saved();
+    if (identity['managed'] == true) {
+      final school = identity['schoolId'].toString();
+      final uid = identity['uid'];
+      final profileId = FirebaseFirestore.instance.activeProfileId;
+      final target = _fileForSchool(school);
+      Future<void> verifyIdentity() async {
+        final current = await CentralSchoolCloud.saved();
+        if (current['schoolId'] != school || current['uid'] != uid ||
+            FirebaseFirestore.instance.activeProfileId != profileId ||
+            FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) {
+          throw StateError('School changed during profile restore. Retry login.');
+        }
+      }
+      try {
+        await verifyIdentity();
+        // The tenant database can survive an app upgrade even when its separate
+        // registration JSON is missing. Never inspect another/unscoped profile.
+        final pending = await FirebaseFirestore.instance.collection('_windows_firebase_outbox')
+            .where('collection',isEqualTo:'school_config').where('documentId',isEqualTo:'school_profile_cache').get();
+        await verifyIdentity();
+        if (!WindowsSchoolProfileRestore.complete(data) || pending.docs.isNotEmpty) {
+          final cached = await FirebaseFirestore.instance.readSchoolRegistrationCache(school);
+          await verifyIdentity();
+          if (cached != null && cached['schoolId'] == school &&
+              WindowsSchoolProfileRestore.complete(cached)) data = Map<String, dynamic>.from(cached);
+        }
+        // Central auth/licence has already been checked by the startup gate.
+        // A complete cache in this exact tenant needs no synchronous Drive pull.
+        if (data['schoolId'] == school && WindowsSchoolProfileRestore.ready(data)) {
+          await verifyIdentity();
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+            FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache')
+              .set(data, SetOptions(merge:true)));
+          await verifyIdentity();
+          _data = data; _cachedCompleted = true;
+          return true;
+        }
+        final restored = await WindowsSchoolProfileRestore.resolveEnrollment(
+          schoolId: school, localProfile: data,
+          preferLocalProfile: pending.docs.isNotEmpty,
+          call: (action, body) async {
+            await verifyIdentity();
+            final result = await ManagedSchoolSession.call(action, body);
+            await verifyIdentity();
+            return result;
+          });
+        await verifyIdentity();
+        if (WindowsSchoolProfileRestore.ready(restored)) {
+          await target.parent.create(recursive:true);
+          final tmp = File('${target.path}.tmp');
+          await tmp.writeAsString(jsonEncode(restored),flush:true);
+          await tmp.rename(target.path);
+          await verifyIdentity();
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+            FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache')
+              .set(restored, SetOptions(merge:true)));
+          await verifyIdentity();
+          data = restored;
+          _data = restored;
+        }
+      } catch (_) {
+        // Verification/restore failures must not become a registration screen,
+        // including on a PC with a previously completed local registration.
+        await verifyIdentity();
+        rethrow;
+      }
+    }
+    final basic = (identity['managed'] == true && WindowsSchoolProfileRestore.ready(data)) ||
+        (data['schoolName']?.toString().isNotEmpty ?? false) &&
         (data['principalName']?.toString().isNotEmpty ?? false);
-    if (basic && WindowsLocalSecurity.configured) {
+    if (basic && (WindowsLocalSecurity.configured || (await CentralSchoolCloud.saved())['managed']==true)) {
       _cachedCompleted = true;
       return true;
     }
-    if (WindowsLocalSecurity.configured) {
+    if (WindowsLocalSecurity.configured && (await CentralSchoolCloud.saved())['managed']!=true) {
       _cachedCompleted = true;
       return true;
     }
     return false;
   }
+
+  static String get restoreNotice => _data['restoreNotice']?.toString() ?? '';
 
   static String get schoolName => _data['schoolName']?.toString() ?? '';
   static String get principalName => _data['principalName']?.toString() ?? '';
@@ -86,12 +173,18 @@ class WindowsAdminSetup {
     if (principal.length < 2) {
       throw const FormatException('Principal Name is required.');
     }
-    if (adminPassword.length < 6) {
+    final saved=await CentralSchoolCloud.saved();final managed=saved['managed']==true;
+    final targetFile=_fileForSchool(managed?saved['schoolId'].toString():'');
+    final brandingRef=FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache');
+
+    if (managed && adminPassword.isNotEmpty && adminPassword.length < 6) throw const FormatException('App Lock password must be at least 6 characters.');
+    if (!managed && adminPassword.length < 6) {
       throw const FormatException(
           'Admin Password must be at least 6 characters.');
     }
     final map = <String, dynamic>{
       'version': 1,
+      if (managed) 'schoolId': saved['schoolId'],
       'schoolName': name,
       'principalName': principal,
       'logoUrl': await _encodeImage(logoPath),
@@ -99,31 +192,45 @@ class WindowsAdminSetup {
       'principalSignatureUrl': await _encodeImage(signaturePath),
       'savedAt': DateTime.now().toIso8601String(),
     };
+    if (managed) {
+      final result = await ManagedSchoolSession.call('managed/profile', {
+        'operation': 'initialize', 'schoolName': name, 'principalName': principal});
+      if (result['success'] != true || result['schoolId'] != saved['schoolId'] ||
+          result['registrationState'] != 'complete') {
+        throw StateError('School registration could not be saved. Retry.');
+      }
+      final profile = result['profile'];
+      if (profile is! Map || profile['schoolId'] != saved['schoolId'] ||
+          profile['schoolName'] != name || profile['principalName'] != principal) {
+        throw StateError('This school is already registered. Retry login to restore its saved profile.');
+      }
+    }
+    // Keep private images on this PC until the school Drive is connected.
     // Persist locally first so the app works fully offline.
     try {
-      await _file.parent.create(recursive: true);
-      final tmp = File('${_file.path}.tmp');
+      await targetFile.parent.create(recursive: true);
+      final tmp = File('${targetFile.path}.tmp');
       await tmp.writeAsString(jsonEncode(map), flush: true);
-      await tmp.rename(_file.path);
+      await tmp.rename(targetFile.path);
+      if(managed&&(await CentralSchoolCloud.saved())['schoolId']!=saved['schoolId'])throw StateError('School changed. Registration remains scoped to its original school.');
       _data = map;
     } catch (e) {
       throw StateError('Could not save the setup on this PC: $e');
     }
-    // Mirror into the same local cache document the dashboard branding uses,
-    // best-effort and strictly offline (local Firestore store).
-    try {
-      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => FirebaseFirestore.instance
-          .collection('school_config')
-          .doc('school_profile_cache')
-          .set({
-        'schoolName': name,
-        'principalName': principal,
-        'logoUrl': map['logoUrl'],
-        'sealUrl': map['sealUrl'],
-        'principalSignatureUrl': map['principalSignatureUrl'],
-      }, SetOptions(merge: true)));
-    } catch (_) {}
+    // Keep initial branding in the durable outbox until its own Drive is ready.
+    final cache = <String,dynamic>{
+      if(managed) 'schoolId':saved['schoolId'],
+      'schoolName':name,'principalName':principal,'logoUrl':map['logoUrl'],
+      'sealUrl':map['sealUrl'],'principalSignatureUrl':map['principalSignatureUrl'],
+      'updatedAt':DateTime.now().millisecondsSinceEpoch,
+    };
+    if(managed) {
+      await brandingRef.set(cache,SetOptions(merge:true));
+    } else {
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>brandingRef.set(cache,SetOptions(merge:true)));
+    }
     // Reuse the existing local security lock with the entered password.
+    if(managed){if(adminPassword.isNotEmpty){if(adminPassword.length<6)throw const FormatException('App Lock password must be at least 6 characters.');await WindowsLocalSecurity.create(adminId:'School app',password:adminPassword);}await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();return;}
     if (!WindowsLocalSecurity.configured) {
       await WindowsLocalSecurity.create(
         adminId: 'Local Administrator',
@@ -168,6 +275,7 @@ class _WindowsAdminSetupScreenState extends State<WindowsAdminSetupScreen> {
   final _principal = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
+  final _licence = TextEditingController();
   String? _logoPath, _sealPath, _signaturePath;
   bool _busy = false, _obscure = true;
   String? _error;
@@ -178,6 +286,7 @@ class _WindowsAdminSetupScreenState extends State<WindowsAdminSetupScreen> {
     _principal.dispose();
     _password.dispose();
     _confirm.dispose();
+    _licence.dispose();
     super.dispose();
   }
 
@@ -241,6 +350,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
       _error = null;
     });
     try {
+      if(_licence.text.trim().isNotEmpty)await ManagedSchoolSession.call('managed/licence/activate',{'key':_licence.text.trim()});
       await WindowsAdminSetup.save(
         schoolName: _school.text,
         principalName: _principal.text,
@@ -249,6 +359,8 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         sealPath: _sealPath,
         signaturePath: _signaturePath,
       );
+      if (!mounted) return;
+      if((await CentralSchoolCloud.saved())['managed']==true)ManagedSchoolSession.changed.value++;
       if (!mounted) return;
       if (widget.onFinished != null) {
         widget.onFinished!();
@@ -295,18 +407,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.account_balance_rounded,
-                      size: 52, color: Colors.orangeAccent),
-                  const SizedBox(height: 14),
-                  const Text('Admin Setup',
-                      textAlign: TextAlign.center,
-                      style:
-                          TextStyle(fontSize: 25, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  const Text(
-                      'Saved on this PC only. No Firebase, cloud or school connection is needed.',
-                      textAlign: TextAlign.center),
-                  const SizedBox(height: 22),
+
                   TextField(
                     controller: _school,
                     decoration: const InputDecoration(
@@ -325,7 +426,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                     controller: _password,
                     obscureText: _obscure,
                     decoration: InputDecoration(
-                      labelText: 'Admin Password *',
+                      labelText: 'New App Lock password (optional)',
                       border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                           onPressed: () =>
@@ -340,9 +441,11 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                     controller: _confirm,
                     obscureText: _obscure,
                     decoration: const InputDecoration(
-                        labelText: 'Confirm Admin Password *',
+                        labelText: 'Confirm App Lock password',
                         border: OutlineInputBorder()),
                   ),
+                  const SizedBox(height: 12),
+                  TextField(controller:_licence,decoration:const InputDecoration(labelText:'Licence Key (optional during five-day trial)',border:OutlineInputBorder())),
                   const SizedBox(height: 16),
                   _imageTile('School Logo', _logoPath, 0),
                   _imageTile('School Seal', _sealPath, 1),

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - windows/easy-connect-draft
   workflow_dispatch:
 
 permissions:
@@ -11,7 +12,7 @@ permissions:
 
 jobs:
   verify-rules:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')
+    if: (github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[developer-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +28,7 @@ jobs:
       - run: npm test
         working-directory: security-tests
   build-and-deploy:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')
+    if: (github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[developer-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')))
     needs: verify-rules
     runs-on: ubuntu-latest
 
@@ -89,11 +90,17 @@ jobs:
       # BUILD WEB
       # IMPORTANT: Firebase site runs from /
       # =========================================================
+      - name: Verify latest installer selection
+        run: flutter test test/release_download_test.dart
+
       - name: Build Web
+        env:
+          SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
         run: |
           flutter build web \
             --release \
-            --base-href "/"
+            --base-href "/" \
+            --dart-define=SAARTHI_SCHOOL_CLOUD_URL="$SAARTHI_SCHOOL_CLOUD_URL"
 
       # =========================================================
       # BLOCK COMMON INSPECT / VIEW SOURCE SHORTCUTS
@@ -237,6 +244,7 @@ jobs:
       # DEPLOY ONLY VIDYASAARTHI HOSTING SITE
       # =========================================================
       - name: Verify and deploy free central Firebase rules
+        if: "!contains(github.event.head_commit.message, '[hosting-only]')"
         run: |
           npm --prefix functions install
           npm --prefix functions test

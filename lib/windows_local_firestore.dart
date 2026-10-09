@@ -1,10 +1,15 @@
+import 'school_timestamp.dart';
+export 'school_timestamp.dart' show Timestamp;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
 import 'windows_local_storage.dart';
+import 'storage/windows_sqlite_store.dart';
 import 'windows_runtime_flags.dart';
+import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'windows_service_status.dart';
 
 
@@ -33,21 +38,6 @@ class WindowsLocalFirestoreSyncControl {
       },
     );
   }
-}
-
-class Timestamp {
-  Timestamp.fromDate(DateTime value)
-      : _value = value.toUtc();
-
-  Timestamp.now()
-      : _value = DateTime.now().toUtc();
-
-  final DateTime _value;
-
-  DateTime toDate() => _value.toLocal();
-
-  int get millisecondsSinceEpoch =>
-      _value.millisecondsSinceEpoch;
 }
 
 class _ServerTimestampValue {
@@ -82,14 +72,22 @@ class FirebaseFirestore {
   static final FirebaseFirestore instance =
       FirebaseFirestore._();
 
-  final _LocalJsonDatabase _database =
-      _LocalJsonDatabase();
+  final _LocalSchoolDatabase _database =
+      _LocalSchoolDatabase();
 
   String get activeProfileId =>
       _database.activeProfileId;
 
   Map<String, dynamic> get activeProfileIdentity =>
       _database.activeProfileIdentity;
+
+  Future<Map<String, dynamic>?> readSchoolRegistrationCache(String schoolId) async {
+    final profile = activeProfileId;
+    if (activeProfileIdentity['schoolSyncId'] != schoolId) throw StateError('School cache identity changed.');
+    final result = await _database.readSchoolRegistrationCache(profile, schoolId);
+    if (activeProfileId != profile || activeProfileIdentity['schoolSyncId'] != schoolId) throw StateError('School changed while reading cache.');
+    return result == null ? null : _decodeMap(result);
+  }
 
   Future<void> switchProfile(
     String profileId, {
@@ -101,7 +99,67 @@ class FirebaseFirestore {
     );
   }
 
+  /// Managed schools use durable, tenant-scoped storage regardless of the
+  /// legacy standalone RAM-only preference. Authentication/licensing stay in
+  /// the startup gate; this validates its saved identity against the live store.
+  String? _persistenceBinding;
+  Future<void> changeLocalStorageLocation(String path) => _database.changeStorageLocation(path);
+  Future<int>? _persistenceResolution;
+
+  Future<bool> localPersistenceEnabled() async {
+    final origin = activeProfileId;
+    final identity = activeProfileIdentity;
+    if (!validSchoolId(identity['schoolSyncId']?.toString() ?? '')) {
+      return await WindowsRuntimeFlags.durableSchoolProfile(origin) ||
+          await WindowsRuntimeFlags.localStorageEnabled();
+    }
+    // Cache only the validated storage decision, never credentials. The
+    // authoritative login/session notifier and immutable profile identity
+    // invalidate it. Avoid native credential I/O inside every database read.
+    final revision = ManagedSchoolSession.changed.value;
+    final binding = '$origin:${identity['schoolSyncId']}:${identity['schoolId']}:${identity['blocked']}:$revision';
+    if (_persistenceBinding != binding || _persistenceResolution == null) {
+      _persistenceBinding = binding;
+      _persistenceResolution = _resolvePersistence(identity).catchError((Object error, StackTrace stack) {
+        if (_persistenceBinding == binding) {
+          _persistenceBinding = null;
+          _persistenceResolution = null;
+        }
+        Error.throwWithStackTrace(error, stack);
+      });
+    }
+    final mode = await _persistenceResolution!;
+    if (origin != activeProfileId || _persistenceBinding != binding ||
+        ManagedSchoolSession.changed.value != revision) {
+      throw StateError('School changed during storage resolution.');
+    }
+    return mode == 1 || mode == 0 && (await WindowsRuntimeFlags.durableSchoolProfile(origin) || await WindowsRuntimeFlags.localStorageEnabled());
+  }
+
+  Future<int> _resolvePersistence(Map<String, dynamic> identity) async {
+    final saved = await CentralSchoolCloud.saved();
+    if (saved['managed'] != true) return 0; // Legacy standalone preference.
+    return saved['uid'] is String && (saved['uid'] as String).isNotEmpty &&
+        (saved['firebaseRefreshToken']?.toString() ?? '').isNotEmpty &&
+        validSchoolId(saved['schoolId']?.toString() ?? '') &&
+        identity['schoolSyncId'] == saved['schoolId'] &&
+        (identity['schoolId'] == null || identity['schoolId'] == saved['schoolId']) &&
+        identity['blocked'] != true ? 1 : -1;
+  }
+
+  /// Exam/fee school records cannot silently fall back to session-only storage.
+  /// Promote only the active standalone profile, keeping the global setting.
+  Future<void> ensureDurableSchoolRecords() async {
+    if (await localPersistenceEnabled()) return;
+    if ((await CentralSchoolCloud.saved())['managed'] == true) {
+      throw StateError('Verified school context required for durable records.');
+    }
+    await _database.enableDurableProfile();
+  }
+
   Future<void> resetVolatileSession() => _database.resetVolatileSession();
+  Future<Map<String,dynamic>> migrateLocalDatabaseToSqlite({required bool approved}) =>
+      _database.migrateToSqlite(approved:approved);
 
   CollectionReference<Map<String, dynamic>> collection(
     String path,
@@ -113,6 +171,30 @@ class FirebaseFirestore {
   }
 
   WriteBatch batch() => WriteBatch._(this);
+
+  Future<void> acknowledgeOutbox(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic> expected, {String? revision}) {
+    ref.requireOriginProfile();
+    if(revision!=null && revision.isEmpty)throw StateError('Verified cloud revision required. Pending retained.');
+    if(ref.collectionPath!='_windows_firebase_outbox') throw ArgumentError('Outbox reference required');
+    return _database.applyOperations([_WriteOperation._(type:_WriteType.delete,
+      collection:ref.collectionPath, documentId:ref.id, data:expected, acknowledgedRevision:revision)]);
+  }
+
+  /// Check the live outbox inside the serialized disk write, not a stale pull snapshot.
+  Future<void> applySyncedDocument(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? data) {
+    ref.requireOriginProfile();
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>_database.applyOperations([
+      _WriteOperation._(type:data==null?_WriteType.delete:_WriteType.set,
+        collection:ref.collectionPath,documentId:ref.id,data:data,preservePending:true),
+    ]));
+  }
+
+  /// Explicit operator review only. Creates a new CAS operation; never ACKs
+  /// the conflicting operation or deletes its retained copies.
+  Future<void> enqueueReviewedConflict({required String queueId,
+    required Map<String,dynamic> expected, required Map<String,dynamic> remote,
+    required String choice, required String reason}) =>
+      _database.enqueueReviewedConflict(queueId, expected, remote, choice, reason);
 
   Future<T> runTransaction<T>(
     Future<T> Function(Transaction transaction) action,
@@ -132,7 +214,7 @@ class Query<T> {
     this.orderField,
     this.orderDescending = false,
     this.limitCount,
-  });
+  }) : originProfile=firestore.activeProfileId;
 
   final FirebaseFirestore firestore;
   final String collectionPath;
@@ -140,11 +222,14 @@ class Query<T> {
   final String? orderField;
   final bool orderDescending;
   final int? limitCount;
+  final String originProfile;
+  void requireOriginProfile(){if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed; reopen this query.');}
 
   Query<T> where(
     String field, {
     Object? isEqualTo,
   }) {
+    requireOriginProfile();
     return Query<T>._(
       firestore: firestore,
       collectionPath: collectionPath,
@@ -165,6 +250,7 @@ class Query<T> {
     String field, {
     bool descending = false,
   }) {
+    requireOriginProfile();
     return Query<T>._(
       firestore: firestore,
       collectionPath: collectionPath,
@@ -176,6 +262,7 @@ class Query<T> {
   }
 
   Query<T> limit(int count) {
+    requireOriginProfile();
     return Query<T>._(
       firestore: firestore,
       collectionPath: collectionPath,
@@ -187,10 +274,12 @@ class Query<T> {
   }
 
   Future<QuerySnapshot<T>> get() async {
+    requireOriginProfile();
     final rawDocs =
         await firestore._database.readCollection(
       collectionPath,
     );
+    requireOriginProfile();
 
     final docs = <QueryDocumentSnapshot<T>>[];
 
@@ -241,11 +330,18 @@ class Query<T> {
   }
 
   Stream<QuerySnapshot<T>> snapshots() async* {
-    yield await get();
-
-    await for (final _ in firestore._database
-        .changesFor(collectionPath)) {
+    try {
+      if(firestore.activeProfileId!=originProfile)return;
       yield await get();
+      if(firestore.activeProfileId!=originProfile)return;
+      await for (final _ in firestore._database.changesFor(collectionPath)) {
+        if(firestore.activeProfileId!=originProfile)return;
+        yield await get();
+      }
+    } on StateError {
+      // Retire subscriptions from the old tenant without delivering the new
+      // tenant's rows or raising an unhandled UI error during account switch.
+      if(firestore.activeProfileId==originProfile)rethrow;
     }
   }
 
@@ -274,6 +370,7 @@ class CollectionReference<T> extends Query<T> {
   DocumentReference<T> doc([
     String? path,
   ]) {
+    requireOriginProfile();
     final id = path == null || path.trim().isEmpty
         ? _autoDocumentId()
         : path.trim();
@@ -301,19 +398,23 @@ class DocumentReference<T> {
     required this.firestore,
     required this.collectionPath,
     required this.documentId,
-  });
+  }) : originProfile=firestore.activeProfileId;
 
   final FirebaseFirestore firestore;
   final String collectionPath;
   final String documentId;
+  final String originProfile;
+  void requireOriginProfile(){if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed; reopen this record.');}
 
   String get id => documentId;
 
   Future<DocumentSnapshot<T>> get() async {
+    requireOriginProfile();
     final raw = await firestore._database.readDocument(
       collectionPath,
       documentId,
     );
+    requireOriginProfile();
 
     if (raw == null) {
       return DocumentSnapshot<T>._(
@@ -331,11 +432,18 @@ class DocumentReference<T> {
   }
 
   Stream<DocumentSnapshot<T>> snapshots() async* {
-    yield await get();
-
-    await for (final _ in firestore._database
-        .changesFor(collectionPath)) {
+    try {
+      if(firestore.activeProfileId!=originProfile)return;
       yield await get();
+      if(firestore.activeProfileId!=originProfile)return;
+      await for (final _ in firestore._database.changesFor(collectionPath)) {
+        if(firestore.activeProfileId!=originProfile)return;
+        yield await get();
+      }
+    } on StateError {
+      // Retire subscriptions from the old tenant without delivering the new
+      // tenant's rows or raising an unhandled UI error during account switch.
+      if(firestore.activeProfileId==originProfile)rethrow;
     }
   }
 
@@ -349,6 +457,7 @@ class DocumentReference<T> {
       );
     }
 
+    requireOriginProfile();
     await firestore._database.setDocument(
       collectionPath,
       documentId,
@@ -360,6 +469,7 @@ class DocumentReference<T> {
   Future<void> update(
     Map<String, dynamic> data,
   ) async {
+    requireOriginProfile();
     await firestore._database.updateDocument(
       collectionPath,
       documentId,
@@ -368,6 +478,7 @@ class DocumentReference<T> {
   }
 
   Future<void> delete() async {
+    requireOriginProfile();
     await firestore._database.deleteDocument(
       collectionPath,
       documentId,
@@ -416,7 +527,8 @@ class QuerySnapshot<T> {
 }
 
 class WriteBatch {
-  WriteBatch._(this.firestore);
+  WriteBatch._(this.firestore):originProfile=firestore.activeProfileId;
+  final String originProfile;
 
   final FirebaseFirestore firestore;
   final List<_WriteOperation> _operations =
@@ -431,6 +543,7 @@ class WriteBatch {
       throw ArgumentError('Batch set Map require karta hai.');
     }
 
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.set(
         reference.collectionPath,
@@ -445,6 +558,7 @@ class WriteBatch {
     DocumentReference<T> reference,
     Map<String, dynamic> data,
   ) {
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.update(
         reference.collectionPath,
@@ -457,6 +571,7 @@ class WriteBatch {
   void delete<T>(
     DocumentReference<T> reference,
   ) {
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.delete(
         reference.collectionPath,
@@ -466,6 +581,7 @@ class WriteBatch {
   }
 
   Future<void> commit() async {
+    if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed during batch.');
     await firestore._database.applyOperations(
       _operations,
     );
@@ -473,7 +589,8 @@ class WriteBatch {
 }
 
 class Transaction {
-  Transaction._(this.firestore);
+  Transaction._(this.firestore):originProfile=firestore.activeProfileId;
+  final String originProfile;
 
   final FirebaseFirestore firestore;
   final List<_WriteOperation> _operations =
@@ -482,6 +599,7 @@ class Transaction {
   Future<DocumentSnapshot<T>> get<T>(
     DocumentReference<T> reference,
   ) {
+    reference.requireOriginProfile();
     return reference.get();
   }
 
@@ -496,6 +614,7 @@ class Transaction {
       );
     }
 
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.set(
         reference.collectionPath,
@@ -510,6 +629,7 @@ class Transaction {
     DocumentReference<T> reference,
     Map<String, dynamic> data,
   ) {
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.update(
         reference.collectionPath,
@@ -522,6 +642,7 @@ class Transaction {
   void delete<T>(
     DocumentReference<T> reference,
   ) {
+    reference.requireOriginProfile();
     _operations.add(
       _WriteOperation.delete(
         reference.collectionPath,
@@ -530,8 +651,9 @@ class Transaction {
     );
   }
 
-  Future<void> _commit() {
-    return firestore._database.applyOperations(
+  Future<void> _commit() async {
+    if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed during transaction.');
+    await firestore._database.applyOperations(
       _operations,
     );
   }
@@ -560,6 +682,8 @@ class _WriteOperation {
     required this.documentId,
     this.data,
     this.merge = false,
+    this.preservePending = false,
+    this.acknowledgedRevision,
   });
 
   factory _WriteOperation.set(
@@ -606,20 +730,59 @@ class _WriteOperation {
   final String documentId;
   final Map<String, dynamic>? data;
   final bool merge;
+  final bool preservePending;
+  final String? acknowledgedRevision;
 }
 
-class _LocalJsonDatabase {
+class _LocalSchoolDatabase {
   final Map<String, StreamController<void>> _signals =
       <String, StreamController<void>>{};
 
   Future<void> _writeTail = Future<void>.value();
 
+  WindowsSqliteStore? _sqlite;
+  Future<WindowsSqliteStore?>? _openingSqlite;
+  String? _sqlitePath;
+  Future<WindowsSqliteStore?> _sqliteStore() async {
+    if (!WindowsLocalStorage.sqliteEnabled) return null;
+    final directory = await WindowsLocalStorage.dataDirectory();
+    final path = '${directory.path}${Platform.pathSeparator}${WindowsSqliteStore.databaseName}';
+    if (_sqlitePath != path) {
+      await _sqlite?.close(); _sqlite=null; _openingSqlite=null; _sqlitePath=path;
+    }
+    return _openingSqlite ??= (() async {
+      // Existing installations stay on their original backend until explicit
+      // installation consent. A review build must never migrate a real PC.
+      final legacy=await _file();
+      if (!await File(path).exists() && (await legacy.exists() ||
+          await File('${legacy.path}.pending').exists() || await File('${legacy.path}.bak').exists())) return null;
+      try {return _sqlite=await WindowsSqliteStore.open(path);}
+      catch (_) {_openingSqlite=null;rethrow;}
+    })();
+  }
+  Future<void> changeStorageLocation(String path) {
+    final migration=_writeTail.then((_) async {
+      await _sqlite?.close();_sqlite=null;_openingSqlite=null;_sqlitePath=null;
+      await WindowsLocalStorage.changeLocation(path);
+    });
+    _writeTail=migration.then<void>((_) {},onError:(Object _,StackTrace __) {});
+    return migration;
+  }
+  Future<Map<String,dynamic>> migrateToSqlite({required bool approved}) {
+    final next=_writeTail.then((_) async {
+      await _sqlite?.close();_sqlite=null;_openingSqlite=null;_sqlitePath=null;
+      return WindowsSqliteMigration.migrate(await WindowsLocalStorage.dataDirectory(),approved:approved);
+    });
+    _writeTail=next.then<void>((_) {},onError:(Object _,StackTrace __) {});
+    return next;
+  }
   Future<File> _file() => WindowsLocalStorage.databaseFile();
 
   String _activeProfileId = 'unbound';
   Map<String, dynamic> _activeIdentity = const <String, dynamic>{};
 
-  // Local Storage OFF = no school database is read from or written to disk.
+  // Legacy standalone Local Storage OFF uses RAM only. Verified managed
+  // school contexts use durable local-first storage independent of that flag.
   // Remote data can still be mirrored into this in-memory root for the
   // current app session, so Firebase + Google features remain usable without
   // leaving a local database behind on the PC.
@@ -633,7 +796,12 @@ class _LocalJsonDatabase {
   Map<String, dynamic> get activeProfileIdentity =>
       Map<String, dynamic>.from(_activeIdentity);
 
-  Future<void> switchProfile(
+  Future<void> switchProfile(String profileId,{Map<String,dynamic>? identity}) {
+    final next=_writeTail.then((_)=>_switchProfileNow(profileId,identity:identity));
+    _writeTail=next.catchError((_){});
+    return next;
+  }
+  Future<void> _switchProfileNow(
     String profileId, {
     Map<String, dynamic>? identity,
   }) async {
@@ -687,10 +855,30 @@ class _LocalJsonDatabase {
         .stream;
   }
 
+  Future<Map<String, dynamic>?> readSchoolRegistrationCache(String profileId, String schoolId) async {
+    final root = await _readRoot();
+    final profile = _profiles(root)[profileId];
+    if (profile is! Map || profile['identity'] is! Map || profile['identity']['schoolSyncId'] != schoolId) {
+      throw StateError('School cache provenance could not be verified.');
+    }
+    final collections = profile['collections'];
+    final docs = collections is Map ? collections['school_config'] : null;
+    final value = docs is Map ? docs['school_profile_cache'] : null;
+    if (value is! Map) return null;
+    final result = Map<String, dynamic>.from(value);
+    if (result['schoolId'] != null && result['schoolId'] != schoolId) throw StateError('Foreign school cache blocked.');
+    result.putIfAbsent('schoolId', () => schoolId);
+    return result;
+  }
+
   Future<Map<String, dynamic>?> readDocument(
     String collection,
     String documentId,
   ) async {
+    if (await FirebaseFirestore.instance.localPersistenceEnabled()) {
+      final sqlite=await _sqliteStore();
+      if(sqlite!=null)return sqlite.readDocument(_activeProfileId,collection,documentId);
+    }
     final root = await _readRoot();
 
     final collections =
@@ -715,6 +903,10 @@ class _LocalJsonDatabase {
       readCollection(
     String collection,
   ) async {
+    if (await FirebaseFirestore.instance.localPersistenceEnabled()) {
+      final sqlite=await _sqliteStore();
+      if(sqlite!=null)return sqlite.readCollection(_activeProfileId,collection);
+    }
     final root = await _readRoot();
 
     final raw =
@@ -794,16 +986,33 @@ class _LocalJsonDatabase {
       return Future<void>.value();
     }
 
+    final profileAtEnqueue=_activeProfileId;
     final completer = Completer<void>();
 
     _writeTail = _writeTail.then((_) async {
       try {
-        final root = await _readRoot();
+        if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed before queued write.');
+        final root = await _readRoot(collections:{
+          ...operations.map((operation)=>operation.collection),
+          '_windows_firebase_outbox','_windows_sync_baselines','_windows_sync_receipts',
+          '_windows_sync_conflict_history','_windows_sync_resolution_history',
+        },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_')).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
+        if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
         final touched = <String>{};
         var trackedMutation = false;
 
         for (final operation in operations) {
+          if(operation.preservePending) {
+            final pending=collections['_windows_firebase_outbox'];
+            if(pending is Map && pending.values.any((item)=>item is Map &&
+                item['collection']==operation.collection && item['documentId']==operation.documentId)) continue;
+          }
+          if(operation.preservePending && operation.data?['_syncRevision'] is String) {
+            final baselines = collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
+            final key = base64Url.encode(utf8.encode('${operation.collection}\\n${operation.documentId}')).replaceAll('=', '');
+            baselines[key] = {'revision':operation.data!['_syncRevision']};
+          }
           touched.add(operation.collection);
 
           final rawCollection =
@@ -821,12 +1030,43 @@ class _LocalJsonDatabase {
 
           switch (operation.type) {
             case _WriteType.delete:
+              // Compare and remove under the same serialized disk write. A save
+              // made while the cloud request was in flight must remain queued.
+              if (operation.acknowledgedRevision != null && operation.data != null) {
+                final sent = operation.data!, revision = operation.acknowledgedRevision!;
+                final baselines = collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
+                baselines[operation.documentId] = {'revision':revision};
+                final receipts=collections.putIfAbsent('_windows_sync_receipts',()=> <String,dynamic>{}) as Map;
+                if(sent['operationId'] is String)receipts.putIfAbsent(sent['operationId'],()=>{
+                  'schoolId':sent['schoolId'],'operationId':sent['operationId'],
+                  'collection':sent['collection'],'recordRevision':revision,
+                  'acknowledgedAt':DateTime.now().millisecondsSinceEpoch});
+
+                final queued = docs[operation.documentId];
+                if (queued is Map && queued['operationId'] != sent['operationId'] &&
+                    queued['baseCloudRevision'] == sent['baseCloudRevision']) {
+                  queued['baseCloudRevision'] = revision;
+                }
+              }
+              if(operation.data != null &&
+                  (operation.acknowledgedRevision != null
+                    ? (docs[operation.documentId] is! Map || (docs[operation.documentId] as Map)['operationId'] != operation.data!['operationId'])
+                    : jsonEncode(docs[operation.documentId]) != jsonEncode(_encodeMap(operation.data!)))) continue;
               docs.remove(operation.documentId);
               break;
 
             case _WriteType.set:
               final incoming =
                   _encodeMap(operation.data ?? {});
+              final oldDocumentQueue=docs[operation.documentId];
+              if(operation.collection=='_windows_document_outbox' && oldDocumentQueue is Map &&
+                  {'conflict','needsAttention'}.contains(oldDocumentQueue['syncState'])) {
+                final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+                final key='document-'+base64Url.encode(utf8.encode(jsonEncode([
+                  operation.documentId,oldDocumentQueue['documentRevision'],oldDocumentQueue['localPath']]))).replaceAll('=','');
+                history.putIfAbsent(key,()=>Map<String,dynamic>.from(oldDocumentQueue));
+                incoming['syncState']=oldDocumentQueue['syncState'];
+              }
 
               if (operation.merge &&
                   docs[operation.documentId] is Map) {
@@ -924,6 +1164,54 @@ class _LocalJsonDatabase {
     return completer.future;
   }
 
+  Future<void> enqueueReviewedConflict(String queueId, Map<String,dynamic> expected,
+      Map<String,dynamic> remote, String choice, String reason) {
+    final origin=_activeProfileId, school=_activeIdentity['schoolSyncId'];
+    final completer=Completer<void>();
+    _writeTail=_writeTail.then((_) async {
+      try {
+        if (_activeProfileId!=origin || school is! String || school.isEmpty ||
+            expected['schoolId']!=school || remote['schoolId']!=school ||
+            remote['id']!=expected['documentId'] || remote['_syncDeleted']==true || expected['data'] is! Map ||
+            !{'local','cloud'}.contains(choice) || reason.trim().isEmpty || reason.length>1000 ||
+            remote['_syncRevision'] is! String || (remote['_syncRevision'] as String).isEmpty ||
+            expected['collection']=='documents' || expected['operation']=='delete') {
+          throw StateError('Verified same-school record and explicit review required. Documents/deletions require separate original-file review.');
+        }
+        final root=await _readRoot();
+        if(_activeProfileId!=origin)throw StateError('School changed during conflict review.');
+        final collections=_collections(root), queue=collections['_windows_firebase_outbox'];
+        final current=queue is Map ? queue[queueId] : null;
+        if(current is! Map || current['syncState']!='conflict' ||
+            jsonEncode(current)!=jsonEncode(_encodeMap(expected))) {
+          throw StateError('Pending version changed; reopen conflict review.');
+        }
+        final collection=expected['collection'] as String, id=expected['documentId'] as String;
+        final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+        final oldOperation=expected['operationId'];
+        if(oldOperation is! String || oldOperation.isEmpty)throw StateError('Original operation identity required.');
+        history.putIfAbsent(oldOperation,()=>_encodeMap(expected));
+        final selected=Map<String,dynamic>.from(choice=='local' ? expected['data'] as Map : remote);
+        selected.removeWhere((key,value)=>key.startsWith('_sync'));
+        selected['schoolId']=school;
+        final newOperation=base64Url.encode(List<int>.generate(24,(_)=>Random.secure().nextInt(256))).replaceAll('=','');
+        final audit=collections.putIfAbsent('_windows_sync_resolution_history',()=> <String,dynamic>{}) as Map;
+        audit[newOperation]=_encodeMap({'schoolId':school,'originalOperationId':oldOperation,
+          'queueId':queueId,'local':expected,'remote':remote,'choice':choice,'reason':reason.trim(),
+          'reviewedAt':DateTime.now().millisecondsSinceEpoch,'status':'awaitingCloudAck'});
+        queue[queueId]=_encodeMap({...expected,'operationId':newOperation,'baseCloudRevision':remote['_syncRevision'],
+          'data':selected,'syncState':'pending','retryCount':0,'lastError':null,
+          'reviewedFromOperationId':oldOperation,'queuedAt':DateTime.now().millisecondsSinceEpoch});
+        final docs=collections.putIfAbsent(collection,()=> <String,dynamic>{}) as Map;
+        docs[id]=_encodeMap(selected);
+        _storeCollections(root,collections);await _writeRoot(root);
+        for(final name in [collection,'_windows_firebase_outbox']){final signal=_signals[name];if(signal!=null&&!signal.isClosed)signal.add(null);}
+        completer.complete();
+      }catch(error,stack){completer.completeError(error,stack);}
+    });
+    return completer.future;
+  }
+
   bool _shouldTrackForFirebase(
     String collection,
   ) {
@@ -967,7 +1255,21 @@ class _LocalJsonDatabase {
     final isDelete =
         operation.type == _WriteType.delete;
 
+    final previous = queue[key];
+    if(previous is Map && {'conflict','needsAttention'}.contains(previous['syncState'])) {
+      final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+      final operationId=previous['operationId'];
+      if(operationId is String)history.putIfAbsent(operationId,()=>Map<String,dynamic>.from(previous));
+    }
+
+    final baseline = collections['_windows_sync_baselines'];
+    final baselineEntry = baseline is Map ? baseline[key] : null;
     queue[key] = <String, dynamic>{
+      'operationId': base64Url.encode(List<int>.generate(24, (_) => Random.secure().nextInt(256))).replaceAll('=', ''),
+      'schoolId': _activeIdentity['schoolSyncId'] ?? '',
+      'baseCloudRevision': previous is Map ? previous['baseCloudRevision'] ?? '' :
+          baselineEntry is Map ? baselineEntry['revision'] ?? '' : '',
+      'syncState':previous is Map && {'conflict','needsAttention'}.contains(previous['syncState']) ? previous['syncState'] : 'pending', 'retryCount':0,
       'collection': operation.collection,
       'documentId': operation.documentId,
       'operation': isDelete ? 'delete' : 'set',
@@ -998,14 +1300,22 @@ class _LocalJsonDatabase {
     }
   }
 
-  Future<Map<String, dynamic>> _readRoot() async {
-    if (!await WindowsRuntimeFlags.localStorageEnabled()) {
+  Future<Map<String, dynamic>> _readRoot({Set<String>? collections,Map<String,List<String>>? recordScope}) async {
+    if (!await FirebaseFirestore.instance.localPersistenceEnabled()) {
       return _cloneRoot(_memoryRoot);
     }
 
+    final sqlite = await _sqliteStore();
+    if (sqlite != null) return sqlite.readRoot(_activeProfileId, collections:collections,recordScope:recordScope);
     final file = await _file();
     try {
+      if (!await file.exists() && await File('${file.path}.pending').exists()) {
+        final recovered=jsonDecode(await File('${file.path}.pending').readAsString());
+        if(recovered is! Map || (recovered['profiles'] is! Map && recovered['collections'] is! Map))throw const FormatException('Pending database is invalid.');
+        final root=Map<String,dynamic>.from(recovered);_upgradeRootInMemory(root);return root;
+      }
       if (!await file.exists()) {
+        if(await File('${file.path}.bak').exists())throw const FormatException('Recover previous database generation.');
         WindowsServiceStatus.instance.healthy(
           WindowsServiceType.localStorage,
           'Local database ready: ${file.path}',
@@ -1020,7 +1330,7 @@ class _LocalJsonDatabase {
         await file.readAsString(),
       );
 
-      if (decoded is Map) {
+      if (decoded is Map && (decoded['profiles'] is Map || decoded['collections'] is Map)) {
         final root = Map<String, dynamic>.from(decoded);
         _upgradeRootInMemory(root);
         WindowsServiceStatus.instance.healthy(
@@ -1036,13 +1346,18 @@ class _LocalJsonDatabase {
         'Local database read problem: $primaryError',
       );
 
+      final pending=File('${file.path}.pending');
+      try {if(await pending.exists()){
+        final decoded=jsonDecode(await pending.readAsString());
+        if(decoded is Map && (decoded['profiles'] is Map || decoded['collections'] is Map)){final root=Map<String,dynamic>.from(decoded);_upgradeRootInMemory(root);return root;}
+      }}catch(_){}
       final backup = File('${file.path}.bak');
       try {
         if (await backup.exists()) {
           final decoded = jsonDecode(
             await backup.readAsString(),
           );
-          if (decoded is Map) {
+          if (decoded is Map && (decoded['profiles'] is Map || decoded['collections'] is Map)) {
             final root = Map<String, dynamic>.from(decoded);
             _upgradeRootInMemory(root);
             return root;
@@ -1050,10 +1365,7 @@ class _LocalJsonDatabase {
         }
       } catch (_) {}
 
-      return <String, dynamic>{
-        'version': 2,
-        'profiles': <String, dynamic>{},
-      };
+      throw StateError('Local database recovery required. Original and backup retained; writes blocked.');
     }
   }
 
@@ -1072,7 +1384,47 @@ class _LocalJsonDatabase {
 
   /// Clears only the non-persistent session cache used while Local Storage is
   /// OFF. Disk data is never deleted by this method.
+  Future<void> enableDurableProfile() {
+    final origin = _activeProfileId;
+    final next = _writeTail.then((_) async {
+      if (_activeProfileId != origin) throw StateError('School changed.');
+      if (await FirebaseFirestore.instance.localPersistenceEnabled()) return;
+      final memory = _cloneRoot(_memoryRoot);
+      await WindowsRuntimeFlags.setDurableSchoolProfile(origin, true);
+      try {
+        final disk = await _readRoot();
+        final profiles = Map<String, dynamic>.from(disk['profiles'] as Map? ?? {});
+        final current = (memory['profiles'] as Map?)?[origin] as Map?;
+        if (current != null) {
+          final saved = Map<String, dynamic>.from(profiles[origin] as Map? ?? {});
+          final collections = Map<String, dynamic>.from(saved['collections'] as Map? ?? {});
+          for (final entry in (current['collections'] as Map? ?? {}).entries) {
+            final records = Map<String, dynamic>.from(collections[entry.key] as Map? ?? {});
+            for (final record in (entry.value as Map).entries) {
+              if (records.containsKey(record.key) &&
+                  _jsonStableMap({'data': records[record.key]}) != _jsonStableMap({'data': record.value})) {
+                throw StateError('Existing durable school data conflicts with this session; both retained.');
+              }
+              records[record.key] = record.value;
+            }
+            collections[entry.key.toString()] = records;
+          }
+          profiles[origin] = {...saved, ...Map<String, dynamic>.from(current), 'collections': collections};
+        }
+        disk['profiles'] = profiles;
+        await _writeRoot(disk);
+      } catch (_) {
+        await WindowsRuntimeFlags.setDurableSchoolProfile(origin, false);
+        rethrow;
+      }
+    });
+    _writeTail = next.catchError((_) {});
+    return next;
+  }
+
   Future<void> resetVolatileSession() async {
+    await _writeTail;
+    await _sqlite?.close();_sqlite=null;_openingSqlite=null;_sqlitePath=null;
     _memoryRoot = <String, dynamic>{
       'version': 2,
       'profiles': <String, dynamic>{},
@@ -1182,11 +1534,17 @@ class _LocalJsonDatabase {
   Future<void> _writeRoot(
     Map<String, dynamic> root,
   ) async {
-    if (!await WindowsRuntimeFlags.localStorageEnabled()) {
+    if (!await FirebaseFirestore.instance.localPersistenceEnabled()) {
       _memoryRoot = _cloneRoot(root);
       return;
     }
 
+    final sqlite = await _sqliteStore();
+    if(sqlite!=null){
+      await sqlite.writeRoot(root);
+      WindowsServiceStatus.instance.healthy(WindowsServiceType.localStorage,'Local SQLite transaction committed.');
+      return;
+    }
     final file = await _file();
     try {
       await file.parent.create(recursive: true);

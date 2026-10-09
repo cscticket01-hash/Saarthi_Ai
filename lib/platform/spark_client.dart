@@ -16,6 +16,38 @@ class SparkLicenseClient {
     if(!RegExp(r'^[a-z][a-z0-9-]{4,61}[a-z0-9]$').hasMatch(project)) throw ArgumentError('Invalid school project');
     final licensed=licenseHash!=null && licenseHash.isNotEmpty;
     if(licensed && !RegExp(r'^[a-f0-9]{64}$').hasMatch(licenseHash)) throw StateError('Invalid licence verification');
+    final block = await _client.get(
+      Uri.parse('$platformFirestoreUrl/platform_school_blocks/$project'),
+      headers: {'Cache-Control': 'no-cache'},
+    ).timeout(const Duration(seconds: 15));
+    if (block.statusCode == 200) {
+      final date = block.headers['date'];
+      if (date == null) throw StateError('Licence server time unavailable');
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(block.body);
+      } on FormatException {
+        throw LicenseVerificationRejected('Invalid developer block response');
+      }
+      final fields = decoded is Map ? decoded['fields'] : null;
+      final flag = fields is Map ? fields['blocked'] : null;
+      final blocked = flag is Map ? flag['booleanValue'] : null;
+      if (blocked is! bool) {
+        throw LicenseVerificationRejected('Invalid developer block response');
+      }
+      if (blocked) {
+        return {
+          'schoolId': project,
+          if (licensed) 'licenseHash': licenseHash,
+          'serverTime': HttpDate.parse(date).millisecondsSinceEpoch,
+          'expiresAt': 0,
+          'allowed': false,
+          'status': 'blocked',
+        };
+      }
+    } else if (block.statusCode != 404) {
+      throw StateError('Developer licence verification unavailable');
+    }
     final path=licensed?'platform_license_status/$licenseHash':'platform_school_trials/$project';
     final r=await _client.get(Uri.parse('$platformFirestoreUrl/$path'),
       headers: {'Cache-Control':'no-cache'}).timeout(const Duration(seconds:15));

@@ -502,6 +502,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                       ),
                       if (update.releaseNotes.isNotEmpty) ...[
                         const SizedBox(height: 13),
+                        const Text('What’s New', style: TextStyle(fontWeight: FontWeight.bold)),
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(13),
@@ -794,10 +795,9 @@ class _WindowsUpdateSettingsCardState
             ),
             if (info.releaseNotes.isNotEmpty) ...[
               const SizedBox(height: 4),
+              const Text('What’s New', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
               Text(
                 info.releaseNotes,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white38,
                   fontSize: 10.5,

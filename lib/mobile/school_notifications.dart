@@ -17,13 +17,14 @@ class SchoolNotifications {
   }
   static bool belongsToSession(Map<String, dynamic> data, String? project) =>
       project != null && data['schoolId'] == project &&
-      data['type'] == 'school_notice';
+      (data['type'] == 'school_notice' || data['type'] == 'school_sync');
 
   static Future<void> show(RemoteMessage message) async {
     final session = SchoolSession.instance;
     if (!session.loggedIn || !belongsToSession(message.data, session.link?.projectId)) return;
     // A broadcast causes no Apps Script/Firestore request on sleeping phones.
     // Private content is loaded through the school session when the app opens.
+    if (message.data['type'] == 'school_sync') return;
     await initialize();
     await _plugin.show(
       (message.data['noticeId']?.hashCode ?? message.hashCode) & 0x7fffffff,

@@ -1,3 +1,5 @@
+import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'dart:async';
 
 import 'windows_local_settings.dart';
@@ -52,6 +54,13 @@ class User {
   Future<UserCredential> reauthenticateWithCredential(
     AuthCredential credential,
   ) async {
+    if((await CentralSchoolCloud.saved())['managed']==true){
+      await WindowsLocalSecurity.initialize();
+      if (!WindowsLocalSecurity.configured || !WindowsLocalSecurity.verifyPassword(credential.password)) {
+        throw FirebaseAuthException(code:'wrong-password', message:'Enter the local App Lock password.');
+      }
+      return UserCredential(user:this);
+    }
     if (!WindowsLocalSecurity.configured) {
       throw FirebaseAuthException(
         code: 'local-settings-lock-not-configured',
@@ -89,9 +98,12 @@ class FirebaseAuth {
   User? _currentUser;
 
   User? get currentUser => _currentUser;
+  void useManagedIdentity(String email) { _currentUser=User(email:email,displayName:email); }
 
   Future<void> bootstrapLocalUser() async {
     await WindowsLocalSecurity.initialize();
+    final managed=await CentralSchoolCloud.saved();
+    if(managed['managed']==true){useManagedIdentity(managed['email']);return;}
 
     if (WindowsLocalSecurity.configured) {
       _currentUser = User(
@@ -139,6 +151,11 @@ class FirebaseAuth {
   Future<void> signOut() async {
     // Session logout only. Local ID/password secure storage me rehte hain.
     _currentUser = null;
+    // Local logout locks this device; managed enrollment is retained.
+    // Credential revocation/password changes use ManagedSchoolSession.logout.
+    if ((await CentralSchoolCloud.saved())['managed'] == true) {
+      await bootstrapLocalUser();
+    }
   }
 
   Stream<User?> authStateChanges() async* {

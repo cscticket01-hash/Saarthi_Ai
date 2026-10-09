@@ -70,8 +70,13 @@ Windows starts a five-day trial on first use. Server registration binds the tria
 to a hashed Windows MachineGuid. The school trial retains that original device
 start when it first binds to its own Firebase project; reinstallation does
 not reset a previously registered device's trial. Clock rollback is rejected.
-After expiry, the license gate permits only activation and protected connection
-settings. Paid installations have an offline lease of at most 72 hours and never
+Windows startup offers Activate or Skip, including after trial or licence expiry.
+Skip persists across restarts and permits local app use with the red header
+`License not activated — Activate now` until a valid licence is activated. Local
+Admin Setup runs only when not already completed; Firebase and Google Drive are
+optional for startup. Licence expiry during use preserves open forms and shows
+the warning. Verification, school boundaries and backend licence policy remain
+unchanged. Paid installations have an offline lease of at most 72 hours and never
 past the key's expiry. A cached licence cannot carry into another school profile.
 
 The developer generates a school-bound key from Licences and manually shares it.

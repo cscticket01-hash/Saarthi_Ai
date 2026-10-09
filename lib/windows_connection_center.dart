@@ -1,10 +1,10 @@
+import 'windows_connect/central_school_cloud.dart';
 import 'package:flutter/foundation.dart';
 
 import 'windows_firebase_sync.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_sync_engine.dart';
-import 'windows_runtime_flags.dart';
 
 class WindowsConnectionSnapshot {
   const WindowsConnectionSnapshot({
@@ -105,15 +105,16 @@ class WindowsConnectionCenter {
 
   static Future<WindowsConnectionSnapshot> reload() async {
     final saved = await WindowsExternalConnections.load();
+    final central = await CentralSchoolCloud.saved();
     final firebaseStatus = await WindowsFirebaseRemote.status();
-    final localEnabled = await WindowsRuntimeFlags.localStorageEnabled();
+    final localEnabled = await FirebaseFirestore.instance.localPersistenceEnabled();
 
     final snapshot = WindowsConnectionSnapshot(
-      firebaseLink: saved['firebaseLink']?.toString().trim() ?? '',
+      firebaseLink: central.isNotEmpty ? 'central:${central['schoolId']}' : saved['firebaseLink']?.toString().trim() ?? '',
       firebaseProjectId: firebaseStatus.projectId.trim(),
       firebaseAuthenticated: firebaseStatus.authenticated,
-      googleScriptUrl: saved['googleScriptUrl']?.toString().trim() ?? '',
-      googleEmail: saved['googleEmail']?.toString().trim() ?? '',
+      googleScriptUrl: await WindowsExternalConnections.googleScriptUrl(),
+      googleEmail: await WindowsExternalConnections.googleEmail(),
       activeProfileId: FirebaseFirestore.instance.activeProfileId.trim().isEmpty
           ? 'unbound'
           : FirebaseFirestore.instance.activeProfileId.trim(),

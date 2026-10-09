@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
+import '../lib/windows_connect/central_school_cloud.dart';
+import '../lib/platform/platform_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,6 +32,15 @@ void main() {
     await local.FirebaseFirestore.instance.switchProfile('test-${DateTime.now().microsecondsSinceEpoch}');
   });
   tearDown(() => ui.WindowsUiLanguage.change('en'));
+  testWidgets('Windows attendance rejects malformed compact QR without a parser exception',(tester) async {
+    await tester.pumpWidget(const MaterialApp(home:WindowsAttendanceScreen()));
+    await tester.enterText(find.byType(TextField),'VS3|truncated');
+    await tester.tap(find.text('Verify Location & Mark Attendance'));
+    await tester.pump();
+    expect(find.text('Invalid Vidya Saarthi QR.'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
 
   testWidgets('both sidebar modes render all ten identical options and separate bottom logout', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 1500));
@@ -137,10 +149,17 @@ void main() {
   test('offline exam definitions and subjects save with Local Data OFF', () async {
     final saved = await WindowsExamService.request({'action':'save_exam', 'examName':'Final Exam',
       'studentClass':'Class 5', 'subjects':['English','Maths'], 'isFinal':true, 'fullMarks':100, 'passMarks':33});
-    expect(saved['success'], true); expect(saved['windowsLocalFallback'], true); expect(saved['sessionOnly'], true);
+    expect(saved['success'], true); expect(saved['windowsLocalFallback'], true); expect(saved['sessionOnly'], false);
     final listed = await WindowsExamService.request({'action':'list_exam_center'});
     expect((listed['exams'] as List).single['subjects'], ['English','Maths']);
     expect((listed['exams'] as List).single['isFinal'], true);
+    final origin = local.FirebaseFirestore.instance.activeProfileId;
+    await local.FirebaseFirestore.instance.resetVolatileSession();
+    await local.FirebaseFirestore.instance.switchProfile('exam-restart-away');
+    await local.FirebaseFirestore.instance.switchProfile(origin);
+    final reopened = await WindowsExamService.request({'action':'list_exam_center'});
+    expect((reopened['exams'] as List).single['subjects'], ['English','Maths']);
+    expect(await WindowsRuntimeFlags.localStorageEnabled(), false);
   });
   test('exam actions reject unrelated mutations', () async {
     expect(() => WindowsBackendBridge.localExamAction({'action':'delete_student'}), throwsArgumentError);
@@ -152,6 +171,25 @@ void main() {
     final listed = await WindowsBackendBridge.localExamAction({'action':'list_exam_center'});
     expect((listed['results'] as List).length, 1);
     expect((listed['results'] as List).single['timestamp'], 1234567);
+  });
+  testWidgets('school branding memory cannot carry School A into School B',(tester)async{
+    await tester.binding.setSurfaceSize(const Size(1500,1600));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    final db=local.FirebaseFirestore.instance;
+    await tester.runAsync(()async{
+      await db.collection('school_config').doc('school_profile_cache').set({'schoolName':'Private School A','principalName':'Principal A'});
+      await tester.pumpWidget(const MaterialApp(home:SchoolSettingsScreen()));
+      await Future<void>.delayed(const Duration(milliseconds:200));
+    });
+    await tester.pump();
+    bool hasName(String name)=>find.byWidgetPredicate((w)=>w is TextField&&w.controller?.text==name).evaluate().isNotEmpty;
+    expect(hasName('Private School A'),true);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(()=>db.switchProfile('branding-school-b'));
+    await tester.pumpWidget(const MaterialApp(home:SchoolSettingsScreen()));
+    expect(hasName('Private School A'),false);
+    expect(hasName('Principal A'),false);
+    await tester.pumpWidget(const SizedBox());
   });
   test('offline exams and queued edits stay inside their original school', () async {
     final db = local.FirebaseFirestore.instance;
@@ -194,9 +232,16 @@ void main() {
     expect(await secure.read(key:'vidya_saarthi_windows_section_password_v1_admin'),isNull);
     await WindowsSyncEngine.instance.pauseForAppReset();
   });
-  test('offline publish never reports delivery or creates a notice', () async {
-    await expectLater(WindowsPlatformClient.instance.publishNotice('unsent', {'title':'Example'}), throwsStateError);
-    expect((await local.FirebaseFirestore.instance.collection('school_notices').get()).docs, isEmpty);
+  test('offline publish retains a pending notice without reporting delivery', () async {
+    const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'managed':true,'schoolId':school,'uid':'A','folderId':'managed','projectId':platformProjectId,'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseRefreshToken':'refresh','storageReady':false})});
+    await local.FirebaseFirestore.instance.switchProfile('notice-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});
+    final delivery=await WindowsPlatformClient.instance.publishNotice('unsent', {'title':'Example'});
+    expect(delivery.notificationSent,false);expect(delivery.schoolPublished,false);
+    expect((await local.FirebaseFirestore.instance.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+    final pending=(await local.FirebaseFirestore.instance.collection('school_notices').doc('unsent').get()).data();
+    expect(pending?['title'],'Example');
+    expect(pending?['deliveryStatus'],'sync_pending');
   });
   test('monthly attendance honours closures, duplicates, role and future days', () {
     final january = windowsMonthlyAttendance(records: [

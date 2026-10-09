@@ -1,3 +1,13 @@
+import 'windows_sync_conflict_review.dart';
+import 'windows_backend_bridge.dart';
+import 'windows_sync_engine.dart';
+import 'school_cloud_state.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'windows_local_firestore.dart' show FirebaseFirestore;
+import 'school_password_panel.dart';
+import 'windows_connect/managed_school_session.dart';
+import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 import 'dart:io';
 
@@ -7,6 +17,7 @@ import 'windows_firebase_sync.dart';
 import 'windows_local_auth.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
+import 'windows_local_folder_picker.dart';
 import 'windows_service_status.dart';
 import 'windows_update_service.dart';
 import 'windows_app_restart.dart';
@@ -18,6 +29,7 @@ class WindowsSettingsPanel extends StatefulWidget {
     super.key,
     this.showLocalLock = true,
     this.showFirebase = false,
+    this.lockRowOnly = false,
   });
 
   /// Keeps the Local Settings Lock on Password Management.
@@ -25,6 +37,7 @@ class WindowsSettingsPanel extends StatefulWidget {
 
   /// Shows the school Firebase connection only from Advanced Settings.
   final bool showFirebase;
+  final bool lockRowOnly;
 
   @override
   State<WindowsSettingsPanel> createState() => _WindowsSettingsPanelState();
@@ -35,6 +48,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
   final _firebaseEmail = TextEditingController();
   final _firebasePassword = TextEditingController();
 
+  bool _managed=false;
   bool _loading = true;
   bool _firebaseBusy = false;
   bool _disconnectBusy = false;
@@ -56,7 +70,8 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
   }
 
   Future<void> _load() async {
-    if (!widget.showFirebase) {
+    _managed=(await CentralSchoolCloud.saved())['managed']==true;
+    if (!widget.showFirebase || _managed) {
       if (mounted) setState(() => _loading = false);
       return;
     }
@@ -108,7 +123,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF172229),
           title: const Text(
-            'Local Settings Lock',
+            'App Lock',
             style: TextStyle(color: Colors.white),
           ),
           content: SizedBox(
@@ -176,7 +191,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF172229),
           title: const Text(
-            'Change Local ID / Password',
+            'Set / Change App Lock',
             style: TextStyle(color: Colors.white),
           ),
           content: SizedBox(
@@ -432,15 +447,20 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
 
     return Column(
       children: [
-        if (widget.showLocalLock) _localLockCard(),
+        if (widget.showLocalLock) ...[
+          if(_managed && !widget.lockRowOnly)SchoolPasswordPanel(change:ManagedSchoolSession.changePassword),
+          if(_managed && !widget.lockRowOnly)const SizedBox(height:14),
+          _localLockCard(),
+        ],
         if (widget.showLocalLock && widget.showFirebase)
           const SizedBox(height: 14),
-        if (widget.showFirebase) _firebaseCard(),
+        if (widget.showFirebase && !_managed) _firebaseCard(),
       ],
     );
   }
 
   Widget _localLockCard() {
+    if(widget.lockRowOnly) return ListTile(leading:const Icon(Icons.lock),title:const Text('App Lock'),subtitle:Text(WindowsLocalSecurity.configured?'ON • local app-open password':'OFF • password not set'),trailing:Wrap(children:[TextButton(onPressed:_changeLock,child:const Text('Set / Change Password')),if(WindowsLocalSecurity.configured)TextButton(onPressed:()async{if(!await _unlock())return;await WindowsLocalSecurity.clearAppLock();if(mounted)setState((){});},child:const Text('Disable'))]));
     return _panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -450,7 +470,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
               Icon(Icons.lock_rounded, color: Color(0xFF00D9A5)),
               SizedBox(width: 9),
               Text(
-                'Local Settings Lock',
+                'App Lock',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 16,
@@ -466,14 +486,18 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Ye ID/Password isi Windows PC ke protected settings aur Local Logout/Login ke liye hai. Firebase se koi relation nahi.',
+            'App kholne ka local password. School Login se alag hai.',
             style: TextStyle(color: Colors.white38, fontSize: 10.5, height: 1.4),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: _changeLock,
             icon: const Icon(Icons.manage_accounts_rounded, size: 18),
-            label: const Text('Change Local ID / Password'),
+            label: const Text('Set / Change App Lock'),
+          ),
+          if(WindowsLocalSecurity.configured)TextButton(
+            onPressed:()async{if(!await _unlock())return;await WindowsLocalSecurity.clearAppLock();await FirebaseAuth.instance.refreshLocalUser();if(mounted)setState((){});},
+            child:const Text('Disable App Lock'),
           ),
         ],
       ),
@@ -635,6 +659,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
   String _path = '';
   bool _busy = true;
   bool _localStorageEnabled = true;
+  bool _managedLocalFirst = false;
 
   @override
   void initState() {
@@ -644,7 +669,8 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
 
   Future<void> _refresh() async {
     final path = await WindowsLocalStorage.currentPath();
-    final localEnabled = await WindowsRuntimeFlags.localStorageEnabled();
+    final localEnabled = await FirebaseFirestore.instance.localPersistenceEnabled();
+    final managed = (await CentralSchoolCloud.saved())['managed'] == true;
     if (localEnabled) {
       await WindowsLocalStorage.healthCheck();
     }
@@ -652,6 +678,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
       setState(() {
         _path = path;
         _localStorageEnabled = localEnabled;
+        _managedLocalFirst = managed;
         _busy = false;
       });
     }
@@ -679,61 +706,16 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
   }
 
   Future<void> _changeLocation() async {
-    final controller = TextEditingController(text: _path);
-    String? error;
-    final next = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF172229),
-          title: const Text('Change Local Storage Location', style: TextStyle(color: Colors.white)),
-          content: SizedBox(
-            width: 570,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Example: D:\\VidyaSaarthiData\nCurrent database aur LocalFiles new HDD/folder me COPY honge. Old copy safety ke liye rahegi.',
-                  style: TextStyle(color: Colors.white54, fontSize: 11, height: 1.45),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: 'New Folder Path',
-                    errorText: error,
-                    prefixIcon: const Icon(Icons.folder_open_rounded),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () {
-                final value = controller.text.trim();
-                if (value.isEmpty) {
-                  setDialogState(() => error = 'Folder path daalein.');
-                  return;
-                }
-                Navigator.pop(ctx, value);
-              },
-              child: const Text('Move / Use This Folder'),
-            ),
-          ],
-        ),
-      ),
-    );
-    controller.dispose();
-    if (next == null || next.trim().isEmpty) return;
-
     setState(() => _busy = true);
     try {
-      await WindowsLocalStorage.changeLocation(next);
+      final changed = await selectLocalStorageFolder(
+        initialDirectory: _path,
+        migrate: WindowsBackendBridge.changeLocalStorageLocation,
+      );
+      if (!changed) {
+        if (mounted) setState(() => _busy = false);
+        return;
+      }
       await _refresh();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -767,12 +749,14 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
             value: _localStorageEnabled,
             title: const Text('Local Data', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
             subtitle: Text(
-              _localStorageEnabled
+              _managedLocalFirst
+                  ? 'School Local-First storage is required. Saves remain available offline.'
+                  : _localStorageEnabled
                   ? 'ON: device local data show/save hoga; active school profile se isolated rahega.'
                   : 'OFF: local school data disk par read/save nahi hoga; remote Firebase + Google mode chalega.',
               style: const TextStyle(color: Colors.white38, fontSize: 10),
             ),
-            onChanged: _busy
+            onChanged: _busy || _managedLocalFirst
                 ? null
                 : (value) async {
                     setState(() => _busy = true);
@@ -825,11 +809,6 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
             runSpacing: 9,
             children: [
               OutlinedButton.icon(
-                onPressed: _busy ? null : WindowsLocalStorage.openFolder,
-                icon: const Icon(Icons.folder_open_rounded, size: 18),
-                label: const Text('Open Folder'),
-              ),
-              OutlinedButton.icon(
                 onPressed: _busy ? null : _backup,
                 icon: const Icon(Icons.backup_rounded, size: 18),
                 label: const Text('Backup Data'),
@@ -837,13 +816,9 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
               FilledButton.icon(
                 onPressed: _busy ? null : _changeLocation,
                 icon: const Icon(Icons.drive_file_move_rounded, size: 18),
-                label: const Text('Change HDD / Folder'),
+                label: const Text('Select / Change Folder'),
               ),
-              IconButton(
-                tooltip: WindowsUiLanguage.translate('Re-test local storage'),
-                onPressed: _busy ? null : _refresh,
-                icon: const Icon(Icons.refresh_rounded),
-              ),
+
             ],
           ),
           const SizedBox(height: 8),
@@ -1015,4 +990,52 @@ Widget _settingsStyleCard({
       ],
     ),
   );
+}
+
+class WindowsSyncStatusCard extends StatelessWidget {
+  const WindowsSyncStatusCard({super.key});
+  @override Widget build(BuildContext context) {
+    final engine=WindowsSyncEngine.instance;
+    return ValueListenableBuilder<SchoolCloudState>(valueListenable:engine.state,builder:(context,state,_)=>
+      ValueListenableBuilder<Map<String,dynamic>>(valueListenable:engine.details,builder:(context,details,_) {
+        final pending=(details['pending'] as num? ?? 0).toInt(),attention=(details['needsAttention'] as num? ?? 0).toInt();
+        final label=state==SchoolCloudState.syncing?'Syncing $pending items...':attention>0?'$attention items need attention':
+          pending>0?'$pending items pending':engine.lastSuccessfulSync==null?'Awaiting first successful sync':'Synced';
+        return _settingsStyleCard(icon:Icons.sync,iconColor:attention>0?Colors.orangeAccent:const Color(0xFF00A884),
+          title:'Sync',subtitle:'Sync Status • $label',child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Text('Last successful sync: ${engine.lastSuccessfulSync?.toLocal().toString()??'Not yet completed'}'),
+            Text('Pending: $pending'),
+            if(engine.lastError!=null)Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent)),
+            Row(children:[OutlinedButton(onPressed:state==SchoolCloudState.syncing?null:()=>unawaited(engine.requestSync()),child:const Text('Sync Now')),
+              const SizedBox(width:12),TextButton(onPressed:()=>showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+                title:const Text('Sync details'),content:SizedBox(width:600,child:SingleChildScrollView(child:Column(
+                  crossAxisAlignment:CrossAxisAlignment.start,children:[
+                    for(final item in details['items'] as List? ?? [])Row(children:[Expanded(child:Text('${item['collection']??'documents'} / ${item['documentId']??item['id']}: ${item['syncState']??'pending'} • ${item['lastError']??''}')), if(item['syncState']=='conflict')TextButton(onPressed:()=>showWindowsConflictReview(ctx,Map<String,dynamic>.from(item as Map)),child:const Text('Review'))]),
+                    Text('Session counters: ${details['metrics']??{}}'),
+                    const Text('Conflicting copies are retained. Review both versions before resolving.')]))),
+                actions:[TextButton(onPressed:() async {
+                  try {
+                    final report=await engine.safeQueueDiagnostics();
+                    if(!ctx.mounted)return;
+                    await showDialog<void>(context:ctx,builder:(reportContext)=>AlertDialog(
+                      title:const Text('Safe sync diagnostics'),
+                      content:SizedBox(width:600,child:SingleChildScrollView(child:Column(
+                        crossAxisAlignment:CrossAxisAlignment.start,children:[
+                          const Text('Read-only queue snapshot. No records, credentials, paths or raw responses. Record IDs are fingerprints. This does not verify cloud ACK.'),
+                          const SizedBox(height:12),
+                          SelectableText(const JsonEncoder.withIndent('  ').convert(report)),
+                        ]))),
+                      actions:[TextButton(onPressed:()=>Navigator.pop(reportContext),child:const Text('Close'))]));
+                  } catch (_) {
+                    if(!ctx.mounted)return;
+                    await showDialog<void>(context:ctx,builder:(errorContext)=>AlertDialog(
+                      title:const Text('Diagnostics unavailable'),
+                      content:const Text('Queue unchanged. Reopen Sync details for the current school and try again.'),
+                      actions:[TextButton(onPressed:()=>Navigator.pop(errorContext),child:const Text('Close'))]));
+                  }
+                },child:const Text('Safe diagnostics')),
+                  TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))])),child:const Text('Details'))])
+          ]));
+      }));
+  }
 }

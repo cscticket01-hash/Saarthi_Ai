@@ -1,21 +1,25 @@
+import 'windows_connect/central_school_cloud.dart';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'windows_secure_storage.dart';
 
 class WindowsLocalSecurity {
   WindowsLocalSecurity._();
 
-  static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const WindowsSecureStorage _secure = WindowsSecureStorage();
 
-  static const String _adminIdKey = 'vidya_saarthi_windows_admin_id_v1';
-  static const String _adminPasswordKey =
-      'vidya_saarthi_windows_admin_password_v1';
+  static String _schoolSuffix='';
+  static String get _adminIdKey => 'vidya_saarthi_windows_admin_id_v1$_schoolSuffix';
+  static String get _adminPasswordKey =>
+      'vidya_saarthi_windows_admin_password_v1$_schoolSuffix';
 
   static String? _adminId;
   static String? _adminPassword;
 
   static Future<void> initialize() async {
+    final saved=await CentralSchoolCloud.saved();
+    _schoolSuffix=saved['managed']==true?'_${saved['schoolId']}':'';
     _adminId = (await _secure.read(key: _adminIdKey))?.trim();
     _adminPassword = await _secure.read(key: _adminPasswordKey);
 
@@ -226,11 +230,16 @@ class WindowsExternalConnections {
   }
 
   static Future<String> googleScriptUrl() async {
+    final central = await CentralSchoolCloud.saved();
+    if (central['managed']==true) return central['scriptUrl']?.toString()??'';
+    if (central.isNotEmpty) return 'https://www.googleapis.com/drive/v3/files/${central['folderId']}';
     final data = await load();
     return data['googleScriptUrl']?.toString().trim() ?? '';
   }
 
   static Future<String> googleEmail() async {
+    final central = await CentralSchoolCloud.saved();
+    if (central.isNotEmpty) return central['email'];
     final data = await load();
     return data['googleEmail']?.toString().trim() ?? '';
   }

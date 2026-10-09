@@ -4,10 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const crypto = require('node:crypto');
-function backend(role = 'student') {
+function backend(role = 'student', source = 'SaarthiMobile.gs') {
  const person={id:'Class 5_Roll_12',name:'Private pupil',class:'Class 5',rollNo:'12',dob:'15/03/2015',mobileLinkToken:'a'.repeat(48)};
  const context = vm.createContext({Date,JSON,Math,Number,String,Object,Array,Error,PropertiesService:{getScriptProperties:()=>({getProperty:()=> 'school-one'})},Utilities:{DigestAlgorithm:{SHA_256:'SHA_256'},computeDigest:(_,s)=>[...crypto.createHash('sha256').update(s).digest()],getUuid:()=>crypto.randomUUID(),formatDate:()=> '2026-10-01'}});
- vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../../school-backend/SaarthiMobile.gs'),'utf8'), context);
+ vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../../school-backend/'+source),'utf8'), context);
  context.VS_get=(col)=>col==='mobile_sessions'?{personId:person.id,documentId:person.id,role,linkToken:person.mobileLinkToken,expiresAt:Date.now()+60000}:col===`${role==='teacher'?'teachers':'students'}_directory`?person:null;
  context.VS_query=()=>[];context.VS_set=()=>({});context.VS_requireLicense=()=>{};context.VS_messagingOptions=()=>null;context.VS_touchPresence=()=>{};
  return {context,person};
@@ -38,3 +38,25 @@ test('promotion uses a free roll and preserves the pupil already in the next cla
 test('promotion refuses an occupied destination without changing either pupil',()=>{const {context,students,body}=promotionSheet();const before=JSON.stringify(students.rows);assert.throws(()=>context.VS_changeStudentClass({...body,newRollNo:'12'}),/occupied/);assert.equal(JSON.stringify(students.rows),before);});
 test('a document-index failure rolls back both student and document sheet data',()=>{const {context,students,documents,body}=promotionSheet();const before=JSON.stringify([students.rows,documents.rows]);documents.fail=true;assert.throws(()=>context.VS_changeStudentClass(body),/Document write failed/);assert.equal(JSON.stringify([students.rows,documents.rows]),before);});
 test('promotion accepts a DOB stored as a real Google Sheet date',()=>{const {context,students,body}=promotionSheet();context.Utilities.formatDate=(date)=>date.toISOString().slice(0,10);students.rows[1][4]=new Date('2015-03-15T00:00:00Z');context.VS_changeStudentClass(body);assert.equal(students.rows[1][3],'13');});
+
+test('expired mobile sessions renew only with existing school record, credential and licence',()=>{
+ for(const source of ['SaarthiMobile.gs']){
+  const {context,person}=backend('student',source);
+  const session={personId:person.id,documentId:person.id,role:'student',linkToken:person.mobileLinkToken,expiresAt:1};
+  context.VS_get=(col)=>col==='mobile_sessions'?session:col==='students_directory'?person:null;
+  let saved;
+  context.VS_set=(col,id,value)=>{assert.equal(col,'mobile_sessions');saved=value;};
+  const request={action:'mobile_refresh',projectId:'school-one',sessionToken:'s'.repeat(50)};
+  assert.throws(()=>context.VS_mobileAction({...request,action:'mobile_dashboard'}),/expired/);
+  assert.ok(context.VS_mobileAction(request).expiresAt>Date.now());
+  assert.equal(saved.linkToken,person.mobileLinkToken);
+  assert.throws(()=>context.VS_mobileAction({...request,projectId:'school-two'}),/identity mismatch/);
+  context.VS_requireLicense=()=>{throw Error('blocked licence');};
+  assert.throws(()=>context.VS_mobileAction(request),/blocked licence/);
+  context.VS_requireLicense=()=>{};
+  session.linkToken='revoked';
+  assert.throws(()=>context.VS_mobileAction(request),/changed/);
+  context.VS_get=()=>null;
+  assert.throws(()=>context.VS_mobileAction(request),/expired/);
+ }
+});

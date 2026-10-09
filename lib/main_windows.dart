@@ -1,3 +1,6 @@
+import 'windows_connect/managed_school_session.dart';
+import 'windows_managed_school_gate.dart';
+import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 import 'dart:async';
 import 'windows_platform_client.dart';
@@ -12,28 +15,31 @@ import 'windows_local_auth.dart';
 import 'windows_local_session.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
+import 'windows_local_firestore.dart';
 import 'windows_connection_center.dart';
 import 'windows_admin_setup.dart';
 import 'windows_update_service.dart' as update_service;
 import 'windows_update_manager.dart';
 
+final _schoolNavigatorKey=GlobalKey<NavigatorState>();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await WindowsLocalSecurity.initialize();
+  try {await WindowsLocalSecurity.initialize();}catch(_){debugPrint('App Lock storage will be retried by the startup lock.');}
   await WindowsLocalStorage.initialize();
   try {
     await WindowsUpdateManager.cleanupOldInstallers();
   } catch (_) {}
   await WindowsLocalSession.initialize();
-  await FirebaseAuth.instance.bootstrapLocalUser();
+  try {await FirebaseAuth.instance.bootstrapLocalUser();}catch(_){debugPrint('Saved identity will be retried by the school startup gate.');}
 
   if (WindowsLocalSession.loggedOut) {
     await FirebaseAuth.instance.signOut();
   }
 
   windows_html.setSchoolStorageNamespace('local');
-  await WindowsPlatformClient.instance.initialize();
+  unawaited(WindowsPlatformClient.instance.initialize().catchError((Object e) {debugPrint('Platform startup verification deferred.');}));
   runApp(const VidyaSaarthiWindowsApp());
 
 }
@@ -50,6 +56,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(valueListenable: WindowsUiLanguage.changed,
       builder: (context, language, _) => MaterialApp(
+      navigatorKey:_schoolNavigatorKey,
       locale: Locale(language),
       supportedLocales: const [Locale('en'), Locale('hi'), Locale('bn'), Locale('as')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
@@ -68,8 +75,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
         ),
       ),
       builder: (context, child) {
-        return WindowsLicenseGate(
-          child: Listener(
+        final content = Listener(
             behavior: HitTestBehavior.translucent,
             onPointerDown: (_) => windows_html.document.dispatchClick(),
             child: Stack(
@@ -81,13 +87,13 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
                 const _WindowsGlobalUpdateProgress(),
               ],
             ),
-          ),
-        );
+          );
+        return WindowsManagedSchoolGate(child:content,legacy:WindowsLicenseGate(child:content),onAuthenticated:()=>_schoolNavigatorKey.currentState?.pushNamedAndRemoveUntil('/',(route)=>false));
       },
       routes: {
         '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
         '/admin-setup': (_) => const WindowsAdminSetupScreen(),
-        '/local-login': (_) => const WindowsLocalLoginScreen(),
+        '/local-login': (_) => const WindowsStartupGate(child: WindowsLocalDashboardGate()),
         '/dashboard': (_) => const WindowsLocalDashboardGate(),
       },
       home: WindowsStartupFlow(
@@ -97,17 +103,16 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
   }
 }
 
-/// Startup order after the licence gate:
-///   License screen (handled by WindowsLicenseGate) -> Skip -> Admin Setup
-///   (only when not already completed) -> Home.
-/// The optional online connection check now runs in the background; it never
-/// blocks opening the app and Firebase is not required to reach Home.
+/// After central account/licence verification, select the exact tenant cache
+/// and resolve saved registration before allowing first setup or the dashboard.
 class WindowsStartupFlow extends StatefulWidget {
   const WindowsStartupFlow(
       {super.key,
-      this.initializeConnections = WindowsConnectionCenter.initialize});
+      this.initializeConnections = WindowsConnectionCenter.initialize,
+      this.checkSetup = WindowsAdminSetup.completed});
 
   final Future<void> Function() initializeConnections;
+  final Future<bool> Function() checkSetup;
 
   @override
   State<WindowsStartupFlow> createState() => _WindowsStartupFlowState();
@@ -116,30 +121,33 @@ class WindowsStartupFlow extends StatefulWidget {
 class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
   bool _loading = true;
   bool _setupDone = false;
+  bool _managed = false;
+  String? _restoreError;
 
   @override
   void initState() {
     super.initState();
-    // Optional school-connection init continues in the background only.
-    unawaited(widget.initializeConnections().catchError((error) {
-      debugPrint('Windows background connection init: $error');
-    }));
     _prepare();
   }
 
   Future<void> _prepare() async {
+    if (mounted) setState(() { _loading = true; _restoreError = null; });
     try {
+      // Select the authenticated tenant cache before inspecting registration.
+      await widget.initializeConnections();
       await WindowsLocalSecurity.initialize();
-      final done = await WindowsAdminSetup.completed();
+      final done = await widget.checkSetup();
+      final managed=(await CentralSchoolCloud.saved())['managed']==true;
       if (!mounted) return;
       setState(() {
         _setupDone = done;
+        _managed = managed;
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _setupDone = WindowsLocalSecurity.configured;
+        _restoreError = 'School profile could not be restored. $e';
         _loading = false;
       });
     }
@@ -155,6 +163,23 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
         ),
       );
     }
+    if (_restoreError != null) return Scaffold(body:Center(child:Padding(
+      padding:const EdgeInsets.all(24), child:Column(mainAxisSize:MainAxisSize.min,children:[
+        Text(_restoreError!),
+        FilledButton(onPressed:_prepare,child:const Text('Retry school profile restore')),
+        TextButton(onPressed:() async {
+          await ManagedSchoolSession.logout();
+        },child:const Text('Sign out and choose school account')),
+      ]))));
+    if (_managed) {
+      if (!_setupDone) return const WindowsAdminSetupScreen();
+      return Column(children: [
+        if (WindowsAdminSetup.restoreNotice.isNotEmpty)
+          Material(child: Padding(padding: const EdgeInsets.all(12),
+            child: Text(WindowsAdminSetup.restoreNotice))),
+        const Expanded(child: WindowsStartupGate(child: WindowsLocalDashboardGate())),
+      ]);
+    }
     // Fresh install: local-first Admin Setup before the dashboard.
     if (!_setupDone && !WindowsLocalSecurity.configured) {
       return const WindowsAdminSetupScreen();
@@ -168,11 +193,13 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
 }
 
 /// Requires the existing local password before showing a saved dashboard.
-/// School Firebase verification remains in Advanced Settings.
+/// Central authentication and licensing are enforced by the outer startup gate.
 class WindowsStartupGate extends StatefulWidget {
-  const WindowsStartupGate({super.key, required this.child});
+  const WindowsStartupGate({super.key, required this.child, this.prepareLock, this.completeUnlock});
 
   final Widget child;
+  final Future<bool> Function()? prepareLock;
+  final Future<void> Function()? completeUnlock;
 
   @override
   State<WindowsStartupGate> createState() => _WindowsStartupGateState();
@@ -183,6 +210,8 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
   bool _loading = true;
   bool _locked = false;
   String? _error;
+  String _schoolName = '';
+  bool _success = false, _unlocking = false;
 
   @override
   void initState() {
@@ -198,8 +227,20 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
 
   Future<void> _prepare() async {
     try {
+      if(widget.prepareLock!=null) {
+        final locked=await widget.prepareLock!();
+        if(mounted)setState((){_locked=locked;_loading=false;});
+        return;
+      }
       await WindowsLocalSecurity.initialize();
       final shouldLock = WindowsLocalSecurity.configured;
+      _schoolName=WindowsAdminSetup.schoolName;
+      if (shouldLock) {
+        final origin=FirebaseFirestore.instance.activeProfileId;
+        final profile=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data();
+        if (FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen the app.');
+        _schoolName=profile?['schoolName']?.toString().trim()??_schoolName;
+      }
       if (!mounted) return;
       setState(() {
         _locked = shouldLock;
@@ -215,14 +256,31 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     }
   }
 
-  void _unlock() {
+  Future<void> _unlock() async {
+    if (_unlocking) return;
     final password = _password.text;
     if (WindowsLocalSecurity.verifyPassword(password)) {
-      setState(() {
-        _locked = false;
-        _error = null;
-      });
-      _password.clear();
+      _unlocking = true;
+      final origin=FirebaseFirestore.instance.activeProfileId;
+      void own() {if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed. Reopen the app.');}
+      try {
+        own();
+        if(widget.completeUnlock!=null)await widget.completeUnlock!();
+        else {
+          await WindowsLocalSession.markLoggedIn();
+          own();
+          await FirebaseAuth.instance.bootstrapLocalUser();
+        }
+        own();
+        if (!mounted) return;
+        setState(() { _success = true; _error = null; });
+        _password.clear();
+        await Future<void>.delayed(const Duration(milliseconds: 850));
+        own();
+        if (mounted) setState(() { _locked=false; _success=false; _unlocking=false; });
+      } catch (e) {
+        if (mounted) setState(() { _success=false; _unlocking=false; _error='$e'; });
+      }
       return;
     }
     setState(() => _error = 'Galat App Password.');
@@ -240,6 +298,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     }
 
     if (!_locked) return widget.child;
+    if (_success) return Scaffold(body:Center(child:TweenAnimationBuilder<double>(tween:Tween(begin:0,end:1),duration:const Duration(milliseconds:500),builder:(context,value,child)=>Opacity(opacity:value,child:Transform.scale(scale:0.85+value*0.15,child:child)),child:const Column(mainAxisSize:MainAxisSize.min,children:[Icon(Icons.check_circle,color:Color(0xFF00D9A5),size:76),SizedBox(height:18),Text('Login Successful',style:TextStyle(fontSize:26,fontWeight:FontWeight.bold))]))));
 
     return Scaffold(
       backgroundColor: const Color(0xFF0B141A),
@@ -257,8 +316,8 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                   const Icon(Icons.lock_rounded,
                       color: Color(0xFF00D9A5), size: 42),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Vidya Saarthi Locked',
+                  Text(
+                    _schoolName.isEmpty ? 'Vidya Saarthi' : _schoolName,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.white,
@@ -268,7 +327,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'App open karne ke liye password daalein.',
+                    'App Lock • Enter your saved local password.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white60),
                   ),
@@ -280,7 +339,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                     onSubmitted: (_) => _unlock(),
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      labelText: 'App Password',
+                      labelText: 'App Lock Password',
                       errorText: _error,
                       prefixIcon: const Icon(Icons.password_rounded),
                       filled: true,
@@ -404,22 +463,30 @@ class _WindowsGlobalUpdateProgress extends StatelessWidget {
 class WindowsLocalDashboardGate extends StatelessWidget {
   const WindowsLocalDashboardGate({super.key});
 
-  void _primeLocalAdminSession() {
-    final storage = windows_html.window.localStorage;
-    storage['saarthi_portal_role_v1'] = 'admin';
-    storage.remove('saarthi_portal_student_id_v1');
-    storage.remove('saarthi_portal_student_class_v1');
-    storage['saarthi_portal_expiry_v1'] = DateTime.now()
-        .add(const Duration(minutes: 30))
-        .millisecondsSinceEpoch
-        .toString();
-  }
-
   @override
   Widget build(BuildContext context) {
-    _primeLocalAdminSession();
-    return const AdminDashboardScreen();
+    // The startup App Lock already protects entry. No intermediate button.
+    return const WindowsAdminAccessGate(child: WindowsAdminSessionDashboard());
   }
+}
+
+/// Start the administration session timer after entering the dashboard.
+class WindowsAdminSessionDashboard extends StatefulWidget {
+  const WindowsAdminSessionDashboard({super.key});
+  @override
+  State<WindowsAdminSessionDashboard> createState() => _WindowsAdminSessionDashboardState();
+}
+class _WindowsAdminSessionDashboardState extends State<WindowsAdminSessionDashboard> {
+  @override
+  void initState() {
+    super.initState();
+    final storage = windows_html.window.localStorage;
+    storage['saarthi_portal_role_v1'] = 'admin';
+    storage['saarthi_portal_expiry_v1'] = DateTime.now()
+        .add(const Duration(minutes: 30)).millisecondsSinceEpoch.toString();
+  }
+  @override
+  Widget build(BuildContext context) => const AdminDashboardScreen();
 }
 
 class WindowsLocalLoginScreen extends StatefulWidget {

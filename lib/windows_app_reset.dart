@@ -1,4 +1,4 @@
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'windows_secure_storage.dart';
 import 'windows_ui_localization.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_session.dart';
@@ -23,7 +23,7 @@ class WindowsAppReset {
       await WindowsPlatformClient.instance.resetAppActivation();
       await WindowsExternalConnections.save(googleScriptUrl: '', googleEmail: '', firebaseLink: '');
       await WindowsFirebaseRemote.disconnect();
-      const secure = FlutterSecureStorage();
+      const secure = WindowsSecureStorage();
       final settings = await secure.readAll();
       for (final key in settings.keys.toList()) {
         if (key.startsWith('vidya_saarthi_windows_')) await secure.delete(key: key);
