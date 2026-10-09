@@ -60,6 +60,29 @@ void main() {
               credentials['VS_TEST_LOGIN_PASSWORD'] as String,
               endpoint: endpoint);
           expect(admin['schoolId'], school);
+          // Registration label and the operational school profile are separate.
+          // Prepare missing synthetic TEST branding with the existing CAS protocol.
+          final config = await ManagedSchoolSession.callForSchool(school, 'managed/records', {
+            'operation': 'read', 'collection': 'school_config', 'syncProtocol': 2
+          });
+          expect(config['schoolId'], school);
+          final existingProfile = (config['records'] as Map)['school_profile_cache'];
+          final profile = existingProfile is Map ? Map<String,dynamic>.from(existingProfile) : <String,dynamic>{};
+          final configuredName = profile['schoolName']?.toString().trim() ?? '';
+          if (configuredName.isEmpty) {
+            final data = {...profile, 'schoolId': school, 'schoolName': 'TEST Sync V2', 'syntheticTest': true};
+            data.removeWhere((key, value) => key.startsWith('_sync'));
+            final ack = await ManagedSchoolSession.callForSchool(school, 'managed/records', {
+              'operation': 'write', 'collection': 'school_config', 'id': 'school_profile_cache',
+              'syncProtocol': 2, 'operationId': 'android-test-branding-$run',
+              'expectedRecordRevision': profile['_syncRevision'] ?? '', 'data': data
+            });
+            expect(ack['schoolId'], school);expect(ack['recordRevision'], isA<String>());
+            metrics['syntheticSchoolProfileSeeded'] = true;
+          } else {
+            expect(configuredName, 'TEST Sync V2', reason: 'Existing TEST profile must not be silently replaced');
+            metrics['syntheticSchoolProfileSeeded'] = false;
+          }
           final person = 'synthetic-android-$run',
               token =
                   sha256.convert(utf8.encode('android-test/$run')).toString();
@@ -154,6 +177,7 @@ void main() {
           await store.close();
         }
       });
+      expect(metrics['nativeCloudChecks'], 'PASS', reason: 'An async test failure must never produce a PASS evidence file');
       await tester.pumpWidget(const SaarthiMobileApp());
       await tester.pump();
       expect(find.text('TEST Sync V2'), findsWidgets);
