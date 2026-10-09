@@ -66,8 +66,12 @@ const fs=require('node:fs'),path=require('node:path');
   await page.reload({waitUntil:'domcontentloaded'});
   await page.getByText('Local TEST session restored; refresh or retry pending sync',{exact:true}).waitFor({timeout:30000});
   proof.draftPersistedAfterReload=await page.evaluate(()=>localStorage.getItem('flutter.isolated_sync_review_v1')!==null);
-  await page.getByRole('textbox',{name:'Synthetic notice ID',exact:true}).click();
-  proof.restoredSyntheticId=await page.getByRole('textbox',{name:'Synthetic notice ID',exact:true}).inputValue();
+  await page.getByText(`Recovered pending TEST notice: ${id} | ${title}`,{exact:true}).waitFor({timeout:30000});
+  const restored=page.getByRole('textbox',{name:'Synthetic notice ID',exact:true});
+  await restored.click();
+  // Flutter updates its focused accessibility input on a subsequent frame.
+  await page.waitForFunction(expected=>Array.from(document.querySelectorAll('input,textarea')).some(input=>input.value===expected),id,{timeout:30000});
+  proof.restoredSyntheticId=await restored.inputValue();
   if(proof.restoredSyntheticId!==id)throw Error('Durable TEST draft mismatch');
   proof.offlineDraftAndReload=true;
   proof.stage='cloud retry ACK';

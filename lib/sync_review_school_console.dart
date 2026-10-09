@@ -212,6 +212,8 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
                       children: [
                         Text(status),
                         if (diagnostic.isNotEmpty) Text('TEST diagnostic: $diagnostic'),
+                        if (pendingId != null && pendingPayload != null)
+                          Text('Recovered pending TEST notice: $pendingId | ${pendingPayload![\'title\']}'),
                         if (busy) const LinearProgressIndicator(),
                         if (!logged) ...[
                           input(email, 'TEST email'),
