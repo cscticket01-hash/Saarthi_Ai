@@ -6,10 +6,12 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import '../lib/windows_settings_panel.dart';
 import '../lib/school_cloud_engine.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -73,13 +75,28 @@ void main(){
    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
  });
  testWidgets('control center reports unknown connectivity and retains original queue', (tester) async {
+   tester.view.physicalSize = const Size(1200, 1800);
+   tester.view.devicePixelRatio = 1;
+   addTearDown(tester.view.resetPhysicalSize);
+   addTearDown(tester.view.resetDevicePixelRatio);
    await db.collection('fee_payments').doc('pending-preview').set({'amount':100});
-   await tester.pumpWidget(const MaterialApp(home: WindowsSyncControlCenter()));
+   final previewKey=GlobalKey();
+   await tester.pumpWidget(RepaintBoundary(key:previewKey,child:MaterialApp(theme:ThemeData.dark(),home:const WindowsSyncControlCenter())));
    await tester.pumpAndSettle();
    expect(find.text('Sync & Backup Control Center'),findsOneWidget);
    expect(find.text('Not independently verified'),findsOneWidget);
    expect(find.text('Not yet verified'),findsWidgets);
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+   await tester.runAsync(() async {
+     final boundary=previewKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+     final image=await boundary.toImage(pixelRatio:1);
+     try {
+       final bytes=await image.toByteData(format:ui.ImageByteFormat.png);
+       final target=File('build/sync-control-preview/synthetic-test-school.png');
+       await target.parent.create(recursive:true);
+       await target.writeAsBytes(bytes!.buffer.asUint8List(),flush:true);
+     } finally {image.dispose();}
+   });
    await tester.pumpWidget(const SizedBox());
  });
  test('legacy queue binding preserves its original operation ID across failed retries', () async {

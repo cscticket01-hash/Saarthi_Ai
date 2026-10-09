@@ -328,6 +328,11 @@ jobs:
         Copy-Item school-backend/managed/SaarthiManagedAll.gs build/windows-review/REVIEW-SCHOOL-STORAGE.gs
     # The production upload path is verified with the injected native adapter.
     # Hosted-runner Win32 picker control automation has repeatedly timed out.
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: smart-sync-control-center-synthetic-preview
+        path: build/sync-control-preview
     # Only the final OS selection is reserved for the owner's real Windows PC.
     - uses: actions/upload-artifact@v4
       with:

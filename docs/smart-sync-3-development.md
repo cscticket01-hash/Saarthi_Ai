@@ -22,6 +22,10 @@ Production Render remains `f81385dd6dc927f11b18f4a123966a66dfaf2d1b`.
 Isolated TEST Render remains `33320babb0e026a9c9e5e65c9434015945e61bb8`.
 Original school and its three pending entries are not accessed or changed.
 
+## Isolated component measurement
+
+The local fsync-backed attendance queue benchmark accepted and drained 1,000, 5,000 and 15,000 synthetic submissions with zero failed/lost rows and 1,000 repeated attempts deduplicated in each run. Measured elapsed times were 42.9 ms, 139.5 ms and 279.3 ms respectively. This uses mocked remote delivery, not Google/Firebase capacity or end-to-end attendance latency. The hosted workflow also retains the 10,000/25,000/50,000 component cases and adds 15,000 explicitly.
+
 ## Not yet implemented or verified as Engine 3.0
 
 This is an initial development stage, not the completed unified upgrade.
