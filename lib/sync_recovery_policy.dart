@@ -2,6 +2,9 @@ import 'school_backend_transport.dart';
 
 enum SyncFailureKind { networkPath, timeout, server, quota, authorization, configuration, conflict, unknown }
 
+bool syncCheckpointDue(DateTime? lastVerified, DateTime now) => lastVerified == null ||
+    lastVerified.isAfter(now) || now.difference(lastVerified) >= const Duration(hours: 1);
+
 /// Deterministic recovery decisions. A decision never deletes or acknowledges data.
 class SyncRecoveryDecision {
   const SyncRecoveryDecision(this.kind, {this.retry = false, this.review = false});

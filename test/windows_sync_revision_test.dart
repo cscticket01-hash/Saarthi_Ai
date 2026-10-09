@@ -61,6 +61,17 @@ void main(){
    expect(queue.single.data()['syncState'],'needsAttention');
    expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(1));
  });
+ test('shared storage identity error stops the batch after one failed request', () async {
+   for (var i=0;i<3;i++) await db.collection('students_directory').doc('identity-$i').set({'name':'Retained'});
+   var calls=0;
+   await expectLater(WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+     send:(a,b,c,d)async{},sendVersioned:(item)async {
+       calls++;
+       throw CentralCloudException(502,'school_cloud','School storage identity mismatch',diagnosticCode:'SCRIPT_WORKBOOK_IDENTITY_MISMATCH');
+     }),throwsStateError);
+   expect(calls,1);expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(3));
+   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+ });
  testWidgets('control center reports unknown connectivity and retains original queue', (tester) async {
    await db.collection('fee_payments').doc('pending-preview').set({'amount':100});
    await tester.pumpWidget(const MaterialApp(home: WindowsSyncControlCenter()));

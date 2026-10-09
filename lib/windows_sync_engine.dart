@@ -8,6 +8,7 @@ import 'windows_connect/central_school_cloud.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import 'school_cloud_state.dart';
 
@@ -30,7 +31,7 @@ import 'windows_sync_recovery.dart';
 import 'sync_recovery_policy.dart';
 import 'windows_platform_client.dart';
 
-class WindowsSyncEngine {
+class WindowsSyncEngine with WidgetsBindingObserver {
   WindowsSyncEngine._();
 
   static final WindowsSyncEngine instance = WindowsSyncEngine._();
@@ -62,6 +63,7 @@ class WindowsSyncEngine {
 
   static const reconciliationInterval = Duration(minutes: 4);
   Timer? _periodicTimer;
+  Timer? _hourlyTimer;
   Timer? _debounceTimer;
   bool _initialized = false;
   bool _syncing = false;
@@ -70,6 +72,8 @@ class WindowsSyncEngine {
   bool _syncBlocked = false;
 
   DateTime? lastSuccessfulSync;
+  DateTime? lastVerifiedCheckpoint;
+  bool get _checkpointDue => syncCheckpointDue(lastVerifiedCheckpoint, DateTime.now());
   SyncRecoveryDecision? recoveryDecision;
   bool automaticSyncEnabled = true;
   final recoveryHistory = <Map<String, dynamic>>[];
@@ -203,6 +207,7 @@ class WindowsSyncEngine {
     if (_initialized) return;
     _resetPaused = false;
     _initialized = true;
+    WidgetsBinding.instance.addObserver(this);
 
     WindowsLocalFirestoreSyncControl.onTrackedMutation = () async {
       scheduleSoon();
@@ -229,6 +234,7 @@ class WindowsSyncEngine {
       reconciliationInterval,
       (_) => scheduleSoon(),
     );
+    _hourlyTimer = Timer.periodic(const Duration(hours: 1), (_) => scheduleSoon());
 
     scheduleSoon(delay: const Duration(milliseconds: 800));
   }
@@ -410,6 +416,7 @@ class WindowsSyncEngine {
   Future<void> pauseForAppReset() async {
     _resetPaused = true;
     _periodicTimer?.cancel();
+    _hourlyTimer?.cancel();
     _debounceTimer?.cancel();
     final deadline = DateTime.now().add(const Duration(seconds: 90));
     while (_syncing || _activating > 0) {
@@ -425,6 +432,7 @@ class WindowsSyncEngine {
     WindowsFirebaseRemote.onConnectionChanged = null;
     WindowsBackendBridge.onRemoteAvailable = null;
     WindowsBackendBridge.onLocalDocumentCommitted = null;
+    WidgetsBinding.instance.removeObserver(this);
     _initialized = false;
     _activeFirebaseProject = '';
     _activeGoogleUrl = '';
@@ -624,6 +632,7 @@ class WindowsSyncEngine {
       recoveryDecision = null;
       recoveryHistory.clear();
       lastSuccessfulSync = null;
+      lastVerifiedCheckpoint = null;
       metrics.clear();
       _samples.clear();
       metrics.addAll({
@@ -656,6 +665,18 @@ class WindowsSyncEngine {
     windows_html.setSchoolStorageNamespace(profile.profileId);
     final preferences = (await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').get()).data();
     automaticSyncEnabled = preferences?['automaticSync'] != false;
+    final storedHistory = (await FirebaseFirestore.instance.collection('_windows_sync_status').doc('recovery').get()).data()?['events'];
+    recoveryHistory.clear();
+    if (storedHistory is List) {
+      for (final event in storedHistory.take(100)) {
+        if (event is Map && SyncFailureKind.values.any((kind) => kind.name == event['category']) &&
+            {'retained_for_retry', 'retained_for_review'}.contains(event['outcome']) &&
+            event['atUtc'] is String && DateTime.tryParse(event['atUtc'] as String) != null && event['attempt'] is num) {
+          recoveryHistory.add({'atUtc': event['atUtc'], 'category': event['category'],
+            'outcome': event['outcome'], 'attempt': (event['attempt'] as num).toInt()});
+        }
+      }
+    }
     final savedStatus =
         (await FirebaseFirestore.instance
                 .collection('_windows_sync_status')
@@ -666,6 +687,7 @@ class WindowsSyncEngine {
       lastSuccessfulSync = DateTime.fromMillisecondsSinceEpoch(
         (savedStatus!['successfulAt'] as num).toInt(),
       );
+    if (savedStatus?['checkpointAt'] is num) lastVerifiedCheckpoint = DateTime.fromMillisecondsSinceEpoch((savedStatus!['checkpointAt'] as num).toInt());
     await refreshDetails();
 
     if (seedGoogleConfig && profile.googleUrl.isNotEmpty) {
@@ -906,6 +928,7 @@ class WindowsSyncEngine {
     state.value = SchoolCloudState.syncing;
     final syncOrigin = _activeProfileId;
     final watch = Stopwatch()..start();
+    bool completedReconciliation = false;
     lastError = null;
     recoveryDecision = null;
 
@@ -925,7 +948,7 @@ class WindowsSyncEngine {
             'School Drive connection pending. Local data retained.',
           );
         final protocolIdentity = jsonEncode([_activeProfileId, _activeSchoolSyncId, _activeGoogleUrl, central['scriptUrl']]);
-        if (_manualSync || _protocolIdentity != protocolIdentity ||
+        if (_manualSync || _checkpointDue || _protocolIdentity != protocolIdentity ||
             _protocolVerifiedAt == null || DateTime.now().difference(_protocolVerifiedAt!) >= const Duration(minutes: 5)) {
         final health = await ManagedSchoolSession.callForSchool(
           _activeSchoolSyncId,
@@ -960,9 +983,10 @@ class WindowsSyncEngine {
         if (_lastPull == null ||
             DateTime.now().difference(_lastPull!) >=
                 reconciliationInterval ||
-            _manualSync) {
+            _manualSync || _checkpointDue) {
           await _pullManagedChanges();
           _lastPull = DateTime.now();
+          completedReconciliation = true;
         }
         await refreshDetails();
         if ((details.value['needsAttention'] as num? ?? 0) > 0)
@@ -978,9 +1002,12 @@ class WindowsSyncEngine {
           () => FirebaseFirestore.instance
               .collection('_windows_sync_status')
               .doc('last')
-              .set({'successfulAt': DateTime.now().millisecondsSinceEpoch}),
+              .set({'successfulAt': DateTime.now().millisecondsSinceEpoch,
+                if (completedReconciliation) 'checkpointAt': DateTime.now().millisecondsSinceEpoch,
+                if (!completedReconciliation && lastVerifiedCheckpoint != null) 'checkpointAt': lastVerifiedCheckpoint!.millisecondsSinceEpoch}),
         );
         lastSuccessfulSync = DateTime.now();
+        if (completedReconciliation) lastVerifiedCheckpoint = lastSuccessfulSync;
         _failures = 0;
         _nextRetry = null;
         state.value = SchoolCloudState.synced;
@@ -1037,6 +1064,9 @@ class WindowsSyncEngine {
       recoveryHistory.add({'atUtc': DateTime.now().toUtc().toIso8601String(),
         'category': recoveryDecision!.kind.name, 'attempt': _failures,
         'outcome': recoveryDecision!.retry ? 'retained_for_retry' : 'retained_for_review'});
+      try {
+        await FirebaseFirestore.instance.collection('_windows_sync_status').doc('recovery').set({'events': List<Map<String, dynamic>>.from(recoveryHistory)});
+      } catch (_) { /* A failed diagnostic write never removes the durable queue. */ }
       if (_activeProfileId == syncOrigin)
         state.value = SchoolCloudState.syncError;
     } finally {
@@ -1768,8 +1798,15 @@ class WindowsSyncEngine {
 
   void dispose() {
     _periodicTimer?.cancel();
+    _hourlyTimer?.cancel();
     _debounceTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _initialized = false;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
+    if (lifecycle == AppLifecycleState.resumed) scheduleSoon();
   }
 }
 

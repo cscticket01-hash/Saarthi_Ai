@@ -82,7 +82,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             metric('Needs administrator attention', '${details['needsAttention'] ?? 'Not measured'}'),
             metric('Retained verified cloud receipts', '${details['verifiedReceiptCount'] ?? 'Not measured'}'),
             metric('Last verified cloud ACK', stamp(details['lastCloudAckMillis'])),
-            metric('Last complete sync', engine.lastSuccessfulSync?.toLocal().toString() ?? 'Not yet verified'),
+            metric('Last complete reconciliation', engine.lastVerifiedCheckpoint?.toLocal().toString() ?? 'Not yet verified'),
             metric('Internet connectivity', 'Not independently verified'),
             metric('Local database health', localHealth),
             metric('Next recovery retry', engine.nextRetryAt?.toLocal().toString() ?? 'No retry scheduled'),
@@ -123,8 +123,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             ));
           }),
           const Divider(height: 32),
-          const Text('Recovery History — current session', style: TextStyle(fontSize: 20)),
-          if (engine.recoveryHistory.isEmpty) const Text('No recovery events recorded in this session.'),
+          const Text('Recovery History — this school', style: TextStyle(fontSize: 20)),
+          if (engine.recoveryHistory.isEmpty) const Text('No recovery events recorded for this school.'),
           for (final event in engine.recoveryHistory.reversed) ListTile(
             title: Text('${event['category']} • ${event['outcome']}'),
             subtitle: Text('${event['atUtc']} • attempt ${event['attempt']}')),

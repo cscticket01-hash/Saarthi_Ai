@@ -9,7 +9,7 @@ Branch: `feature/smart-sync-3`. Production publication is not authorized by this
 - Deterministic classification of API outages, timeout, network path failure, quotas, access denial, school storage configuration and revision conflicts.
 - Windows does not immediately repeat unknown, configuration, authorization or conflict failures. Recoverable outages keep bounded jitter recovery and existing passive reconciliation.
 - Structural record failures retain their operation identity and payload, require attention, and allow unrelated records to continue. No local record is deleted by repair.
-- Full Windows Sync & Backup Control Center route from Settings: actual pending count, attention count, retained verified receipts, last cloud ACK, complete-sync time, next retry, queue, conflict review, sanitized diagnostics, session recovery history, local integrity check, local backup and persisted school-specific automatic-sync preference.
+- Full Windows Sync & Backup Control Center route from Settings: actual pending count, attention count, retained verified receipts, last cloud ACK, complete-sync time, next retry, queue, conflict review, sanitized diagnostics, durable school-specific recovery history, local integrity check, local backup and persisted school-specific automatic-sync preference.
 - Internet connectivity is explicitly unverified until independently measured. Receipt count is not misrepresented as unique cloud record count.
 - Reuses existing local-first save, version-checked ACK, mobile session renewal and isolated real-cloud tests.
 
@@ -27,7 +27,7 @@ Original school and its three pending entries are not accessed or changed.
 This is an initial development stage, not the completed unified upgrade.
 
 - Independent OS connectivity monitoring and physical reconnect/sleep/resume verification.
-- Durable recovery history across restarts, hourly checkpoint evidence and opt-in scheduled Windows worker.
+- Hourly checkpoint scheduling and resume-triggered retry are implemented. Physical sleep/resume and a full elapsed-hour integration cycle remain unverified; opt-in scheduled Windows worker is not implemented.
 - Automatic local/cloud missing-record restoration using verified inventories and authoritative tombstones.
 - New 24-hour recycle protocol, cloud snapshots, authorized restore and server-side retention sweep.
 - Complete control center service health/storage usage/category counts and guided restore controls.

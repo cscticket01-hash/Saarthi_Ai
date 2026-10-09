@@ -2,6 +2,14 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/sync_recovery_policy.dart';
 
 void main() {
+  test('hourly checkpoint becomes due on missed sleep interval and clock rollback', () {
+    final start = DateTime.utc(2026, 10, 9, 10);
+    expect(syncCheckpointDue(null, start), true);
+    expect(syncCheckpointDue(start, start.add(const Duration(minutes: 59))), false);
+    expect(syncCheckpointDue(start, start.add(const Duration(hours: 1))), true);
+    expect(syncCheckpointDue(start, start.add(const Duration(hours: 8))), true);
+    expect(syncCheckpointDue(start, start.subtract(const Duration(minutes: 1))), true);
+  });
   test('server outage and timeout are distinct from a failed network path', () {
     final server = SyncRecoveryDecision.classify(status: 502, code: 'SCRIPT_OPERATION_FAILED');
     expect(server.kind, SyncFailureKind.server);
