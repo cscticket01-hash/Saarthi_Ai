@@ -119,7 +119,8 @@ class WindowsSyncEngine {
                 {'conflict', 'needsAttention'}.contains(d.data()['syncState']),
           )
           .length,
-      'items': items.map((d) => {'id': d.id, ...d.data()}).toList(),
+      'items': [for(final d in general.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_firebase_outbox'},
+        for(final d in documents.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_document_outbox'}],
       'metrics': Map<String, int>.from(metrics),
       'performance': performanceSummary,
     };
@@ -133,12 +134,13 @@ class WindowsSyncEngine {
     final school = db.activeProfileIdentity['schoolSyncId'];
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
+    final receipts = await db.collection('_windows_sync_receipts').get();
     if (db.activeProfileId != origin) throw StateError('School changed. Reopen Sync details.');
     String? token(dynamic value) => value is String && RegExp(r'^[A-Za-z0-9_-]{1,100}$').hasMatch(value) ? value : null;
     Map<String, dynamic> errorMetadata(dynamic value) {
       final text = value is String ? value : '';
       final candidate = RegExp(r'\[([A-Z_]+)\]').firstMatch(text)?.group(1);
-      final code = {'RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED',
+      final code = {'RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED','TEST_ENVIRONMENT_MISMATCH',
         'SCRIPT_HTTP_ERROR','SCRIPT_INVALID_RESPONSE','SCRIPT_IDENTITY_MISMATCH','SCRIPT_OPERATION_FAILED',
         'SCRIPT_MIGRATION_PENDING','SCRIPT_MIGRATION_CONFLICT','SCRIPT_MISSING_MIGRATED_TAB',
         'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_PERMISSION_DENIED',
@@ -169,7 +171,9 @@ class WindowsSyncEngine {
     }
     return {'schemaVersion': 1, 'capturedAtUtc': DateTime.now().toUtc().toIso8601String(),
       if (school is String && RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)) 'schoolId': school,
-      'pendingCount': rows.length, 'items': rows, 'latestError': errorMetadata(lastError),
+      'pendingCount': rows.length, 'items': rows,
+      'retainedVerifiedReceiptCount': receipts.docs.length,
+      'historicalCountChange': 'Cannot infer ACK for missing historical items without their operation receipts', 'latestError': errorMetadata(lastError),
       'cloudVerification': 'Not performed by this read-only report'};
   }
   String _activeProfileId = 'unbound';
@@ -893,6 +897,7 @@ class WindowsSyncEngine {
         return;
       }
       if (central['managed'] == true) {
+        ManagedSchoolSession.verifyBuildEndpoint(central['endpoint']?.toString()??'');
         if (SchoolCloudEngine.instance.identity != null &&
             !SchoolCloudEngine.instance.canOpen)
           throw StateError('School access requires verification.');
@@ -921,13 +926,13 @@ class WindowsSyncEngine {
         try {
           await _pushManagedOutbox();
         } catch (e) {
-          if (!e.toString().contains('conflict')) rethrow;
+          if (!isRecordSyncConflict(e)) rethrow;
         }
         await WindowsDocumentTemplates.publishChangedIdCards();
         // ID preparation may create credential metadata; drain only those new
         // durable operations before uploading their published files.
         try { await _pushManagedOutbox(); }
-        catch (e) { if (!e.toString().contains('conflict')) rethrow; }
+        catch (e) { if (!isRecordSyncConflict(e)) rethrow; }
         try {
           await WindowsBackendBridge.flushDocumentPending();
         } catch (e) {
@@ -1124,7 +1129,7 @@ class WindowsSyncEngine {
           final ref = db.collection(collection).doc(entry.key);
           final batch = db.batch();
           batch.set(
-            db.collection('_windows_sync_conflicts').doc(queued.first.id),
+            db.collection('_windows_sync_conflicts').doc('${queued.first.data()['operationId'] ?? queued.first.id}-${sha256.convert(utf8.encode(data['_syncRevision']?.toString() ?? ''))}'),
             {
               'schoolId': school,
               'collection': collection,

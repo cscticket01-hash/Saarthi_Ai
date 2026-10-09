@@ -58,7 +58,11 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  check('Real operation ID reuse is HTTP 409 without ACK',r,r.http===409&&r.data.code==='OPERATION_ID_CONFLICT');
  r=await admin({action:'managed/records',operation:'read',collection:'school_notices',syncProtocol:2});
  check('Rejected conflicts preserve existing TEST notice',r,r.http===200&&r.data.records?.[noticeId]?._syncRevision===notice._syncRevision&&r.data.records?.[noticeId]?.title===notice.title);
- const captured=Date.now()-1000;
+ const priorAttendance=await admin({action:'managed/records',operation:'read',collection:'attendance_records',syncProtocol:2});
+ if(priorAttendance.http!==200)throw Error('Attendance readback required');
+ const priorEntry=Object.values(priorAttendance.data.records||{}).find(row=>row.personId===personId&&Number.isSafeInteger(row.entryCapturedAt));
+ const captured=priorEntry?priorEntry.entryCapturedAt:Date.now()-1000;
+ report.attendanceSampleAlreadyCompleted=Boolean(priorEntry);
  const attendance={action:'mobile_mark_attendance',sessionToken,attendancePermit:permit,projectId:schoolId,role:'student',personId,linkToken,latitude:24.8,longitude:92.7,accuracy:5,mode:'entry',clientCapturedAt:captured};
  r=await mobile(attendance);check('Actual isolated durable attendance acceptance',r,r.http===200&&r.data.accepted===true&&typeof r.data.operationId==='string');
  const op=r.data.operationId;report.attendanceOperationId=op;
@@ -71,7 +75,7 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
    report.realAttendanceQueueToAckMs=row.completedAt-row.createdAt;
    report.realAttendanceCompletedAt=row.completedAt;
    r=await mobile({action:'mobile_attendance_list',sessionToken,month:new Date(captured+19800000).toISOString().slice(0,7)});
-   check('Original capture timestamp survives actual Drive attendance ACK',r,r.http===200&&r.data.attendance?.some(x=>x.entryCapturedAt===captured||Number.isSafeInteger(x.entryCapturedAt)&&x.captureTimeSource==='DEVICE_REPORTED'));
+   check('Original capture timestamp survives actual Drive attendance ACK',r,r.http===200&&r.data.attendance?.some(x=>x.entryCapturedAt===captured));
    report.realAttendancePending=0;return;
   }
   if(row.state==='needsAttention')throw Error('Attendance needs review; durable operation retained');

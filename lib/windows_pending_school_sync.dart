@@ -1,4 +1,9 @@
 import 'windows_local_firestore.dart';
+import 'windows_connect/central_school_cloud.dart';
+
+bool isRecordSyncConflict(Object error) => error is CentralCloudException
+    ? error.recordConflict
+    : error is StateError && RegExp(r'record revision conflict|sync operation id conflict', caseSensitive:false).hasMatch(error.toString());
 
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
@@ -25,6 +30,7 @@ class WindowsPendingSchoolSync {
       final order=priority(a.data()).compareTo(priority(b.data()));
       return order!=0 ? order : time(a.data()).compareTo(time(b.data()));
     });
+    Object? firstConflict;
     for(final queued in docs) {
       unchanged();queued.reference.requireOriginProfile();
       final item=queued.data();
@@ -53,13 +59,18 @@ class WindowsPendingSchoolSync {
         unchanged();
         final latest = (await queued.reference.get()).data();
         if(latest?['operationId'] == item['operationId']) {
-          await queued.reference.update({'syncState': e.toString().contains('conflict') ? 'conflict' : 'retry',
+          await queued.reference.update({'syncState': isRecordSyncConflict(e) ? 'conflict' : 'retry',
             'retryCount':(item['retryCount'] as num? ?? 0).toInt()+1, 'lastError': e.toString()});
+        }
+        if (isRecordSyncConflict(e)) {
+          firstConflict ??= e;
+          continue; // Independent rows must not be starved by a conflict.
         }
         rethrow;
       }
       unchanged();
       await db.acknowledgeOutbox(queued.reference,item,revision:revision);
     }
+    if (firstConflict != null) throw firstConflict;
   }
 }

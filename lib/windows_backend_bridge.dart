@@ -1696,9 +1696,14 @@ class WindowsBackendBridge {
     };
   }
 
+  static String publishedIdCardOwnerId(String role, String personId) {
+    if(!{'student','teacher'}.contains(role)||personId.isEmpty||personId.length>200||personId.contains('/'))throw StateError('Invalid ID owner.');
+    return 'ID-${crypto.sha256.convert(utf8.encode('$role/$personId'))}';
+  }
+
   static String publishedIdCardId(String qr) {
     final link = SchoolLink.parse(qr);
-    return 'ID-${crypto.sha256.convert(utf8.encode('${link.role}/${link.personId}'))}';
+    return publishedIdCardOwnerId(link.role,link.personId);
   }
 
   static Future<void> publishIdCard({

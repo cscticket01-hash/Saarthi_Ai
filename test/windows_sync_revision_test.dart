@@ -1,3 +1,6 @@
+import '../lib/windows_document_templates.dart';
+import '../lib/windows_sync_conflict_review.dart';
+import '../lib/windows_connect/managed_school_session.dart';
 import '../lib/windows_exam_service.dart';
 import 'dart:convert';
 import 'dart:async';
@@ -234,6 +237,274 @@ void main(){
   await tester.pump();expect(find.text('Pending: 0'),findsOneWidget);expect(find.textContaining('Sync Status • Synced'),findsOneWidget);
   expect(find.textContaining('2026-10-06'),findsOneWidget);
   await tester.pumpWidget(const SizedBox());engine.lastSuccessfulSync=null;engine.state.value=SchoolCloudState.localReady;
+ });
+
+  test(
+      'a typed 409 retains its row but does not starve an independent pending record',
+      () async {
+    await db
+        .collection('fee_payments')
+        .doc('conflicted')
+        .set({'schoolId': school, 'amount': 100});
+    await db
+        .collection('school_notices')
+        .doc('independent')
+        .set({'schoolId': school, 'title': 'retained'});
+    final origin = db.activeProfileId;
+    final sent = <String>[];
+    await expectLater(
+        WindowsPendingSchoolSync.flush(
+            profileId: origin,
+            send: (a, b, c, d) async {},
+            sendVersioned: (item) async {
+              sent.add(item['collection'] as String);
+              if (item['collection'] == 'fee_payments')
+                throw CentralCloudException(
+                    409, 'school_cloud', 'UPPERCASE diagnostic',
+                    diagnosticCode: 'RECORD_REVISION_CONFLICT');
+              return 'verified-revision';
+            }),
+        throwsA(isA<CentralCloudException>()));
+    expect(sent, containsAll(['fee_payments', 'school_notices']));
+    final retained =
+        (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    expect(retained.data()['syncState'], 'conflict');
+    expect(retained.data()['data']['amount'], 100);
+    expect(
+        (await db.collection('_windows_sync_receipts').get())
+            .docs
+            .single
+            .data()['recordRevision'],
+        'verified-revision');
+  });
+  test(
+      'conflict edits retain the original operation and stay blocked until explicit review',
+      () async {
+    await db
+        .collection('fee_payments')
+        .doc('reviewed')
+        .set({'schoolId': school, 'amount': 100});
+    final queued =
+        (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await queued.reference.update({'syncState': 'conflict'});
+    final old = (await queued.reference.get()).data()!;
+    await db.collection('fee_payments').doc('reviewed').update({'amount': 150});
+    final current = (await queued.reference.get()).data()!;
+    expect(current['syncState'], 'conflict');
+    expect(current['operationId'], isNot(old['operationId']));
+    expect(
+        (await db
+                .collection('_windows_sync_conflict_history')
+                .doc(old['operationId'])
+                .get())
+            .data()?['data']['amount'],
+        100);
+    await WindowsPendingSchoolSync.flush(
+        profileId: db.activeProfileId,
+        send: (a, b, c, d) async => fail('Conflict auto-sent'));
+  });
+  test(
+      'explicit financial review creates a new CAS operation and retains both versions without ACK',
+      () async {
+    await db
+        .collection('fee_payments')
+        .doc('reviewed')
+        .set({'schoolId': school, 'amount': 100});
+    final row =
+        (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await row.reference.update({'syncState': 'conflict'});
+    final old = (await row.reference.get()).data()!;
+    final remote = {
+      'schoolId': school,
+      'id': 'reviewed',
+      'amount': 200,
+      '_syncRevision': 'cloud-revision'
+    };
+    await db.enqueueReviewedConflict(
+        queueId: row.id,
+        expected: old,
+        remote: remote,
+        choice: 'local',
+        reason: 'Verified receipt comparison');
+    final current = (await row.reference.get()).data()!;
+    expect(current['data']['amount'], 100);
+    expect(current['baseCloudRevision'], 'cloud-revision');
+    expect(current['operationId'], isNot(old['operationId']));
+    expect(current['syncState'], 'pending');
+    final audit =
+        (await db.collection('_windows_sync_resolution_history').get())
+            .docs
+            .single
+            .data();
+    expect(audit['remote']['amount'], 200);
+    expect(audit['local']['operationId'], old['operationId']);
+    expect(audit['status'], 'awaitingCloudAck');
+    expect((await db.collection('_windows_sync_receipts').get()).docs, isEmpty);
+    await expectLater(
+        db.enqueueReviewedConflict(
+            queueId: row.id,
+            expected: old,
+            remote: remote,
+            choice: 'local',
+            reason: 'duplicate'),
+        throwsStateError);
+  });
+  test(
+      'review rejects foreign school, foreign record, unverified revision and missing explicit decision',
+      () async {
+    await db
+        .collection('fee_payments')
+        .doc('guarded')
+        .set({'schoolId': school, 'amount': 100});
+    final row =
+        (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await row.reference.update({'syncState': 'conflict'});
+    final old = (await row.reference.get()).data()!;
+    for (final edit in [
+      {'schoolId': 'foreign'},
+      {'id': 'other'},
+      {'_syncRevision': ''},
+      {'_syncDeleted': true}
+    ]) {
+      await expectLater(
+          db.enqueueReviewedConflict(
+              queueId: row.id,
+              expected: old,
+              remote: {
+                'schoolId': school,
+                'id': 'guarded',
+                '_syncRevision': 'cloud',
+                ...edit
+              },
+              choice: 'cloud',
+              reason: 'review'),
+          throwsStateError);
+    }
+    await expectLater(
+        db.enqueueReviewedConflict(
+            queueId: row.id,
+            expected: old,
+            remote: {
+              'schoolId': school,
+              'id': 'guarded',
+              '_syncRevision': 'cloud'
+            },
+            choice: 'cloud',
+            reason: ''),
+        throwsStateError);
+    expect((await row.reference.get()).data(), old);
+  });
+  test(
+      'a newer local edit invalidates the operator review before it can replace data',
+      () async {
+    await db
+        .collection('fee_payments')
+        .doc('stale-review')
+        .set({'schoolId': school, 'amount': 100});
+    final row =
+        (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await row.reference.update({'syncState': 'conflict'});
+    final old = (await row.reference.get()).data()!;
+    await db
+        .collection('fee_payments')
+        .doc('stale-review')
+        .update({'amount': 300});
+    await expectLater(
+        db.enqueueReviewedConflict(
+            queueId: row.id,
+            expected: old,
+            remote: {
+              'schoolId': school,
+              'id': 'stale-review',
+              '_syncRevision': 'cloud',
+              'amount': 200
+            },
+            choice: 'cloud',
+            reason: 'stale'),
+        throwsStateError);
+    expect(
+        (await db.collection('fee_payments').doc('stale-review').get())
+            .data()?['amount'],
+        300);
+  });
+  test(
+      'replacing conflicted document metadata retains the original and cannot auto-upload',
+      () async {
+    final ref = db.collection('_windows_document_outbox').doc('file');
+    await ref.set({
+      'schoolId': school,
+      'documentRevision': 'original',
+      'localPath': 'original-file',
+      'syncState': 'conflict'
+    });
+    await ref.set({
+      'schoolId': school,
+      'documentRevision': 'newer',
+      'localPath': 'new-file',
+      'syncState': 'pending'
+    });
+    expect((await ref.get()).data()?['syncState'], 'conflict');
+    expect(
+        (await db.collection('_windows_sync_conflict_history').get())
+            .docs
+            .single
+            .data()['localPath'],
+        'original-file');
+  });
+  test(
+      'conflict recognition does not treat storage readiness or arbitrary 409 as record conflicts',
+      () {
+    expect(
+        isRecordSyncConflict(CentralCloudException(
+            409, 'school_cloud', 'conflict',
+            diagnosticCode: 'SCHOOL_STORAGE_NOT_CONNECTED')),
+        false);
+    expect(
+        isRecordSyncConflict(CentralCloudException(
+            409, 'school_cloud', 'localized',
+            diagnosticCode: 'OPERATION_ID_CONFLICT')),
+        true);
+    expect(isRecordSyncConflict(StateError('school identity conflict')), false);
+  });
+ test('isolated TEST build refuses original server before authentication or queue writes',(){
+   const endpoint='https://saarthi-sync-v2-test.onrender.com/school-cloud';
+   expect(()=>ManagedSchoolSession.verifyBuildEndpoint('https://saarthi-oauth-staging.onrender.com/school-cloud',configured:endpoint),throwsA(isA<CentralCloudException>().having((e)=>e.diagnosticCode,'code','TEST_ENVIRONMENT_MISMATCH')));
+   ManagedSchoolSession.verifyBuildEndpoint(endpoint,configured:endpoint);
+ });
+
+ test('automatic ID publication skips a retained file conflict before credential changes or QR generation',()async{
+   await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>db.collection('students_directory').doc('retained-id').set({'schoolId':school,'name':'Retained','mobileLinkToken':'original-token'}));
+   final id=WindowsBackendBridge.publishedIdCardOwnerId('student','retained-id');
+   final queue=db.collection('_windows_document_outbox').doc(id);
+   await queue.set({'schoolId':school,'documentRevision':'original','localPath':'original-file','syncState':'conflict'});
+   final before=(await queue.get()).data();
+   await WindowsDocumentTemplates.publishChangedIdCards();
+   expect((await queue.get()).data(),before);
+   expect((await db.collection('students_directory').doc('retained-id').get()).data()?['mobileLinkToken'],'original-token');
+ });
+ testWidgets('production conflict review opens read-only with no automatic financial choice',(tester)async{
+   await tester.pumpWidget(MaterialApp(home:Builder(builder:(context)=>Scaffold(body:TextButton(onPressed:()=>showWindowsConflictReview(context,{'id':'pending','collection':'fee_payments','schoolId':school,'syncState':'conflict','data':{'amount':100}}),child:const Text('Open review'))))));
+   await tester.tap(find.text('Open review'));await tester.pumpAndSettle();
+   expect(find.text('Cloud verification: not performed'),findsOneWidget);
+   expect(find.text('Use local version'),findsNothing);
+   expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Review and queue')).onPressed,isNull);
+   expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+ });
+
+ test('reviewed conflict retains both versions and operation after durable reopen',()async{
+   await db.collection('fee_payments').doc('restart-review').set({'amount':100,'schoolId':school});
+   final row=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+   await row.reference.update({'syncState':'conflict'});
+   final expected=(await row.reference.get()).data()!;
+   await db.enqueueReviewedConflict(queueId:row.id,expected:expected,remote:{'schoolId':school,'id':'restart-review','_syncRevision':'cloud-before-review','amount':200},choice:'local',reason:'Synthetic restart verification');
+   final queued=(await row.reference.get()).data()!;
+   final origin=db.activeProfileId;
+   await db.resetVolatileSession();await db.switchProfile('review-away');
+   await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+   expect((await row.reference.get()).data(),queued);
+   expect((await db.collection('_windows_sync_conflict_history').get()).docs.single.data(),expected);
+   expect((await db.collection('_windows_sync_resolution_history').get()).docs.length,1);
+   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
  });
 
 }

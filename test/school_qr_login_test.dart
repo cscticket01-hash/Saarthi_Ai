@@ -130,4 +130,24 @@ void main() {
     expect(await const FlutterSecureStorage().read(key:'vs_mobile_session'),isNull);
   });
 
+  test(
+      'valid issued QR from another environment is distinguished without trusting its endpoint',
+      () {
+    final raw = jsonEncode({
+      ...fixtures.first,
+      'centralEndpoint':
+          'https://saarthi-sync-v2-test.onrender.com/school-cloud'
+    });
+    expect(
+        () => SchoolLink.parse(raw),
+        throwsA(isA<SchoolQrException>()
+            .having((e) => e.code, 'code', 'SERVER_ENVIRONMENT_MISMATCH')));
+  });
+  test('school setup QR is distinct from an issued person card', () {
+    expect(
+        () =>
+            SchoolLink.parse(jsonEncode({...fixtures.first, 'type': 'school'})),
+        throwsA(isA<SchoolQrException>()
+            .having((e) => e.code, 'code', 'WRONG_QR_KIND')));
+  });
 }

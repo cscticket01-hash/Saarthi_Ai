@@ -76,4 +76,99 @@ void main() {
     expect(session.attendancePending,0);expect(session.lastAttendanceAck,isNotNull);
     expect((await db.query('attendance')).single['capturedAt'],captured); // Retained audit row, no deletion.
   });
+  test(
+      'server-issued permit is reused only for its live session; ACK polling avoids another Drive refresh',
+      () async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final day = DateTime.now()
+        .toUtc()
+        .add(const Duration(hours: 5, minutes: 30))
+        .toIso8601String()
+        .substring(0, 10);
+    final person = fixture['personId'], role = fixture['type'];
+    final body = {
+      'purpose': 'attendance',
+      'schoolId': school,
+      'role': role,
+      'documentId': person,
+      'personId': 'stable',
+      'day': day,
+      'expiresAt': now + 300000,
+      'sessionHash': sha256.convert(utf8.encode('verified')).toString(),
+      'qrHash': sha256
+          .convert(utf8.encode('$role/$person/${fixture['linkToken']}'))
+          .toString()
+    };
+    final token =
+        '${base64UrlEncode(utf8.encode(jsonEncode(body)))}.${List.filled(64, 'a').join()}';
+    final operation = sha256
+        .convert(
+            utf8.encode(jsonEncode([school, role, 'stable', day, 'entry'])))
+        .toString();
+    var refreshes = 0, marks = 0, statuses = 0;
+    final client = MockClient((request) async {
+      final b = jsonDecode(request.body)['request'] as Map;
+      Map<String, dynamic> data = {
+        'success': true,
+        'schoolId': school,
+        'projectId': school
+      };
+      if (b['action'] == 'mobile_login')
+        data.addAll({
+          'sessionToken': 'verified',
+          'expiresAt': now + 3600000,
+          'person': {'personId': person},
+          'attendancePermit': token
+        });
+      if (b['action'] == 'mobile_refresh') {
+        refreshes++;
+        data.addAll({'expiresAt': now + 3600000, 'attendancePermit': token});
+      }
+      if (b['action'] == 'mobile_mark_attendance') {
+        marks++;
+        expect(b['clientCapturedAt'], now);
+        data.addAll({
+          'syncProtocol': 2,
+          'accepted': true,
+          'operationId': sha256
+              .convert(utf8
+                  .encode(jsonEncode([school, role, 'stable', day, b['mode']])))
+              .toString()
+        });
+      }
+      if (b['action'] == 'mobile_attendance_status') {
+        statuses++;
+        data.addAll({
+          'syncProtocol': 2,
+          'operations': [
+            {
+              'operationId': operation,
+              'state': 'completed',
+              'createdAt': now,
+              'completedAt': now + 1
+            }
+          ]
+        });
+      }
+      return http.Response(jsonEncode(data), 200);
+    });
+    final session = SchoolSession(client: client, attendanceStore: store);
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await session.saveAttendance(gps, now, 'entry');
+    await session.flushAttendance();
+    await (await store.database).update('attendance', {'nextAt': 0});
+    await session.flushAttendance();
+    expect(refreshes, 0);
+    expect(marks, 1);
+    expect(statuses, 1);
+    expect(session.attendancePending, 0);
+    expect(
+        (await (await store.database).query('attendance')).single['capturedAt'],
+        now);
+    final restored = SchoolSession(client: client, attendanceStore: store);
+    await restored.restore();
+    await restored.saveAttendance(gps, now, 'exit');
+    await restored.flushAttendance();
+    expect(refreshes, 1); // Permit was not persisted or reused across restore.
+  });
 }

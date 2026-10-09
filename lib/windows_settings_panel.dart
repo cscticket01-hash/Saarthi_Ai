@@ -1,3 +1,4 @@
+import 'windows_sync_conflict_review.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
 import 'school_cloud_state.dart';
@@ -1009,7 +1010,7 @@ class WindowsSyncStatusCard extends StatelessWidget {
               const SizedBox(width:12),TextButton(onPressed:()=>showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
                 title:const Text('Sync details'),content:SizedBox(width:600,child:SingleChildScrollView(child:Column(
                   crossAxisAlignment:CrossAxisAlignment.start,children:[
-                    for(final item in details['items'] as List? ?? [])Text('${item['collection']??'documents'} / ${item['documentId']??item['id']}: ${item['syncState']??'pending'} • ${item['lastError']??''}'),
+                    for(final item in details['items'] as List? ?? [])Row(children:[Expanded(child:Text('${item['collection']??'documents'} / ${item['documentId']??item['id']}: ${item['syncState']??'pending'} • ${item['lastError']??''}')), if(item['syncState']=='conflict')TextButton(onPressed:()=>showWindowsConflictReview(ctx,Map<String,dynamic>.from(item as Map)),child:const Text('Review'))]),
                     Text('Session counters: ${details['metrics']??{}}'),
                     const Text('Conflicting copies are retained. Review both versions before resolving.')]))),
                 actions:[TextButton(onPressed:() async {

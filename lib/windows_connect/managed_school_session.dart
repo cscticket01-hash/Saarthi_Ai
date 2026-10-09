@@ -15,10 +15,17 @@ class ManagedSchoolSession {
     return _transport!;
   }
   static const enabled=bool.fromEnvironment('SAARTHI_MANAGED_ACCOUNTS');
+  static void verifyBuildEndpoint(String endpoint, {String configured=CentralSchoolCloud.apiUrl}) {
+    const isolated='https://saarthi-sync-v2-test.onrender.com/school-cloud';
+    if(configured==isolated && endpoint!=isolated)throw CentralCloudException(409,'school_cloud',
+      'This isolated TEST app cannot access the saved original-school server. Local data and pending records are retained. Use the original-school app or an isolated TEST profile.',
+      diagnosticCode:'TEST_ENVIRONMENT_MISMATCH');
+  }
+
   static final changed=ValueNotifier<int>(0);
   static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) => callForSchool(null, action, body);
   static Future<Map<String,dynamic>> callForSchool(String? expectedSchoolId, String action, Map<String,dynamic> body) async {
-    final saved=await CentralSchoolCloud.saved();if(saved['managed']!=true)throw StateError('Managed school login required');
+    final saved=await CentralSchoolCloud.saved();verifyBuildEndpoint(saved['endpoint']?.toString()??'');if(saved['managed']!=true)throw StateError('Managed school login required');
     if(expectedSchoolId != null && saved['schoolId'] != expectedSchoolId) throw StateError('School changed before operation.');
     final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId'],
       client:_transportFor(saved),closeClient:false);
@@ -42,8 +49,12 @@ class ManagedSchoolSession {
             scriptUrl: action == 'managed/storage/connect' ? body['scriptUrl']?.toString() : null);
       }
       return result;
-    } catch (_) {
-      CentralSchoolCloud.clearFirebaseToken();
+    } catch (error) {
+      // Revision, quota and transport failures do not invalidate authentication.
+      if (error is CentralCloudException &&
+          (error.status == 401 || error.invalidRefresh)) {
+        CentralSchoolCloud.clearFirebaseToken();
+      }
       rethrow;
     } finally {cloud.close();}
   }
@@ -58,6 +69,7 @@ class ManagedSchoolSession {
   }
   static Future<Map<String,dynamic>> login(String email,String password,
       {http.Client? client, String endpoint = CentralSchoolCloud.apiUrl}) async {
+    verifyBuildEndpoint(endpoint);
     CentralSchoolCloud.clearFirebaseToken();
     if(!CentralSchoolCloud.validEndpoint(endpoint))throw StateError('Central school server is not configured');
     final cloud=CentralSchoolCloud(client:client,endpoint:endpoint);

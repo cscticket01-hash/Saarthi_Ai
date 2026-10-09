@@ -12,7 +12,17 @@ import '../../lib/mobile/school_session.dart';
 import '../../lib/mobile/attendance_store.dart';
 class OfflineBoundary extends http.BaseClient {
  final http.Client inner=http.Client();bool offline=false;
- @override Future<http.StreamedResponse> send(http.BaseRequest request){if(offline)throw const SocketException('Synthetic offline boundary');return inner.send(request);}
+ final samples=<Map<String,dynamic>>[];
+ @override Future<http.StreamedResponse> send(http.BaseRequest request) async {
+  if(offline)throw const SocketException('Synthetic offline boundary');
+  String stage=request.url.host=='identitytoolkit.googleapis.com'?'firebase-auth':'other';
+  if(request is http.Request){try{final body=jsonDecode(request.body) as Map;final action=body['request'] is Map?body['request']['action']:body['action'];if(action is String&&RegExp(r'^[a-z_/]{1,50}$').hasMatch(action))stage=action;}catch(_){} }
+  final watch=Stopwatch()..start();final response=await inner.send(request);final bytes=await response.stream.toBytes();
+  final sample=<String,dynamic>{'stage':stage,'http':response.statusCode,'elapsedMs':watch.elapsedMilliseconds};
+  try{final data=jsonDecode(utf8.decode(bytes));if(data is Map&&data['syncTiming'] is Map)sample['serverTiming']=data['syncTiming'];}catch(_){}
+  samples.add(sample);
+  return http.StreamedResponse(Stream.value(bytes),response.statusCode,headers:response.headers,request:request);
+ }
  @override void close()=>inner.close();
 }
 
@@ -32,12 +42,22 @@ void main() {
   var store=AttendanceStore(openDatabaseOverride:open);
   final transport=OfflineBoundary();
   try{
-   final login=await ManagedSchoolSession.login(Platform.environment['VS_TEST_LOGIN_EMAIL']!,Platform.environment['VS_TEST_LOGIN_PASSWORD']!,endpoint:endpoint);
+   final authentication=OfflineBoundary();final authenticationClock=Stopwatch()..start();
+   final login=await ManagedSchoolSession.login(Platform.environment['VS_TEST_LOGIN_EMAIL']!,Platform.environment['VS_TEST_LOGIN_PASSWORD']!,endpoint:endpoint,client:authentication);
+   report['authenticationMs']=authenticationClock.elapsedMilliseconds;report['authenticationRequests']=authentication.samples;
    expect(login['schoolId'],school);
    final db=FirebaseFirestore.instance;await db.changeLocalStorageLocation('${tmp.path}/windows');
    final profile='TEST-hosted-${Platform.environment['GITHUB_RUN_ID']}';
    await db.switchProfile(profile,identity:{'schoolId':school,'schoolSyncId':school});
    final id='synthetic-hosted-notice-${Platform.environment['GITHUB_RUN_ID']}';
+   final unique='${Platform.environment['GITHUB_RUN_ID']}-${Platform.environment['GITHUB_RUN_ATTEMPT']??'1'}';
+   final person='synthetic-hosted-person-$unique';
+   final linkToken=sha256.convert(utf8.encode('hosted-fresh/$unique')).toString();
+   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken}});
+   final existingDocuments=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'read','syncProtocol':2});
+   final fixture=(existingDocuments['records'] as Map).values.firstWhere((r)=>r['syntheticTest']==true&&r['personId']=='isolated-v2-20261009-student'&&r['documentKind']=='idCard') as Map;
+   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'personId':person,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixture['sizeBytes'],'contentHash':fixture['contentHash'],'documentRevision':fixture['documentRevision']}});
+   report['conditions']='Fresh synthetic person and attendance; authenticated/warmed TEST service; unchanged deployed backend/Script; no physical devices';
    final clock=Stopwatch()..start();
    await db.collection('school_notices').doc(id).set({'schoolId':school,'syntheticTest':true,'title':'Actual Windows local-first TEST notice','timestamp':DateTime.now().millisecondsSinceEpoch});
    report['localSaveMs']=clock.elapsedMilliseconds;
@@ -47,13 +67,13 @@ void main() {
    expect((await db.collection('school_notices').doc(id).get()).exists,true);
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
    await WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async=>throw StateError('Versioned path required'),sendVersioned:(item)async{
+    report['queueWaitMs']=clock.elapsedMilliseconds;final apiClock=Stopwatch()..start();
     final ack=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':item['collection'],'id':item['documentId'],'operation':'write','data':item['data'],'syncProtocol':2,'operationId':item['operationId'],'expectedRecordRevision':item['baseCloudRevision']??''});
+    report['windowsWriteApiMs']=apiClock.elapsedMilliseconds;report['windowsWriteServerTiming']=ack['syncTiming'];
     expect(ack['schoolId'],school);expect(ack['syncProtocol'],2);expect(ack['recordRevision'],isA<String>());return ack['recordRevision'] as String;
    });
    report['windowsQueueToAckMs']=clock.elapsedMilliseconds;
    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);report['windowsPending']=0;
-   const person='isolated-v2-20261009-student';
-   final linkToken=sha256.convert(utf8.encode('isolated-v2-20261009/synthetic-qr')).toString();
    final qr=SchoolLink.encodeCompact({'managed':true,'schoolId':school,'centralEndpoint':endpoint,'type':'student','personId':person,'linkToken':linkToken});
    final mobile=SchoolSession(client:transport,cacheDirectory:()async=>tmp,attendanceStore:store);
    await mobile.login(SchoolLink.parse(qr),studentClass:'1',roll:'900001',dob:'2015-01-01');
@@ -66,6 +86,7 @@ void main() {
    final priorRows=(existingAttendance['records'] as Map).values.where((row)=>row['personId']==person&&row['exitCapturedAt'] is int).toList();
    final captured=priorRows.isEmpty?DateTime.now().millisecondsSinceEpoch:priorRows.single['exitCapturedAt'] as int;
    report['exitAlreadyCompletedBeforeTest']=priorRows.isNotEmpty;
+   expect(priorRows,isEmpty,reason:'Latency test must use a fresh attendance operation');
    transport.offline=true;
    await mobile.saveAttendance({'latitude':24.8,'longitude':92.7,'accuracy':5},captured,'exit');await mobile.flushAttendance();
    final owner=AttendanceStore.owner(endpoint,school,'student',person);
@@ -81,7 +102,7 @@ void main() {
    final fromMobile=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'attendance_records','operation':'read','syncProtocol':2});
    expect((fromMobile['records'] as Map).values.any((row)=>row['personId']==person&&row['exitCapturedAt']==captured),true);
    report['actualMobileQueueToWindowsReadMs']=reverse.elapsedMilliseconds;report['mobilePending']=0;
-   report['status']='PASS';
+   report['mobileRequests']=transport.samples;report['status']='PASS';
   }catch(_){report['status']='FAIL';rethrow;}
   finally{transport.close();await store.close();await Directory('build/cloud-prerequisites').create(recursive:true);await File('build/cloud-prerequisites/actual-engines.json').writeAsString(jsonEncode(report));print(jsonEncode(report));}
  },timeout:const Timeout(Duration(minutes:8)));

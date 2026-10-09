@@ -197,6 +197,12 @@ class WindowsDocumentTemplates {
             .data() ??
         {};
     final templates = await selections();
+    final fileQueue=(await db.collection('_windows_document_outbox').get()).docs;
+    final recordQueue=(await db.collection('_windows_firebase_outbox').get()).docs;
+    final conflictedIds={
+      for(final q in fileQueue)if({'conflict','needsAttention'}.contains(q.data()['syncState']))q.id,
+      for(final q in recordQueue)if(q.data()['collection']=='documents' && {'conflict','needsAttention'}.contains(q.data()['syncState']))q.data()['documentId'],
+    };
     for (final kind in ['studentId', 'teacherId']) {
       final collection = kind == 'studentId'
           ? 'students_directory'
@@ -205,6 +211,10 @@ class WindowsDocumentTemplates {
       for (final doc in people.docs) {
         if (db.activeProfileId != origin)
           throw StateError('School changed during ID publication.');
+        // Retained file/metadata conflicts must be explicitly reviewed before
+        // automatic ID regeneration can change their queue or local originals.
+        final ownerId=WindowsBackendBridge.publishedIdCardOwnerId(kind=='studentId'?'student':'teacher',doc.id);
+        if(conflictedIds.contains(ownerId))continue;
         final person = await SchoolPersonIdentity.ensure(collection, doc.id);
         final qr = SchoolLink.encodeCompact({
           'app': 'VIDYA_SAARTHI',

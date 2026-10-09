@@ -32,6 +32,23 @@ class SchoolSession {
   final http.Client _client;
   final AttendanceStore _attendanceStore;
   Future<void>? _attendanceFlush;
+  String? _cachedAttendancePermit;
+  String? get _currentAttendancePermit {
+    final token=_cachedAttendancePermit, current=link;
+    if(token==null || current==null || !cachedAccessAllowed)return null;
+    try {
+      final parts=token.split('.');
+      if(parts.length!=2 || token.length>3000 || !RegExp(r'^[a-f0-9]{64}$').hasMatch(parts[1]))return null;
+      final p=jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[0])))) as Map;
+      if(p['purpose']!='attendance' || p['schoolId']!=current.schoolId || p['role']!=current.role ||
+          p['documentId']!=current.personId || p['expiresAt'] is! int ||
+          p['expiresAt']<=DateTime.now().millisecondsSinceEpoch+2000 || p['expiresAt']>_expiresAt ||
+          p['sessionHash']!=sha256.convert(utf8.encode(schoolToken)).toString() ||
+          p['qrHash']!=sha256.convert(utf8.encode('${current.role}/${current.personId}/${current.linkToken}')).toString())return null;
+      return token;
+    }catch(_){return null;}
+  }
+
   final attendanceChanges = ValueNotifier<int>(0);
   bool attendanceStatusReady = false;
   int attendancePending = 0, attendanceAccepted = 0;
@@ -95,7 +112,8 @@ class SchoolSession {
       await refreshAttendanceStatus(); return;
     }
     Map<String, dynamic> refreshed;
-    try { refreshed = await schoolCall('mobile_refresh', {}); }
+    final cachedPermit=_currentAttendancePermit;
+    try { refreshed = cachedPermit==null ? await schoolCall('mobile_refresh', {}) : {'attendancePermit':cachedPermit}; }
     catch (_) { await refreshAttendanceStatus(); return; }
     if (generation != _generation || owner != _attendanceOwner) return;
     final permitToken = refreshed['attendancePermit'];
@@ -134,10 +152,11 @@ class SchoolSession {
           final completed = operation['state'] == 'completed' && operation['completedAt'] is num && operation['createdAt'] is num && operation['completedAt'] >= operation['createdAt'];
           if (operation['state'] == 'needsAttention') throw StateError('Attendance needs school review; capture retained.');
           await _attendanceStore.finish(owner, id, lease, {'state': completed ? 'completed' : 'accepted',
-            'attempts': attempts, 'nextAt': at + 30000, 'error': '', if (completed) 'completedAt': operation['completedAt']});
+            'attempts': attempts, 'nextAt': at + min(30000, 5000 * pow(2, min(max(0, attempts-2), 3)).toInt()), 'error': '', if (completed) 'completedAt': operation['completedAt']});
           if (completed && generation == _generation) lastAttendanceAck = DateTime.fromMillisecondsSinceEpoch((operation['completedAt'] as num).toInt());
         }
       } catch (error) {
+        _cachedAttendancePermit=null;
         final review = error is SchoolAccessDenied || error is StateError && error.message.contains('school review');
         final delay = min(3600000, 5000 * pow(2, min(attempts, 9)).toInt());
         await _attendanceStore.finish(owner, id, lease, {'attempts': attempts,
@@ -282,6 +301,7 @@ class SchoolSession {
       }
       if (d['policyExpiresAt'] is num)
         _policyExpiresAt = (d['policyExpiresAt'] as num).toInt();
+      if(action!='mobile_login' && d['attendancePermit'] is String)_cachedAttendancePermit=d['attendancePermit'] as String;
       return Map<String, dynamic>.from(d);
     }
     final r = await _client
@@ -403,6 +423,7 @@ class SchoolSession {
       throw StateError('School returned an invalid login session.');
     }
     schoolToken = login['sessionToken'] as String;
+    if(login['attendancePermit'] is String)_cachedAttendancePermit=login['attendancePermit'] as String;
     _expiresAt = (login['expiresAt'] as num).toInt();
     person = Map<String, dynamic>.from(login['person'] ?? {});
     schoolName = login['schoolName']?.toString() ?? newLink.projectId;
@@ -686,6 +707,7 @@ class SchoolSession {
 
   Future<void> clear() async {
     _generation++;
+    _cachedAttendancePermit=null;
     attendanceStatusReady = false;
     attendancePending = 0; attendanceAccepted = 0; attendanceFailure = ''; lastAttendanceAck = null;
     attendanceChanges.value++;

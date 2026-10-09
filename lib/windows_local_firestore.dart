@@ -184,6 +184,7 @@ class FirebaseFirestore {
 
   Future<void> acknowledgeOutbox(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic> expected, {String? revision}) {
     ref.requireOriginProfile();
+    if(revision!=null && revision.isEmpty)throw StateError('Verified cloud revision required. Pending retained.');
     if(ref.collectionPath!='_windows_firebase_outbox') throw ArgumentError('Outbox reference required');
     return _database.applyOperations([_WriteOperation._(type:_WriteType.delete,
       collection:ref.collectionPath, documentId:ref.id, data:expected, acknowledgedRevision:revision)]);
@@ -197,6 +198,13 @@ class FirebaseFirestore {
         collection:ref.collectionPath,documentId:ref.id,data:data,preservePending:true),
     ]));
   }
+
+  /// Explicit operator review only. Creates a new CAS operation; never ACKs
+  /// the conflicting operation or deletes its retained copies.
+  Future<void> enqueueReviewedConflict({required String queueId,
+    required Map<String,dynamic> expected, required Map<String,dynamic> remote,
+    required String choice, required String reason}) =>
+      _database.enqueueReviewedConflict(queueId, expected, remote, choice, reason);
 
   Future<T> runTransaction<T>(
     Future<T> Function(Transaction transaction) action,
@@ -995,6 +1003,12 @@ class _LocalJsonDatabase {
                 final sent = operation.data!, revision = operation.acknowledgedRevision!;
                 final baselines = collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
                 baselines[operation.documentId] = {'revision':revision};
+                final receipts=collections.putIfAbsent('_windows_sync_receipts',()=> <String,dynamic>{}) as Map;
+                if(sent['operationId'] is String)receipts.putIfAbsent(sent['operationId'],()=>{
+                  'schoolId':sent['schoolId'],'operationId':sent['operationId'],
+                  'collection':sent['collection'],'recordRevision':revision,
+                  'acknowledgedAt':DateTime.now().millisecondsSinceEpoch});
+
                 final queued = docs[operation.documentId];
                 if (queued is Map && queued['operationId'] != sent['operationId'] &&
                     queued['baseCloudRevision'] == sent['baseCloudRevision']) {
@@ -1011,6 +1025,15 @@ class _LocalJsonDatabase {
             case _WriteType.set:
               final incoming =
                   _encodeMap(operation.data ?? {});
+              final oldDocumentQueue=docs[operation.documentId];
+              if(operation.collection=='_windows_document_outbox' && oldDocumentQueue is Map &&
+                  {'conflict','needsAttention'}.contains(oldDocumentQueue['syncState'])) {
+                final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+                final key='document-'+base64Url.encode(utf8.encode(jsonEncode([
+                  operation.documentId,oldDocumentQueue['documentRevision'],oldDocumentQueue['localPath']]))).replaceAll('=','');
+                history.putIfAbsent(key,()=>Map<String,dynamic>.from(oldDocumentQueue));
+                incoming['syncState']=oldDocumentQueue['syncState'];
+              }
 
               if (operation.merge &&
                   docs[operation.documentId] is Map) {
@@ -1108,6 +1131,54 @@ class _LocalJsonDatabase {
     return completer.future;
   }
 
+  Future<void> enqueueReviewedConflict(String queueId, Map<String,dynamic> expected,
+      Map<String,dynamic> remote, String choice, String reason) {
+    final origin=_activeProfileId, school=_activeIdentity['schoolSyncId'];
+    final completer=Completer<void>();
+    _writeTail=_writeTail.then((_) async {
+      try {
+        if (_activeProfileId!=origin || school is! String || school.isEmpty ||
+            expected['schoolId']!=school || remote['schoolId']!=school ||
+            remote['id']!=expected['documentId'] || remote['_syncDeleted']==true || expected['data'] is! Map ||
+            !{'local','cloud'}.contains(choice) || reason.trim().isEmpty || reason.length>1000 ||
+            remote['_syncRevision'] is! String || (remote['_syncRevision'] as String).isEmpty ||
+            expected['collection']=='documents' || expected['operation']=='delete') {
+          throw StateError('Verified same-school record and explicit review required. Documents/deletions require separate original-file review.');
+        }
+        final root=await _readRoot();
+        if(_activeProfileId!=origin)throw StateError('School changed during conflict review.');
+        final collections=_collections(root), queue=collections['_windows_firebase_outbox'];
+        final current=queue is Map ? queue[queueId] : null;
+        if(current is! Map || current['syncState']!='conflict' ||
+            jsonEncode(current)!=jsonEncode(_encodeMap(expected))) {
+          throw StateError('Pending version changed; reopen conflict review.');
+        }
+        final collection=expected['collection'] as String, id=expected['documentId'] as String;
+        final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+        final oldOperation=expected['operationId'];
+        if(oldOperation is! String || oldOperation.isEmpty)throw StateError('Original operation identity required.');
+        history.putIfAbsent(oldOperation,()=>_encodeMap(expected));
+        final selected=Map<String,dynamic>.from(choice=='local' ? expected['data'] as Map : remote);
+        selected.removeWhere((key,value)=>key.startsWith('_sync'));
+        selected['schoolId']=school;
+        final newOperation=base64Url.encode(List<int>.generate(24,(_)=>Random.secure().nextInt(256))).replaceAll('=','');
+        final audit=collections.putIfAbsent('_windows_sync_resolution_history',()=> <String,dynamic>{}) as Map;
+        audit[newOperation]=_encodeMap({'schoolId':school,'originalOperationId':oldOperation,
+          'queueId':queueId,'local':expected,'remote':remote,'choice':choice,'reason':reason.trim(),
+          'reviewedAt':DateTime.now().millisecondsSinceEpoch,'status':'awaitingCloudAck'});
+        queue[queueId]=_encodeMap({...expected,'operationId':newOperation,'baseCloudRevision':remote['_syncRevision'],
+          'data':selected,'syncState':'pending','retryCount':0,'lastError':null,
+          'reviewedFromOperationId':oldOperation,'queuedAt':DateTime.now().millisecondsSinceEpoch});
+        final docs=collections.putIfAbsent(collection,()=> <String,dynamic>{}) as Map;
+        docs[id]=_encodeMap(selected);
+        _storeCollections(root,collections);await _writeRoot(root);
+        for(final name in [collection,'_windows_firebase_outbox']){final signal=_signals[name];if(signal!=null&&!signal.isClosed)signal.add(null);}
+        completer.complete();
+      }catch(error,stack){completer.completeError(error,stack);}
+    });
+    return completer.future;
+  }
+
   bool _shouldTrackForFirebase(
     String collection,
   ) {
@@ -1152,6 +1223,12 @@ class _LocalJsonDatabase {
         operation.type == _WriteType.delete;
 
     final previous = queue[key];
+    if(previous is Map && {'conflict','needsAttention'}.contains(previous['syncState'])) {
+      final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+      final operationId=previous['operationId'];
+      if(operationId is String)history.putIfAbsent(operationId,()=>Map<String,dynamic>.from(previous));
+    }
+
     final baseline = collections['_windows_sync_baselines'];
     final baselineEntry = baseline is Map ? baseline[key] : null;
     queue[key] = <String, dynamic>{
@@ -1159,7 +1236,7 @@ class _LocalJsonDatabase {
       'schoolId': _activeIdentity['schoolSyncId'] ?? '',
       'baseCloudRevision': previous is Map ? previous['baseCloudRevision'] ?? '' :
           baselineEntry is Map ? baselineEntry['revision'] ?? '' : '',
-      'syncState':'pending', 'retryCount':0,
+      'syncState':previous is Map && {'conflict','needsAttention'}.contains(previous['syncState']) ? previous['syncState'] : 'pending', 'retryCount':0,
       'collection': operation.collection,
       'documentId': operation.documentId,
       'operation': isDelete ? 'delete' : 'set',

@@ -862,6 +862,9 @@ class CentralCloudException extends StateError {
   final String stage;
   final bool invalidRefresh;
   final String diagnosticCode;
+  bool get recordConflict => status == 409 &&
+      ({'RECORD_REVISION_CONFLICT', 'OPERATION_ID_CONFLICT'}.contains(diagnosticCode) ||
+       diagnosticCode.isEmpty && RegExp(r'record revision conflict|sync operation id conflict',caseSensitive:false).hasMatch(message));
   bool get authoritativeAccessDenial =>
       invalidRefresh ||
       stage == 'school_cloud' && (status == 401 || status == 403);
