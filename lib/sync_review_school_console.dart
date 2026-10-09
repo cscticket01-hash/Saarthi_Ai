@@ -44,7 +44,10 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
           session['endpoint'] != endpoint ||
           session['managed'] != true) return;
       logged = true;
-      final raw = (await SharedPreferences.getInstance()).getString(draftKey);
+      final preferences = await SharedPreferences.getInstance();
+      // Read durable browser storage, not a prior plugin/engine cache.
+      await preferences.reload();
+      final raw = preferences.getString(draftKey);
       if (raw != null) {
         final draft = jsonDecode(raw) as Map;
         final payload = Map<String, dynamic>.from(draft['payload'] as Map);
