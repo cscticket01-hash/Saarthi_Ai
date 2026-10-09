@@ -9,12 +9,14 @@ import '../../lib/windows_connect/managed_school_session.dart';
 import '../../lib/windows_pending_school_sync.dart';
 import '../../lib/windows_local_firestore.dart';
 import '../../lib/mobile/school_session.dart';
+import '../../lib/school_backend_transport.dart';
 import '../../lib/mobile/attendance_store.dart';
 class OfflineBoundary extends http.BaseClient {
- final http.Client inner=http.Client();bool offline=false;
+ final http.Client inner=http.Client();bool offline=false;bool serverFailure=false;
  final samples=<Map<String,dynamic>>[];
  @override Future<http.StreamedResponse> send(http.BaseRequest request) async {
   if(offline)throw const SocketException('Synthetic offline boundary');
+  if(serverFailure)return http.StreamedResponse(Stream.value(utf8.encode(jsonEncode({'success':false,'code':'SCRIPT_TIMEOUT'}))),502);
   String stage=request.url.host=='identitytoolkit.googleapis.com'?'firebase-auth':'other';
   if(request is http.Request){try{final body=jsonDecode(request.body) as Map;final action=body['request'] is Map?body['request']['action']:body['action'];if(action is String&&RegExp(r'^[a-z_/]{1,50}$').hasMatch(action))stage=action;}catch(_){} }
   final watch=Stopwatch()..start();final response=await inner.send(request);final bytes=await response.stream.toBytes();
@@ -65,6 +67,13 @@ void main() {
    report['windowsLocalBackend']='SQLite WAL/FULL';
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
    await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async=>throw const SocketException('Synthetic offline boundary')),throwsA(isA<SocketException>()));
+   final operationBeforeFault=(await db.collection('_windows_firebase_outbox').get()).docs.single.data()!['operationId'];
+   await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,
+     send:(a,b,c,d)async=>throw SchoolApiFailure(502,code:'SCRIPT_TIMEOUT'),
+     sendVersioned:(item)async=>throw SchoolApiFailure(502,code:'SCRIPT_TIMEOUT')),
+     throwsA(isA<SchoolApiFailure>()));
+   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()!['operationId'],operationBeforeFault);
+   report['controlledWindows502']='outbox retained original operation ID; no ACK before subsequent real TEST cloud write';
    await db.switchProfile('TEST-unbound');await db.switchProfile(profile,identity:{'schoolId':school,'schoolSyncId':school});
    expect((await db.collection('school_notices').doc(id).get()).exists,true);
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
@@ -82,6 +91,18 @@ void main() {
    await mobile.refreshDashboard();
    expect((mobile.dashboard['notices'] as List).any((n)=>n['id']==id),true);
    expect(mobile.connectionState,SchoolConnectionState.connected);
+   final verifiedBeforeFault=mobile.lastDashboardVerifiedAt;
+   transport.serverFailure=true;
+   await expectLater(mobile.refreshDashboard(),throwsA(isA<SchoolApiFailure>()));
+   expect(mobile.loggedIn,true);expect(mobile.lastDashboardVerifiedAt,verifiedBeforeFault);
+   expect((mobile.dashboard['notices'] as List).any((n)=>n['id']==id),true);
+   expect(mobile.connectionState,SchoolConnectionState.connectionError);
+   transport.serverFailure=false;
+   final recoveryDeadline=DateTime.now().add(const Duration(seconds:75));
+   while(mobile.connectionState!=SchoolConnectionState.connected && DateTime.now().isBefore(recoveryDeadline)){await Future<void>.delayed(const Duration(seconds:1));}
+   expect(mobile.connectionState,SchoolConnectionState.connected);
+   expect(mobile.lastDashboardVerifiedAt!.isAfter(verifiedBeforeFault!),true);
+   report['controlled502Recovery']='client-boundary HTTP 502; real TEST readback after automatic jittered retry; server not mutated';
    report['windowsToActualMobileReadMs']=clock.elapsedMilliseconds;
    final bytes=await mobile.publishedIdCard();expect(bytes,isNotNull);expect(bytes!.length,greaterThan(0));
    final existingAttendance=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'attendance_records','operation':'read','syncProtocol':2});

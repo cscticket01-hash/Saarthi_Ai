@@ -157,13 +157,16 @@ class SchoolSession {
         }
       } catch (error) {
         _cachedAttendancePermit=null;
-        final review = error is SchoolAccessDenied || error is StateError && error.message.contains('school review');
+        final review = error is SchoolAccessDenied ||
+            (error is SchoolApiFailure && !error.retryable) ||
+            error is StateError && error.message.contains('school review');
         final delay = min(3600000, 5000 * pow(2, min(attempts, 9)).toInt());
         await _attendanceStore.finish(owner, id, lease, {'attempts': attempts,
           'nextAt': at + delay + Random.secure().nextInt(max(1, delay ~/ 2)),
           if (review) 'state': 'needsAttention',
           'error': review ? 'Attendance needs school review; capture retained.' : 'Attendance unavailable; capture retained for automatic retry.'});
-        if (generation != _generation) break;
+        // A shared outage must not send the remaining 24 captures to the same failed server.
+        if (generation != _generation || !review) break;
       }
     }
     await refreshAttendanceStatus();
@@ -172,6 +175,10 @@ class SchoolSession {
   final Future<Directory> Function()? cacheDirectory;
   Map<String, dynamic> dashboard = {};
   SchoolConnectionState connectionState = SchoolConnectionState.cachedOffline;
+  String connectionMessage = 'Cached school data; cloud verification has not completed.';
+  int _refreshFailures = 0;
+  Timer? _recoveryTimer;
+  final connectionChanges = ValueNotifier<int>(0);
   DateTime? lastDashboardVerifiedAt;
   DateTime? _pushRegisteredAt;
   String? _registeredPushToken;
@@ -230,6 +237,7 @@ class SchoolSession {
       if (d['cacheSchool'] == link!.projectId &&
           d['cachePerson'] == link!.personId) {
         dashboard = Map<String, dynamic>.from(d['dashboard'] as Map? ?? {});
+        if (d['lastDashboardVerifiedAt'] is num) lastDashboardVerifiedAt = DateTime.fromMillisecondsSinceEpoch((d['lastDashboardVerifiedAt'] as num).toInt());
         _pdfCache = Map<String, dynamic>.from(d['pdfCache'] as Map? ?? {});
       }
     } catch (_) {
@@ -281,6 +289,11 @@ class SchoolSession {
           )
           .timeout(const Duration(seconds: 25));
       unchanged();
+      if (r.statusCode >= 500 || r.statusCode == 429) {
+        Map<String, dynamic> safe = {};
+        try { safe = _decodeSchoolResponse(r.body); } catch (_) {}
+        throw SchoolApiFailure(r.statusCode, code: safe['code']?.toString() ?? '', requestId: safe['requestId']?.toString() ?? '');
+      }
       final d = _decodeSchoolResponse(r.body);
       if (r.statusCode == 401 || r.statusCode == 403) {
         await clear();
@@ -451,6 +464,7 @@ class SchoolSession {
       'cacheSchool': link!.projectId,
       'cachePerson': link!.personId,
       'dashboard': dashboard,
+      'lastDashboardVerifiedAt': lastDashboardVerifiedAt?.millisecondsSinceEpoch,
       'pdfCache': _pdfCache,
     });
     final write = _storageTail.then((_) async {
@@ -494,18 +508,36 @@ class SchoolSession {
         watch.stop();
         if (origin != _generation) return;
         lastDashboardRefreshDuration = watch.elapsed;
-        lastDashboardVerifiedAt = DateTime.now();
+        _refreshFailures = 0;
+        _recoveryTimer?.cancel();
+        connectionMessage = 'School cloud verified.';
         connectionState = SchoolConnectionState.connected;
+        connectionChanges.value++;
         if (identical(_refresh, pending)) _refresh = null;
       },
       onError: (Object error, StackTrace __) {
         watch.stop();
         if (origin != _generation) return;
         lastDashboardRefreshDuration = watch.elapsed;
-        connectionState = error is SocketException || error is TimeoutException ||
-                error is http.ClientException
-            ? SchoolConnectionState.cachedOffline
-            : SchoolConnectionState.connectionError;
+        // A failed API request does not prove the phone has no internet.
+        connectionState = SchoolConnectionState.connectionError;
+        connectionMessage = error is SchoolApiFailure ? error.userMessage
+            : error is TimeoutException ? 'School server took too long to respond. Cached data is retained.'
+            : error is SocketException || error is http.ClientException
+                ? 'Network connection to the school server failed. Check connectivity; cached data is retained.'
+                : 'School connection needs review. Cached data is retained.';
+        final temporary = error is TimeoutException || error is SocketException ||
+            error is http.ClientException || (error is SchoolApiFailure && error.retryable);
+        _refreshFailures++;
+        _recoveryTimer?.cancel();
+        if (temporary && _refreshFailures <= 5 && cachedAccessAllowed) {
+          _recoveryTimer = Timer(schoolRetryDelay(_refreshFailures), () {
+            if (origin == _generation && cachedAccessAllowed) {
+              unawaited(refreshDashboard().catchError((Object _) => dashboard));
+            }
+          });
+        }
+        connectionChanges.value++;
         if (identical(_refresh, pending)) _refresh = null;
       },
     );
@@ -583,6 +615,9 @@ class SchoolSession {
       dashboard = {...dashboard, ...result};
       await _persist();
     }
+    final previousVerified = lastDashboardVerifiedAt;
+    lastDashboardVerifiedAt = DateTime.now();
+    try { await _persist(); } catch (_) { lastDashboardVerifiedAt = previousVerified; rethrow; }
     return dashboard;
   }
 
@@ -707,6 +742,8 @@ class SchoolSession {
 
   Future<void> clear() async {
     _generation++;
+    _recoveryTimer?.cancel();
+    _refreshFailures = 0;
     _cachedAttendancePermit=null;
     attendanceStatusReady = false;
     attendancePending = 0; attendanceAccepted = 0; attendanceFailure = ''; lastAttendanceAck = null;

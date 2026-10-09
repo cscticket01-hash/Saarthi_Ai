@@ -333,7 +333,7 @@ test('verified attendance permit and final ACK use '+attendanceCollection+'; tam
 }
 
 test('broker forwards only allowlisted Script diagnostic codes and never raw failure details',async()=>{
- for(const [code,expected] of [['SCRIPT_PERMISSION_DENIED','SCRIPT_PERMISSION_DENIED'],['SCRIPT_TYPE_ERROR','SCRIPT_TYPE_ERROR'],['secret-root-token','SCRIPT_OPERATION_FAILED']]) {
+ for(const [code,expected] of [['SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_IDENTITY_MISMATCH'],['SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT'],['SCRIPT_PERMISSION_DENIED','SCRIPT_PERMISSION_DENIED'],['SCRIPT_TYPE_ERROR','SCRIPT_TYPE_ERROR'],['secret-root-token','SCRIPT_OPERATION_FAILED']]) {
   const f=fixture(async(_,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(opt.body).schoolId,success:false,message:'private exception secret-root-token',code})}));
   await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read'}),error=>error.status===502&&error.code===expected&&!error.message.includes('secret-root-token'));
  }

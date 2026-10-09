@@ -20,6 +20,9 @@ import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_platform_client.dart';
 import '../lib/windows_sync_engine.dart';
+import '../lib/windows_sync_recovery.dart';
+import '../lib/sync_recovery_policy.dart';
+import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/platform/platform_config.dart';
 void main(){
@@ -30,6 +33,43 @@ void main(){
    'projectId':platformProjectId,'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseRefreshToken':'refresh','storageReady':false})});
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('revision-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});
+ });
+ test('typed outage evidence is retryable while permission failure is retained for review', () async {
+   expect(windowsSyncRecovery(TimeoutException('fixture')).kind, SyncFailureKind.timeout);
+   expect(windowsSyncRecovery(const SocketException('fixture')).kind, SyncFailureKind.networkPath);
+   await db.collection('fee_payments').doc('retained-payment').set({'amount':100});
+   final before=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+   await expectLater(WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+     send:(a,b,c,d)async{},sendVersioned:(item)async=>throw CentralCloudException(502,'school_cloud',
+       'Storage permission check failed',diagnosticCode:'SCRIPT_PERMISSION_DENIED')),throwsStateError);
+   final retained=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+   expect(retained['operationId'],before['operationId']);expect(retained['data']['amount'],100);
+   expect(retained['syncState'],'needsAttention');expect(retained['failureCategory'],'authorization');
+   await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async=>fail('No automatic permission bypass'));
+   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+ });
+ test('structural failure does not starve independent records or manufacture ACK', () async {
+   await db.collection('students_directory').doc('a-broken').set({'name':'Retained'});
+   await db.collection('students_directory').doc('b-working').set({'name':'Independent'});
+   await expectLater(WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+     send:(a,b,c,d)async{},sendVersioned:(item)async {
+       if(item['documentId']=='a-broken')throw CentralCloudException(502,'school_cloud','Storage review required',diagnosticCode:'SCRIPT_RECORD_VERIFY_FAILED');
+       return 'verified-working-revision';
+     }),throwsStateError);
+   final queue=(await db.collection('_windows_firebase_outbox').get()).docs;
+   expect(queue,hasLength(1));expect(queue.single.data()['documentId'],'a-broken');
+   expect(queue.single.data()['syncState'],'needsAttention');
+   expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(1));
+ });
+ testWidgets('control center reports unknown connectivity and retains original queue', (tester) async {
+   await db.collection('fee_payments').doc('pending-preview').set({'amount':100});
+   await tester.pumpWidget(const MaterialApp(home: WindowsSyncControlCenter()));
+   await tester.pumpAndSettle();
+   expect(find.text('Sync & Backup Control Center'),findsOneWidget);
+   expect(find.text('Not independently verified'),findsOneWidget);
+   expect(find.text('Not yet verified'),findsWidgets);
+   expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+   await tester.pumpWidget(const SizedBox());
  });
  test('legacy queue binding preserves its original operation ID across failed retries', () async {
    final row=db.collection('_windows_firebase_outbox').doc('legacy-operation');

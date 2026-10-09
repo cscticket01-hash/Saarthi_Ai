@@ -26,6 +26,8 @@ import 'windows_html_shim.dart' as windows_html;
 import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_runtime_flags.dart';
+import 'windows_sync_recovery.dart';
+import 'sync_recovery_policy.dart';
 import 'windows_platform_client.dart';
 
 class WindowsSyncEngine {
@@ -68,6 +70,11 @@ class WindowsSyncEngine {
   bool _syncBlocked = false;
 
   DateTime? lastSuccessfulSync;
+  SyncRecoveryDecision? recoveryDecision;
+  bool automaticSyncEnabled = true;
+  final recoveryHistory = <Map<String, dynamic>>[];
+  DateTime? get nextRetryAt => _nextRetry;
+  bool get isSyncing => _syncing;
   String? _protocolIdentity;
   DateTime? _protocolVerifiedAt;
   bool _deltaBatchSupported = false;
@@ -109,10 +116,16 @@ class WindowsSyncEngine {
         origin = FirebaseFirestore.instance.activeProfileId;
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
+    final receipts = await db.collection('_windows_sync_receipts').get();
     if (db.activeProfileId != origin) return;
     final items = [...general.docs, ...documents.docs];
     details.value = {
       'pending': items.length,
+      'verifiedReceiptCount': receipts.docs.length,
+      'lastCloudAckMillis': receipts.docs.fold<int>(0, (latest, row) {
+        final stamp = row.data()['acknowledgedAt'];
+        return stamp is num && stamp.toInt() > latest ? stamp.toInt() : latest;
+      }),
       'needsAttention': items
           .where(
             (d) =>
@@ -263,7 +276,8 @@ class WindowsSyncEngine {
   }
 
   void scheduleSoon({Duration delay = const Duration(milliseconds: 250)}) {
-    if (!_initialized || _syncBlocked || _resetPaused) return;
+    if (!_initialized || _syncBlocked || _resetPaused || !automaticSyncEnabled) return;
+    if (recoveryDecision != null && !recoveryDecision!.retry) return;
     if (_syncing) {
       _rerunRequested = true;
       return;
@@ -607,6 +621,8 @@ class WindowsSyncEngine {
       _lastPull = null;
       _failures = 0;
       _nextRetry = null;
+      recoveryDecision = null;
+      recoveryHistory.clear();
       lastSuccessfulSync = null;
       metrics.clear();
       _samples.clear();
@@ -638,6 +654,8 @@ class WindowsSyncEngine {
     );
 
     windows_html.setSchoolStorageNamespace(profile.profileId);
+    final preferences = (await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').get()).data();
+    automaticSyncEnabled = preferences?['automaticSync'] != false;
     final savedStatus =
         (await FirebaseFirestore.instance
                 .collection('_windows_sync_status')
@@ -889,6 +907,7 @@ class WindowsSyncEngine {
     final syncOrigin = _activeProfileId;
     final watch = Stopwatch()..start();
     lastError = null;
+    recoveryDecision = null;
 
     try {
       final central = await CentralSchoolCloud.saved();
@@ -1009,11 +1028,15 @@ class WindowsSyncEngine {
       lastSuccessfulSync = DateTime.now();
       if (_activeProfileId == syncOrigin) state.value = SchoolCloudState.synced;
     } catch (e) {
+      if (_activeProfileId != syncOrigin) return;
       lastError = e.toString();
+      recoveryDecision = windowsSyncRecovery(e);
       _failures++;
-      _nextRetry = DateTime.now().add(
-        retryDelayForFailure(_failures, quotaLimited: RegExp(r'429|QUOTA|quota|RESOURCE_EXHAUSTED').hasMatch(lastError!)),
-      );
+      _nextRetry = recoveryDecision!.retry ? DateTime.now().add(recoveryDecision!.delay(_failures)) : null;
+      if (recoveryHistory.length >= 100) recoveryHistory.removeAt(0);
+      recoveryHistory.add({'atUtc': DateTime.now().toUtc().toIso8601String(),
+        'category': recoveryDecision!.kind.name, 'attempt': _failures,
+        'outcome': recoveryDecision!.retry ? 'retained_for_retry' : 'retained_for_review'});
       if (_activeProfileId == syncOrigin)
         state.value = SchoolCloudState.syncError;
     } finally {
@@ -1021,16 +1044,29 @@ class WindowsSyncEngine {
       metrics['reconciliationMicros'] = watch.elapsedMicroseconds;
       _syncing = false;
       await refreshDetails();
-      if (lastError != null || _rerunRequested) {
+      if ((lastError != null && recoveryDecision?.retry == true && _failures <= 5) || _rerunRequested) {
         _rerunRequested = false;
-        scheduleSoon(delay: lastError == null ? const Duration(milliseconds: 250) : retryDelayForFailure(_failures));
+        scheduleSoon(delay: lastError == null ? const Duration(milliseconds: 250) : schoolRetryDelay(_failures));
       }
     }
   }
 
   bool _manualSync = false;
+  Future<void> setAutomaticSync(bool enabled) async {
+    final origin = _activeProfileId;
+    await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').set({'automaticSync': enabled});
+    if (_activeProfileId != origin) return;
+    automaticSyncEnabled = enabled;
+    if (!enabled) { _debounceTimer?.cancel(); _rerunRequested = false; }
+    else scheduleSoon();
+    await refreshDetails();
+  }
   bool _rerunRequested = false;
   Future<void> requestSync() async {
+    _debounceTimer?.cancel();
+    _nextRetry = null;
+    recoveryDecision = null;
+    _failures = 0;
     _manualSync = true;
     try {
       await SchoolCloudEngine.instance.verify();

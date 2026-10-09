@@ -1,5 +1,6 @@
 import 'windows_local_firestore.dart';
 import 'windows_connect/central_school_cloud.dart';
+import 'windows_sync_recovery.dart';
 
 bool isRecordSyncConflict(Object error) => error is CentralCloudException
     ? error.recordConflict
@@ -57,12 +58,14 @@ class WindowsPendingSchoolSync {
         if (sendVersioned == null) await send(collection,id,operation,raw is Map?Map<String,dynamic>.from(raw):null);
       } catch (e) {
         unchanged();
+        final decision = windowsSyncRecovery(e);
         final latest = (await queued.reference.get()).data();
         if(latest?['operationId'] == item['operationId']) {
-          await queued.reference.update({'syncState': isRecordSyncConflict(e) ? 'conflict' : 'retry',
+          await queued.reference.update({'syncState': isRecordSyncConflict(e) ? 'conflict' : decision.review ? 'needsAttention' : 'retry',
+            'failureCategory': decision.kind.name,
             'retryCount':(item['retryCount'] as num? ?? 0).toInt()+1, 'lastError': e.toString()});
         }
-        if (isRecordSyncConflict(e)) {
+        if (isRecordSyncConflict(e) || decision.review && decision.kind.name == 'configuration') {
           firstConflict ??= e;
           continue; // Independent rows must not be starved by a conflict.
         }
