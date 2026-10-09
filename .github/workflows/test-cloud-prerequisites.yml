@@ -19,6 +19,8 @@ on:
       - lib/windows_connect/managed_school_session.dart
       - lib/windows_pending_school_sync.dart
       - lib/windows_local_firestore.dart
+      - .github/tests/sqlite_benchmark.dart
+      - .github/workflows/platform-review.yml
       - lib/storage/**
       - lib/main_sync_review_web.dart
       - lib/sync_review_school_console.dart

@@ -292,6 +292,26 @@ jobs:
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
         SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.106 --build-number=106 --dart-define=APP_VERSION=2.1.106-sync-test --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
+    - name: Record hosted Windows Defender review evidence
+      run: |
+        $evidence = @{ scope = 'GitHub hosted Windows only; no personal PC claim'; status = 'BLOCKED' }
+        try {
+          $defender = Get-MpComputerStatus -ErrorAction Stop
+          $evidence.enabled = $defender.AntivirusEnabled
+          $evidence.definitions = $defender.AntivirusSignatureVersion
+          if ($defender.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath (Resolve-Path build/windows/x64/runner/Release).Path -ErrorAction Stop
+            $evidence.status = 'SCAN_COMPLETED'
+          } else { $evidence.reason = 'Hosted antivirus unavailable or disabled' }
+        } catch { $evidence.reason = 'Hosted Defender command unavailable or scan failed; physical compatibility unverified' }
+        New-Item -ItemType Directory -Force build/sqlite-evidence | Out-Null
+        $evidence | ConvertTo-Json | Set-Content build/sqlite-evidence/defender.json
+        $evidence | ConvertTo-Json
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: hosted-windows-defender-review
+        path: build/sqlite-evidence/defender.json
     - name: Execute Windows fresh-start duplicate-launch and restart smoke test
       shell: powershell
       run: .github/scripts/test_windows_executable.ps1
