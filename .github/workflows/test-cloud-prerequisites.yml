@@ -1,0 +1,30 @@
+name: Isolated TEST cloud prerequisites
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows/easy-connect-draft]
+    paths:
+      - .github/scripts/test_cloud_readiness.cjs
+      - .github/workflows/test-cloud-prerequisites.yml
+permissions:
+  contents: read
+jobs:
+  windows-live-prerequisites:
+    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check real TEST cloud without changing school records
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_cloud_readiness.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosted-windows-live-cloud-prerequisites
+          path: build/cloud-prerequisites/report.json
