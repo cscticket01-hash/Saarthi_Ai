@@ -256,7 +256,7 @@ test('notice deletion is acknowledged as a tombstone and removes mobile delta ev
  assert.equal(f.call(deletion).success,true);assert.equal(f.call(deletion).success,true);
  const next=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevisions:first.revisions,knownNoticeRevisions:{n:first.notices[0]._noticeRevision}});
  assert.deepEqual(next.noticeIds,[]);assert.deepEqual(next.notices,[]);
- assert.equal(f.call({action:'managed_health'}).scriptBundleVersion,'2026-10-08.2');
+ assert.equal(f.call({action:'managed_health'}).scriptBundleVersion,'2026-10-09.3');
 });
 
 test('bounded migration resumes across requests and never activates a partial collection',()=>{

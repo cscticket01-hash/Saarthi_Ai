@@ -402,6 +402,12 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(typeof b.base64!=='string'||b.base64.length>28*1024*1024||!b.base64.length||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)fail(400,'Invalid school file');if(b.uploadKey!==undefined&&!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))fail(400,'Invalid upload key');return signed(m,{action:'managed_upload',name:b.name,mime:b.mime,base64:b.base64,...(b.uploadKey?{uploadKey:b.uploadKey}:{})});
  }
  if(action==='managed/file/read'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid file ID');return signed(m,{action:'managed_file',fileId:b.fileId});}
+ if(action==='managed/recycle'){
+  if(!['restore','purge'].includes(b.operation)||! /^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||
+     !/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100)fail(400,'Invalid recycle operation');
+  const result=await signed(m,{action:'managed_recycle',operation:b.operation,fileId:b.fileId,operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision});
+  invalidate(m.schoolId);return result;
+ }
  if(action==='managed/backup')return signed(m,{action:'managed_backup'});
  if(action==='managed/restore'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid backup file ID');return signed(m,{action:'managed_restore',fileId:b.fileId});}
  fail(400,'Unknown managed school operation');

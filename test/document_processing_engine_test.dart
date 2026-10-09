@@ -20,13 +20,13 @@ void main() {
     expect(restored.width,1000);expect(restored.height,1400);
     expect(restored.getPixel(900,1300).r,255);
   });
-  test('80 KB target reports real source/output sizes without changing source bytes', () {
+  test('50 KB target reports real source/output sizes without changing source bytes', () {
     final image=img.Image(width:200,height:300);
     img.fill(image,color:img.ColorRgb8(255,255,255));
     final source=Uint8List.fromList(img.encodePng(image));
     final original=List<int>.from(source);
     final result=DocumentProcessingEngine.process({'bytes':source});
-    expect(result['targetBytes'],80*1024);
+    expect(result['targetBytes'],50*1024);
     expect(result['originalBytes'],source.length);
     expect(result['actualBytes'],(result['optimized'] as Uint8List).length);
     expect(source,original);

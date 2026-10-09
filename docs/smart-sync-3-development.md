@@ -52,10 +52,16 @@ Recovered HEAD: `76c1291bd0fb0299a0c0710a62e513af77543f92`, existing PR #23. No 
 | B self-repair | Existing bounded recovery hosted-tested; original incident still blocked. |
 | C hourly sync | Implemented; physical sleep/wake and elapsed-hour verification pending. |
 | D bidirectional recovery | Local missing-cache inventory recovery added to existing manual/hourly managed pull; new SQLite tests pending. Cloud-row authoritative restoration incomplete. |
-| E recycle bin | Not implemented; immediate deletion is not a 24-hour recycle protocol. |
+| E recycle bin | Partial: default-off signed snapshot/restore/retained-audit protocol implemented; local UI, scheduling and actual TEST deployment remain pending. |
 | F cross-platform | Prior isolated evidence preserved; no new cloud success claimed. |
 | G attendance | Existing durable queue/dedup tested; 15,000-case result is a component benchmark, not cloud throughput. |
 | H compression | Existing processor extended with portrait 30 KB and scan 50 KB best-effort targets. Portraits skip paper crop/deskew; originals retained; tests pending. |
 | I disaster recovery/monitoring | Existing atomic storage, integrity and backup preserved; guided verified restore and central sync monitoring incomplete. |
 
 Missing-cache recovery excludes explicit tombstones, all pending edits/deletes and deliberately skipped configuration. Original-school records and production resources were not touched. New test/build verification is required before rollout.
+
+### Recycle protocol development, not deployment
+
+`VS_RECYCLE_VERSION=1` is an explicit owner configuration gate; default is zero. Versioned deletion captures and readback-verifies a content-hashed school snapshot before writing a tombstone. Document binaries stay intact during the 24-hour restore window. Signed school-admin restore requires the exact deletion revision, retains original timestamps, refuses newer edits and supports lost-ACK retries. Expired restores and early purges fail closed. Financial audit snapshots are never purged by this mechanism; tombstones and snapshots are retained. Eligible binary cleanup reuses existing immutable-upload ownership/shared-file protections. No live school flag or Script deployment was changed. Local hide/recover UI and scheduled purge are not yet complete; this is not a release-ready recycle bin.
+
+CI found the old default-target test still asserted 80 KB after the requirement changed to 50 KB (106 passed / 1 failed). Its expectation was updated to the specified target; original-preservation and readability checks remain unchanged.

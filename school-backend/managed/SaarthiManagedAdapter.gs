@@ -205,6 +205,7 @@ function VS_sheetRecords(store) {
 // Delete only the immutable upload belonging to this exact document revision.
 // Unkeyed legacy or shared files are retained; no broad Drive delete is possible.
 function VS_managedDeletedFile(store,id,data) {
+  if(data._syncRecycleUntil && Date.now()<data._syncRecycleUntil)return 'retained-recycle';
   if(!data._syncDeletedFileId)return 'none';
   if(data._syncFileCleanupComplete===true)return 'deleted';
   const file=VS_managedFile(data._syncDeletedFileId);
@@ -217,6 +218,69 @@ function VS_managedDeletedFile(store,id,data) {
   if(!file.isTrashed())throw new Error('Document file deletion not acknowledged');
   data._syncFileCleanupComplete=true;VS_sheetPut(store,{id:id,schoolId:store.school,data:data});
   return 'deleted';
+}
+// Optional reviewed capability. Existing schools keep their deployed behavior
+// until their owner explicitly enables VS_RECYCLE_VERSION=1 in isolated testing.
+function VS_recycleEnabled() {
+  return PropertiesService.getScriptProperties().getProperty('VS_RECYCLE_VERSION')==='1';
+}
+function VS_recycleSnapshot(collection,id,existing,deletionRevision) {
+  const root=VS_managedRoot(),folder=VS_managedFolder(root,'Recycle Bin');
+  const deletedAt=Date.now();
+  const snapshot={schemaVersion:1,schoolId:existing.schoolId,collection:collection,id:id,
+    deletedRevision:deletionRevision,deletedAt:deletedAt,recoverUntil:deletedAt+86400000,
+    data:existing.data};
+  const text=JSON.stringify(snapshot);if(text.length>600*1024)throw new Error('Recycle snapshot exceeds safe limit');
+  const file=folder.createFile('Deleted_'+deletionRevision+'.json',text,'application/json');
+  file.setDescription('VIDYA_RECYCLE:'+existing.schoolId+':'+deletionRevision+':'+VS_layoutHash(snapshot));
+  const read=JSON.parse(file.getBlob().getDataAsString());
+  if(JSON.stringify(read)!==text)throw new Error('Recycle snapshot verification failed');
+  return {fileId:file.getId(),recoverUntil:snapshot.recoverUntil};
+}
+function VS_recycleRead(fileId) {
+  const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
+  const file=VS_managedFile(fileId),blob=file.getBlob();
+  if(blob.getBytes().length>600*1024)throw new Error('Recycle snapshot exceeds safe limit');
+  const snapshot=JSON.parse(blob.getDataAsString());
+  if(snapshot.schemaVersion!==1||snapshot.schoolId!==school||!snapshot.data||snapshot.data.schoolId!==school||
+      file.getDescription()!=='VIDYA_RECYCLE:'+school+':'+snapshot.deletedRevision+':'+VS_layoutHash(snapshot)||
+      typeof snapshot.recoverUntil!=='number'||typeof snapshot.deletedAt!=='number'||
+      snapshot.recoverUntil-snapshot.deletedAt!==86400000)throw new Error('Invalid school recycle snapshot');
+  VS_managedCollection(snapshot.collection);
+  if(!/^[^/]{1,200}$/.test(snapshot.id||'')||snapshot.id==='.'||snapshot.id==='..')throw new Error('Invalid record ID');
+  return {file:file,snapshot:snapshot};
+}
+function VS_managedRecycle(b) {
+  if(!VS_recycleEnabled())throw new Error('Recycle capability not enabled');
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    if(!['restore','purge'].includes(b.operation)||typeof b.expectedRecordRevision!=='string'||
+        !/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||''))throw new Error('Invalid sync operation');
+    const item=VS_recycleRead(b.fileId),snap=item.snapshot,store=VS_managedSheet(snap.collection),current=VS_sheetItem(store,snap.id);
+    if(!current||current.schoolId!==snap.schoolId)throw new Error('Record revision conflict');
+    const data=current.data;
+    if(b.operation==='restore'&&data._syncRecycleRestoreId===b.operationId&&data._syncRecycleSource===b.fileId&&data._syncRecycleRestoreRevision===b.expectedRecordRevision)
+      return {recordRevision:data._syncRevision,syncProtocol:2,restored:true};
+    if(b.expectedRecordRevision!==data._syncRevision||data._syncRevision!==snap.deletedRevision||
+        data._syncDeleted!==true||data._syncRecycleFileId!==b.fileId)throw new Error('Record revision conflict');
+    if(b.operation==='restore') {
+      if(Date.now()>=snap.recoverUntil||data._syncFileCleanupComplete===true)throw new Error('Recycle restore window expired');
+      if(snap.collection==='documents'&&snap.data.fileId&&VS_managedFile(snap.data.fileId).isTrashed())throw new Error('Original document unavailable; retained snapshot requires review');
+      const restored=Object.assign({},snap.data);Object.keys(restored).filter(k=>k.indexOf('_sync')===0).forEach(k=>delete restored[k]);
+      restored._syncRevision=Utilities.getUuid();restored._syncRecycleRestoreId=b.operationId;restored._syncRecycleSource=b.fileId;restored._syncRecycleRestoreRevision=b.expectedRecordRevision;
+      PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+snap.collection,Utilities.getUuid());
+      VS_sheetPut(store,{id:snap.id,schoolId:snap.schoolId,data:restored});
+      return {recordRevision:restored._syncRevision,syncProtocol:2,restored:true};
+    }
+    if(Date.now()<snap.recoverUntil)throw new Error('Recycle retention window active');
+    // Accounting audit snapshots are never purged by this generic mechanism.
+    if(['fee_payments','fee_ledger','teacher_salary','school_expenses'].includes(snap.collection))return {purged:false,retainedAudit:true};
+    const cleanup=VS_managedDeletedFile(store,snap.id,data);
+    // Retain explicit tombstones and an audit snapshot. Only an eligible owned,
+    // immutable, unshared document binary is purged; snapshots need a separately
+    // reviewed school retention policy before permanent erasure.
+    return {purged:cleanup==='deleted',fileCleanup:cleanup,retainedSnapshot:true};
+  } finally {lock.releaseLock();}
 }
 function VS_syncRequestShape(b) {
   const data=Object.create(null);
@@ -267,6 +331,7 @@ function VS_managedRecordUnlocked(b) {
       const revision=Utilities.getUuid(),data={schoolId:school,_syncDeleted:true,_syncRevision:revision};
       if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=VS_layoutHash(VS_syncRequestShape(b));}
       if(b.collection==='documents' && existing){data.documentRevision=existing.data.documentRevision||'';const fileId=existing.data._syncDeletedFileId||existing.data.fileId;if(fileId)data._syncDeletedFileId=fileId;}
+      if(VS_recycleEnabled()&&existing){const saved=VS_recycleSnapshot(b.collection,b.id,existing,revision);data._syncRecycleFileId=saved.fileId;data._syncRecycleUntil=saved.recoverUntil;}
       PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());
       VS_sheetPut(store,{id:b.id,schoolId:school,data:data});
       return {recordRevision:revision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,data)};
@@ -275,6 +340,7 @@ function VS_managedRecordUnlocked(b) {
   }
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
   const revision=Utilities.getUuid(),data=Object.assign({},b.data);
+  Object.keys(data).filter(k=>k.indexOf('_syncRecycle')===0).forEach(k=>delete data[k]);
   delete data._syncDeleted;delete data._syncOperationId;delete data._syncRevision;
   data._syncRevision=revision;
   if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=VS_layoutHash(VS_syncRequestShape(b));}
@@ -337,7 +403,7 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);verified=true;let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,scriptBundleVersion:'2026-10-08.2',googleEmail:''};}
+    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,scriptBundleVersion:'2026-10-09.3',googleEmail:''};}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
@@ -371,6 +437,8 @@ function VS_managedHandle(e) {
     }else if(b.action==='managed_backup'){
       const root=VS_managedRoot(),folders=root.getFolders(),records={};while(folders.hasNext()){const f=folders.next();if(f.getName().indexOf('records_')===0)records[f.getName().slice(8)]=VS_managedRecord({collection:f.getName().slice(8),operation:'read'}).records;}
       const text=JSON.stringify({schemaVersion:3,schoolId:school,createdAt:new Date().toISOString(),records:records});if(text.length>20*1024*1024)throw new Error('Backup exceeds safe file limit');const file=VS_managedFolder(root,'Backups').createFile('School_Backup_'+Date.now()+'.json',text,'application/json');result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
+    }else if(b.action==='managed_recycle'){
+      result=VS_managedRecycle(b);
     }else if(b.action==='managed_restore'){
       const file=VS_managedFile(b.fileId),blob=file.getBlob();if(blob.getBytes().length>20*1024*1024)throw new Error('Backup too large');const backup=JSON.parse(blob.getDataAsString());
       if(backup.schemaVersion!==3||backup.schoolId!==school||!backup.records||typeof backup.records!=='object')throw new Error('Foreign or unsupported backup');

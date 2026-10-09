@@ -78,7 +78,8 @@ void main() {
     expect((await CentralSchoolCloud.saved())['firebaseRefreshToken'],'saved-refresh');
   });
   test('network failure retains durable data; later retry publishes only the original school',() async {
-    await db.collection('teachers_directory').doc('same').set({'name':'School A teacher','schoolId':school,'photoUrl':'data:image/png;base64,YWJj'});
+    final photo='data:image/png;base64,${base64Encode(img.encodePng(img.Image(width:64,height:96)))}';
+    await db.collection('teachers_directory').doc('same').set({'name':'School A teacher','schoolId':school,'photoUrl':photo});
     final profile=db.activeProfileId;
     await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(c,id,op,data) async=>throw StateError('Network unavailable')),throwsStateError);
     expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
