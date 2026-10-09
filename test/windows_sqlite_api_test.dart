@@ -8,6 +8,7 @@ import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/storage/windows_sqlite_store.dart';
+import '../lib/platform/platform_config.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +21,8 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({
       CentralSchoolCloud.key: jsonEncode({
         'managed': true,
+        'projectId': platformProjectId,
+        'folderId': 'managed',
         'schoolId': school,
         'uid': 'synthetic-sqlite',
         'firebaseRefreshToken': 'synthetic',
