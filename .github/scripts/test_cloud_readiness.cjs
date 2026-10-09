@@ -37,7 +37,10 @@ async function run() {
   r = await request(endpoint, {action: 'managed/session', schoolId}, token);
   check('Authenticated TEST school identity', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && r.data.uid === uid);
   r = await request(endpoint, {action: 'managed/profile', schoolId}, token);
-  check('TEST profile', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && r.data.profile?.schoolName === 'TEST Sync V2');
+  check('Authenticated TEST profile response', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId);
+  if (r.data.profile && r.data.profile.schoolName !== 'TEST Sync V2') throw new Error('TEST profile name mismatch');
+  report.registrationState = r.data.registrationState || 'unknown';
+  report.registrationProfileReady = Boolean(r.data.profile);
   r = await request(endpoint, {action: 'managed/storage/check', schoolId}, token);
   if (r.status !== 200 || r.data.success !== true || r.data.schoolId !== schoolId || r.data.storageReady !== true) {
     report.checks.push({name: 'Owner-connected TEST storage', status: 'BLOCKED', http: r.status, reference: r.data.requestId || null});

@@ -5,6 +5,25 @@ concurrency:
   group: platform-review-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 jobs:
+  isolated-test-cloud:
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' && github.event_name == 'push'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Isolated TEST cloud prerequisites
+      env:
+        VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+        VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+      run: node .github/scripts/test_cloud_readiness.cjs
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: hosted-windows-live-cloud-prerequisites
+        path: build/cloud-prerequisites/report.json
   backend:
     runs-on: ubuntu-latest
     outputs:
