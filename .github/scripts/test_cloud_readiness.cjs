@@ -36,7 +36,7 @@ async function run() {
   const token = r.data.idToken, uid = r.data.localId;
   r = await request(endpoint, {action: 'managed/session', schoolId}, token);
   check('Authenticated TEST school identity', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && r.data.uid === uid);
-  r = await request(endpoint, {action: 'managed/profile', schoolId}, token);
+  r = await request(endpoint, {action: 'managed/profile', operation: 'read', schoolId}, token);
   check('Authenticated TEST profile response', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId);
   if (r.data.profile && r.data.profile.schoolName !== 'TEST Sync V2') throw new Error('TEST profile name mismatch');
   report.registrationState = r.data.registrationState || 'unknown';
