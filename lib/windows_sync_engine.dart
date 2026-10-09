@@ -1012,7 +1012,7 @@ class WindowsSyncEngine {
       lastError = e.toString();
       _failures++;
       _nextRetry = DateTime.now().add(
-        retryDelayForFailure(_failures, quotaLimited: RegExp(r'429|QUOTA|quota|RESOURCE_EXHAUSTED').hasMatch(lastError!)),
+        schoolRetryDelay(_failures, quota: RegExp(r'429|QUOTA|quota|RESOURCE_EXHAUSTED').hasMatch(lastError!)),
       );
       if (_activeProfileId == syncOrigin)
         state.value = SchoolCloudState.syncError;
@@ -1021,9 +1021,9 @@ class WindowsSyncEngine {
       metrics['reconciliationMicros'] = watch.elapsedMicroseconds;
       _syncing = false;
       await refreshDetails();
-      if (lastError != null || _rerunRequested) {
+      if ((lastError != null && _failures <= 5) || _rerunRequested) {
         _rerunRequested = false;
-        scheduleSoon(delay: lastError == null ? const Duration(milliseconds: 250) : retryDelayForFailure(_failures));
+        scheduleSoon(delay: lastError == null ? const Duration(milliseconds: 250) : schoolRetryDelay(_failures));
       }
     }
   }
