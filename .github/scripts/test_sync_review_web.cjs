@@ -18,6 +18,9 @@ const fs=require('node:fs'),path=require('node:path');
   await route.fulfill({status:200,contentType:types[ext]||'application/octet-stream',body:fs.readFileSync(file)});
  });
  fs.mkdirSync('build/cloud-prerequisites',{recursive:true});
+ const network=[];
+ context.on('response',response=>{const url=new URL(response.url());if(['saarthi-sync-v2-test.onrender.com','identitytoolkit.googleapis.com','securetoken.googleapis.com'].includes(url.hostname))network.push({host:url.hostname,path:url.pathname,http:response.status()});});
+ context.on('requestfailed',request=>{const url=new URL(request.url());if(['saarthi-sync-v2-test.onrender.com','identitytoolkit.googleapis.com','securetoken.googleapis.com'].includes(url.hostname))network.push({host:url.hostname,path:url.pathname,http:0});});
  const page=await context.newPage();
  const proof={scope:'Hosted Chromium actual TEST school review UI, locally intercepted static build; authenticated TEST backend',schoolId:school,status:'RUNNING',stage:'load UI'};
  try {
@@ -54,7 +57,15 @@ const fs=require('node:fs'),path=require('node:path');
   proof.duplicateReplayAndReadback=true;
   proof.websiteNoticeId=id;proof.websiteNoticeTitle=title;proof.status='PASS';proof.stage='complete';
   await page.screenshot({path:'build/cloud-prerequisites/website-ui.png',fullPage:true});
- } catch(e){proof.status='FAIL';throw e;}
+ } catch(e){
+  proof.status='FAIL';proof.network=network;
+  proof.uiDiagnostic=await page.getByText(/^TEST diagnostic: /).allTextContents();
+  // Never capture login credentials in failure screenshots.
+  await page.getByRole('textbox',{name:'TEST password',exact:true}).fill('').catch(()=>{});
+  await page.getByRole('textbox',{name:'TEST email',exact:true}).fill('').catch(()=>{});
+  await page.screenshot({path:'build/cloud-prerequisites/website-ui.png',fullPage:true}).catch(()=>{});
+  console.log(JSON.stringify(proof));throw e;
+ }
  finally {
   fs.mkdirSync('build/cloud-prerequisites',{recursive:true});
   fs.writeFileSync('build/cloud-prerequisites/website-ui.json',JSON.stringify(proof));

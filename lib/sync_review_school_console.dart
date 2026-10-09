@@ -24,7 +24,7 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
       noticeId = TextEditingController(),
       title = TextEditingController();
   final records = <String, Map<String, dynamic>>{};
-  String revision = '', status = 'TEST school login required';
+  String revision = '', status = 'TEST school login required', diagnostic = '';
   String? operationId;
   Map<String, dynamic>? pendingPayload;
   String? pendingId;
@@ -105,7 +105,8 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
       if (!enabled || CentralSchoolCloud.apiUrl != endpoint)
         throw StateError('Isolated TEST build required');
       await task();
-    } catch (_) {
+    } catch (error) {
+      diagnostic = error is CentralCloudException ? 'HTTP ${error.status}' : error is UnsupportedError ? 'unsupported platform operation' : error is StateError ? 'session or protocol validation' : 'transport or secure storage failure';
       if (mounted)
         setState(() => status =
             'Cloud unavailable or verification failed; Sync pending. Retry unchanged; no ACK claimed.');
@@ -207,6 +208,7 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(status),
+                        if (diagnostic.isNotEmpty) Text('TEST diagnostic: $diagnostic'),
                         if (busy) const LinearProgressIndicator(),
                         if (!logged) ...[
                           input(email, 'TEST email'),
