@@ -34,7 +34,7 @@ permissions:
   contents: read
 concurrency:
   group: isolated-sync-v2-real-cloud
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   windows-live-prerequisites:
     if: github.ref == 'refs/heads/windows/easy-connect-draft'
