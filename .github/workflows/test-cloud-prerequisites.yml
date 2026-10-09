@@ -9,6 +9,12 @@ on:
       - .github/scripts/isolated_live_sync.cjs
       - .github/tests/isolated_engine_live_test.dart
       - .github/workflows/test-cloud-prerequisites.yml
+      - school-backend/managed/**
+      - lib/mobile/school_session.dart
+      - lib/mobile/attendance_store.dart
+      - lib/windows_connect/managed_school_session.dart
+      - lib/windows_pending_school_sync.dart
+      - lib/windows_local_firestore.dart
 permissions:
   contents: read
 concurrency:
