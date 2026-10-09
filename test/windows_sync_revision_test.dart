@@ -204,6 +204,35 @@ void main(){
  });
  test('crash generations recover without silently overwriting irrecoverable school data',()async{
   await db.collection('students_directory').doc('retained').set({'name':'Retained'});
+    if (WindowsLocalStorage.sqliteEnabled &&
+        await (await WindowsLocalStorage.sqliteFile()).exists()) {
+      final sql = await WindowsLocalStorage.sqliteFile();
+      await db.resetVolatileSession();
+      final original = await sql.readAsBytes();
+      final corrupt = utf8.encode('truncated SQLite recovery evidence');
+      try {
+        await sql.writeAsBytes(corrupt, flush: true);
+        await expectLater(
+            db
+                .collection('students_directory')
+                .doc('unsafe')
+                .set({'name': 'Must not write'}),
+            throwsStateError);
+        expect(await sql.readAsBytes(), corrupt);
+      } finally {
+        await db.resetVolatileSession();
+        await sql.writeAsBytes(original, flush: true);
+      }
+      expect(
+          (await db.collection('students_directory').doc('retained').get())
+              .data()?['name'],
+          'Retained');
+      expect(
+          (await db.collection('students_directory').doc('unsafe').get())
+              .exists,
+          false);
+      return;
+    }
   final file=await WindowsLocalStorage.databaseFile(),pending=File('${(await WindowsLocalStorage.databaseFile()).path}.pending'),backup=File('${(await WindowsLocalStorage.databaseFile()).path}.bak');
   final original=await file.readAsString(),oldBackup=await backup.exists()?await backup.readAsString():null;
   try{

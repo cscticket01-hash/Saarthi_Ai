@@ -134,56 +134,60 @@ class WindowsSqliteStore {
 
 class _SqliteDriver {
   _SqliteDriver(String path) : db = sqlite3.open(path) {
-    db.execute('PRAGMA busy_timeout=5000');
-    final version = db.select('PRAGMA user_version').single.values.first as int;
-    if (version > 1) {
-      db.close();
-      throw StateError('Newer database schema; downgrade blocked.');
-    }
-    // A single worker/connection owns normal app writes. The bundled SQLite
-    // also must contain the 2026 WAL-reset fix before enabling WAL.
-    final nativeVersionParts =
-        (db.select('SELECT sqlite_version() AS v').single['v'] as String)
-            .split('.')
-            .map(int.parse)
-            .toList();
-    final nativeVersion = nativeVersionParts[0] * 1000000 +
-        nativeVersionParts[1] * 1000 +
-        nativeVersionParts[2];
-    if (nativeVersion < 3051003 &&
-        nativeVersion != 3050007 &&
-        nativeVersion != 3044006) {
-      db.close();
-      throw StateError('A WAL-safe SQLite build is required.');
-    }
-    db.execute('PRAGMA journal_mode=WAL');
-    db.execute('PRAGMA synchronous=FULL');
-    db.execute('PRAGMA foreign_keys=ON');
-    db.execute('PRAGMA wal_autocheckpoint=1000');
-    db.execute('PRAGMA trusted_schema=OFF');
-    db.execute(
-        '''CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID''');
-    db.execute(
-        '''CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, content TEXT NOT NULL) WITHOUT ROWID''');
-    db.execute(
-        '''CREATE TABLE IF NOT EXISTS collections(profile TEXT NOT NULL, name TEXT NOT NULL,
+    try {
+      db.execute('PRAGMA busy_timeout=5000');
+      final version =
+          db.select('PRAGMA user_version').single.values.first as int;
+      if (version > 1) {
+        throw StateError('Newer database schema; downgrade blocked.');
+      }
+      // A single worker/connection owns normal app writes. The bundled SQLite
+      // also must contain the 2026 WAL-reset fix before enabling WAL.
+      final nativeVersionParts =
+          (db.select('SELECT sqlite_version() AS v').single['v'] as String)
+              .split('.')
+              .map(int.parse)
+              .toList();
+      final nativeVersion = nativeVersionParts[0] * 1000000 +
+          nativeVersionParts[1] * 1000 +
+          nativeVersionParts[2];
+      if (nativeVersion < 3051003 &&
+          nativeVersion != 3050007 &&
+          nativeVersion != 3044006) {
+        throw StateError('A WAL-safe SQLite build is required.');
+      }
+      db.execute('PRAGMA journal_mode=WAL');
+      db.execute('PRAGMA synchronous=FULL');
+      db.execute('PRAGMA foreign_keys=ON');
+      db.execute('PRAGMA wal_autocheckpoint=1000');
+      db.execute('PRAGMA trusted_schema=OFF');
+      db.execute(
+          '''CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID''');
+      db.execute(
+          '''CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, content TEXT NOT NULL) WITHOUT ROWID''');
+      db.execute(
+          '''CREATE TABLE IF NOT EXISTS collections(profile TEXT NOT NULL, name TEXT NOT NULL,
       PRIMARY KEY(profile,name), FOREIGN KEY(profile) REFERENCES profiles(id)) WITHOUT ROWID''');
-    db.execute(
-        '''CREATE TABLE IF NOT EXISTS records(profile TEXT NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
+      db.execute(
+          '''CREATE TABLE IF NOT EXISTS records(profile TEXT NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
       content TEXT NOT NULL, school_id TEXT, revision TEXT, operation_id TEXT, sync_state TEXT,
       captured_at INTEGER, deleted INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY(profile,collection,id), FOREIGN KEY(profile,collection) REFERENCES collections(profile,name)) WITHOUT ROWID''');
-    db.execute(
-        'CREATE INDEX IF NOT EXISTS pending_state ON records(profile,collection,sync_state)');
-    db.execute(
-        'CREATE INDEX IF NOT EXISTS operation_identity ON records(profile,operation_id)');
-    db.execute(
-        'CREATE INDEX IF NOT EXISTS school_capture ON records(profile,school_id,collection,captured_at)');
-    db.execute("INSERT OR IGNORE INTO metadata VALUES('generation','0')");
-    db.execute(
-        "INSERT OR IGNORE INTO metadata VALUES('root','{\"version\":2}')");
-    db.execute('PRAGMA user_version=1');
-    verify();
+      db.execute(
+          'CREATE INDEX IF NOT EXISTS pending_state ON records(profile,collection,sync_state)');
+      db.execute(
+          'CREATE INDEX IF NOT EXISTS operation_identity ON records(profile,operation_id)');
+      db.execute(
+          'CREATE INDEX IF NOT EXISTS school_capture ON records(profile,school_id,collection,captured_at)');
+      db.execute("INSERT OR IGNORE INTO metadata VALUES('generation','0')");
+      db.execute(
+          "INSERT OR IGNORE INTO metadata VALUES('root','{\"version\":2}')");
+      db.execute('PRAGMA user_version=1');
+      verify();
+    } catch (_) {
+      db.close();
+      rethrow;
+    }
   }
   final Database db;
   int get generation => int.parse(db
