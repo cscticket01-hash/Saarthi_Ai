@@ -41,3 +41,21 @@ This is an initial development stage, not the completed unified upgrade.
 - Original-school repaired sync and durable ACK of the original pending records.
 
 Production readiness: **BLOCKED**. New branch CI and TEST evidence must be evaluated for this exact branch SHA; earlier Engine 2.0 results do not certify this stage.
+
+## Resumed development inventory (2026-10-09)
+
+Recovered HEAD: `76c1291bd0fb0299a0c0710a62e513af77543f92`, existing PR #23. No later Engine 3.0 branch/commit/review/comment found. All five platform/security jobs passed there. Its isolated cloud job was skipped; real cloud evidence belongs to earlier `cdb2901d688ec5823de0a633d360526c9332b0be` test-sequence run. Invisible uncommitted work from another session cannot be recovered.
+
+| Requirement | Actual recovery status |
+| --- | --- |
+| A control center | Partial: existing page preserved; guided restore and independent service health remain open. |
+| B self-repair | Existing bounded recovery hosted-tested; original incident still blocked. |
+| C hourly sync | Implemented; physical sleep/wake and elapsed-hour verification pending. |
+| D bidirectional recovery | Local missing-cache inventory recovery added to existing manual/hourly managed pull; new SQLite tests pending. Cloud-row authoritative restoration incomplete. |
+| E recycle bin | Not implemented; immediate deletion is not a 24-hour recycle protocol. |
+| F cross-platform | Prior isolated evidence preserved; no new cloud success claimed. |
+| G attendance | Existing durable queue/dedup tested; 15,000-case result is a component benchmark, not cloud throughput. |
+| H compression | Existing processor extended with portrait 30 KB and scan 50 KB best-effort targets. Portraits skip paper crop/deskew; originals retained; tests pending. |
+| I disaster recovery/monitoring | Existing atomic storage, integrity and backup preserved; guided verified restore and central sync monitoring incomplete. |
+
+Missing-cache recovery excludes explicit tombstones, all pending edits/deletes and deliberately skipped configuration. Original-school records and production resources were not touched. New test/build verification is required before rollout.

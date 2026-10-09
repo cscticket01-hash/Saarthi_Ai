@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:image/image.dart' as img;
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_school_operations.dart';
 import '../lib/windows_school_image_cache.dart';
@@ -159,7 +160,8 @@ void main() {
   test('offline photo and pending sync reopen from disk; successful sync retains an offline image after reopen',() async {
     final origin=db.activeProfileId;
     final ref=db.collection('students_directory').doc('photo-pupil');
-    const local='data:image/png;base64,YWJj';
+    final original=img.encodePng(img.Image(width:64,height:96));
+    final local='data:image/png;base64,${base64Encode(original)}';
     await ref.set({'name':'Own pupil','schoolId':school,'photoUrl':local});
     await db.resetVolatileSession();
     await db.switchProfile('temporary-reopen',identity:{});
@@ -175,15 +177,16 @@ void main() {
     await db.switchProfile('temporary-second-reopen',identity:{});
     await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
     expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
-    expect(await schoolImageBytes((await db.collection('students_directory').doc('photo-pupil').get()).data()!['photoUrl'] as String),[97,98,99]);
+    expect(await schoolImageBytes((await db.collection('students_directory').doc('photo-pupil').get()).data()!['photoUrl'] as String),original);
   });
 
   test('nested other-staff photos retain usable local copies and cannot continue under another school', () async {
     final origin=db.activeProfileId;
-    const photo='data:image/png;base64,YWJj';
+    final original=img.encodePng(img.Image(width:64,height:96));
+    final photo='data:image/png;base64,${base64Encode(original)}';
     final prepared=await prepareManagedRecord({'staff':[{'id':'staff:own','photoUrl':photo}]},school,(action,body) async => {'success':true,'schoolId':school,'fileId':'staff-photo','fileUrl':'https://drive.google.com/file/d/staff-photo/view'});
     expect((prepared['staff'] as List).single['photoUrl'],'https://drive.google.com/file/d/staff-photo/view');
-    expect(await WindowsSchoolImageCache.read(school,'staff-photo'),[97,98,99]);
+    expect(await WindowsSchoolImageCache.read(school,'staff-photo'),original);
     var requests=0;
     await expectLater(prepareManagedRecord({'staff':[{'photoUrl':photo},{'photoUrl':photo}]},school,(action,body) async {
       requests++;
@@ -193,6 +196,17 @@ void main() {
     expect(requests,1);
     expect(await WindowsSchoolImageCache.read('vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','staff-photo'),isNull);
     await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+  });
+
+  test('malformed portrait remains local and never reaches cloud upload', () async {
+    var uploads=0;
+    final original={'schoolId':school,'photoUrl':'data:image/png;base64,YWJj'};
+    await expectLater(prepareManagedRecord(original,school,(action,body) async {
+      uploads++;
+      return {'success':true};
+    }),throwsFormatException);
+    expect(uploads,0);
+    expect(original['photoUrl'],'data:image/png;base64,YWJj');
   });
 
   test('saved final results promote PASS offline, retain FAIL and audit the deliberate override', () async {

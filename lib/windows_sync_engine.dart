@@ -1139,19 +1139,33 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     },
   );
 
-  Future<void> _pullManagedChanges() async {
+  @visibleForTesting
+  Future<void> reconcileManagedCacheForTesting(String school,
+      Future<Map<String, dynamic>> Function(Map<String, String>) read) =>
+      _pullManagedChanges(schoolOverride: school, batchReader: read, verifyInventory: true);
+
+  Future<void> _pullManagedChanges({String? schoolOverride,
+      Future<Map<String, dynamic>> Function(Map<String, String>)? batchReader,
+      bool? verifyInventory}) async {
     final db = FirebaseFirestore.instance,
         origin = db.activeProfileId,
-        school = _activeSchoolSyncId;
+        school = schoolOverride ?? _activeSchoolSyncId;
+    if (db.activeProfileIdentity['schoolSyncId'] != school) throw StateError('School identity changed before recovery.');
+    final audit = verifyInventory ?? (_manualSync || _checkpointDue);
+    final pendingAtRead = (await db.collection('_windows_firebase_outbox').get()).docs;
+    final revisions = <String, String>{};
+    for (final collection in _firebaseCollections.where((c) => c != 'backups')) {
+      final prior = (await db.collection('_windows_sync_manifest').doc(_manifestId('managed', collection)).get()).data();
+      revisions[collection] = audit ? managedRecoveryRevision(prior,
+          (await db.collection(collection).get()).docs.map((d) => d.id).toSet(),
+          {...pendingAtRead.where((d) => d.data()['collection'] == collection).map((d) => d.data()['documentId']).whereType<String>(), if (collection == 'school_config') 'google_drive_account'})
+          : prior?['revision']?.toString() ?? '';
+    }
+    if (db.activeProfileId != origin) throw StateError('School changed during recovery inventory.');
     Map<String,dynamic>? batch;
-    if (_deltaBatchSupported) {
-      final revisions=<String,String>{};
-      for(final collection in _firebaseCollections.where((c)=>c!='backups')) {
-        final prior=(await db.collection('_windows_sync_manifest').doc(_manifestId('managed',collection)).get()).data();
-        revisions[collection]=prior?['revision']?.toString()??'';
-      }
+    if (_deltaBatchSupported || batchReader != null) {
       metrics['recordReadRequests']=metrics['recordReadRequests']!+1;
-      batch=await WindowsFirebaseRemote.readManagedBatch(school,revisions);
+      batch=await (batchReader != null ? batchReader(revisions) : WindowsFirebaseRemote.readManagedBatch(school,revisions));
       if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
     }
     for (final collection in _firebaseCollections.where(
@@ -1165,13 +1179,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       final manifest = db
           .collection('_windows_sync_manifest')
           .doc(_manifestId('managed', collection));
-      final prior = (await manifest.get()).data();
       if(batch==null)metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
       final result = batch!=null?Map<String,dynamic>.from(batch[collection] as Map):await WindowsFirebaseRemote.readManagedChanges(
-        school,collection,prior?['revision']?.toString() ?? '',
+        school,collection,revisions[collection] ?? '',
       );
       if (db.activeProfileId != origin)
         throw StateError('School changed during reconciliation.');
+      if (result['syncProtocol'] != 2 || result['collectionRevision'] is! String || result['records'] is! Map) throw StateError('Invalid authoritative recovery response.');
       if (result['unchanged'] == true) continue;
       final records = Map<String, dynamic>.from(result['records'] as Map);
       final pending =

@@ -226,7 +226,7 @@ jobs:
       run: |
         $env:APPDATA = Join-Path $env:RUNNER_TEMP 'sqlite-production-screen'
         $env:LOCALAPPDATA = $env:APPDATA
-        flutter test --concurrency=1 test/windows_document_queue_test.dart test/windows_document_screen_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
+        flutter test --concurrency=1 test/windows_smart_recovery_test.dart test/smart_media_compression_test.dart test/windows_document_queue_test.dart test/windows_document_screen_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
         if ($LASTEXITCODE -ne 0) { throw 'SQLite production screen/queue/startup regressions failed' }
     - name: Real OS SQLite process crash recovery and controlled local benchmark
       run: |
