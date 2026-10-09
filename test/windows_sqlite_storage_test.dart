@@ -115,6 +115,26 @@ void main() {
         WindowsSqliteMigration.migrate(dir, approved: false), throwsStateError);
     expect(await dir.list().isEmpty, true);
   });
+  test('orphan WAL is retained and blocks migration cutover', () async {
+    final dir = await Directory.systemTemp.createTemp('vs-sql-orphan-');
+    final source = File('${dir.path}/local_database_v1.json');
+    await source.writeAsString(jsonEncode(fixture('retained.pdf')));
+    final wal = File('${dir.path}/${WindowsSqliteStore.databaseName}-wal');
+    await wal.writeAsString('recovery evidence');
+    await expectLater(
+        WindowsSqliteMigration.migrate(dir, approved: true), throwsStateError);
+    expect(await wal.readAsString(), 'recovery evidence');
+    expect(
+        await File('${dir.path}/${WindowsSqliteStore.databaseName}').exists(),
+        false);
+  });
+  test('rollback with missing SQLite never creates an empty database',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('vs-sql-no-rollback-');
+    await expectLater(
+        WindowsSqliteMigration.rollback(dir, approved: true), throwsStateError);
+    expect(await dir.list().isEmpty, true);
+  });
   test(
       '17 categories, 3 conflicts, original files, queue IDs and ACK history survive exact verified migration',
       () async {

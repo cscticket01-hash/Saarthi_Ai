@@ -422,6 +422,9 @@ class WindowsSqliteMigration {
     if (!approved) throw StateError('Explicit rollback approval required.');
     final path =
         '${directory.path}${Platform.pathSeparator}${WindowsSqliteStore.databaseName}';
+    if (!await File(path).exists())
+      throw StateError(
+          'No migrated SQLite database; rollback cannot create one.');
     final store = await WindowsSqliteStore.open(path);
     try {
       final checkpoint = await store.migrationProof();
@@ -472,8 +475,11 @@ class WindowsSqliteMigration {
         '${directory.path}${Platform.pathSeparator}local_database_v1.json');
     final finalFile = File(
         '${directory.path}${Platform.pathSeparator}${WindowsSqliteStore.databaseName}');
-    if (await finalFile.exists())
-      throw StateError('SQLite already exists; migration cannot overwrite it.');
+    if (await finalFile.exists() ||
+        await File('${finalFile.path}-wal').exists() ||
+        await File('${finalFile.path}-shm').exists())
+      throw StateError(
+          'SQLite or recovery sidecars already exist; migration cannot overwrite them.');
     final nonce =
         '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
     final backup = Directory(
