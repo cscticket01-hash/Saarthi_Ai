@@ -10,6 +10,11 @@ test('signed broker -> organized Script CAS ACK -> mobile delta + automatic webs
  await write('students_directory','pupil',{name:'Own Student',class:'1',rollNo:'1',dob:'2015-01-01',mobileLinkToken:'x'.repeat(48),mobileStableId:'own'});
  await write('students_directory','other',{name:'Other',class:'2',rollNo:'2',dob:'2015-01-01',mobileLinkToken:'y'.repeat(48)});
  const login=await broker.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_login',role:'student',personId:'pupil',projectId:A,linkToken:'x'.repeat(48),studentClass:'1',rollNo:'1',dob:'2015-01-01'}});
+ await write('school_settings','school_location',{latitude:24.8,longitude:92.7,radiusMeters:100});
+ const refresh=await broker.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_refresh',sessionToken:login.sessionToken,projectId:A}});
+ assert.equal(typeof refresh.attendancePermit,'string');assert.equal(refresh.attendancePolicy,undefined);
+ const permit=JSON.parse(Buffer.from(refresh.attendancePermit.split('.')[0],'base64url').toString());
+ assert.equal(permit.schoolId,A);assert.equal(permit.documentId,'pupil');assert.equal(permit.latitude,24.8);assert.equal(permit.radiusMeters,100);
  gs.context.VS_beginOrganizedStorageMigration();for(let i=0;i<100&&gs.context.VS_organizedStorageStatus().phase!=='complete';i++)gs.context.VS_stepOrganizedStorageMigration();assert.equal(gs.context.VS_organizedStorageStatus().phase,'complete');
  const ack=await write('exam_center_results','exam_own',{personId:'own',studentName:'Own Student',examId:'exam',marks:88,timestamp:1});assert.equal(ack.syncProtocol,2);assert(ack.recordRevision);
  await write('exams','exam',{examName:'Unit Test'});await write('fee_settings','Class_1__2026-2027',{className:'Class 1',academicSession:'2026-2027',fees:{Tuition:125.75}});await write('fee_settings','Class_2',{className:'Class 2',fees:{Tuition:999}});await write('school_notices','notice',{title:'Cloud notice',timestamp:1});

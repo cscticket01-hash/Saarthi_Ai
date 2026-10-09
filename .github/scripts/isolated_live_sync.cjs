@@ -30,7 +30,10 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  r=await mobile({action:'mobile_dashboard',sessionToken,projectId:schoolId});
  check('Mobile reads newly published real cloud notice without Windows presence',r,r.http===200&&r.data.notices?.some(n=>n.id===noticeId));
  report.noticeWriteRetryAndReadbackMs=Math.round(performance.now()-start);
- const revisions=r.data.revisions,permit=r.data.attendancePermit;
+ const revisions=r.data.revisions;
+ r=await mobile({action:'mobile_refresh',sessionToken,projectId:schoolId});
+ check('Actual Android queue refresh provides signed attendance permit',r,r.http===200&&typeof r.data.attendancePermit==='string');
+ const permit=r.data.attendancePermit;
  const pdf=Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n');
  const upload={action:'managed/file/upload',name:prefix+'-fixture.pdf',mime:'application/pdf',base64:pdf.toString('base64'),uploadKey:prefix+'-fixture'};
  r=await admin(upload);check('Real Drive upload ACK',r,r.http===200&&typeof r.data.fileId==='string');const fileId=r.data.fileId;

@@ -7146,6 +7146,7 @@ function VS_session(b){const token=String(b.sessionToken||'');if(token.length<40
 function VS_own(col,session){const records=VS_query(col,'personId',session.personId).concat(VS_query(col,'studentId',session.person.id));const seen=Object.create(null);return records.filter(d=>{if(d.personId){if(d.personId!==session.personId)return false;}else{const name=String(d.studentName||d.name||'').trim().toLowerCase(),owner=String(session.person.name||'').trim().toLowerCase();if(!name||name!==owner)return false;if((d.dob||d.dateOfBirth)&&VS_dob(d.dob||d.dateOfBirth)!==VS_dob(session.person.dob||session.person.dateOfBirth))return false;}if(seen[d.id])return false;seen[d.id]=true;return true;});}
 function VS_safePerson(p){const allowed=['id','name','class','rollNo','dob','dateOfBirth','parentName','fatherName','parentContact','photoUrl','studentUid','teacherId','designation','subject','idCardUrl','mobileStableId'];const out={};allowed.forEach(k=>{if(p[k]!==undefined)out[k]=p[k];});return out;}
 function VS_distance(a,b,c,d){const rad=x=>x*Math.PI/180;const h=Math.sin(rad(c-a)/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(rad(d-b)/2)**2;return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));}
+function VS_attendancePolicy(session){const loc=VS_get('school_settings','school_location')||{},day=VS_day();return {role:session.role,personId:session.personId,documentId:session.person.id,qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,open:VS_isOpen(day),latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200};}
 function VS_mobileAction(b){
  const action=b.action;
  if(action==='mobile_project_info')return {projectId:VS_project(),windowsAdminProtection:!!PropertiesService.getScriptProperties().getProperty('VS_FIREBASE_API_KEY'),mobileProtocol:3};
@@ -7166,7 +7167,7 @@ function VS_mobileAction(b){
  if(b.projectId && b.projectId!==VS_project())throw new Error('School identity mismatch');
  const session=VS_session(b);
  if(action!=='mobile_session_verify'&&action!=='mobile_logout')VS_requireLicense();
- if(action==='mobile_refresh'){VS_requireLicense();const expires=Date.now()+30*86400000;VS_set('mobile_sessions',VS_hash(b.sessionToken),Object.assign({},session.doc,{expiresAt:expires}));return {personId:session.personId,role:session.role,expiresAt:expires};}
+ if(action==='mobile_refresh'){VS_requireLicense();const expires=Date.now()+30*86400000;VS_set('mobile_sessions',VS_hash(b.sessionToken),Object.assign({},session.doc,{expiresAt:expires}));return {personId:session.personId,role:session.role,expiresAt:expires,attendancePolicy:VS_attendancePolicy(session)};}
  if(action==='mobile_session_verify')return {personId:session.personId,role:session.role,expiresAt:session.doc.expiresAt};
  if(action==='mobile_logout'){VS_firestore('DELETE','mobile_sessions/'+VS_hash(b.sessionToken));return {loggedOut:true};}
  if(action==='mobile_heartbeat'){VS_touchPresence(session,b.version);return {allowed:true};}
@@ -7177,10 +7178,7 @@ function VS_mobileAction(b){
  if(action==='mobile_dashboard'){
   VS_touchPresence(session,b.version);
   const props=PropertiesService.getScriptProperties(),known=b.knownRevisions||{};
-  const loc=VS_get('school_settings','school_location')||{},day=VS_day();
-  const policy={role:session.role,personId:session.personId,documentId:session.person.id,
-   qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,open:VS_isOpen(day),
-   latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200};
+  const policy=VS_attendancePolicy(session);
   const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
   const groups={school:'school_config',templates:'school_settings',notices:'school_notices',calendar:'school_calendar',documents:'documents',examinations:'exams'};
   if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments',feeStructures:'fee_settings'});
