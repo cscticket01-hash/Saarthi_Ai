@@ -94,6 +94,7 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: '22'
+    - run: flutter create --platforms=web --project-name saarthi_ai .
     - run: flutter pub get
     - name: Build isolated TEST school website, no production hosting
       run: flutter build web --release --no-web-resources-cdn -t lib/main_sync_review_web.dart --dart-define=SAARTHI_SYNC_REVIEW_WEB=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
