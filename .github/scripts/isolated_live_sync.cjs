@@ -26,7 +26,7 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  check('Real mobile protocol login',r,r.http===200&&typeof r.data.sessionToken==='string');
  const sessionToken=r.data.sessionToken;
  const noticeId=prefix+'-notice';const start=performance.now();
- await write('school_notices',noticeId,{title:'Synthetic TEST cloud notice',message:'Protocol acceptance only',timestamp:Date.now()});
+ const notice=await write('school_notices',noticeId,{title:'Synthetic TEST cloud notice',message:'Protocol acceptance only',timestamp:Date.now()});
  r=await mobile({action:'mobile_dashboard',sessionToken,projectId:schoolId});
  check('Mobile reads newly published real cloud notice without Windows presence',r,r.http===200&&r.data.notices?.some(n=>n.id===noticeId));
  report.noticeWriteRetryAndReadbackMs=Math.round(performance.now()-start);
@@ -51,6 +51,13 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  check('Unchanged delta omits unchanged records',delta,delta.http===200&&Object.values(delta.data.changes).every(x=>x.unchanged===true&&Object.keys(x.records).length===0));
  r=await post(endpoint,{action:'managed/changes',schoolId:'vs-'+'0'.repeat(32),collections:['documents']},token);
  check('Foreign school rejected with authenticated TEST token',r,r.http===403&&r.data.code==='ISOLATED_TEST_SCOPE_REQUIRED');
+ r=await admin({action:'managed/records',operation:'write',collection:'school_notices',id:noticeId,syncProtocol:2,operationId:prefix+'-stale-cas-conflict',expectedRecordRevision:'stale-test-revision',data:{title:'Rejected stale TEST edit',syntheticTest:true}});
+ check('Real stale revision is HTTP 409 without ACK',r,r.http===409&&r.data.code==='RECORD_REVISION_CONFLICT');
+ const originalOperation=prefix+'-'+createHash('sha256').update('school_notices/'+noticeId).digest('hex').slice(0,24);
+ r=await admin({action:'managed/records',operation:'write',collection:'school_notices',id:noticeId,syncProtocol:2,operationId:originalOperation,expectedRecordRevision:'',data:{title:'Rejected changed operation TEST edit',syntheticTest:true}});
+ check('Real operation ID reuse is HTTP 409 without ACK',r,r.http===409&&r.data.code==='OPERATION_ID_CONFLICT');
+ r=await admin({action:'managed/records',operation:'read',collection:'school_notices',syncProtocol:2});
+ check('Rejected conflicts preserve existing TEST notice',r,r.http===200&&r.data.records?.[noticeId]?._syncRevision===notice._syncRevision&&r.data.records?.[noticeId]?.title===notice.title);
  const captured=Date.now()-1000;
  const attendance={action:'mobile_mark_attendance',sessionToken,attendancePermit:permit,projectId:schoolId,role:'student',personId,linkToken,latitude:24.8,longitude:92.7,accuracy:5,mode:'entry',clientCapturedAt:captured};
  r=await mobile(attendance);check('Actual isolated durable attendance acceptance',r,r.http===200&&r.data.accepted===true&&typeof r.data.operationId==='string');

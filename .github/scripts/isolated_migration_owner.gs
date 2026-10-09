@@ -4,6 +4,7 @@ function VS_TEST_guard(){
  if(p.getProperty('VS_MANAGED_SCHOOL_ID')!=='vs-db8afb01a3be46a983c8284714d06e5d')throw new Error('Isolated TEST school required');
  VS_managedRoot();return p;
 }
+function VS_TEST_ownership(){VS_TEST_guard();const root=VS_managedRoot();Logger.log(JSON.stringify({event:'TEST_root_ownership',schoolId:PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID'),rootId:root.getId(),rootName:root.getName(),ownerEmail:root.getOwner().getEmail(),marker:root.getDescription()}));}
 function VS_TEST_seedAndDryRun(){
  const p=VS_TEST_guard();if(p.getProperty('VS_TEST_MIGRATION_BASELINE')){Logger.log('TEST migration baseline already retained');return;}
  const rows=[['students_directory','student'],['teachers_directory','teacher'],['teachers_directory','staff'],['attendance_logs','student'],['teacher_attendance','teacher'],['teacher_attendance','staff'],['fee_ledger',''],['fee_settings',''],['school_expenses',''],['exams',''],['exam_results',''],['teacher_salary',''],['school_notices',''],['school_config',''],['school_calendar',''],['documents',''],['scanner_devices','']];
