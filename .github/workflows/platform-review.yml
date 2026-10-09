@@ -129,7 +129,7 @@ jobs:
         flutter test test/windows_easy_connect_test.dart --dart-define=SAARTHI_LEGACY_PROVISIONING_TEST_ONLY=true
     - name: Build developer website
       env:
-        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: flutter build web --release --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
     - uses: actions/upload-artifact@v4
       with:
@@ -249,7 +249,7 @@ jobs:
         SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ inputs.test_oauth_broker_url || vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         OAUTH_SECRET_PRESENT: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET != '' }}
-        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: |
         if ($env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID -notmatch '^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$') { throw 'Valid repository Desktop OAuth Client ID is required for this preview.' }
         Write-Host 'Public OAuth Client ID configured; compiling verification test with the build definition.'
@@ -292,7 +292,7 @@ jobs:
         SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ inputs.test_oauth_broker_url || vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
-        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.106 --build-number=106 --dart-define=APP_VERSION=2.1.106-sync-test --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
     - name: Record hosted Windows Defender review evidence
       run: |
@@ -404,7 +404,7 @@ jobs:
       run: flutter test test/android_startup_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Build unsigned Android preview
       env:
-        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: flutter build apk --debug -t lib/main_android.dart --build-name=1.0.500 --build-number=500 --dart-define=APP_VERSION=1.0.500-sync-test --dart-define=APP_BUILD=500 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
     - name: Record Android TEST source commit
       run: echo "$GITHUB_SHA" > build/app/outputs/flutter-apk/TEST-COMMIT.txt

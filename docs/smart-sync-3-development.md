@@ -67,3 +67,5 @@ Missing-cache recovery excludes explicit tombstones, all pending edits/deletes a
 CI found the old default-target test still asserted 80 KB after the requirement changed to 50 KB (106 passed / 1 failed). Its expectation was updated to the specified target; original-preservation and readability checks remain unchanged.
 
 Cloud health is checked only on administrator request through the existing authenticated school session; failed/foreign responses remain unverified and do not gate local UI. This does not claim independent OS internet connectivity or full Drive inventory completeness.
+
+Smart Sync 3.0 review Windows/Android/Web artifacts default to the isolated TEST endpoint, matching the existing TEST build identity guard. Main/production endpoint defaults remain unchanged. Explicit workflow-dispatch endpoint inputs retain the existing reviewed mechanism. This prevents a default Smart Sync 3.0 TEST artifact from synchronizing a saved original-school account; local UI/data remain governed by existing local-first startup. Native file-dialog interaction and physical sleep/wake still require separate device verification.
