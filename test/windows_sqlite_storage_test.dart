@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:crypto/crypto.dart';
+import 'package:sqlite3/sqlite3.dart';
 import '../lib/storage/windows_sqlite_store.dart';
 
 const schoolA = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -109,6 +110,56 @@ Map<String, dynamic> fixture(String file) => {
       }
     };
 void main() {
+  test('100000 records across 17 categories survive explicit migration with queue evidence', () async {
+    final dir = await Directory.systemTemp.createTemp('vs-sql-large-migration-');
+    final root = fixture('retained-photo.jpg');
+    final collections = root['profiles']['A']['collections'] as Map;
+    final categories = collections.keys.where((name) => !name.toString().startsWith('_') && name != 'empty_collection').toList();
+    expect(categories.length, 17);
+    for (var i = 0; i < 100000; i++) {
+      collections[categories[i % 17]]['synthetic-$i'] = {
+        'schoolId': schoolA, '_syncRevision': 'revision-$i',
+        'operationId': 'operation-$i', 'originalPath': 'retained-photo.jpg', 'value': i
+      };
+    }
+    final source = File('${dir.path}/local_database_v1.json');
+    final original = jsonEncode(root);
+    await source.writeAsString(original, flush: true);
+    await WindowsSqliteMigration.migrate(dir, approved: true);
+    expect(await source.readAsString(), original);
+    final reopened = await WindowsSqliteStore.open('${dir.path}/${WindowsSqliteStore.databaseName}');
+    try {
+      expect(await reopened.inventory(), sqliteInventory(root));
+      expect((await reopened.inventory())['pendingStates'], {'conflict': 3, 'retry': 1});
+      expect((await reopened.readDocument('A', categories[99999 % 17], 'synthetic-99999'))!['operationId'], 'operation-99999');
+      await reopened.verify();
+    } finally { await reopened.close(); }
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('schema reopen preserves data and a newer schema refuses downgrade', () async {
+    final dir = await Directory.systemTemp.createTemp('vs-sql-schema-');
+    final path = '${dir.path}/${WindowsSqliteStore.databaseName}';
+    final first = await WindowsSqliteStore.open(path);
+    await first.writeRoot(fixture('original.pdf'));
+    final expected = await first.inventory();
+    await first.close();
+    final reopened = await WindowsSqliteStore.open(path);
+    expect(await reopened.inventory(), expected);
+    await reopened.close();
+    final raw = sqlite3.open(path);
+    expect(raw.select('PRAGMA user_version').single.values.first, 1);
+    final count = raw.select('SELECT COUNT(*) AS n FROM records').single['n'];
+    raw.execute('PRAGMA user_version=2');
+    raw.dispose();
+    await expectLater(WindowsSqliteStore.open(path), throwsStateError);
+    final retained = sqlite3.open(path);
+    try {
+      expect(retained.select('PRAGMA user_version').single.values.first, 2);
+      expect(retained.select('SELECT COUNT(*) AS n FROM records').single['n'], count);
+      expect(retained.select('PRAGMA integrity_check').single.values.first, 'ok');
+    } finally { retained.dispose(); }
+  });
+
   test('migration approval is mandatory, including isolated copies', () async {
     final dir = await Directory.systemTemp.createTemp('vs-sql-consent-');
     await expectLater(

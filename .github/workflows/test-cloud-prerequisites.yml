@@ -19,6 +19,7 @@ on:
       - lib/windows_connect/managed_school_session.dart
       - lib/windows_connect/central_school_cloud.dart
       - lib/school_timestamp.dart
+      - test/windows_sqlite_storage_test.dart
       - lib/windows_pending_school_sync.dart
       - lib/windows_local_firestore.dart
       - .github/tests/sqlite_benchmark.dart
