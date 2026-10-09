@@ -6691,7 +6691,7 @@ function VS_recycleSnapshot(collection,id,existing,deletionRevision) {
   const snapshot={schemaVersion:1,schoolId:existing.schoolId,collection:collection,id:id,
     deletedRevision:deletionRevision,deletedAt:deletedAt,recoverUntil:deletedAt+86400000,
     data:existing.data};
-  const text=JSON.stringify(snapshot);if(text.length>600*1024)throw new Error('Recycle snapshot exceeds safe limit');
+  const text=JSON.stringify(snapshot);if(Utilities.base64Decode(Utilities.base64Encode(text)).length>600*1024)throw new Error('Recycle snapshot exceeds safe limit');
   const file=folder.createFile('Deleted_'+deletionRevision+'.json',text,'application/json');
   file.setDescription('VIDYA_RECYCLE:'+existing.schoolId+':'+deletionRevision+':'+VS_layoutHash(snapshot));
   const read=JSON.parse(file.getBlob().getDataAsString());

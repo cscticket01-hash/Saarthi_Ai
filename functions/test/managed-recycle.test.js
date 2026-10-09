@@ -100,3 +100,12 @@ test('opt-in recycle rejects unversioned deletion instead of bypassing revision 
  assert.equal(f.call({action:'managed_records',operation:'delete',collection:'fee_payments',id:'row'}).success,false);
  assert.equal(f.call({action:'managed_records',operation:'read',collection:'fee_payments'}).records.row.amount,500);
 });
+
+test('UTF-8 snapshot byte limit fails before deletion and retains the large original',()=>{
+ const f=storage();f.props.set('VS_RECYCLE_VERSION','1');
+ const name='अ'.repeat(210000);
+ const write=f.call({action:'managed_records',operation:'write',collection:'students_directory',id:'large',syncProtocol:2,operationId:'create_operation_0001',expectedRecordRevision:'',data:{schoolId:A,name}});
+ assert.equal(write.success,true);
+ assert.equal(f.call({action:'managed_records',operation:'delete',collection:'students_directory',id:'large',syncProtocol:2,operationId:'delete_operation_0001',expectedRecordRevision:write.recordRevision}).success,false);
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).records.large.name,name);
+});
