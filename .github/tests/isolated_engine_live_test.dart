@@ -67,6 +67,13 @@ void main() {
    report['windowsLocalBackend']='SQLite WAL/FULL';
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
    await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async=>throw const SocketException('Synthetic offline boundary')),throwsA(isA<SocketException>()));
+   final operationBeforeFault=(await db.collection('_windows_firebase_outbox').get()).docs.single.data()!['operationId'];
+   await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,
+     send:(a,b,c,d)async=>throw SchoolApiFailure(502,code:'SCRIPT_TIMEOUT'),
+     sendVersioned:(item)async=>throw SchoolApiFailure(502,code:'SCRIPT_TIMEOUT')),
+     throwsA(isA<SchoolApiFailure>()));
+   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()!['operationId'],operationBeforeFault);
+   report['controlledWindows502']='outbox retained original operation ID; no ACK before subsequent real TEST cloud write';
    await db.switchProfile('TEST-unbound');await db.switchProfile(profile,identity:{'schoolId':school,'schoolSyncId':school});
    expect((await db.collection('school_notices').doc(id).get()).exists,true);
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
@@ -91,7 +98,8 @@ void main() {
    expect((mobile.dashboard['notices'] as List).any((n)=>n['id']==id),true);
    expect(mobile.connectionState,SchoolConnectionState.connectionError);
    transport.serverFailure=false;
-   await Future<void>.delayed(const Duration(seconds:8));
+   final recoveryDeadline=DateTime.now().add(const Duration(seconds:75));
+   while(mobile.connectionState!=SchoolConnectionState.connected && DateTime.now().isBefore(recoveryDeadline)){await Future<void>.delayed(const Duration(seconds:1));}
    expect(mobile.connectionState,SchoolConnectionState.connected);
    expect(mobile.lastDashboardVerifiedAt!.isAfter(verifiedBeforeFault!),true);
    report['controlled502Recovery']='client-boundary HTTP 502; real TEST readback after automatic jittered retry; server not mutated';

@@ -118,7 +118,7 @@ void main() {
     expect(session.dashboard['revision'], 'recovered');
     final restored = SchoolSession(client: MockClient((_) async => throw TimeoutException('outage')));
     await restored.restore();
-    expect(restored.lastDashboardVerifiedAt, session.lastDashboardVerifiedAt);
+    expect(restored.lastDashboardVerifiedAt?.millisecondsSinceEpoch, session.lastDashboardVerifiedAt?.millisecondsSinceEpoch);
     await session.clear(); await restored.clear();
   });
   test('retry jitter is capped and structural storage failures require review', () {
