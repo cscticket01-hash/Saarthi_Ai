@@ -130,8 +130,10 @@ void main(){
          return {'success':true,'storageReady':true,'schoolId':own?school:'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'};
        })));
      await tester.pumpAndSettle();
-     await tester.ensureVisible(find.text('Check Cloud Health'));
+     await tester.scrollUntilVisible(find.text('Check Cloud Health'),300,scrollable:find.byType(Scrollable).first);
      await tester.tap(find.text('Check Cloud Health'));
+     await tester.pumpAndSettle();
+     await tester.drag(find.byType(ListView),const Offset(0,1000));
      await tester.pumpAndSettle();
      expect(find.textContaining('Authenticated backend and school storage verified at'),own?findsOneWidget:findsNothing);
      if(!own)expect(find.textContaining('cloud readiness unverified'),findsOneWidget);
