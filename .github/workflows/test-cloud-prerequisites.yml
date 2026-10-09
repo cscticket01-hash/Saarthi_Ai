@@ -9,6 +9,7 @@ on:
       - .github/scripts/isolated_live_sync.cjs
       - .github/scripts/run_android_live_test.sh
       - .github/tests/isolated_engine_live_test.dart
+      - .github/tests/native_android_windows_readback_test.dart
       - integration_test/sync_v2_android_live_test.dart
       - lib/school_qr_link.dart
       - .github/workflows/test-cloud-prerequisites.yml
@@ -75,7 +76,7 @@ jobs:
           path: build/cloud-prerequisites/actual-engines.json
 
   android-os-live:
-    needs: windows-live-prerequisites
+    needs: actual-engines-live
     if: github.ref == 'refs/heads/windows/easy-connect-draft'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -176,3 +177,31 @@ jobs:
       with:
         name: android-os-real-cloud-evidence
         path: build/cloud-prerequisites/android-os.json
+
+  native-android-windows-readback:
+    needs: android-os-live
+    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - run: flutter pub get
+    - uses: actions/download-artifact@v4
+      with:
+        name: android-os-real-cloud-evidence
+        path: build/native-evidence
+    - name: Native Android record -> real TEST cloud -> existing Windows local store
+      env:
+        VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+        VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+        VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+      run: flutter test .github/tests/native_android_windows_readback_test.dart --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: native-android-hosted-windows-readback
+        path: build/cloud-prerequisites/native-windows-readback.json

@@ -118,7 +118,13 @@ void main() {
               studentClass: '1', roll: '900002', dob: '2015-01-01');
           await session.refreshDashboard();
           expect(session.schoolName, 'TEST Sync V2');
+          final windowsNotice = 'synthetic-hosted-notice-${run.split('-').first}';
+          expect((session.dashboard['notices'] as List).any((row) => row['id'] == windowsNotice), true,
+              reason: 'Native Android must read the notice ACKed by the hosted Windows outbox in this same run');
+          metrics['windowsNoticeReadOnNativeAndroid'] = true;
           final captured = DateTime.now().millisecondsSinceEpoch;
+          metrics['syntheticPersonId'] = person;
+          metrics['originalCapturedAt'] = captured;
           transport.offline = true;
           final save = Stopwatch()..start();
           await session.saveAttendance(
