@@ -157,13 +157,16 @@ class SchoolSession {
         }
       } catch (error) {
         _cachedAttendancePermit=null;
-        final review = error is SchoolAccessDenied || error is StateError && error.message.contains('school review');
+        final review = error is SchoolAccessDenied ||
+            (error is SchoolApiFailure && !error.retryable) ||
+            error is StateError && error.message.contains('school review');
         final delay = min(3600000, 5000 * pow(2, min(attempts, 9)).toInt());
         await _attendanceStore.finish(owner, id, lease, {'attempts': attempts,
           'nextAt': at + delay + Random.secure().nextInt(max(1, delay ~/ 2)),
           if (review) 'state': 'needsAttention',
           'error': review ? 'Attendance needs school review; capture retained.' : 'Attendance unavailable; capture retained for automatic retry.'});
-        if (generation != _generation) break;
+        // A shared outage must not send the remaining 24 captures to the same failed server.
+        if (generation != _generation || !review) break;
       }
     }
     await refreshAttendanceStatus();
