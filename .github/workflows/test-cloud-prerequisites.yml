@@ -5,6 +5,7 @@ on:
     branches: [windows/easy-connect-draft]
     paths:
       - .github/scripts/test_cloud_readiness.cjs
+      - .github/scripts/connect_isolated_test_storage.cjs
       - .github/workflows/test-cloud-prerequisites.yml
 permissions:
   contents: read
@@ -18,6 +19,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Pair owner-approved isolated TEST storage and verify signed readback
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/connect_isolated_test_storage.cjs
       - name: Check real TEST cloud without changing school records
         env:
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
