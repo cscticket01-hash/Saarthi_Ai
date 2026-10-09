@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const schoolId = 'vs-db8afb01a3be46a983c8284714d06e5d';
 const endpoint = 'https://saarthi-sync-v2-test.onrender.com/school-cloud';
 const apiKey = 'AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A';
-const report = {scope: 'hosted runner, real cloud, read-only protocol prerequisites', schoolId, checks: []};
+const report = {scope: `${process.env.GITHUB_ACTIONS === 'true' ? 'GitHub hosted runner' : 'local automation environment'}, real cloud, read-only protocol prerequisites`, schoolId, checks: []};
 async function request(url, body, token) {
   const start = performance.now();
   const response = await fetch(url, {method: body ? 'POST' : 'GET', headers: {
