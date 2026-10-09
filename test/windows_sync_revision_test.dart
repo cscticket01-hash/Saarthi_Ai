@@ -93,14 +93,21 @@ void main(){
      final font=FontLoader('ControlCenterPreview');
      font.addFont(File('assets/id_card_regular.ttf').readAsBytes().then((bytes)=>ByteData.sublistView(bytes)));
      await font.load();
+     final icons=FontLoader('MaterialIcons');
+     icons.addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+     await icons.load();
    });
    final previewKey=GlobalKey();
-   await tester.pumpWidget(RepaintBoundary(key:previewKey,child:MaterialApp(theme:ThemeData.dark().copyWith(textTheme:ThemeData.dark().textTheme.apply(fontFamily:'ControlCenterPreview')),home:const WindowsSyncControlCenter())));
-   await tester.runAsync(() => WindowsSyncEngine.instance.refreshDetails());
+   await tester.pumpWidget(RepaintBoundary(key:previewKey,child:MaterialApp(theme:ThemeData.dark().copyWith(
+     scaffoldBackgroundColor:const Color(0xFF0B141A),appBarTheme:const AppBarTheme(backgroundColor:Color(0xFF1F2C34)),
+     textTheme:ThemeData.dark().textTheme.apply(fontFamily:'ControlCenterPreview')),
+     home:WindowsSyncControlCenter(refreshOnOpen:()async{}))));
    await tester.pumpAndSettle();
    expect(find.text('Sync & Backup Control Center'),findsOneWidget);
    expect(find.text('Not independently verified'),findsOneWidget);
    expect(find.text('Not yet verified'),findsWidgets);
+   expect(find.textContaining('Operation in progress.'),findsNothing);
+   expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Sync Now')).onPressed,isNotNull);
    final pending=await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get());
    expect(pending!.docs,hasLength(1));
    await tester.runAsync(() async {

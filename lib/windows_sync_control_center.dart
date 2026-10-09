@@ -7,7 +7,8 @@ import 'windows_local_storage.dart';
 
 /// Evidence-driven own-school controls. No guessed health, ACKs or conflict repair.
 class WindowsSyncControlCenter extends StatefulWidget {
-  const WindowsSyncControlCenter({super.key});
+  const WindowsSyncControlCenter({super.key, this.refreshOnOpen});
+  final Future<void> Function()? refreshOnOpen;
   @override
   State<WindowsSyncControlCenter> createState() => _WindowsSyncControlCenterState();
 }
@@ -24,7 +25,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   @override
   void initState() {
     super.initState();
-    _run(engine.refreshDetails);
+    _run(() => (widget.refreshOnOpen ?? engine.refreshDetails)().timeout(const Duration(seconds: 30)));
   }
 
   Future<void> _run(Future<void> Function() action) async {
