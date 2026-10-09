@@ -100,7 +100,7 @@ function fromEnvironment(env) {
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
     monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
   if(env.SAARTHI_ATTENDANCE_QUEUE_ENABLED!=='false'){
-    const worker=require('../functions/attendance-queue').createAttendanceWorker({drain:async()=>{await verifyTest();return managed.drainAttendance();},onError:()=>console.info(JSON.stringify({event:'attendance_retry_pending'}))});
+    const worker=require('../functions/attendance-queue').createAttendanceWorker({drain:async()=>{await verifyTest();return managed.drainAttendance();},onError:error=>console.info(JSON.stringify({event:'attendance_retry_pending',code:Number.isInteger(error?.code)&&error.code>=0&&error.code<=16?error.code:'UNAVAILABLE'}))});
     managed.setAttendanceWake(worker.wake);
   }
   const verifyTest=async()=>{if(testSchoolId){const school=await db.doc('schools/'+testSchoolId).get();if(!school.exists||!/^TEST\b/i.test(school.data().schoolName||''))throw Object.assign(Error('Verified TEST school required'),{status:403,code:'ISOLATED_TEST_SCOPE_REQUIRED'});}};
