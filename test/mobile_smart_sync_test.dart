@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import '../lib/mobile/school_session.dart';
+import '../lib/school_backend_transport.dart';
 import '../lib/mobile/school_notifications.dart';
 
 void main() {
@@ -76,19 +77,55 @@ void main() {
     await session.refreshDashboard();
     expect(session.connectionState,SchoolConnectionState.connected);
     expect(session.lastDashboardVerifiedAt,isNotNull);
-    await expectLater(session.schoolCall('mobile_document',{}),throwsStateError);
+    await expectLater(session.schoolCall('mobile_document',{}),throwsA(isA<SchoolApiFailure>()));
     expect(session.connectionState,SchoolConnectionState.connected);
     mode='server';
-    await expectLater(session.refreshDashboard(),throwsStateError);
+    await expectLater(session.refreshDashboard(),throwsA(isA<SchoolApiFailure>()));
     expect(session.connectionState,SchoolConnectionState.connectionError);
     expect((session.dashboard['notices'] as List).single['title'],'online');
     mode='offline';
     await expectLater(session.refreshDashboard(),throwsA(isA<SocketException>()));
-    expect(session.connectionState,SchoolConnectionState.cachedOffline);
+    expect(session.connectionState,SchoolConnectionState.connectionError);
     mode='recovered';
     await session.refreshDashboard();
     expect(session.connectionState,SchoolConnectionState.connected);
     expect((session.dashboard['notices'] as List).single['title'],'recovered');
+  });
+  test('HTML 503 and timeout preserve session and verified generation, then recover', () async {
+    var mode = 'online';
+    final session = SchoolSession(client: MockClient((request) async {
+      final action = (jsonDecode(request.body)['request'] as Map)['action'];
+      if (action == 'mobile_login') return http.Response(jsonEncode(login()), 200);
+      if (mode == 'server') return http.Response('<html>Bad gateway</html>', 503);
+      if (mode == 'timeout') throw TimeoutException('synthetic timeout');
+      return http.Response(jsonEncode(response({'revision': mode, 'notices': [{'id':'safe','title':mode}]})), 200);
+    }));
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await session.refreshDashboard();
+    final verified = session.lastDashboardVerifiedAt;
+    mode = 'server';
+    await expectLater(session.refreshDashboard(), throwsA(isA<SchoolApiFailure>()));
+    expect(session.loggedIn, true);
+    expect(session.lastDashboardVerifiedAt, verified);
+    expect(session.connectionMessage, contains('HTTP 503'));
+    mode = 'timeout';
+    await expectLater(session.refreshDashboard(), throwsA(isA<TimeoutException>()));
+    expect(session.connectionMessage, contains('too long'));
+    expect(session.dashboard['revision'], 'online');
+    mode = 'recovered';
+    await session.refreshDashboard();
+    expect(session.connectionState, SchoolConnectionState.connected);
+    expect(session.dashboard['revision'], 'recovered');
+    final restored = SchoolSession(client: MockClient((_) async => throw TimeoutException('outage')));
+    await restored.restore();
+    expect(restored.lastDashboardVerifiedAt?.millisecondsSinceEpoch, session.lastDashboardVerifiedAt?.millisecondsSinceEpoch);
+    await session.clear(); await restored.clear();
+  });
+  test('retry jitter is capped and structural storage failures require review', () {
+    expect(schoolRetryDelay(1, jitter:0).inSeconds, 5);
+    expect(schoolRetryDelay(20, jitter:1).inSeconds, 300);
+    expect(SchoolApiFailure(502,code:'SCRIPT_PERMISSION_DENIED').retryable,false);
+    expect(SchoolApiFailure(502,code:'SCRIPT_TIMEOUT').retryable,true);
   });
   test('expired saved login survives restart and outage; renews without QR; logout persists', () async {
     var offline = false;
