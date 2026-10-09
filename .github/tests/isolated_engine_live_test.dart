@@ -55,7 +55,7 @@ void main() {
    const person='isolated-v2-20261009-student';
    final linkToken=sha256.convert(utf8.encode('isolated-v2-20261009/synthetic-qr')).toString();
    final qr=SchoolLink.encodeCompact({'managed':true,'schoolId':school,'centralEndpoint':endpoint,'type':'student','personId':person,'linkToken':linkToken});
-   final mobile=SchoolSession(client:transport,cacheDirectory:tmp,attendanceStore:store);
+   final mobile=SchoolSession(client:transport,cacheDirectory:()async=>tmp,attendanceStore:store);
    await mobile.login(SchoolLink.parse(qr),studentClass:'1',roll:'900001',dob:'2015-01-01');
    await mobile.refreshDashboard();
    expect((mobile.dashboard['notices'] as List).any((n)=>n['id']==id),true);
@@ -71,7 +71,7 @@ void main() {
    final owner=AttendanceStore.owner(endpoint,school,'student',person);
    expect((await store.pending(owner)).single['capturedAt'],captured);
    await store.close();store=AttendanceStore(openDatabaseOverride:open);
-   final restored=SchoolSession(client:transport,cacheDirectory:tmp,attendanceStore:store);await restored.restore();
+   final restored=SchoolSession(client:transport,cacheDirectory:()async=>tmp,attendanceStore:store);await restored.restore();
    expect(restored.loggedIn,true);expect((restored.dashboard['notices'] as List).any((n)=>n['id']==id),true);
    expect(await restored.cachedPdf('idCard'),isNotNull);
    expect((await store.pending(owner)).single['capturedAt'],captured);
