@@ -392,7 +392,7 @@ void main(){
             choice: 'cloud',
             reason: ''),
         throwsStateError);
-    expect((await row.reference.get()).data(), old);
+    expect(migrationJsonValue((await row.reference.get()).data()), migrationJsonValue(old));
   });
   test(
       'a newer local edit invalidates the operator review before it can replace data',
@@ -488,7 +488,9 @@ void main(){
    expect(find.text('Cloud verification: not performed'),findsOneWidget);
    expect(find.text('Use local version'),findsNothing);
    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Review and queue')).onPressed,isNull);
-   expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+   final pending=await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get());
+   expect(pending!.docs,isEmpty);
+   await tester.pumpWidget(const SizedBox.shrink());
  });
 
  test('reviewed conflict retains both versions and operation after durable reopen',()async{
@@ -501,8 +503,8 @@ void main(){
    final origin=db.activeProfileId;
    await db.resetVolatileSession();await db.switchProfile('review-away');
    await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
-   expect((await row.reference.get()).data(),queued);
-   expect((await db.collection('_windows_sync_conflict_history').get()).docs.single.data(),expected);
+   expect(migrationJsonValue((await row.reference.get()).data()),migrationJsonValue(queued));
+   expect(migrationJsonValue((await db.collection('_windows_sync_conflict_history').get()).docs.single.data()),migrationJsonValue(expected));
    expect((await db.collection('_windows_sync_resolution_history').get()).docs.length,1);
    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
  });
