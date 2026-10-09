@@ -28,6 +28,19 @@ const fs=require('node:fs'),path=require('node:path');
   await input.click();await input.press('ControlOrMeta+A');
   await input.pressSequentially(value,{delay:5});await input.press('Tab');
  }
+ async function publishAndReadback(id){
+  function requestBody(response){try{return JSON.parse(response.request().postData());}catch(_){return {};}}
+  const endpoint='https://saarthi-sync-v2-test.onrender.com/school-cloud';
+  const writePromise=page.waitForResponse(response=>{const body=requestBody(response);return response.url()===endpoint&&body.action==='managed/records'&&body.operation==='write'&&body.collection==='school_notices'&&body.id===id;},{timeout:180000});
+  const readPromise=page.waitForResponse(response=>{const body=requestBody(response);return response.url()===endpoint&&body.action==='managed/changes'&&body.collections?.includes('school_notices');},{timeout:180000});
+  await page.getByRole('button',{name:'Publish TEST notice',exact:true}).click();
+  const response=await writePromise,ack=await response.json(),body=requestBody(response);
+  if(response.status()!==200||ack.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision)throw Error('Verified TEST write ACK required');
+  const read=await readPromise,reply=await read.json();
+  if(read.status()!==200||reply.schoolId!==school||reply.syncProtocol!==2||!reply.changes?.school_notices)throw Error('Verified TEST post-write readback required');
+  await page.getByText('Website ACK and readback verified',{exact:true}).waitFor({timeout:180000});
+  return {operationId:body.operationId,recordRevision:ack.recordRevision,readbackVerified:true};
+ }
  const proof={scope:'Hosted Chromium actual TEST school review UI, locally intercepted static build; authenticated TEST backend',schoolId:school,status:'RUNNING',stage:'load UI'};
  try {
   await page.goto('https://vidyasaarthi.web.app/',{waitUntil:'domcontentloaded'});
@@ -59,13 +72,13 @@ const fs=require('node:fs'),path=require('node:path');
   proof.offlineDraftAndReload=true;
   proof.stage='cloud retry ACK';
   const clock=performance.now();
-  await page.getByRole('button',{name:'Publish TEST notice',exact:true}).click();
-  await page.getByText('Website ACK and readback verified',{exact:true}).waitFor({timeout:180000});
+  const first=await publishAndReadback(id);
   await page.getByText(`${id} | ${title}`,{exact:true}).waitFor();
   proof.websiteWriteAndReadbackMs=Math.round(performance.now()-clock);
   proof.stage='duplicate replay';
-  await page.getByRole('button',{name:'Publish TEST notice',exact:true}).click();
-  await page.getByText('Website ACK and readback verified',{exact:true}).waitFor({timeout:180000});
+  const replay=await publishAndReadback(id);
+  if(replay.operationId!==first.operationId||replay.recordRevision!==first.recordRevision)throw Error('Duplicate TEST operation identity/revision changed');
+  proof.actualDuplicateAckAndReadback=true;
   if(await page.getByText(`${id} | ${title}`,{exact:true}).count()!==1)throw Error('Duplicate TEST row');
   proof.duplicateReplayAndReadback=true;
   proof.websiteNoticeId=id;proof.websiteNoticeTitle=title;proof.status='PASS';proof.stage='complete';
