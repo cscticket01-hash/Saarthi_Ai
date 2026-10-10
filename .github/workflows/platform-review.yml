@@ -46,6 +46,7 @@ jobs:
         node --check platform.js
         node --check domain.js
         npm test
+        node --test ../.github/scripts/test_runtime_identity.test.cjs
     - name: Benchmark isolated durable attendance queue
       run: node .github/scripts/attendance_queue_load.cjs build/review-metrics/attendance-queue-load.json
     - uses: actions/upload-artifact@v4

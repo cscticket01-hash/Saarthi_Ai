@@ -51,3 +51,11 @@ test('Central request traces expose only allowlisted actions, status and generat
   assert.equal(logs.filter(e=>e.event==='central_request')[1].action,'UNKNOWN');assert(!JSON.stringify(logs).includes('secret'));
  });
 });
+
+test('isolated health exposes only a valid public deployed commit; production and malformed values stay hidden',async()=>{
+ for(const [testSchoolId,runtimeCommit,expected] of [['vs-'+ 'a'.repeat(32),'b'.repeat(40),'b'.repeat(40)],[null,'b'.repeat(40),undefined],['vs-'+ 'a'.repeat(32),'private unexpected data',undefined]]) {
+  await withServer(createHandler({handle:async()=>({}),health:async()=>{},testSchoolId,runtimeCommit}),async base=>{
+   const r=await fetch(base+'/school-cloud/healthz');assert.equal(r.status,200);assert.equal((await r.json()).runtimeCommit,expected);
+  });
+ }
+});

@@ -19,7 +19,7 @@ async function run(){
   const r=await fetch('https://api.github.com/repos/'+process.env.GITHUB_REPOSITORY+'/actions/runs?branch=feature%2Fsmart-sync-3&per_page=30',{
     headers:{Authorization:'Bearer '+process.env.GITHUB_TOKEN,Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(30000)});assert.equal(r.status,200);
   const runs=(await r.json()).workflow_runs,cloud=runs.filter(run=>run.name==='Isolated TEST cloud prerequisites');
-  const run=cloud.find(run=>String(run.id)===process.env.VS_TEST_CLOUD_EVIDENCE_RUN_ID)||cloud.find(run=>run.head_sha===process.env.GITHUB_SHA);
+  const run=cloud.find(run=>run.head_sha===process.env.GITHUB_SHA)||cloud.find(run=>String(run.id)===process.env.VS_TEST_CLOUD_EVIDENCE_RUN_ID);
   report.prerequisite={runId:run?.id||null,status:run?.status||'missing',conclusion:run?.conclusion||null};
   if(!cloud.some(run=>run.status!=='completed')&&run?.status==='completed'){
    let comparison;if(run.head_sha!==process.env.GITHUB_SHA){

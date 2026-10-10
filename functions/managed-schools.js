@@ -338,10 +338,11 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  if(action==='managed/summary'){
   if(!lease(m).allowed||m.entitlement.status!=='trial'&&m.entitlement.activated!==true)fail(403,'School licence is inactive');
   const school=await db.doc('platform_schools/'+m.schoolId).get();
-  if(now()-Number(school.data()?.summaryAt||0)<300000)return {success:true,cached:true};
+  const cached=school.data()||{};
+  if(Number.isSafeInteger(cached.summaryAt)&&cached.summaryAt>0&&cached.summaryAt<=now()&&now()-cached.summaryAt<300000&&Number.isSafeInteger(cached.studentCount)&&cached.studentCount>=0&&Number.isSafeInteger(cached.driveBytes)&&cached.driveBytes>=0)return {success:true,schoolId:m.schoolId,cached:true,studentCount:cached.studentCount,driveBytes:cached.driveBytes,partial:cached.driveBytesPartial===true,measuredAt:cached.summaryAt};
   const result=await signed(m,{action:'managed_summary'});
-  if(!Number.isSafeInteger(result.studentCount)||result.studentCount<0||!Number.isSafeInteger(result.driveBytes)||result.driveBytes<0)fail(502,'Invalid school storage summary');
-  await db.doc('platform_schools/'+m.schoolId).set({studentCount:result.studentCount,driveBytes:result.driveBytes,driveBytesPartial:result.partial===true,summaryAt:now()},{merge:true});return {success:true};
+  if(!Number.isSafeInteger(result.studentCount)||result.studentCount<0||!Number.isSafeInteger(result.driveBytes)||result.driveBytes<0||typeof result.partial!=='boolean')fail(502,'Invalid school storage summary');
+  await db.doc('platform_schools/'+m.schoolId).set({studentCount:result.studentCount,driveBytes:result.driveBytes,driveBytesPartial:result.partial===true,summaryAt:now()},{merge:true});return {success:true,schoolId:m.schoolId,cached:false,studentCount:result.studentCount,driveBytes:result.driveBytes,partial:result.partial===true,measuredAt:now()};
  }
  if(action==='managed/licence/activate'){if(hash(String(b.key||'').trim().toUpperCase())!==m.entitlement.licenseHash||!lease(m).allowed)fail(403,'Licence does not belong to this school or has expired');const ref=db.doc('school_entitlements/'+m.schoolId);
  await db.runTransaction(async tx=>{const current=await tx.get(ref);const e=current.data();if(!e||e.active!==true||e.blocked===true||e.licenseHash!==m.entitlement.licenseHash||Number(e.expiresAt)<=now()||Number(e.startsAt)>now())fail(403,'School licence changed or access was blocked');tx.set(ref,{activated:true},{merge:true});});return {...lease(m),activated:true,status:'licensed'};}
@@ -406,10 +407,11 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  }
  if(action==='managed/sync/status'){
   if(b.report!==undefined){const r=b.report;
-   if(!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(k=>!['pending','needsAttention','verifiedReceiptCount','lastCloudAckMillis'].includes(k))||
+   if(!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(k=>!['pending','needsAttention','verifiedReceiptCount','lastCloudAckMillis','appVersion','conflictCount','documentPending','lastReconciliationMillis','lastLocalBackupMillis'].includes(k))||
      !['pending','needsAttention','verifiedReceiptCount','lastCloudAckMillis'].every(k=>Number.isSafeInteger(r[k])&&r[k]>=0)||r.needsAttention>r.pending||r.pending>100000||r.verifiedReceiptCount>10000000||r.lastCloudAckMillis>now()+300000)fail(400,'Invalid aggregate Windows sync report');
+   if(r.appVersion!==undefined&&(typeof r.appVersion!=='string'||! /^[A-Za-z0-9._+-]{1,80}$/.test(r.appVersion))||['conflictCount','documentPending','lastReconciliationMillis','lastLocalBackupMillis'].some(k=>r[k]!==undefined&&(!Number.isSafeInteger(r[k])||r[k]<0))||r.conflictCount!==undefined&&r.conflictCount>r.needsAttention||r.documentPending!==undefined&&r.documentPending>r.pending||['lastReconciliationMillis','lastLocalBackupMillis'].some(k=>r[k]!==undefined&&r[k]>now()+300000))fail(400,'Invalid aggregate Windows sync evidence');
    const row=await db.doc('platform_schools/'+m.schoolId).get(),previous=row.data()?.syncWindowsReport;
-   if(!previous||now()-previous.receivedAt>=300000)await db.doc('platform_schools/'+m.schoolId).set({syncWindowsReport:{version:1,receivedAt:now(),source:'latest_windows_client_report',...r}},{merge:true});
+   if(!previous||now()-previous.receivedAt>=300000)await db.doc('platform_schools/'+m.schoolId).update({syncWindowsReport:{version:1,receivedAt:now(),source:'latest_windows_client_report',...r}});
   }
   const row=await db.doc('platform_schools/'+m.schoolId).get(),data=row.data()||{};
   return {success:true,schoolId:m.schoolId,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};

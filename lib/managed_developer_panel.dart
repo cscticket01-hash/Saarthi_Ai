@@ -15,13 +15,20 @@ class _ManagedDeveloperPanelState extends State<ManagedDeveloperPanel>{
   try{final r=await ManagedDeveloperService.call('sync/status',{'schoolId':school['id']}).timeout(const Duration(seconds:30));
    if(r['success']!=true||r['schoolId']!=school['id'])throw StateError('Sync monitor identity unverified');
    if(!mounted)return;final server=r['serverEvidence'],client=r['latestWindowsReport'];
+   final measured=r['measuredAt'] is num?(r['measuredAt'] as num).toInt():0;
+   final clientStale=client is! Map||client['receivedAt'] is! num||measured<=0||measured-(client['receivedAt'] as num)>600000;
    await showDialog<void>(context:context,builder:(c)=>AlertDialog(title:Text('${school['name']??school['id']} — Sync monitoring'),
     content:SizedBox(width:520,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+     Text('School ID: ${school['id']}'),
+     Text('Last Windows contact: ${date(school['lastSeenAt'])}'),
+     Text('Apps Script binding: ${school['storageReady']==true?'Previously verified':'Not reported'}'),
+     Text('Drive usage: ${bytes(school)} • measured ${date(school['summaryAt'])}'),
      Text(server is Map?'Backend observed: ${server['outcome']} at ${date(server['observedAt'])}':'Backend verification: Not reported'),
      if(server is Map&&server['code']!=null)Text('Safe category: ${server['code']}'),
      const SizedBox(height:16),
      Text(client is Map?'Latest Windows report received: ${date(client['receivedAt'])}':'Windows queue: Not reported'),
-     if(client is Map)...[Text('Client-reported pending: ${client['pending']} · Needs review: ${client['needsAttention']}'),Text('Client-reported durable receipts: ${client['verifiedReceiptCount']}'),Text('Client last verified ACK: ${date(client['lastCloudAckMillis'])}')],
+     if(clientStale)const Text('Windows report is stale or unavailable; current queue state is unknown.',style:TextStyle(color:Colors.orangeAccent)),
+     if(client is Map)...[Text('Reported app version: ${client['appVersion']??'Not reported'}'),Text('Reported conflicts: ${client['conflictCount']??'Not reported'} • Documents pending: ${client['documentPending']??'Not reported'}'),Text('Last complete reconciliation: ${date(client['lastReconciliationMillis'])}'),Text('Last verified local backup: ${date(client['lastLocalBackupMillis'])}'),Text('Client-reported pending: ${client['pending']} · Needs review: ${client['needsAttention']}'),Text('Client-reported durable receipts: ${client['verifiedReceiptCount']}'),Text('Client last verified ACK: ${date(client['lastCloudAckMillis'])}')],
      const SizedBox(height:16),const Text('Reports are time-stamped observations. A stale or missing report does not prove zero pending data or lack of internet. This view does not modify school records or queues.'),
     ]))),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('Close'))]));
   }catch(_){if(mounted)setState(()=>message='Sync monitoring unavailable; school data is retained.');}

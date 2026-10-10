@@ -213,6 +213,57 @@ void main(){
      await tester.pumpWidget(const SizedBox());
    }
  });
+  testWidgets(
+    'Drive usage distinguishes partial measurements and rejects foreign or old unscoped responses',
+    (tester) async {
+      for (final variant in ['partial', 'foreign', 'old']) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: WindowsSyncControlCenter(
+              key: ValueKey(variant),
+              refreshOnOpen: () async {},
+              storageProbe: (requested) async {
+                expect(requested, school);
+                if (variant == 'old') return {'success': true};
+                return {
+                  'success': true,
+                  'schoolId': variant == 'foreign'
+                      ? 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+                      : school,
+                  'driveBytes': 2048,
+                  'partial': true,
+                  'measuredAt': 123456,
+                };
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text('School Drive Usage'),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.tap(find.text('School Drive Usage'));
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<OutlinedButton>(
+                find.widgetWithText(OutlinedButton, 'School Drive Usage'),
+              )
+              .onPressed,
+          isNotNull,
+        );
+        await tester.drag(find.byType(ListView), const Offset(0, 2400));
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('At least 2.00 KB'),
+          variant == 'partial' ? findsOneWidget : findsNothing,
+        );
+        await tester.pumpWidget(const SizedBox());
+      }
+    },
+  );
  testWidgets('timed-out cloud health stays unverified and releases controls', (tester) async {
    await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(
      refreshOnOpen:()async{},healthProbe:(_)async{

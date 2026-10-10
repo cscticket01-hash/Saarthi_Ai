@@ -45,7 +45,7 @@ jobs:
   windows-live-prerequisites:
     if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

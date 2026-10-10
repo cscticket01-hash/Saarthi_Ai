@@ -38,3 +38,32 @@ test('a successful durable ACK replaces obsolete failure evidence without replac
  assert.equal(Object.hasOwn(result.serverEvidence,'code'),false,'Recovered ACK must not retain the preceding failure category');
  assert.equal(result.latestWindowsReport.pending,3);assert.equal(f.docs.get('platform_schools/'+A).managed,true);assert.equal(f.docs.get('platform_schools/'+A).authUid,'A');
 });
+
+
+test('own-school storage evidence returns measured partial byte totals and uses bounded cached reads',async()=>{
+ const f=fixture(async(_,options)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(options.body).schoolId,success:true,studentCount:4,driveBytes:321,partial:true})}));
+ const measured=await f.call({action:'managed/summary'});
+ assert.deepEqual(measured,{success:true,schoolId:A,cached:false,studentCount:4,driveBytes:321,partial:true,measuredAt:time});
+ const calls=f.sent.length;const cached=await f.call({action:'managed/summary'});
+ assert.equal(cached.cached,true);assert.equal(cached.measuredAt,time);assert.equal(cached.driveBytes,321);assert.equal(f.sent.length,calls);
+ await assert.rejects(f.call({action:'managed/summary',schoolId:B}),e=>e.status===403);
+ assert.equal(f.docs.get('platform_schools/'+B).driveBytes,undefined);
+});
+test('missing or invalid cached storage totals require a new verified summary; malformed remote evidence is rejected',async()=>{
+ const f=fixture(async(_,options)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(options.body).schoolId,success:true,studentCount:0,driveBytes:0,partial:false})}));
+ f.docs.get('platform_schools/'+A).summaryAt=time;
+ const r=await f.call({action:'managed/summary'});assert.equal(r.cached,false);assert.equal(r.driveBytes,0);
+ const bad=fixture(async(_,options)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(options.body).schoolId,success:true,studentCount:0,driveBytes:-1})}));
+ await assert.rejects(bad.call({action:'managed/summary'}),e=>e.status===502);
+ assert.equal(bad.docs.get('platform_schools/'+A).driveBytes,undefined);
+});
+
+test('optional Windows fleet metadata is bounded, tenant scoped and never retains omitted stale fields',async()=>{
+ const f=fixture();const base={pending:3,needsAttention:1,verifiedReceiptCount:7,lastCloudAckMillis:time-1000};
+ const r=await f.call({action:'managed/sync/status',report:{...base,appVersion:'2.1.106-test',conflictCount:1,documentPending:2,lastReconciliationMillis:time-2000,lastLocalBackupMillis:time-3000}});
+ assert.equal(r.latestWindowsReport.appVersion,'2.1.106-test');assert.equal(r.latestWindowsReport.documentPending,2);
+ for(const extra of [{appVersion:'private email@example.com'},{conflictCount:2},{documentPending:4},{lastLocalBackupMillis:time+999999}])await assert.rejects(f.call({action:'managed/sync/status',report:{...base,...extra}}),e=>e.status===400);
+ const old=f.docs.get('platform_schools/'+A);old.syncWindowsReport.receivedAt=time-300001;
+ const next=await f.call({action:'managed/sync/status',report:base});assert.equal(next.latestWindowsReport.appVersion,undefined);
+ assert.equal(f.docs.get('platform_schools/'+B).syncWindowsReport,undefined);
+});

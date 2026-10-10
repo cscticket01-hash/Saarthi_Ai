@@ -55,6 +55,8 @@ async function run() {
     evidence && ['verified_response', 'durable_ack'].includes(evidence.outcome) && evidence.protocol === 2 && Number.isSafeInteger(evidence.observedAt) && evidence.observedAt > 0 &&
     Object.keys(evidence).every(key => ['version', 'observedAt', 'outcome', 'stage', 'protocol'].includes(key)) &&
     (r.data.latestWindowsReport === null || r.data.latestWindowsReport.source === 'latest_windows_client_report'));
+  r = await request(endpoint, {action: 'managed/summary', schoolId}, token);
+  check('Measured own-school Drive usage with explicit partial status', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && Number.isSafeInteger(r.data.driveBytes) && r.data.driveBytes >= 0 && typeof r.data.partial === 'boolean' && Number.isSafeInteger(r.data.measuredAt) && r.data.measuredAt > 0);
   report.status = 'PASS';
   report.remaining = 'No mutations, attendance ACK, migration or application UI acceptance performed by this harness.';
 }

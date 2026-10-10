@@ -21,9 +21,24 @@ class WindowsSyncControlCenter extends StatefulWidget {
     super.key,
     this.refreshOnOpen,
     this.healthProbe,
+    this.storageProbe,
   });
   final Future<void> Function()? refreshOnOpen;
   final Future<Map<String, dynamic>> Function(String school)? healthProbe;
+  final Future<Map<String, dynamic>> Function(String school)? storageProbe;
+  static const categories = [
+    'students_directory',
+    'teachers_directory',
+    'school_notices',
+    'school_calendar',
+    'attendance_records',
+    'exam_results',
+    'fee_payments',
+    'fee_ledger',
+    'teacher_salary',
+    'school_expenses',
+    'documents',
+  ];
   @override
   State<WindowsSyncControlCenter> createState() =>
       _WindowsSyncControlCenterState();
@@ -38,7 +53,95 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   String localHealth = 'Not checked in this session';
   Map<String, dynamic>? diagnostics;
   String cloudHealth = 'Not checked in this session';
-  Map<String,dynamic>? cloudEvidence;
+  Map<String, dynamic>? cloudEvidence;
+  Map<String, int>? categoryCounts;
+  Map<String, dynamic>? storageEvidence;
+  int? localBytes;
+  bool localBytesPartial = false;
+  int? lastBackupAt;
+
+  Future<void> _storageDetails() async {
+    final counts = <String, int>{};
+    for (final category in WindowsSyncControlCenter.categories) {
+      final rows = await db.collection(category).get();
+      if (db.activeProfileId != origin) throw StateError('School changed');
+      counts[category] = rows.docs
+          .where((row) => row.data()['_syncDeleted'] != true)
+          .length;
+    }
+    final root = await WindowsLocalStorage.dataDirectory();
+    var bytes = 0, entries = 0, partial = false;
+    final budget = Stopwatch()..start();
+    await for (final entry in root.list(recursive: true, followLinks: false)) {
+      if (++entries > 10000 || budget.elapsed > const Duration(seconds: 5)) {
+        partial = true;
+        break;
+      }
+      if (entry is File) bytes += await entry.length();
+    }
+    final backup = await db
+        .collection('_windows_sync_status')
+        .doc('backup')
+        .get();
+    if (db.activeProfileId != origin) throw StateError('School changed');
+    if (mounted)
+      setState(() {
+        categoryCounts = counts;
+        localBytes = bytes;
+        localBytesPartial = partial;
+        lastBackupAt = backup.data()?['createdAt'] as int?;
+      });
+  }
+
+  Future<void> _cloudStorageDetails() async {
+    final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+    if (school.isEmpty) throw StateError('School identity required');
+    if (mounted) setState(() => storageEvidence = null);
+    final result =
+        await (widget.storageProbe != null
+                ? widget.storageProbe!(school)
+                : ManagedSchoolSession.callForSchool(
+                    school,
+                    'managed/summary',
+                    {},
+                  ))
+            .timeout(const Duration(seconds: 95));
+    if (db.activeProfileId != origin ||
+        result['success'] != true ||
+        result['schoolId'] != school ||
+        result['driveBytes'] is! int ||
+        (result['driveBytes'] as int) < 0 ||
+        result['partial'] is! bool ||
+        result['measuredAt'] is! int ||
+        (result['measuredAt'] as int) <= 0)
+      throw StateError('Storage usage unverified');
+    if (mounted) setState(() => storageEvidence = result);
+  }
+
+  Future<void> _exportDiagnostics() async {
+    final report = await engine.safeQueueDiagnostics();
+    if (db.activeProfileId != origin) throw StateError('School changed');
+    final destination = await files.getSaveLocation(
+      suggestedName: 'vidya-sync-diagnostics.json',
+      acceptedTypeGroups: const [
+        files.XTypeGroup(label: 'JSON', extensions: ['json']),
+      ],
+    );
+    if (destination == null || db.activeProfileId != origin) return;
+    await File(destination.path).writeAsString(
+      const JsonEncoder.withIndent('  ').convert(report),
+      flush: true,
+    );
+    if (mounted)
+      setState(() {
+        diagnostics = report;
+        notice = 'Sanitized diagnostic report exported.';
+      });
+  }
+
+  String bytesLabel(int bytes) => bytes >= 1048576
+      ? '${(bytes / 1048576).toStringAsFixed(2)} MB'
+      : '${(bytes / 1024).toStringAsFixed(2)} KB';
 
   @override
   void initState() {
@@ -77,7 +180,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
 
   Future<void> _checkCloudHealth() async {
     if (mounted)
-      setState(() {cloudEvidence=null;cloudHealth = 'Checking authenticated school storage';});
+      setState(() {
+        cloudEvidence = null;
+        cloudHealth = 'Checking authenticated school storage';
+      });
     try {
       final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
       if (school.isEmpty || db.activeProfileId != origin)
@@ -95,17 +201,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         throw StateError('School changed during health check');
       ManagedSchoolSession.verifyStorageResponse(result, school);
       if (mounted)
-        setState(
-          () {cloudEvidence = result;cloudHealth =
-              'Authenticated school storage handshake verified at ${DateTime.now().toLocal()}';},
-        );
+        setState(() {
+          cloudEvidence = result;
+          cloudHealth =
+              'Authenticated school storage handshake verified at ${DateTime.now().toLocal()}';
+        });
     } catch (error) {
       if (mounted)
         setState(
-          () => cloudHealth =
-              error is TimeoutException
-                  ? 'Health check timed out — cloud readiness unverified'
-                  : 'Check failed — local data retained; cloud readiness unverified',
+          () => cloudHealth = error is TimeoutException
+              ? 'Health check timed out — cloud readiness unverified'
+              : 'Check failed — local data retained; cloud readiness unverified',
         );
       rethrow;
     }
@@ -119,38 +225,82 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       'cloudVerified': false,
     });
     if (mounted)
-      setState(
-        () => notice =
-            'Local backup created and file hashes verified: $path. Cloud backup and restore have not been verified.',
-      );
+      setState(() {
+        lastBackupAt = DateTime.now().millisecondsSinceEpoch;
+        notice =
+            'Local backup created and file hashes verified: $path. Cloud backup and restore have not been verified.';
+      });
   }
+
   Future<void> _cloudRecordBackup() async {
-    const testSchool='vs-db8afb01a3be46a983c8284714d06e5d';
-    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
-    if(school!=testSchool)throw StateError('This backup verification is isolated TEST only');
-    final result=await ManagedSchoolSession.callForSchool(school,'managed/backup',{}).timeout(const Duration(seconds:95));
-    if(db.activeProfileId!=origin||result['success']!=true||result['schoolId']!=school||result['recordBackupVersion']!=4||result['verified']!=true||result['fileId'] is! String)
+    const testSchool = 'vs-db8afb01a3be46a983c8284714d06e5d';
+    final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+    if (school != testSchool)
+      throw StateError('This backup verification is isolated TEST only');
+    final result = await ManagedSchoolSession.callForSchool(
+      school,
+      'managed/backup',
+      {},
+    ).timeout(const Duration(seconds: 95));
+    if (db.activeProfileId != origin ||
+        result['success'] != true ||
+        result['schoolId'] != school ||
+        result['recordBackupVersion'] != 4 ||
+        result['verified'] != true ||
+        result['fileId'] is! String)
       throw StateError('Cloud backup remains unverified');
-    await db.collection('_windows_sync_status').doc('cloudRecordBackup').set({'verifiedAt':DateTime.now().millisecondsSinceEpoch,'recordBackupVersion':4,'documentBinariesIncluded':false});
-    if(mounted)setState(()=>notice='TEST cloud record backup and tombstones verified by Drive readback. Document binaries and full disaster restore are not included.');
+    await db.collection('_windows_sync_status').doc('cloudRecordBackup').set({
+      'verifiedAt': DateTime.now().millisecondsSinceEpoch,
+      'recordBackupVersion': 4,
+      'documentBinariesIncluded': false,
+    });
+    if (mounted)
+      setState(
+        () => notice = 'TEST cloud record backup and tombstones verified by Drive readback. Document binaries and full disaster restore are not included.',
+      );
   }
 
   Future<void> _restoreRehearsal() async {
-    final backup = await files.getDirectoryPath(confirmButtonText: 'Select Backup');
+    final backup = await files.getDirectoryPath(
+      confirmButtonText: 'Select Backup',
+    );
     if (backup == null || !mounted) return;
-    final parent = await files.getDirectoryPath(confirmButtonText: 'Select Rehearsal Folder');
+    final parent = await files.getDirectoryPath(
+      confirmButtonText: 'Select Rehearsal Folder',
+    );
     if (parent == null || !mounted || db.activeProfileId != origin) return;
-    final approved = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
-      title: const Text('Verify backup restore?'),
-      content: const Text('Copy the backup into a new rehearsal folder and verify every file hash. Pending operations and original files remain unchanged. This does not activate restored data, send cloud records, or replace the current school database.'),
-      actions: [TextButton(onPressed: () => Navigator.pop(context,false), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.pop(context,true), child: const Text('Verify restore copy'))],
-    ));
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Verify backup restore?'),
+        content: const Text(
+          'Copy the backup into a new rehearsal folder and verify every file hash. Pending operations and original files remain unchanged. This does not activate restored data, send cloud records, or replace the current school database.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Verify restore copy'),
+          ),
+        ],
+      ),
+    );
     if (approved != true || db.activeProfileId != origin) return;
-    final target = Directory('$parent${Platform.pathSeparator}restore_rehearsal_${DateTime.now().microsecondsSinceEpoch}');
-    final count = await WindowsBackupIntegrity.stageRestore(Directory(backup), target);
-    if (mounted && db.activeProfileId == origin) setState(() => notice =
-      'Restore rehearsal verified: $count files at ${target.path}. Current school storage remains active. Cloud disaster restore has not been verified.');
+    final target = Directory(
+      '$parent${Platform.pathSeparator}restore_rehearsal_${DateTime.now().microsecondsSinceEpoch}',
+    );
+    final count = await WindowsBackupIntegrity.stageRestore(
+      Directory(backup),
+      target,
+    );
+    if (mounted && db.activeProfileId == origin)
+      setState(
+        () => notice =
+            'Restore rehearsal verified: $count files at ${target.path}. Current school storage remains active. Cloud disaster restore has not been verified.',
+      );
   }
 
   String stamp(dynamic value) => value is num && value > 0
@@ -229,15 +379,102 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     engine.lastVerifiedCheckpoint?.toLocal().toString() ??
                         'Not yet verified',
                   ),
-                  metric('Internet connectivity', 'Not independently verified'),
+                  metric(
+                    'Internet connectivity',
+                    cloudEvidence == null ? 'Not independently verified' : 'Authenticated school API network path verified in this session',
+                  ),
                   metric('Local database health', localHealth),
                   metric('School cloud health', cloudHealth),
-                  if(cloudEvidence!=null)...[
-                    metric('Drive school root',cloudEvidence!['driveRootVerified']==true?'Verified by current owner response':'Not independently verified'),
-                    metric('Google Sheets access',cloudEvidence!['sheetsAccessVerified']==true?'Existing tab read verified':'Not independently verified'),
-                    metric('Cloud record backup',cloudEvidence!['recordBackupVersion']==4&&cloudEvidence!['lastVerifiedRecordBackupAt'] is num&&(cloudEvidence!['lastVerifiedRecordBackupAt'] as num)>0
-                      ?'Verified at ${DateTime.fromMillisecondsSinceEpoch((cloudEvidence!['lastVerifiedRecordBackupAt'] as num).toInt()).toLocal()} — records and tombstones only'
-                      :'No verified current-generation record backup'),
+                  metric(
+                    'Current sync activity',
+                    engine.isSyncing
+                        ? 'Syncing'
+                        : busy
+                        ? 'Checking'
+                        : 'Idle',
+                  ),
+                  metric(
+                    'Pending downloads',
+                    'Requires a verified reconciliation',
+                  ),
+                  metric(
+                    'Conflict count',
+                    details['items'] is! List
+                        ? 'Not measured'
+                        : '${items.where((item) => item['syncState'] == 'conflict').length}',
+                  ),
+                  metric(
+                    'Failed / needs review',
+                    details['items'] is! List
+                        ? 'Not measured'
+                        : '${items.where((item) => {'failed', 'needsAttention'}.contains(item['syncState'])).length}',
+                  ),
+                  metric(
+                    'Documents pending',
+                    details['items'] is! List
+                        ? 'Not measured'
+                        : '${items.where((item) => item['_queueCollection'] == '_windows_document_outbox' || item['collection'] == 'documents').length}',
+                  ),
+                  metric(
+                    'Local application storage',
+                    localBytes == null
+                        ? 'Not measured'
+                        : '${localBytesPartial ? 'At least ' : ''}${bytesLabel(localBytes!)} — all local profiles and backups',
+                  ),
+                  metric(
+                    'School Drive storage',
+                    storageEvidence == null
+                        ? 'Not measured'
+                        : '${storageEvidence!['partial'] == true ? 'At least ' : ''}${bytesLabel(storageEvidence!['driveBytes'] as int)} — measured ${stamp(storageEvidence!['measuredAt'])}',
+                  ),
+                  metric('Last local backup', stamp(lastBackupAt)),
+                  metric(
+                    'Next hourly reconciliation',
+                    !engine.automaticSyncEnabled
+                        ? 'Automatic sync paused'
+                        : engine.lastVerifiedCheckpoint == null
+                        ? 'Due at next permitted sync'
+                        : engine.lastVerifiedCheckpoint!
+                              .add(const Duration(hours: 1))
+                              .toLocal()
+                              .toString(),
+                  ),
+                  if (cloudEvidence != null) ...[
+                    metric(
+                      'Firebase school authorization',
+                      'Authenticated school request accepted',
+                    ),
+                    metric(
+                      'Render API availability',
+                      'Authenticated response verified in this session',
+                    ),
+                    metric(
+                      'School Apps Script',
+                      'Signed storage response verified in this session',
+                    ),
+                    metric(
+                      'Drive school root',
+                      cloudEvidence!['driveRootVerified'] == true
+                          ? 'Verified by current owner response'
+                          : 'Not independently verified',
+                    ),
+                    metric(
+                      'Google Sheets access',
+                      cloudEvidence!['sheetsAccessVerified'] == true
+                          ? 'Existing tab read verified'
+                          : 'Not independently verified',
+                    ),
+                    metric(
+                      'Cloud record backup',
+                      cloudEvidence!['recordBackupVersion'] == 4 &&
+                              cloudEvidence!['lastVerifiedRecordBackupAt']
+                                  is num &&
+                              (cloudEvidence!['lastVerifiedRecordBackupAt']
+                                      as num) >
+                                  0
+                          ? 'Verified at ${DateTime.fromMillisecondsSinceEpoch((cloudEvidence!['lastVerifiedRecordBackupAt'] as num).toInt()).toLocal()} — records and tombstones only'
+                          : 'No verified current-generation record backup',
+                    ),
                   ],
                   metric(
                     'Next recovery retry',
@@ -273,6 +510,18 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     child: const Text('Check Cloud Health'),
                   ),
                   OutlinedButton(
+                    onPressed: active ? null : () => _run(_storageDetails),
+                    child: const Text('Local Storage Details'),
+                  ),
+                  OutlinedButton(
+                    onPressed: active ? null : () => _run(_cloudStorageDetails),
+                    child: const Text('School Drive Usage'),
+                  ),
+                  OutlinedButton(
+                    onPressed: active ? null : () => _run(_exportDiagnostics),
+                    child: const Text('Export Sanitized Report'),
+                  ),
+                  OutlinedButton(
                     onPressed: active ? null : () => _run(_backup),
                     child: const Text('Backup Now'),
                   ),
@@ -280,12 +529,33 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     onPressed: active ? null : () => _run(_restoreRehearsal),
                     child: const Text('Verify Backup Restore'),
                   ),
-                  if(db.activeProfileIdentity['schoolSyncId']=='vs-db8afb01a3be46a983c8284714d06e5d')
-                    OutlinedButton(onPressed:active?null:()=>_run(_cloudRecordBackup),child:const Text('TEST Cloud Record Backup')),
-                  if(db.activeProfileIdentity['schoolSyncId']=='vs-db8afb01a3be46a983c8284714d06e5d')
-                    OutlinedButton(onPressed:active?null:()=>Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>const WindowsDisasterRehearsal())),child:const Text('TEST Disaster Recovery')),
+                  if (db.activeProfileIdentity['schoolSyncId'] ==
+                      'vs-db8afb01a3be46a983c8284714d06e5d')
+                    OutlinedButton(
+                      onPressed: active ? null : () => _run(_cloudRecordBackup),
+                      child: const Text('TEST Cloud Record Backup'),
+                    ),
+                  if (db.activeProfileIdentity['schoolSyncId'] ==
+                      'vs-db8afb01a3be46a983c8284714d06e5d')
+                    OutlinedButton(
+                      onPressed: active
+                          ? null
+                          : () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) =>
+                                    const WindowsDisasterRehearsal(),
+                              ),
+                            ),
+                      child: const Text('TEST Disaster Recovery'),
+                    ),
                   OutlinedButton(
-                    onPressed: active ? null : () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsRecycleBin())),
+                    onPressed: active
+                        ? null
+                        : () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const WindowsRecycleBin(),
+                            ),
+                          ),
                     child: const Text('Recycle Bin'),
                   ),
                   OutlinedButton(
@@ -333,6 +603,21 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   ),
                 ),
               const Divider(height: 32),
+              if (categoryCounts != null) ...[
+                const Text(
+                  'Local records by category — current school',
+                  style: TextStyle(fontSize: 20),
+                ),
+                for (final entry in categoryCounts!.entries)
+                  ListTile(
+                    title: Text(entry.key.replaceAll('_', ' ')),
+                    trailing: Text('${entry.value}'),
+                  ),
+                const Text(
+                  'These counts describe local active records. Cloud completeness requires verified reconciliation.',
+                ),
+                const Divider(height: 32),
+              ],
               const Text(
                 'Pending Queue & Conflict Review',
                 style: TextStyle(fontSize: 20),

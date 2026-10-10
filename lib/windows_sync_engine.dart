@@ -123,10 +123,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
     final receipts = await db.collection('_windows_sync_receipts').get();
+    final backup = await db.collection('_windows_sync_status').doc('backup').get();
     if (db.activeProfileId != origin) return;
     final items = [...general.docs, ...documents.docs];
     details.value = {
       'pending': items.length,
+      'conflictCount': items.where((d)=>d.data()['syncState']=='conflict').length,
+      'documentPending': documents.docs.length + general.docs.where((d)=>d.data()['collection']=='documents').length,
+      'lastLocalBackupMillis': backup.data()?['createdAt'] is int ? backup.data()!['createdAt'] : 0,
       'verifiedReceiptCount': receipts.docs.length,
       'lastCloudAckMillis': receipts.docs.fold<int>(0, (latest, row) {
         final stamp = row.data()['acknowledgedAt'];
@@ -154,6 +158,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (FirebaseFirestore.instance.activeProfileId!=origin || central['managed']!=true || central['schoolId']!=_activeSchoolSyncId) return;
       await ManagedSchoolSession.callForSchool(_activeSchoolSyncId,'managed/sync/status',{'report':{
         'pending':observed['pending'],'needsAttention':observed['needsAttention'],
+        'appVersion':WindowsPlatformClient.version,'conflictCount':observed['conflictCount'],'documentPending':observed['documentPending'],
+        'lastReconciliationMillis':lastVerifiedCheckpoint?.millisecondsSinceEpoch??0,
+        'lastLocalBackupMillis':observed['lastLocalBackupMillis'],
         'verifiedReceiptCount':observed['verifiedReceiptCount'],'lastCloudAckMillis':observed['lastCloudAckMillis'],
       }}).timeout(const Duration(seconds:25));
     } catch (_) {/* Aggregate monitoring cannot clear queues or change sync success. */}
@@ -175,6 +182,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       final candidate = RegExp(r'\[([A-Z_]+)\]').firstMatch(text)?.group(1);
       final code = {'RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED','TEST_ENVIRONMENT_MISMATCH',
         'SCRIPT_HTTP_ERROR','SCRIPT_INVALID_RESPONSE','SCRIPT_IDENTITY_MISMATCH','SCRIPT_OPERATION_FAILED',
+        'SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED',
         'SCRIPT_MIGRATION_PENDING','SCRIPT_MIGRATION_CONFLICT','SCRIPT_MISSING_MIGRATED_TAB',
         'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_PERMISSION_DENIED',
         'SCRIPT_QUOTA_EXCEEDED','SCRIPT_TIMEOUT','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR'}.contains(candidate) ? candidate : null;
