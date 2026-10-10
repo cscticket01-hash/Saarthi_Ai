@@ -2,6 +2,36 @@
 
 Branch: `feature/smart-sync-3`; draft PR #23. Main starts at `de547d2c0a025db815ce97479e3f4f3fc4f8f1a8`. Production publication is not authorized.
 
+
+## Latest verified checkpoint (2026-10-10 UTC, end of continuation)
+
+Application/UI source: `4547c483ee82ba9001423451bb22e71e77025f6f`. Engine/backend TEST runtime: `33767380ad3e5635824cc94808aabdea5184a27d`; later changes are UI/tests/docs only. Final evidence update is documentation only. PR #23 remains OPEN/DRAFT, unmerged.
+
+- [Platform 38073120446](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38073120446): **all five platform jobs PASS** on exact application source. Backend 268, OAuth 14, Firestore rules 25, Windows SQLite 25, production SQLite recovery/screen/queue/startup 98 and broader Windows regressions 178 PASS, 0 final failures. Overlapping groups are not summed. EXE compile/fresh-start/duplicate-launch/restart, Android review APK and Web build PASS.
+- [Real TEST cloud 38070710562](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38070710562): **all five stages PASS**, attempt 2, exact engine/runtime source above. Includes 32 preflight checks, actual Windows engines, Chromium, native Android API 35 and independent Android-to-Windows readback. This is hosted/emulator evidence.
+- [Disaster 38070710623](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38070710623): **8 checks PASS**, attempt 2; **348 records / 19 binaries** from the immutable TEST generation verified in separate storage. No active cutover, local pending queues or Firebase credential recovery. Current Windows client monitor report remains Unknown.
+
+New code in this continuation: resumable hash-verified backup staging; durable record-only download/readback observations; current-school UI filtering; read-only retained offline snapshot inventory. Full activation/restore and binary inventory are still incomplete. The complete history, initial failed prerequisites, measurements and exact next implementation steps are retained below. No production deployment, main merge/release, public-link change, billing change or original-school mutation occurred. Existing TEST Render deployment only: `dep-db576inlot8c73dv4rhg` at the engine/runtime commit above.
+
+| Requirement | Code / acceptance classification | Verified evidence | Remaining work |
+| --- | --- | --- | --- |
+| Control Center | Partial | School-filtered record observations, queue/storage controls and UI regressions | Binary inventory and active restore controls |
+| Intelligent Recovery | Partial | Actual retry/ACK/readback, IDs and edits retained | Original-school Script exception diagnostics |
+| Hourly Sync | Blocked acceptance; code implemented | Controlled scheduler tests | Full elapsed hour, minimized/background, sleep/wake/Wi-Fi on isolated hardware |
+| Local-first Sync | Partial overall acceptance; engine implemented | Actual SQLite save, OS crash/restart, verified real TEST ACK | Physical Windows/Android network acceptance |
+| Bidirectional Recovery | Partial | Native-to-Windows integrity, missing-cache protection and newer-edit preservation | Clean-install activation and complete file inventory |
+| 24-hour Recycle Bin | Partial | Cloud protocol regressions, retained offline inventory/identity tests | Offline restore activation/order; actual elapsed expiry |
+| Android Independence | Blocked physical acceptance; code implemented | Native API 35 cloud read/write with Windows absent | Physical Android device/network checks |
+| Offline Attendance | Blocked physical acceptance; code implemented | Native SQLite/secure storage, injected-offline real-cloud readback | Genuine physical app restart/airplane mode |
+| High-volume Attendance | Blocked provider acceptance | Fsync component stress with mocked delivery; quota/cost plan | Explicitly approved measured provider load |
+| Photo Optimization | Blocked representative quality acceptance | Synthetic original bytes retained, idempotent cloud readback | Real student/teacher/logo/signature/seal inspection |
+| Document Processing | Blocked representative quality acceptance | Original-preserving queue/storage regressions | Representative multi-page fine-print/handwriting/PDF inspection |
+| Disaster Recovery | Partial | Resumable local staging; 348/19 separate cloud readback | School-bound clean-install activation and never-uploaded queue recovery |
+| School Isolation | Complete in tested software/cloud scope | Exact security suites, foreign snapshot/UI exclusion and real-cloud foreign rejection | Retain these safeguards in subsequent restore work |
+| Central Monitoring | Partial | Own-school server durable ACK/storage evidence, unknown client preserved | Actual latest Windows/Android fleet reports and recovery failure observations |
+
+Conservative fourteen-requirement classification: **1 complete, 7 partial, 6 blocked at acceptance**. This is not 100% completion. **Release remains BLOCKED**; final owner approval is still required before any future production release.
+
 ## Current implementation (2026-10-10)
 
 The existing local-first engine remains authoritative: durable SQLite writes enqueue original operation IDs, versioned cloud ACKs remove only the acknowledged queue version, and later edits survive failed requests and stale pulls. Changes add bounded recovery, hourly/wake scheduling, protected cache recovery, recycle inventory/restore, TEST recovery rehearsal, media-original retention and measured monitoring.
@@ -131,3 +161,16 @@ Application/UI commit `a7396ace8eb457917ebc5015f7b4910940eb127f`: [exact-commit 
 ### Retained offline snapshot inventory
 
 Recycle Bin now reads retained `_windows_local_deletions` before the cloud inventory, with bounded local reads and school/category validation. Local snapshot names, device deletion time and stored deletion-receipt linkage remain visible when the cloud is unavailable. Foreign snapshots are not rendered; changing category clears the old inventory. This is a read-only recovery inventory, **not offline restore activation** and not proof of a current server expiry window. Financial evidence, file bytes and original pending delete identities remain untouched. A widget regression uses stored snapshots and verifies unavailable-cloud visibility, foreign-row exclusion and unchanged pending deletion/hidden record. Exact-commit hosted verification is required for this UI extension.
+
+
+## Fresh real-cloud and disaster outcome (2026-10-10 UTC)
+
+Engine/backend runtime: `33767380ad3e5635824cc94808aabdea5184a27d`. Later source changes (`a7396ac`, `4547c48`) are Control Center/Recycle Bin UI and tests only; the sync engine/backend are unchanged.
+
+[Real TEST chain 38070710562](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38070710562), rerun attempt 2: **ALL FIVE STAGES PASS**. Preflight has 32 checks PASS. Hosted Windows real engine: SQLite local save 13 ms, queue-to-verified cloud ACK 8,254 ms; controlled client-boundary 502 retains its original ID, followed by jittered retry and actual cloud readback; original synthetic portrait retained after reopen and retry idempotent. Chromium login/notice/CAS/offline-draft/readback PASS. Native Android API 35 production dashboard/SQLite/secure storage: injected-offline save 46 ms, queue-to-verified cloud read 60,618 ms, Windows/website notices visible with Windows absent. Hosted Windows independently reads the actual Android capture in 15,596 ms; original capture time/record integrity and foreign-school rejection PASS; one deliberate newer local edit remains durably pending. This is hosted Windows plus an Android emulator and injected network boundary, not physical-device/airplane-mode acceptance.
+
+[Disaster 38070710623](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38070710623), rerun attempt 2: **8 checks PASS**, same original recovery operation resumed. **348 records / 19 binaries** from the immutable TEST recovery generation are verified in separate private Sheets/Drive storage. Active record/revision/operation/capture time/file link and original bytes remain unchanged; foreign-school recovery rejected. Monitor server durable-ACK evidence verified, residual failure absent; **Windows client report not observed and remains Unknown**. Active cutover, local pending queues and Firebase credentials are explicitly not included.
+
+Retain the initial failed attempts as evidence: preflight stopped at the runtime fence before pairing (zero checks), disaster stopped at failed cloud evidence before recovery writes (zero recovery checks). TEST-only deployment and prerequisite rerun resolved that setup sequencing failure. No assertion, provenance fence or security test was removed or bypassed.
+
+Production remains BLOCKED. Remaining code: school-bound clean-install activation, offline snapshot restore ordering/activation, and authoritative binary download inventory. Remaining acceptance: physical full-hour/background/sleep/wake/reconnect/restart/airplane mode, actual elapsed 24-hour expiry, representative photo/document legibility, separately approved provider load, and observation of current client/fleet reports. Original-school Apps Script source exception is still unconfirmed; original fee/document intents remain untouched by this session.
