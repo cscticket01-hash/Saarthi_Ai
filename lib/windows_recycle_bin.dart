@@ -8,10 +8,11 @@ import 'windows_sync_engine.dart';
 
 typedef RecycleCall = Future<Map<String, dynamic>> Function(String school, Map<String, dynamic> body);
 
-/// Administrator-only server inventory; never guesses deletion ACK or restores local snapshots.
+/// Server restore controls and read-only school-scoped retained local evidence.
 class WindowsRecycleBin extends StatefulWidget {
-  const WindowsRecycleBin({super.key, this.call});
+  const WindowsRecycleBin({super.key, this.call, this.readLocal});
   final RecycleCall? call;
+  final Future<List<Map<String,dynamic>>> Function()? readLocal;
   @override
   State<WindowsRecycleBin> createState() => _WindowsRecycleBinState();
 }
@@ -27,6 +28,8 @@ class _WindowsRecycleBinState extends State<WindowsRecycleBin> {
   int serverNow = 0;
   String? nextAfter;
   List<Map<String, dynamic>> entries = [];
+  List<Map<String, dynamic>> localEntries = [];
+  bool localVerified = false;
   static const categories = ['students_directory','teachers_directory','documents','fee_payments','fee_ledger','teacher_salary','school_expenses','attendance_records','school_notices','school_calendar','exam_results'];
   @override
   void initState() {
@@ -48,7 +51,23 @@ class _WindowsRecycleBinState extends State<WindowsRecycleBin> {
   }
   Future<void> _load({bool more = false}) async {
     if(busy)return;
-    setState(() {busy=true; verified=false; message='';});
+    setState(() {busy=true; verified=false; localVerified=false;localEntries=[];message='';});
+    // Local evidence remains available even when the cloud inventory is offline.
+    try {
+      checkOrigin();
+      final snapshots = await (widget.readLocal != null ? widget.readLocal!() :
+          db.collection('_windows_local_deletions').get().then((result)=>result.docs.map((row)=>row.data()).toList()))
+          .timeout(const Duration(seconds:30));
+      checkOrigin();
+      final rows = snapshots.where((row)=>
+          row['schoolId']==school && row['collection']==collection).toList();
+      if(rows.any((row)=>row['version']!=1 || row['operationId'] is! String ||
+          row['documentId'] is! String || row['snapshot'] is! Map || row['deletedAt'] is! int))
+        throw StateError('Local deletion evidence requires review');
+      if(mounted)setState(() {localEntries=rows;localVerified=true;});
+    } catch (_) {
+      if(mounted)setState(() {localEntries=[];localVerified=false;});
+    }
     try {
       final result = await call({'operation':'list','collection':collection,'after':more ? nextAfter ?? '' : ''});
       if(result['recycleVersion'] != 1 || result['serverNow'] is! int || result['entries'] is! List || result['partial'] is! bool)
@@ -104,6 +123,13 @@ class _WindowsRecycleBinState extends State<WindowsRecycleBin> {
       DropdownButton<String>(value:collection,items:[for(final c in categories)DropdownMenuItem(value:c,child:Text(c))],onChanged:busy?null:(value){if(value!=null){setState(() {collection=value;entries=[];});unawaited(_load());}}),
       Wrap(spacing:12,children:[OutlinedButton(onPressed:busy?null:()=>_load(),child:const Text('Refresh verified inventory')),if(partial)OutlinedButton(onPressed:busy?null:()=>_load(more:true),child:const Text('Load more'))]),
       if(busy)const LinearProgressIndicator(),if(message.isNotEmpty)SelectableText(message),
+      const Text('Retained offline deletion snapshots',style:TextStyle(fontSize:20)),
+      Text(localVerified && db.activeProfileId==origin ? '${localEntries.length} retained snapshots in this school/category.' : 'Local snapshot inventory unverified.'),
+      const Text('These are retained local evidence, not a verified restore or proof of a current server restore window. Offline snapshot activation is not yet implemented. Original deletion intents, financial evidence and file bytes are retained.'),
+      if(db.activeProfileId==origin)for(final row in localEntries)Card(child:ListTile(
+        title:Text('Local snapshot: ${(row['snapshot'] as Map)['name'] ?? row['documentId']}'),
+        subtitle:Text('Device deletion time: ${stamp(row['deletedAt'])}\nOriginal deletion identity retained • ${row['cloudDeletionVerified']==true && row['deletedRevision'] is String ? 'Stored verified deletion receipt linked' : 'Cloud deletion ACK not verified'}'))),
+      const Divider(),
       Text(verified ? 'Cloud deletion inventory verified; ${entries.length} entries loaded${partial ? ' (more available)' : ''}.' : 'Cloud deletion inventory unverified.'),
       if(verified && entries.isEmpty)const Text('No recycle entries in the selected category. This does not verify other categories.'),
       for(final row in entries)Card(child:ListTile(
