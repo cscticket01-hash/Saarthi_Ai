@@ -32,7 +32,7 @@ jobs:
           # Recovered monitoring requires fresh cloud proof for changed runtime.
           # Runtime provenance is verified against this successful cloud run;
           # changed backend/engine code cannot reuse its evidence.
-          VS_TEST_CLOUD_EVIDENCE_RUN_ID: '38020985995'
+          VS_TEST_CLOUD_EVIDENCE_RUN_ID: '38025377350'
           VS_TEST_DISASTER_FIXTURE_RUN_ID: '38020985989'
           VS_TEST_DISASTER_FIXTURE_ATTEMPT: '2'
         run: |
