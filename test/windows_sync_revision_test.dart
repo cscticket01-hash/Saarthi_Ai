@@ -179,7 +179,8 @@ void main(){
      await tester.pumpAndSettle();
      await tester.drag(find.byType(ListView),const Offset(0,1000));
      await tester.pumpAndSettle();
-     expect(find.textContaining('Authenticated backend and school storage verified at'),own?findsOneWidget:findsNothing);
+     expect(find.textContaining('Authenticated school storage handshake verified at'),own?findsOneWidget:findsNothing);
+     expect(find.text('Not independently verified'),own?findsNWidgets(2):findsNothing);
      if(!own)expect(find.textContaining('cloud readiness unverified'),findsOneWidget);
      await tester.pumpWidget(const SizedBox());
    }
