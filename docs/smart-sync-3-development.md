@@ -51,6 +51,8 @@ Exact reviewed source: `f6fe4a1ebe79104fc0e462eb7a83a66fb2d9744d`; [Platform rev
 
 The initial attempt stopped in the safe OAuth probe after its 90-second health check and emitted only the generic failure message. The rerun passed the same probe. The underlying cause of the first timeout remains unconfirmed; no credential, OAuth configuration, or staging deployment was changed. Review artifacts were created for `windows-review-build`, `android-review-apk`, and the web preview. These are unpublished CI review artifacts, not release downloads.
 
+Read-only Render inspection found no staging application/request/error logs or service events in the initial OAuth probe window. This leaves the probe timeout's cause unconfirmed. The original school incident is an Apps Script `HTTP 502 / SCRIPT_OPERATION_FAILED`; Apps Script execution logs for that school were not available through the connected tools, so its exact exception remains unverified. Its three pending fee/document operations remain untouched.
+
 This run does not close the remaining production limits below: integrated local snapshot restore, pending-download inventory, clean-install disaster cutover, physical device/sleep/wake/media checks, real provider concurrency, and the original school's HTTP 502 cause remain unresolved or unverified. The prior TEST cloud and disaster-recovery evidence remains tied to its stated runtime and runs; it is not reclassified as part of run 38033317079.
 
 ## Fourteen requirements
