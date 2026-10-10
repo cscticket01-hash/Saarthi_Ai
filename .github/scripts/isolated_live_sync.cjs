@@ -3,7 +3,8 @@
 const {createHash}=require('node:crypto');
 const {isolatedRunPrefix}=require('./isolated_fixture_identity.cjs');
 module.exports=async function({post,check,endpoint,schoolId,token,report}){
- const admin=body=>post(endpoint,{...body,schoolId},token);
+ const safeRead=require('./safe_test_read_retry.cjs');
+ const admin=body=>safeRead(post,endpoint,{...body,schoolId},token,report);
  const mobile=request=>post(endpoint,{action:'managed/mobile',schoolId,request});
  const prefix=isolatedRunPrefix();
  async function write(collection,id,data){
