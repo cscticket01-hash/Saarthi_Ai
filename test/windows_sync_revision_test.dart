@@ -231,6 +231,22 @@ void main(){
    });
    await tester.pumpWidget(const SizedBox());
  });
+ testWidgets('download observations from a previously active school are not rendered', (tester) async {
+   final engine=WindowsSyncEngine.instance,previous=WindowsSyncEngine.instance.details.value;
+   engine.details.value={'downloads':[
+     {'schoolId':school,'collection':'own-observation','state':'verified','remaining':0,'verified':1,'blocked':0},
+     {'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','collection':'foreign-observation','state':'verified','remaining':0,'verified':999,'blocked':0},
+   ]};
+   try {
+     await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(refreshOnOpen:()async{})));
+     await tester.pumpAndSettle();
+     await tester.scrollUntilVisible(find.text('own-observation • verified'),300,scrollable:find.byType(Scrollable).first);
+     expect(find.text('own-observation • verified'),findsOneWidget);
+     expect(find.textContaining('foreign-observation'),findsNothing);
+   } finally {
+     await tester.pumpWidget(const SizedBox());engine.details.value=previous;
+   }
+ });
  testWidgets('cloud health requires authenticated own-school readiness and rejects a foreign result', (tester) async {
    for(final own in [true,false]) {
      await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(

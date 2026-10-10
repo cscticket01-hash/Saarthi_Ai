@@ -622,7 +622,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               ],
               const Text('Observed downloads — current school',style:TextStyle(fontSize:20)),
               const Text('Local readback verifies stored record content, not a server upload ACK. File bytes and cloud-wide completeness remain Unknown. In-progress observations retained after a stopped sync require retry.'),
-              for (final raw in details['downloads'] as List? ?? <dynamic>[])
+              for (final raw in (details['downloads'] as List? ?? <dynamic>[]).where((row) =>
+                  row is Map && row['schoolId'] == db.activeProfileIdentity['schoolSyncId']))
                 Builder(builder:(context) {
                   final row=Map<String,dynamic>.from(raw as Map);
                   return ListTile(title:Text('${row['collection']} • ${row['state'] == 'downloading' && !engine.isSyncing ? 'Interrupted / retry required' : row['state']}'),
