@@ -24,6 +24,8 @@ class WindowsBackupIntegrity {
   }
 
   static Future<int> verify(Directory root) async {
+    if (await FileSystemEntity.type(root.path, followLinks: false) != FileSystemEntityType.directory)
+      throw StateError('Backup folder requires review');
     final manifest = File('${root.path}${Platform.pathSeparator}$manifestName');
     if (await manifest.length() > 10 * 1024 * 1024) throw StateError('Backup manifest exceeds review limit');
     final data = jsonDecode(await manifest.readAsString());
@@ -48,6 +50,52 @@ class WindowsBackupIntegrity {
           (await sha256.bind(file.openRead()).first).toString() != item['sha256'])
         throw StateError('Backup content verification failed');
     }
+    // Extra databases/files must not be silently admitted into a restore.
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is Link) throw StateError('Backup link requires review');
+      if (entity is File) {
+        final relative = entity.path.substring(root.path.length + 1).replaceAll(r'\', '/');
+        if (relative != manifestName && !seen.contains(relative))
+          throw StateError('Unlisted backup content requires review');
+      }
+    }
     return seen.length;
+  }
+
+  /// Readback rehearsal only: never activates a database or changes current data.
+  /// A fresh destination prevents accidental overwrites, including earlier attempts.
+  static Future<int> stageRestore(Directory backup, Directory destination) async {
+    await verify(backup);
+    final sourcePath = await backup.resolveSymbolicLinks();
+    final targetPath = destination.absolute.path;
+    final normalizedSource = sourcePath.replaceAll(r'\', '/').toLowerCase();
+    final normalizedTarget = targetPath.replaceAll(r'\', '/').toLowerCase();
+    if (normalizedTarget == normalizedSource || normalizedTarget.startsWith('$normalizedSource/') ||
+        normalizedSource.startsWith('$normalizedTarget/'))
+      throw StateError('Choose a separate restore rehearsal folder');
+    if (await FileSystemEntity.type(destination.path, followLinks: false) != FileSystemEntityType.notFound)
+      throw StateError('Restore destination already exists; retained without changes');
+    // Resolve the existing parent, preventing a symlink from redirecting the copy.
+    final parent = destination.parent;
+    if (!await parent.exists() ||
+        (await parent.resolveSymbolicLinks()).replaceAll(r'\', '/').toLowerCase() !=
+            parent.absolute.path.replaceAll(r'\', '/').toLowerCase())
+      throw StateError('Restore parent requires review');
+    await destination.create();
+    await for (final entity in backup.list(recursive: true, followLinks: false)) {
+      if (entity is Link) throw StateError('Backup changed during restore rehearsal');
+      final relative = entity.path.substring(backup.path.length + 1);
+      final target = '${destination.path}${Platform.pathSeparator}$relative';
+      if (entity is Directory) await Directory(target).create(recursive: true);
+      if (entity is File) {
+        await File(target).parent.create(recursive: true);
+        await entity.copy(target);
+      }
+    }
+    // Recheck both generations to detect changes during copy. Failed staging is
+    // retained for review and never becomes active school storage.
+    final count = await verify(destination);
+    await verify(backup);
+    return count;
   }
 }

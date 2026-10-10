@@ -31,6 +31,26 @@ import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/platform/platform_config.dart';
 void main(){
+ test('restore rehearsal preserves queue IDs and document bytes without activating or overwriting storage', () async {
+   final root = await Directory.systemTemp.createTemp('vs-restore-rehearsal-');
+   try {
+     final backup = await Directory('${root.path}/backup').create();
+     final pending = jsonEncode({'pending':[{'operationId':'original-operation','amount':100,'state':'pending'}]});
+     await File('${backup.path}/local_database_v1.json').writeAsString(pending,flush:true);
+     await Directory('${backup.path}/LocalFiles').create();
+     await File('${backup.path}/LocalFiles/original.pdf').writeAsBytes([4,5,6],flush:true);
+     await WindowsBackupIntegrity.seal(backup);
+     final destination = Directory('${root.path}/rehearsal');
+     expect(await WindowsBackupIntegrity.stageRestore(backup,destination),2);
+     expect(await File('${destination.path}/local_database_v1.json').readAsString(),pending);
+     expect(await File('${destination.path}/LocalFiles/original.pdf').readAsBytes(),[4,5,6]);
+     await expectLater(WindowsBackupIntegrity.stageRestore(backup,destination),throwsStateError);
+     await expectLater(WindowsBackupIntegrity.stageRestore(backup,Directory('${backup.path}/nested')),throwsStateError);
+     expect(await File('${backup.path}/local_database_v1.json').readAsString(),pending);
+     await File('${backup.path}/unlisted.sqlite').writeAsBytes([1]);
+     await expectLater(WindowsBackupIntegrity.verify(backup),throwsStateError);
+   } finally {await root.delete(recursive:true);}
+ });
  test('backup generation verifies originals and rejects corruption or missing files', () async {
    final dir = await Directory.systemTemp.createTemp('vs-backup-integrity-');
    try {

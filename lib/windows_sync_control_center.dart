@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 
 import 'windows_sync_engine.dart';
 import 'windows_sync_recovery.dart';
@@ -10,6 +12,7 @@ import 'windows_connect/managed_school_session.dart';
 import 'windows_sync_conflict_review.dart';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'windows_local_storage.dart';
+import 'windows_backup_integrity.dart';
 
 /// Evidence-driven own-school controls. No guessed health, ACKs or conflict repair.
 class WindowsSyncControlCenter extends StatefulWidget {
@@ -118,6 +121,24 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         () => notice =
             'Local backup created and file hashes verified: $path. Cloud backup and restore have not been verified.',
       );
+  }
+
+  Future<void> _restoreRehearsal() async {
+    final backup = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select a verified local backup generation');
+    if (backup == null || !mounted) return;
+    final parent = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select a separate folder for restore rehearsal');
+    if (parent == null || !mounted || db.activeProfileId != origin) return;
+    final approved = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+      title: const Text('Verify backup restore?'),
+      content: const Text('Copy the backup into a new rehearsal folder and verify every file hash. Pending operations and original files remain unchanged. This does not activate restored data, send cloud records, or replace the current school database.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(context,false), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(context,true), child: const Text('Verify restore copy'))],
+    ));
+    if (approved != true || db.activeProfileId != origin) return;
+    final target = Directory('$parent${Platform.pathSeparator}restore_rehearsal_${DateTime.now().microsecondsSinceEpoch}');
+    final count = await WindowsBackupIntegrity.stageRestore(Directory(backup), target);
+    if (mounted && db.activeProfileId == origin) setState(() => notice =
+      'Restore rehearsal verified: $count files at ${target.path}. Current school storage remains active. Cloud disaster restore has not been verified.');
   }
 
   String stamp(dynamic value) => value is num && value > 0
@@ -235,6 +256,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   OutlinedButton(
                     onPressed: active ? null : () => _run(_backup),
                     child: const Text('Backup Now'),
+                  ),
+                  OutlinedButton(
+                    onPressed: active ? null : () => _run(_restoreRehearsal),
+                    child: const Text('Verify Backup Restore'),
                   ),
                   OutlinedButton(
                     onPressed: active ? null : () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsRecycleBin())),
