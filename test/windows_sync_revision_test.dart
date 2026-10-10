@@ -33,6 +33,46 @@ import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/platform/platform_config.dart';
 void main(){
+ test('interrupted restore resumes verified files and repairs incomplete staging bytes', () async {
+   final root = await Directory.systemTemp.createTemp('vs-resume-');
+   try {
+     final backup = await Directory('${root.path}/backup').create();
+     await File('${backup.path}/a.json').writeAsString('{"operationId":"original","pending":true}',flush:true);
+     await File('${backup.path}/b.pdf').writeAsBytes([4,5,6],flush:true);
+     await WindowsBackupIntegrity.seal(backup);
+     final target = Directory('${root.path}/restore');
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,target,onFileVerified:(count)async {
+       if(count==1) throw StateError('interrupted TEST copy');
+     }),throwsStateError);
+     expect(await File('${target.path}/a.json').exists(),true);
+     await File('${target.path}/a.json').writeAsString('partial',flush:true);
+     expect(await WindowsBackupIntegrity.resumeRestore(backup,target),2);
+     expect(await File('${target.path}/a.json').readAsString(),await File('${backup.path}/a.json').readAsString());
+     expect(await WindowsBackupIntegrity.verify(target),2);
+     expect(await WindowsBackupIntegrity.resumeRestore(backup,target),2);
+     await File('${backup.path}/b.pdf').writeAsBytes([7,8,9],flush:true);
+     await WindowsBackupIntegrity.seal(backup);
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,target),throwsStateError);
+     expect(await File('${target.path}/b.pdf').readAsBytes(),[4,5,6]);
+   } finally {await root.delete(recursive:true);}
+ });
+ test('resumable restore rejects unowned destinations, extra files and containment', () async {
+   final root = await Directory.systemTemp.createTemp('vs-resume-protection-');
+   try {
+     final backup = await Directory('${root.path}/backup').create();
+     await File('${backup.path}/original').writeAsBytes([1]);
+     await WindowsBackupIntegrity.seal(backup);
+     final existing = await Directory('${root.path}/existing').create();
+     await File('${existing.path}/pending').writeAsBytes([9]);
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,existing),throwsStateError);
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,Directory('${backup.path}/nested')),throwsStateError);
+     final target = Directory('${root.path}/restore');
+     await WindowsBackupIntegrity.resumeRestore(backup,target);
+     await File('${target.path}/unlisted').writeAsBytes([8]);
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,target),throwsStateError);
+     expect(await File('${existing.path}/pending').readAsBytes(),[9]);
+   } finally {await root.delete(recursive:true);}
+ });
  testWidgets('TEST disaster controls require explicit approval and do not present unverified restore success', (tester) async {
    final db=FirebaseFirestore.instance;
    await tester.runAsync(()=>db.switchProfile('disaster-widget-test',identity:{'schoolSyncId':'vs-db8afb01a3be46a983c8284714d06e5d'}));

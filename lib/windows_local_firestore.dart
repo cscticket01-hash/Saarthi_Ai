@@ -189,6 +189,16 @@ class FirebaseFirestore {
     ]));
   }
 
+  /// Readback evidence only. A retained newer edit must never count as a download.
+  Future<bool> syncedDocumentMatches(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? expected) async {
+    ref.requireOriginProfile();
+    final actual = (await ref.get()).data();
+    ref.requireOriginProfile();
+    if (expected == null) return actual == null;
+    if (actual == null) return false;
+    return _database._jsonStableMap(_encodeMap(actual)) == _database._jsonStableMap(_encodeMap(expected));
+  }
+
   /// Explicit operator review only. Creates a new CAS operation; never ACKs
   /// the conflicting operation or deletes its retained copies.
   Future<void> enqueueReviewedConflict({required String queueId,

@@ -124,6 +124,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final documents = await db.collection('_windows_document_outbox').get();
     final receipts = await db.collection('_windows_sync_receipts').get();
     final backup = await db.collection('_windows_sync_status').doc('backup').get();
+    final downloads = await db.collection('_windows_sync_downloads').get();
     if (db.activeProfileId != origin) return;
     final items = [...general.docs, ...documents.docs];
     details.value = {
@@ -146,6 +147,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         for(final d in documents.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_document_outbox'}],
       'metrics': Map<String, int>.from(metrics),
       'performance': performanceSummary,
+      'downloads': [for (final row in downloads.docs)
+        if (row.data()['schoolId'] == db.activeProfileIdentity['schoolSyncId']) row.data()],
     };
     if (_initialized) unawaited(_reportSyncMonitor(origin, Map<String,dynamic>.from(details.value)));
   }
@@ -1207,6 +1210,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (result['syncProtocol'] != 2 || result['collectionRevision'] is! String || result['records'] is! Map) throw StateError('Invalid authoritative recovery response.');
       if (result['unchanged'] == true) continue;
       final records = Map<String, dynamic>.from(result['records'] as Map);
+      // Validate the whole response before recording any inventory or applying it.
+      if (records.values.any((value) => value is! Map || value['schoolId'] != school))
+        throw StateError('Foreign or invalid school inventory rejected.');
+      final downloadable = records.entries.where((entry) => collection != 'school_config' || entry.key != 'google_drive_account').length;
+      final progress = db.collection('_windows_sync_downloads').doc(collection);
+      var remaining = downloadable, verifiedDownloads = 0, blockedDownloads = 0;
+      await progress.set({'schoolId':school,'collection':collection,
+        'collectionRevision':result['collectionRevision'],'observedAt':DateTime.now().millisecondsSinceEpoch,
+        'inventoryScope':'records_only','state':'downloading','remaining':remaining,
+        'verified':0,'blocked':0});
       final pending =
           (await db.collection('_windows_firebase_outbox').get()).docs;
       if (db.activeProfileId != origin)
@@ -1253,6 +1266,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           db.collection(collection).doc(entry.key),
           data['_syncDeleted'] == true ? null : data,
         );
+        if (await db.syncedDocumentMatches(db.collection(collection).doc(entry.key),
+            data['_syncDeleted'] == true ? null : data)) {
+          verifiedDownloads++;
+          remaining--;
+        } else {
+          // A local edit/conflict is retained. It is not a successful download.
+          blockedDownloads++;
+        }
+        await progress.set({'remaining':remaining,'verified':verifiedDownloads,'blocked':blockedDownloads,
+          if (verifiedDownloads > 0) 'lastVerifiedLocalReadbackAt':DateTime.now().millisecondsSinceEpoch},
+          const SetOptions(merge:true));
       }
       // Missing IDs are not deletions: only explicit server tombstones delete.
       if (db.activeProfileId != origin)
@@ -1268,6 +1292,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               .toList(),
         }),
       );
+      await progress.set({'state':remaining == 0 ? 'verified' : 'needsReview',
+        'finishedAt':DateTime.now().millisecondsSinceEpoch},const SetOptions(merge:true));
     }
   }
 

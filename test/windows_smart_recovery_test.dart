@@ -60,6 +60,13 @@ void main() {
       );
   test('actual reconciliation restores accidentally missing cache despite unchanged cloud checkpoint', () async {
     await seed();
+    final inventory=(await db.collection('_windows_sync_downloads').doc('students_directory').get()).data()!;
+    expect(inventory['schoolId'],school);
+    expect(inventory['inventoryScope'],'records_only');
+    expect(inventory['remaining'],0);
+    expect(inventory['verified'],1);
+    expect(inventory['state'],'verified');
+    expect(inventory['lastVerifiedLocalReadbackAt'],isA<int>());
     expect(
       (await db.collection('students_directory').doc('pupil').get())
           .data()?['entryCapturedAt'],
@@ -151,6 +158,7 @@ void main() {
       throwsStateError,
     );
     expect((await db.collection('students_directory').get()).docs, isEmpty);
+    expect((await db.collection('_windows_sync_downloads').get()).docs,isEmpty);
     await expectLater(
       engine.reconcileManagedCacheForTesting(school, (revisions) async {
         await db.switchProfile(
@@ -162,5 +170,19 @@ void main() {
       throwsStateError,
     );
     expect((await db.collection('students_directory').get()).docs, isEmpty);
+  });
+  test('download inventory retains newer local edits without a successful readback claim', () async {
+    await seed();
+    await db.collection('students_directory').doc('pupil').update({'name':'Offline newer'});
+    final original=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+    await engine.reconcileManagedCacheForTesting(school,(revisions)async=>cloud({for(final c in revisions.keys)c:''}));
+    final inventory=(await db.collection('_windows_sync_downloads').doc('students_directory').get()).data()!;
+    expect(inventory['state'],'needsReview');
+    expect(inventory['remaining'],1);
+    expect(inventory['blocked'],1);
+    expect(inventory['verified'],0);
+    expect(inventory.containsKey('lastVerifiedLocalReadbackAt'),false);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'],original['operationId']);
+    expect((await db.collection('students_directory').doc('pupil').get()).data()?['name'],'Offline newer');
   });
 }

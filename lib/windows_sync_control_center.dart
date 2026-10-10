@@ -274,7 +274,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       builder: (context) => AlertDialog(
         title: const Text('Verify backup restore?'),
         content: const Text(
-          'Copy the backup into a new rehearsal folder and verify every file hash. Pending operations and original files remain unchanged. This does not activate restored data, send cloud records, or replace the current school database.',
+          'Copy the backup into restore_rehearsal in the selected folder and verify every file hash. An interrupted copy of this same backup can resume. Pending operations and original files remain unchanged. This does not activate restored data, send cloud records, or replace the current school database.',
         ),
         actions: [
           TextButton(
@@ -290,9 +290,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     );
     if (approved != true || db.activeProfileId != origin) return;
     final target = Directory(
-      '$parent${Platform.pathSeparator}restore_rehearsal_${DateTime.now().microsecondsSinceEpoch}',
+      '$parent${Platform.pathSeparator}restore_rehearsal',
     );
-    final count = await WindowsBackupIntegrity.stageRestore(
+    final count = await WindowsBackupIntegrity.resumeRestore(
       Directory(backup),
       target,
     );
@@ -395,8 +395,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   ),
                   metric(
                     'Pending downloads',
-                    'Requires a verified reconciliation',
+                    'Partial — observed record inventories below; unmeasured categories are Unknown',
                   ),
+                  metric('Document binaries awaiting download', 'Unknown — record metadata does not verify file bytes'),
+                  metric('Photos / media requiring restoration', 'Unknown — binary inventory not measured'),
                   metric(
                     'Conflict count',
                     details['items'] is! List
@@ -618,6 +620,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 ),
                 const Divider(height: 32),
               ],
+              const Text('Observed downloads — current school',style:TextStyle(fontSize:20)),
+              const Text('Local readback verifies stored record content, not a server upload ACK. File bytes and cloud-wide completeness remain Unknown. In-progress observations retained after a stopped sync require retry.'),
+              for (final raw in details['downloads'] as List? ?? <dynamic>[])
+                Builder(builder:(context) {
+                  final row=Map<String,dynamic>.from(raw as Map);
+                  return ListTile(title:Text('${row['collection']} • ${row['state'] == 'downloading' && !engine.isSyncing ? 'Interrupted / retry required' : row['state']}'),
+                    subtitle:Text('Observed: ${stamp(row['observedAt'])}\nAwaiting verified storage: ${row['remaining']} • Verified records: ${row['verified']} • Local edits / review: ${row['blocked']}\nLast verified local download readback: ${stamp(row['lastVerifiedLocalReadbackAt'])}'));
+                }),
+              const Divider(height: 32),
               const Text(
                 'Pending Queue & Conflict Review',
                 style: TextStyle(fontSize: 20),

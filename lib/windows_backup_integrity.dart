@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 /// Local generation readback. Hashes detect corruption, not malicious manifest replacement.
 class WindowsBackupIntegrity {
   static const manifestName = 'backup_integrity_v1.json';
+  static final _restoring = <String>{};
 
   static Future<void> seal(Directory root) async {
     final files = <Map<String, dynamic>>[];
@@ -27,6 +28,8 @@ class WindowsBackupIntegrity {
     if (await FileSystemEntity.type(root.path, followLinks: false) != FileSystemEntityType.directory)
       throw StateError('Backup folder requires review');
     final manifest = File('${root.path}${Platform.pathSeparator}$manifestName');
+    if (await FileSystemEntity.type(manifest.path, followLinks: false) != FileSystemEntityType.file)
+      throw StateError('Backup manifest requires review');
     if (await manifest.length() > 10 * 1024 * 1024) throw StateError('Backup manifest exceeds review limit');
     final data = jsonDecode(await manifest.readAsString());
     if (data is! Map || data['version'] != 1 || data['files'] is! List || (data['files'] as List).isEmpty)
@@ -60,6 +63,80 @@ class WindowsBackupIntegrity {
       }
     }
     return seen.length;
+  }
+
+  /// Resumes only a separately staged copy bound to the same verified manifest.
+  /// Every reused file is hashed again; a checkpoint never certifies its bytes.
+  /// The sibling checkpoint is retained and no database is activated here.
+  static Future<int> resumeRestore(Directory backup, Directory destination,
+      {Future<void> Function(int verifiedFiles)? onFileVerified}) async {
+    await verify(backup);
+    final source = (await backup.resolveSymbolicLinks()).replaceAll(r'\', '/').toLowerCase();
+    if (!await destination.parent.exists()) throw StateError('Restore parent requires review');
+    final parent = (await destination.parent.resolveSymbolicLinks()).replaceAll(r'\', '/').toLowerCase();
+    final name = destination.uri.pathSegments.where((part) => part.isNotEmpty).last;
+    final target = '$parent/${name.toLowerCase()}';
+    if (target == source || target.startsWith('$source/') || source.startsWith('$target/'))
+      throw StateError('Choose a separate restore folder');
+    if (!_restoring.add(target)) throw StateError('Restore already in progress');
+    try {
+      final manifest = File('${backup.path}${Platform.pathSeparator}$manifestName');
+      final manifestBytes = await manifest.readAsBytes();
+      final digest = sha256.convert(manifestBytes).toString();
+      final checkpoint = File('${destination.path}.restore-checkpoint.json');
+      final expected = {'version': 1, 'manifestSha256': digest, 'source': source, 'target': target};
+      final checkpointType = await FileSystemEntity.type(checkpoint.path, followLinks: false);
+      final targetType = await FileSystemEntity.type(destination.path, followLinks: false);
+      if (checkpointType == FileSystemEntityType.notFound) {
+        if (targetType != FileSystemEntityType.notFound)
+          throw StateError('Unrecognized restore destination retained');
+        await checkpoint.writeAsString(jsonEncode(expected), flush: true);
+      } else {
+        if (checkpointType != FileSystemEntityType.file || await checkpoint.length() > 16384 ||
+            jsonEncode(jsonDecode(await checkpoint.readAsString())) != jsonEncode(expected))
+          throw StateError('Restore checkpoint does not match backup');
+        if (targetType != FileSystemEntityType.directory && targetType != FileSystemEntityType.notFound)
+          throw StateError('Restore destination requires review');
+      }
+      await destination.create();
+      final entries = (jsonDecode(utf8.decode(manifestBytes)) as Map)['files'] as List;
+      final allowed = {manifestName, ...entries.map((item) => (item as Map)['path'] as String)};
+      await for (final entity in destination.list(recursive: true, followLinks: false)) {
+        if (entity is Link) throw StateError('Restore link requires review');
+        if (entity is File && !allowed.contains(entity.path.substring(destination.path.length + 1).replaceAll(r'\', '/')))
+          throw StateError('Unrecognized restore content retained');
+      }
+      var count = 0;
+      for (final raw in entries) {
+        final entry = raw as Map;
+        final relative = (entry['path'] as String).replaceAll('/', Platform.pathSeparator);
+        final output = File('${destination.path}${Platform.pathSeparator}$relative');
+        var current = destination.path;
+        for (final part in (entry['path'] as String).split('/')) {
+          current += '${Platform.pathSeparator}$part';
+          if (await FileSystemEntity.type(current, followLinks: false) == FileSystemEntityType.link)
+            throw StateError('Restore link requires review');
+        }
+        Future<bool> matches() async => await output.exists() && await output.length() == entry['bytes'] &&
+            (await sha256.bind(output.openRead()).first).toString() == entry['sha256'];
+        if (!await matches()) {
+          await output.parent.create(recursive: true);
+          // Recopy only this incomplete staging file; the backup is never changed.
+          await File('${backup.path}${Platform.pathSeparator}$relative').copy(output.path);
+          if (!await matches()) throw StateError('Restore file verification failed');
+        }
+        count++;
+        if (onFileVerified != null) await onFileVerified(count);
+      }
+      await File('${destination.path}${Platform.pathSeparator}$manifestName').writeAsBytes(manifestBytes, flush: true);
+      await verify(destination);
+      await verify(backup);
+      if (sha256.convert(await manifest.readAsBytes()).toString() != digest)
+        throw StateError('Backup generation changed during restore');
+      return count;
+    } finally {
+      _restoring.remove(target);
+    }
   }
 
   /// Readback rehearsal only: never activates a database or changes current data.
