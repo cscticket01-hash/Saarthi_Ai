@@ -13,6 +13,7 @@ import 'windows_sync_conflict_review.dart';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'windows_local_storage.dart';
 import 'windows_backup_integrity.dart';
+import 'windows_disaster_rehearsal.dart';
 
 /// Evidence-driven own-school controls. No guessed health, ACKs or conflict repair.
 class WindowsSyncControlCenter extends StatefulWidget {
@@ -281,6 +282,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   ),
                   if(db.activeProfileIdentity['schoolSyncId']=='vs-db8afb01a3be46a983c8284714d06e5d')
                     OutlinedButton(onPressed:active?null:()=>_run(_cloudRecordBackup),child:const Text('TEST Cloud Record Backup')),
+                  if(db.activeProfileIdentity['schoolSyncId']=='vs-db8afb01a3be46a983c8284714d06e5d')
+                    OutlinedButton(onPressed:active?null:()=>Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>const WindowsDisasterRehearsal())),child:const Text('TEST Disaster Recovery')),
                   OutlinedButton(
                     onPressed: active ? null : () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsRecycleBin())),
                     child: const Text('Recycle Bin'),

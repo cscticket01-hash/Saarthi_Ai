@@ -6,6 +6,7 @@ import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
 
 import 'dart:async';
+import 'windows_sync_schedule.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -62,14 +63,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   ];
 
   static const reconciliationInterval = Duration(minutes: 4);
-  Timer? _periodicTimer;
-  Timer? _hourlyTimer;
+  late final _schedule = WindowsSyncSchedule((delay) => scheduleSoon(delay: delay));
   Timer? _debounceTimer;
   bool _initialized = false;
   bool _syncing = false;
   bool _resetPaused = false;
   int _activating = 0;
   bool _syncBlocked = false;
+  DateTime? _lastMonitorReport;
+  String? _lastMonitorProfile;
 
   DateTime? lastSuccessfulSync;
   DateTime? lastVerifiedCheckpoint;
@@ -141,6 +143,20 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'metrics': Map<String, int>.from(metrics),
       'performance': performanceSummary,
     };
+    if (_initialized) unawaited(_reportSyncMonitor(origin, Map<String,dynamic>.from(details.value)));
+  }
+
+  Future<void> _reportSyncMonitor(String origin, Map<String,dynamic> observed) async {
+    if (_lastMonitorProfile == origin && _lastMonitorReport != null && DateTime.now().difference(_lastMonitorReport!) < const Duration(minutes:5)) return;
+    _lastMonitorProfile=origin;_lastMonitorReport=DateTime.now();
+    try {
+      final central=await CentralSchoolCloud.saved();
+      if (FirebaseFirestore.instance.activeProfileId!=origin || central['managed']!=true || central['schoolId']!=_activeSchoolSyncId) return;
+      await ManagedSchoolSession.callForSchool(_activeSchoolSyncId,'managed/sync/status',{'report':{
+        'pending':observed['pending'],'needsAttention':observed['needsAttention'],
+        'verifiedReceiptCount':observed['verifiedReceiptCount'],'lastCloudAckMillis':observed['lastCloudAckMillis'],
+      }}).timeout(const Duration(seconds:25));
+    } catch (_) {/* Aggregate monitoring cannot clear queues or change sync success. */}
   }
 
   String? lastError;
@@ -223,18 +239,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       unawaited(refreshDetails());
     };
     WindowsBackendBridge.onRemoteAvailable = () async {
-      scheduleSoon(delay: const Duration(seconds: 2));
+      _schedule.reconnected();
     };
 
     await activateCurrentConnections(allowPairing: false);
 
     if (_resetPaused) return;
 
-    _periodicTimer = Timer.periodic(
-      reconciliationInterval,
-      (_) => scheduleSoon(),
-    );
-    _hourlyTimer = Timer.periodic(const Duration(hours: 1), (_) => scheduleSoon());
+    _schedule.start(reconciliationInterval);
 
     scheduleSoon(delay: const Duration(milliseconds: 800));
   }
@@ -419,8 +431,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   Future<void> pauseForAppReset() async {
     _resetPaused = true;
-    _periodicTimer?.cancel();
-    _hourlyTimer?.cancel();
+    _schedule.stop();
     _debounceTimer?.cancel();
     final deadline = DateTime.now().add(const Duration(seconds: 90));
     while (_syncing || _activating > 0) {
@@ -1816,8 +1827,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   void dispose() {
-    _periodicTimer?.cancel();
-    _hourlyTimer?.cancel();
+    _schedule.stop();
     _debounceTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _initialized = false;
@@ -1825,7 +1835,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
-    if (lifecycle == AppLifecycleState.resumed) scheduleSoon();
+    if (lifecycle == AppLifecycleState.resumed) _schedule.wake();
   }
 }
 

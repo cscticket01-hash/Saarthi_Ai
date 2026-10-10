@@ -562,8 +562,8 @@ function VS_managedHandle(e) {
         });sheetsVerified=true;}
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
-        recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        scriptBundleVersion:'2026-10-10.2',googleEmail:''};
+        recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
+        scriptBundleVersion:'2026-10-10.3',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
@@ -599,6 +599,8 @@ function VS_managedHandle(e) {
       if(VS_testBackupRecoveryEnabled())return jsonResponse(Object.assign({success:true,schoolId:school},VS_createVerifiedRecordBackup()));
       const root=VS_managedRoot(),folders=root.getFolders(),records={};while(folders.hasNext()){const f=folders.next();if(f.getName().indexOf('records_')===0)records[f.getName().slice(8)]=VS_managedRecord({collection:f.getName().slice(8),operation:'read'}).records;}
       const text=JSON.stringify({schemaVersion:3,schoolId:school,createdAt:new Date().toISOString(),records:records});if(text.length>20*1024*1024)throw new Error('Backup exceeds safe file limit');const file=VS_managedFolder(root,'Backups').createFile('School_Backup_'+Date.now()+'.json',text,'application/json');result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
+    }else if(b.action==='managed_disaster'){
+      result=VS_managedDisaster(b);
     }else if(b.action==='managed_recycle'){
       result=VS_managedRecycle(b);
     }else if(b.action==='managed_restore'){

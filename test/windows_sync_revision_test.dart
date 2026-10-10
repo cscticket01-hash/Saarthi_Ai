@@ -26,11 +26,36 @@ import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_platform_client.dart';
 import '../lib/windows_sync_engine.dart';
 import '../lib/windows_sync_recovery.dart';
+import '../lib/windows_sync_schedule.dart';
+import '../lib/windows_disaster_rehearsal.dart';
 import '../lib/sync_recovery_policy.dart';
 import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/platform/platform_config.dart';
 void main(){
+ testWidgets('TEST disaster controls require explicit approval and do not present unverified restore success', (tester) async {
+   final db=FirebaseFirestore.instance;
+   await tester.runAsync(()=>db.switchProfile('disaster-widget-test',identity:{'schoolSyncId':'vs-db8afb01a3be46a983c8284714d06e5d'}));
+   await tester.pumpWidget(const MaterialApp(home:WindowsDisasterRehearsal()));await tester.pumpAndSettle();
+   expect(find.text('Completion unverified'),findsNWidgets(2));
+   final restore=tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Authorize separate TEST restore'));expect(restore.onPressed,isNull);
+   await tester.tap(find.text('New TEST backup generation'));await tester.pumpAndSettle();
+   expect(find.text('Authorize TEST copy'),findsOneWidget);await tester.tap(find.text('Cancel'));await tester.pumpAndSettle();
+   expect((await db.collection('_windows_disaster_jobs').get()).docs,isEmpty);
+   await tester.pumpWidget(const SizedBox.shrink());
+ });
+ test('hourly standby, wake and reconnect use bounded engine scheduling without duplicate timers', () {
+   final timers=<Timer>[],intervals=<Duration>[],signals=<Duration>[],callbacks=<void Function(Timer)>[];
+   final schedule=WindowsSyncSchedule(signals.add,periodic:(duration,callback){
+     final timer=_TestSyncTimer();timers.add(timer);intervals.add(duration);callbacks.add(callback);return timer;
+   });
+   schedule.start(WindowsSyncEngine.reconciliationInterval);
+   expect(intervals,[const Duration(minutes:4),const Duration(hours:1)]);
+   callbacks[1](timers[1]);schedule.wake();schedule.reconnected();
+   expect(signals,[const Duration(milliseconds:250),const Duration(milliseconds:250),const Duration(seconds:2)]);
+   schedule.start(WindowsSyncEngine.reconciliationInterval);expect(timers.take(2).every((t)=>!t.isActive),true);
+   schedule.stop();expect(timers.every((t)=>!t.isActive),true);
+ });
  test('restore rehearsal preserves queue IDs and document bytes without activating or overwriting storage', () async {
    final root = await Directory.systemTemp.createTemp('vs-restore-rehearsal-');
    try {
@@ -739,4 +764,11 @@ void main(){
    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
  });
 
+}
+
+class _TestSyncTimer implements Timer {
+  bool active=true;
+  @override void cancel(){active=false;}
+  @override bool get isActive=>active;
+  @override int get tick=>0;
 }

@@ -147,8 +147,23 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  function lease(m){const e=m.entitlement,t=now(),paid=e.status!=='trial',end=Number(e.expiresAt||0);return {success:true,managed:true,schoolId:m.schoolId,uid:m.uid,projectId,serverTime:t,activated:e.activated===true,expiresAt:end,allowed:e.startsAt<=t&&end>t,status:e.startsAt>t?'pending':end>t?(paid?'licensed':'trial'):'expired'};}
  // Context is attached only after identity/entitlement verification, never from
  // an unauthenticated request's schoolId or arbitrary Script response.
+ const syncEvidenceWrites=new Map();
+ async function saveSyncEvidence(schoolId,evidence){
+  const prior=syncEvidenceWrites.get(schoolId);if(prior&&prior.outcome===evidence.outcome&&now()-prior.at<60000)return;
+  if(syncEvidenceWrites.size>=1000)syncEvidenceWrites.delete(syncEvidenceWrites.keys().next().value);
+  syncEvidenceWrites.set(schoolId,{at:now(),outcome:evidence.outcome});
+  // Monitoring is best-effort; its failure never reverses a verified storage ACK.
+  try{await db.doc('platform_schools/'+schoolId).set({syncServerEvidence:{version:1,observedAt:now(),...evidence}},{merge:true});}catch(_){}
+ }
  async function signed(m,body){
-  try{return await signedRequest(m,body);}catch(error){
+  try{const result=await signedRequest(m,body);
+   if(['managed_records','managed_delta','managed_mobile'].includes(body.action)){
+    const ack=body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision.length>0;
+    await saveSyncEvidence(m.schoolId,{outcome:ack?'durable_ack':'verified_response',stage:body.action,protocol:result.syncProtocol===2?2:1});
+   }return result;
+  }catch(error){
+   if(['managed_records','managed_delta','managed_mobile'].includes(body.action))await saveSyncEvidence(m.schoolId,{outcome:'failed',stage:body.action,code:
+     ['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_TIMEOUT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED'].includes(error.code)?error.code:'SCRIPT_UNVERIFIED'});
    if((error.status===409&&['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(error.code))||([503,504].includes(error.status)&&['SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_TIMEOUT'].includes(error.code))){
     error.syncDiagnostic={schoolId:m.schoolId,syncProtocol:body.syncProtocol===2?2:1,
      ...(typeof body.operationId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(body.operationId)?{operationId:body.operationId}:{}),
@@ -224,7 +239,8 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
    await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,...(password===undefined?{passwordSetupLink:await auth.generatePasswordResetLink(email)}:{})};
   }
   if(action==='developer/managed/monitor'){const started=now();const metrics=await monitor();return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics};}
-  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
+  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view','developer/managed/sync/status'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
+  if(action==='developer/managed/sync/status')return {success:true,schoolId:id,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
   if(action==='developer/managed/view'){
    const known=b.knownRevisions||{};if(!known||typeof known!=='object'||Array.isArray(known)||JSON.stringify(known).length>16000)fail(400,'Invalid school view checkpoint');
    const body={action:'managed_view',knownRevisions:known};
@@ -388,7 +404,17 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
    return {success:true,schoolId:m.schoolId,storageReady:true,scriptUrl:url,googleEmail:health.googleEmail||''};
   }finally{pairingTickets.delete(ticketHash);}
  }
- if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2};
+ if(action==='managed/sync/status'){
+  if(b.report!==undefined){const r=b.report;
+   if(!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(k=>!['pending','needsAttention','verifiedReceiptCount','lastCloudAckMillis'].includes(k))||
+     !['pending','needsAttention','verifiedReceiptCount','lastCloudAckMillis'].every(k=>Number.isSafeInteger(r[k])&&r[k]>=0)||r.needsAttention>r.pending||r.pending>100000||r.verifiedReceiptCount>10000000||r.lastCloudAckMillis>now()+300000)fail(400,'Invalid aggregate Windows sync report');
+   const row=await db.doc('platform_schools/'+m.schoolId).get(),previous=row.data()?.syncWindowsReport;
+   if(!previous||now()-previous.receivedAt>=300000)await db.doc('platform_schools/'+m.schoolId).set({syncWindowsReport:{version:1,receivedAt:now(),source:'latest_windows_client_report',...r}},{merge:true});
+  }
+  const row=await db.doc('platform_schools/'+m.schoolId).get(),data=row.data()||{};
+  return {success:true,schoolId:m.schoolId,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
+ }
+ if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerDisasterRehearsalVersion:5};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
   const rows=await Promise.all(b.operationIds.map(id=>db.doc(attendanceCollection+'/'+id).get()));
@@ -431,6 +457,12 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
      !/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100)fail(400,'Invalid recycle operation');
   const result=await signed(m,{action:'managed_recycle',operation:b.operation,fileId:b.fileId,operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision});
   invalidate(m.schoolId);return result;
+ }
+ if(action==='managed/disaster'){
+  if(m.schoolId!=='vs-db8afb01a3be46a983c8284714d06e5d')fail(403,'Disaster rehearsal is isolated TEST only');
+  if(!['backup','rehearse'].includes(b.operation)||!/^[a-f0-9]{64}$/.test(b.operationId||'')||
+     b.operation==='rehearse'&&!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||b.operation==='backup'&&b.fileId!==undefined)fail(400,'Invalid disaster operation');
+  return signed(m,{action:'managed_disaster',operation:b.operation,operationId:b.operationId,...(b.operation==='rehearse'?{fileId:b.fileId}:{})});
  }
  if(action==='managed/backup')return signed(m,{action:'managed_backup'});
  if(action==='managed/restore'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid backup file ID');return signed(m,{action:'managed_restore',fileId:b.fileId});}
