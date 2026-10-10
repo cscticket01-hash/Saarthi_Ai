@@ -200,9 +200,11 @@ void main(){
        })));
      await tester.pumpAndSettle();
      await tester.scrollUntilVisible(find.text('Check Cloud Health'),300,scrollable:find.byType(Scrollable).first);
-     await tester.tap(find.text('Check Cloud Health'));
+     await tester.ensureVisible(find.text('Check Cloud Health'));
+   await tester.pumpAndSettle();
+   await tester.tap(find.text('Check Cloud Health'));
      await tester.pumpAndSettle();
-     await tester.drag(find.byType(ListView),const Offset(0,1000));
+     await tester.scrollUntilVisible(find.text('School cloud health'),-300,scrollable:find.byType(Scrollable).first);
      await tester.pumpAndSettle();
      expect(find.textContaining('Authenticated school storage handshake verified at'),own?findsOneWidget:findsNothing);
      for(final label in ['Drive school root','Google Sheets access']) {
@@ -244,6 +246,8 @@ void main(){
           300,
           scrollable: find.byType(Scrollable).first,
         );
+        await tester.ensureVisible(find.text('School Drive Usage'));
+        await tester.pumpAndSettle();
         await tester.tap(find.text('School Drive Usage'));
         await tester.pumpAndSettle();
         expect(
@@ -254,7 +258,7 @@ void main(){
               .onPressed,
           isNotNull,
         );
-        await tester.drag(find.byType(ListView), const Offset(0, 2400));
+        await tester.scrollUntilVisible(find.text('School Drive storage'),-300,scrollable:find.byType(Scrollable).first);
         await tester.pumpAndSettle();
         expect(
           find.textContaining('At least 2.00 KB'),
@@ -271,12 +275,15 @@ void main(){
      })));
    await tester.pumpAndSettle();
    await tester.scrollUntilVisible(find.text('Check Cloud Health'),300,scrollable:find.byType(Scrollable).first);
+   await tester.ensureVisible(find.text('Check Cloud Health'));
+   await tester.pumpAndSettle();
    await tester.tap(find.text('Check Cloud Health'));
    await tester.pumpAndSettle();
+   await tester.scrollUntilVisible(find.text('Action timed out. Completion is unverified; local data is retained.'),300,scrollable:find.byType(Scrollable).first);
    expect(find.text('Action timed out. Completion is unverified; local data is retained.'),findsOneWidget);
    expect(find.textContaining('Private upstream detail'),findsNothing);
    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Check Cloud Health')).onPressed,isNotNull);
-   await tester.drag(find.byType(ListView),const Offset(0,1000));
+   await tester.scrollUntilVisible(find.text('School cloud health'),-300,scrollable:find.byType(Scrollable).first);
    await tester.pumpAndSettle();
    expect(find.text('Health check timed out — cloud readiness unverified'),findsOneWidget);
    expect(find.textContaining('Authenticated backend and school storage verified at'),findsNothing);

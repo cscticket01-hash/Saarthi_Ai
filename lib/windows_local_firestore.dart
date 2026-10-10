@@ -996,6 +996,7 @@ class _LocalSchoolDatabase {
           ...operations.map((operation)=>operation.collection),
           '_windows_firebase_outbox','_windows_sync_baselines','_windows_sync_receipts',
           '_windows_sync_conflict_history','_windows_sync_resolution_history',
+          '_windows_local_deletions',
         },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_')).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
@@ -1027,6 +1028,12 @@ class _LocalSchoolDatabase {
           );
 
           collections[operation.collection] = docs;
+          final deletedSnapshot = operation.type == _WriteType.delete &&
+              WindowsLocalFirestoreSyncControl.trackingEnabled &&
+              _shouldTrackForFirebase(operation.collection) &&
+              docs[operation.documentId] is Map
+              ? Map<String,dynamic>.from(docs[operation.documentId] as Map)
+              : null;
 
           switch (operation.type) {
             case _WriteType.delete:
@@ -1122,6 +1129,20 @@ class _LocalSchoolDatabase {
               operation,
               docs,
             );
+            if (deletedSnapshot != null) {
+              final queue = collections['_windows_firebase_outbox'] as Map;
+              final key = base64Url.encode(utf8.encode('${operation.collection}\\n${operation.documentId}')).replaceAll('=', '');
+              final intent = queue[key] as Map;
+              final snapshots = collections.putIfAbsent('_windows_local_deletions',()=> <String,dynamic>{}) as Map;
+              snapshots[intent['operationId']] = {
+                'version':1,'schoolId':_activeIdentity['schoolSyncId'] ?? '',
+                'collection':operation.collection,'documentId':operation.documentId,
+                'operationId':intent['operationId'],'deletedAt':DateTime.now().millisecondsSinceEpoch,
+                'snapshot':deletedSnapshot,'cloudDeletionVerified':false,
+              };
+              // The snapshot, hidden local row and original delete intent commit
+              // together. Never expire financial evidence or delete file bytes here.
+            }
             trackedMutation = true;
           }
         }
