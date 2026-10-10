@@ -4,6 +4,7 @@ import '../lib/windows_connect/managed_school_session.dart';
 import '../lib/windows_exam_service.dart';
 import 'dart:convert';
 import '../lib/windows_backup_integrity.dart';
+import '../lib/windows_recycle_bin.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -179,6 +180,32 @@ void main(){
    await tester.pumpAndSettle();
    expect(find.text('Health check timed out — cloud readiness unverified'),findsOneWidget);
    expect(find.textContaining('Authenticated backend and school storage verified at'),findsNothing);
+   await tester.pumpWidget(const SizedBox());
+ });
+ testWidgets('recycle inventory rejects foreign school and expires restore from server time', (tester) async {
+   for(final foreign in [false,true]) {
+     await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(key:ValueKey(foreign),call:(requested,body)async{
+       expect(requested,school);expect(body['operation'],'list');
+       return {'success':true,'schoolId':foreign?'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb':school,'recycleVersion':1,'serverNow':2000,'partial':false,'nextAfter':null,
+         'entries':[{'id':'synthetic-deleted','collection':'students_directory','fileId':'snapshot-safe','deletedRevision':'deleted-revision','name':'Synthetic deleted record','deletedAt':1000,'recoverUntil':2000,'status':'expired'}]};
+     })));
+     await tester.pumpAndSettle();
+     if(foreign) {
+       expect(find.text('Cloud deletion inventory unverified.'),findsOneWidget);
+       expect(find.textContaining('Synthetic deleted record'),findsNothing);
+     } else {
+       expect(find.textContaining('1 entries loaded'),findsOneWidget);
+       expect(tester.widget<TextButton>(find.widgetWithText(TextButton,'Restore')).onPressed,isNull);
+     }
+     await tester.pumpWidget(const SizedBox());
+   }
+ });
+ testWidgets('recycle unavailable response never invents a deletion ACK or exposes private errors', (tester) async {
+   await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(call:(_,__)async{throw TimeoutException('secret detail');})));
+   await tester.pumpAndSettle();
+   expect(find.text('Cloud deletion inventory unverified.'),findsOneWidget);
+   expect(find.textContaining('secret detail'),findsNothing);
+   expect(find.textContaining('No recycle entries'),findsNothing);
    await tester.pumpWidget(const SizedBox());
  });
  test('legacy queue binding preserves its original operation ID across failed retries', () async {

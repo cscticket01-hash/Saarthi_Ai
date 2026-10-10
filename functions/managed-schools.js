@@ -423,6 +423,10 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
  }
  if(action==='managed/file/read'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid file ID');return signed(m,{action:'managed_file',fileId:b.fileId});}
  if(action==='managed/recycle'){
+  if(b.operation==='list'){
+   if(!COLLECTIONS.has(b.collection)||(b.after!==undefined&&typeof b.after!=='string')||(b.after||'').length>200)fail(400,'Invalid recycle inventory');
+   return signed(m,{action:'managed_recycle',operation:'list',collection:b.collection,after:b.after||''});
+  }
   if(!['restore','purge'].includes(b.operation)||! /^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||
      !/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100)fail(400,'Invalid recycle operation');
   const result=await signed(m,{action:'managed_recycle',operation:b.operation,fileId:b.fileId,operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision});

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'windows_sync_engine.dart';
 import 'windows_sync_recovery.dart';
+import 'windows_recycle_bin.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_sync_conflict_review.dart';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
@@ -234,6 +235,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   OutlinedButton(
                     onPressed: active ? null : () => _run(_backup),
                     child: const Text('Backup Now'),
+                  ),
+                  OutlinedButton(
+                    onPressed: active ? null : () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsRecycleBin())),
+                    child: const Text('Recycle Bin'),
                   ),
                   OutlinedButton(
                     onPressed: active

@@ -6715,6 +6715,23 @@ function VS_managedRecycle(b) {
   if(!VS_recycleEnabled())throw new Error('Recycle capability not enabled');
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try {
+    if(b.operation==='list') {
+      VS_managedCollection(b.collection);
+      if(typeof b.after!=='string'||b.after.length>200)throw new Error('Invalid record ID');
+      const store=VS_managedSheet(b.collection),records=VS_sheetRecords(store),now=Date.now();
+      const ids=Object.keys(records).filter(id=>id>b.after&&records[id]._syncDeleted===true&&records[id]._syncRecycleFileId).sort();
+      const entries=ids.slice(0,25).map(id=>{
+        const row=records[id],base={id:id,collection:b.collection,fileId:row._syncRecycleFileId,deletedRevision:row._syncRevision};
+        try {
+          const snap=VS_recycleRead(row._syncRecycleFileId).snapshot;
+          if(snap.id!==id||snap.collection!==b.collection||snap.deletedRevision!==row._syncRevision)throw new Error('Record revision conflict');
+          const name=snap.data.name||snap.data.documentName||snap.data.title||id;
+          return Object.assign(base,{name:typeof name==='string'?name.slice(0,120):id,deletedAt:snap.deletedAt,recoverUntil:snap.recoverUntil,
+            status:now>=snap.recoverUntil?'expired':'recoverable',auditRetained:true,deletedBy:'Not recorded'});
+        } catch (_) {return Object.assign(base,{name:id,status:'needsReview',auditRetained:true,deletedBy:'Not recorded'});}
+      });
+      return {entries:entries,serverNow:now,partial:ids.length>25,nextAfter:ids.length>25?ids[24]:null,recycleVersion:1};
+    }
     if(!['restore','purge'].includes(b.operation)||typeof b.expectedRecordRevision!=='string'||
         !/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||''))throw new Error('Invalid sync operation');
     const item=VS_recycleRead(b.fileId),snap=item.snapshot,store=VS_managedSheet(snap.collection),current=VS_sheetItem(store,snap.id);
@@ -6742,6 +6759,32 @@ function VS_managedRecycle(b) {
     // reviewed school retention policy before permanent erasure.
     return {purged:cleanup==='deleted',fileCleanup:cleanup,retainedSnapshot:true};
   } finally {lock.releaseLock();}
+}
+/** Owner-only, isolated TEST opt-in. Never purges files, snapshots or accounting evidence. */
+function VS_requireTestRecycleScheduler() {
+  const p=PropertiesService.getScriptProperties();
+  if(p.getProperty('VS_MANAGED_SCHOOL_ID')!=='vs-db8afb01a3be46a983c8284714d06e5d'||!VS_recycleEnabled())throw new Error('Isolated TEST recycle authorization required');
+  return p;
+}
+function VS_installTestRecycleExpiryScheduler() {
+  VS_requireTestRecycleScheduler();
+  const existing=ScriptApp.getProjectTriggers().filter(t=>t.getHandlerFunction()==='VS_testRecycleExpiryTick');
+  if(!existing.length)ScriptApp.newTrigger('VS_testRecycleExpiryTick').timeBased().everyHours(1).create();
+  return {installed:true,intervalHours:1,destructive:false,scope:'isolated TEST only'};
+}
+function VS_testRecycleExpiryTick() {
+  const p=VS_requireTestRecycleScheduler(),properties=p.getProperties();
+  const collections=VS_LAYOUT_COLLECTIONS.filter(c=>properties['VS_RECORD_REV_'+c]).sort();
+  if(!collections.length)return {checked:0,expired:0,partial:false,destructive:false};
+  const old=Number(p.getProperty('VS_RECYCLE_SWEEP_COLLECTION')||0),index=Number.isSafeInteger(old)&&old>=0?old%collections.length:0;
+  const collection=collections[index],cursor=p.getProperty('VS_RECYCLE_SWEEP_AFTER_'+collection)||'';
+  const result=VS_managedRecycle({operation:'list',collection:collection,after:cursor});
+  const summary={checkedAt:result.serverNow,checked:result.entries.length,expired:result.entries.filter(r=>r.status==='expired').length,
+    needsReview:result.entries.filter(r=>r.status==='needsReview').length,partial:result.partial||collections.length>1,destructive:false};
+  p.setProperty('VS_RECYCLE_SWEEP_AFTER_'+collection,result.nextAfter||'');
+  p.setProperty('VS_RECYCLE_SWEEP_COLLECTION',String((index+1)%collections.length));
+  p.setProperty('VS_RECYCLE_LAST_SWEEP',JSON.stringify(summary));
+  return summary;
 }
 function VS_syncRequestShape(b) {
   const data=Object.create(null);
