@@ -6809,6 +6809,7 @@ function VS_managedRecord(b) {
 function VS_managedRecordUnlocked(b) {
   const store=VS_managedSheet(b.collection), school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
   if(b.operation==='read') {
+    VS_recoverMissingBackupRows(b.collection,store);
     const revision=PropertiesService.getScriptProperties().getProperty('VS_RECORD_REV_'+b.collection)||'legacy';
     if(b.syncProtocol===2 && b.knownRevision===revision)return {records:{},unchanged:true,collectionRevision:revision,syncProtocol:2};
     const all=VS_sheetRecords(store),records=Object.create(null);Object.keys(all).forEach(id=>{if(b.syncProtocol===2||!all[id]._syncDeleted)records[id]=all[id];});
@@ -6863,6 +6864,81 @@ function VS_managedRecordUnlocked(b) {
   delete data._syncDeletedFileId;delete data._syncFileCleanupComplete;
   const text=JSON.stringify({id:b.id,schoolId:school,data:data});if(text.length>512*1024)throw new Error('Record too large; upload files separately');
   PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());VS_sheetPut(store,{id:b.id,schoolId:school,data:data});return {recordRevision:revision,syncProtocol:2};
+}
+/** Opt-in recovery proof for isolated TEST. Financial/document rows require review. */
+function VS_enableTestBackupRecovery() {
+  const p=PropertiesService.getScriptProperties();
+  if(p.getProperty('VS_MANAGED_SCHOOL_ID')!=='vs-db8afb01a3be46a983c8284714d06e5d')throw new Error('Isolated TEST backup authorization required');
+  VS_managedRoot();p.setProperty('VS_TEST_BACKUP_RECOVERY','1');
+  const result={success:true,recordBackupVersion:4,financialRecoveryAutomatic:false};
+  if(typeof console!=='undefined')console.log(JSON.stringify(result));return result;
+}
+function VS_testBackupRecoveryEnabled() {
+  const p=PropertiesService.getScriptProperties();return p.getProperty('VS_MANAGED_SCHOOL_ID')==='vs-db8afb01a3be46a983c8284714d06e5d'&&p.getProperty('VS_TEST_BACKUP_RECOVERY')==='1';
+}
+function VS_verifiedRecordBackup(fileId) {
+  const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID'),file=VS_managedFile(fileId);
+  if(file.getSize()>20*1024*1024)throw new Error('Backup exceeds verification limit');
+  const text=file.getBlob().getDataAsString(),digest=VS_layoutHash(text);
+  if(file.getDescription()!=='VIDYA_RECORD_BACKUP:'+school+':'+digest)throw new Error('Backup integrity requires review');
+  const backup=JSON.parse(text);
+  if(backup.schemaVersion!==4||backup.schoolId!==school||!backup.records||!backup.collectionRevisions)throw new Error('Foreign or unsupported backup');
+  Object.keys(backup.records).forEach(col=>{VS_managedCollection(col);Object.keys(backup.records[col]).forEach(id=>{
+    const data=backup.records[col][id];if(!/^[^/]{1,200}$/.test(id)||id==='.'||id==='..'||!data||data.schoolId!==school||typeof data._syncRevision!=='string')throw new Error('Backup record requires review');
+  });});return backup;
+}
+function VS_createVerifiedRecordBackup() {
+  if(!VS_testBackupRecoveryEnabled())throw new Error('Isolated TEST backup authorization required');
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const p=PropertiesService.getScriptProperties(),records={},heads={},properties=p.getProperties();
+    VS_LAYOUT_COLLECTIONS.filter(col=>properties['VS_RECORD_REV_'+col]).forEach(col=>{
+      const result=VS_managedRecordUnlocked({collection:col,operation:'read',syncProtocol:2});
+      records[col]=result.records;heads[col]=result.collectionRevision;
+    });
+    const backup={schemaVersion:4,schoolId:p.getProperty('VS_MANAGED_SCHOOL_ID'),createdAt:Date.now(),records:records,collectionRevisions:heads,
+      scope:'records_and_tombstones',documentBinariesIncluded:false};
+    const text=JSON.stringify(backup);if(text.length>20*1024*1024)throw new Error('Backup exceeds verification limit');
+    const file=VS_managedFolder(VS_managedRoot(),'Backups').createFile('Verified_Record_Backup_'+Date.now()+'.json',text,'application/json');
+    file.setDescription('VIDYA_RECORD_BACKUP:'+backup.schoolId+':'+VS_layoutHash(text));
+    const readback=VS_verifiedRecordBackup(file.getId());if(JSON.stringify(readback)!==text)throw new Error('Backup verification failed');
+    p.setProperty('VS_LAST_VERIFIED_RECORD_BACKUP',file.getId());
+    p.setProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT',String(backup.createdAt));
+    return {fileId:file.getId(),recordBackupVersion:4,verified:true,collections:Object.keys(records).length,documentBinariesIncluded:false};
+  } finally {lock.releaseLock();}
+}
+function VS_recoverMissingBackupRows(collection,store,verifiedBackup) {
+  if(!VS_testBackupRecoveryEnabled()||['fee_payments','fee_ledger','teacher_salary','school_expenses','documents'].includes(collection))return;
+  const p=PropertiesService.getScriptProperties(),id=p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP');if(!id)return;
+  let backup=verifiedBackup;try{if(!backup)backup=VS_verifiedRecordBackup(id);}catch(_){p.setProperty('VS_LAST_RECORD_RECOVERY',JSON.stringify({at:Date.now(),verified:false,needsReview:true,code:'BACKUP_INTEGRITY_UNVERIFIED'}));return;}
+  const rows=backup.records[collection];
+  // Any accepted cloud write since this backup invalidates automatic recovery.
+  if(!rows||backup.collectionRevisions[collection]!==p.getProperty('VS_RECORD_REV_'+collection))return;
+  const existing=VS_sheetRecords(store),missing=Object.keys(rows).filter(key=>!existing[key]);
+  if(missing.length>100){p.setProperty('VS_LAST_RECORD_RECOVERY',JSON.stringify({at:Date.now(),verified:false,needsReview:true,code:'RECOVERY_BATCH_REVIEW_REQUIRED'}));return;}
+  missing.forEach(key=>VS_sheetPut(store,{id:key,schoolId:store.school,data:rows[key]}));
+  if(missing.length){p.setProperty('VS_RECORD_REV_'+collection,Utilities.getUuid());
+    p.setProperty('VS_LAST_RECORD_RECOVERY',JSON.stringify({at:Date.now(),restored:missing.length,verified:true,financial:false}));}
+}
+/** Owner-only real-cloud rehearsal. Deletes only its own fresh disposable row,
+ * after verifying the complete record backup; ordinary read then repairs it. */
+function VS_testMissingRecordRecoveryRehearsal() {
+  if(!VS_testBackupRecoveryEnabled())throw new Error('Isolated TEST backup authorization required');
+  const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
+  const id='recovery-rehearsal-'+Utilities.getUuid(),operation='recovery-create-'+Utilities.getUuid(),capturedAt=Date.now();
+  const ack=VS_managedRecord({collection:'school_notices',operation:'write',id:id,syncProtocol:2,operationId:operation,expectedRecordRevision:'',
+    data:{schoolId:school,syntheticTest:true,title:'Disposable missing-row recovery rehearsal',capturedAt:capturedAt}});
+  const backup=VS_createVerifiedRecordBackup(),lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const saved=VS_verifiedRecordBackup(backup.fileId),p=PropertiesService.getScriptProperties(),store=VS_managedSheet('school_notices'),row=VS_sheetItem(store,id);
+    if(!row||row.data.syntheticTest!==true||row.data._syncRevision!==ack.recordRevision||saved.collectionRevisions.school_notices!==p.getProperty('VS_RECORD_REV_school_notices'))throw new Error('TEST rehearsal changed; no fault injected');
+    store.sheet.getRange(row.row,1,1,33).setValues([Array(33).fill('')]);SpreadsheetApp.flush();
+    if(VS_sheetItem(store,id))throw new Error('TEST fault injection unverified');
+    const result=VS_managedRecordUnlocked({collection:'school_notices',operation:'read',syncProtocol:2,knownRevision:saved.collectionRevisions.school_notices}),restored=result.records&&result.records[id];
+    if(!restored||restored._syncRevision!==ack.recordRevision||restored._syncOperationId!==operation||restored.capturedAt!==capturedAt)throw new Error('TEST recovery readback failed; verified backup retained');
+    const evidence={at:Date.now(),stage:'missing_row_cloud_readback',success:true,verifiedDriveBackup:true,recordRevisionPreserved:true,operationIdentityPreserved:true,timestampPreserved:true,originalSchoolTouched:false};
+    if(typeof console!=='undefined')console.log(JSON.stringify(evidence));return evidence;
+  } finally {lock.releaseLock();}
 }
 function VS_managedFile(id) {
   const file=DriveApp.getFileById(id),root=VS_managedRoot().getId(),seen={};
@@ -6919,7 +6995,18 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);verified=true;let result;
-    if(b.action==='managed_health'){VS_managedRoot();result={storageReady:true,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,scriptBundleVersion:'2026-10-09.3',googleEmail:''};}
+    if(b.action==='managed_health'){
+      VS_managedRoot();const p=PropertiesService.getScriptProperties();let sheetsVerified=null;
+      if(VS_testBackupRecoveryEnabled()){
+        const properties=p.getProperties(),collection=VS_LAYOUT_COLLECTIONS.find(col=>properties['VS_SHEET_MIGRATED_'+col]==='1');
+        if(collection){const store=VS_managedSheet(collection),parts=store.partitions||[store];parts.forEach(part=>{
+          if(part.sheet.getRange(1,1,1,1).getValues()[0][0]!=='Record Key')throw new Error('School tab identity requires review');
+        });sheetsVerified=true;}
+      }
+      result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
+        recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
+        scriptBundleVersion:'2026-10-10.1',googleEmail:''};
+    }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
@@ -6951,6 +7038,7 @@ function VS_managedHandle(e) {
     }else if(b.action==='managed_file'){
       const blob=VS_managedFile(b.fileId).getBlob();if(blob.getBytes().length>20*1024*1024)throw new Error('File limit exceeded');result={mime:blob.getContentType(),base64:Utilities.base64Encode(blob.getBytes())};
     }else if(b.action==='managed_backup'){
+      if(VS_testBackupRecoveryEnabled())return jsonResponse(Object.assign({success:true,schoolId:school},VS_createVerifiedRecordBackup()));
       const root=VS_managedRoot(),folders=root.getFolders(),records={};while(folders.hasNext()){const f=folders.next();if(f.getName().indexOf('records_')===0)records[f.getName().slice(8)]=VS_managedRecord({collection:f.getName().slice(8),operation:'read'}).records;}
       const text=JSON.stringify({schemaVersion:3,schoolId:school,createdAt:new Date().toISOString(),records:records});if(text.length>20*1024*1024)throw new Error('Backup exceeds safe file limit');const file=VS_managedFolder(root,'Backups').createFile('School_Backup_'+Date.now()+'.json',text,'application/json');result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
     }else if(b.action==='managed_recycle'){
@@ -7245,7 +7333,10 @@ function VS_managedDelta(b) {
   if(!Array.isArray(b.collections)||b.collections.length>22||new Set(b.collections).size!==b.collections.length||b.collections.some(col=>VS_LAYOUT_COLLECTIONS.indexOf(col)<0||['mobile_sessions','mobile_users','mobile_complaints'].indexOf(col)>=0))throw new Error('Invalid delta collections');
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try{const changes={},p=PropertiesService.getScriptProperties();
-    b.collections.forEach(col=>{const revision=p.getProperty('VS_RECORD_REV_'+col)||'legacy';changes[col]=b.knownRevisions&&b.knownRevisions[col]===revision?{records:{},unchanged:true,collectionRevision:revision,syncProtocol:2}:VS_managedRecordUnlocked({operation:'read',collection:col,syncProtocol:2});});
+    let recoveryBackup=null;if(VS_testBackupRecoveryEnabled()&&p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP')){
+      try{recoveryBackup=VS_verifiedRecordBackup(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP'));}catch(_){p.setProperty('VS_LAST_RECORD_RECOVERY',JSON.stringify({at:Date.now(),verified:false,needsReview:true,code:'BACKUP_INTEGRITY_UNVERIFIED'}));}
+    }
+    b.collections.forEach(col=>{if(recoveryBackup&&recoveryBackup.records[col])VS_recoverMissingBackupRows(col,VS_managedSheet(col),recoveryBackup);const revision=p.getProperty('VS_RECORD_REV_'+col)||'legacy';changes[col]=b.knownRevisions&&b.knownRevisions[col]===revision?{records:{},unchanged:true,collectionRevision:revision,syncProtocol:2}:VS_managedRecordUnlocked({operation:'read',collection:col,syncProtocol:2});});
     if(JSON.stringify(changes).length>20*1024*1024)throw new Error('Delta export exceeds safe limit');return {syncProtocol:2,changes:changes};
   }finally{lock.releaseLock();}
 }

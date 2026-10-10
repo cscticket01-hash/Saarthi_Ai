@@ -37,6 +37,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   String localHealth = 'Not checked in this session';
   Map<String, dynamic>? diagnostics;
   String cloudHealth = 'Not checked in this session';
+  Map<String,dynamic>? cloudEvidence;
 
   @override
   void initState() {
@@ -75,7 +76,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
 
   Future<void> _checkCloudHealth() async {
     if (mounted)
-      setState(() => cloudHealth = 'Checking authenticated school storage');
+      setState(() {cloudEvidence=null;cloudHealth = 'Checking authenticated school storage';});
     try {
       final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
       if (school.isEmpty || db.activeProfileId != origin)
@@ -94,8 +95,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       ManagedSchoolSession.verifyStorageResponse(result, school);
       if (mounted)
         setState(
-          () => cloudHealth =
-              'Authenticated backend and school storage verified at ${DateTime.now().toLocal()}',
+          () {cloudEvidence = result;cloudHealth =
+              'Authenticated school storage handshake verified at ${DateTime.now().toLocal()}';},
         );
     } catch (error) {
       if (mounted)
@@ -121,6 +122,16 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         () => notice =
             'Local backup created and file hashes verified: $path. Cloud backup and restore have not been verified.',
       );
+  }
+  Future<void> _cloudRecordBackup() async {
+    const testSchool='vs-db8afb01a3be46a983c8284714d06e5d';
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    if(school!=testSchool)throw StateError('This backup verification is isolated TEST only');
+    final result=await ManagedSchoolSession.callForSchool(school,'managed/backup',{}).timeout(const Duration(seconds:95));
+    if(db.activeProfileId!=origin||result['success']!=true||result['schoolId']!=school||result['recordBackupVersion']!=4||result['verified']!=true||result['fileId'] is! String)
+      throw StateError('Cloud backup remains unverified');
+    await db.collection('_windows_sync_status').doc('cloudRecordBackup').set({'verifiedAt':DateTime.now().millisecondsSinceEpoch,'recordBackupVersion':4,'documentBinariesIncluded':false});
+    if(mounted)setState(()=>notice='TEST cloud record backup and tombstones verified by Drive readback. Document binaries and full disaster restore are not included.');
   }
 
   Future<void> _restoreRehearsal() async {
@@ -220,6 +231,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   metric('Internet connectivity', 'Not independently verified'),
                   metric('Local database health', localHealth),
                   metric('School cloud health', cloudHealth),
+                  if(cloudEvidence!=null)...[
+                    metric('Drive school root',cloudEvidence!['driveRootVerified']==true?'Verified by current owner response':'Not independently verified'),
+                    metric('Google Sheets access',cloudEvidence!['sheetsAccessVerified']==true?'Existing tab read verified':'Not independently verified'),
+                    metric('Cloud record backup',cloudEvidence!['recordBackupVersion']==4&&cloudEvidence!['lastVerifiedRecordBackupAt'] is num&&(cloudEvidence!['lastVerifiedRecordBackupAt'] as num)>0
+                      ?'Verified at ${DateTime.fromMillisecondsSinceEpoch((cloudEvidence!['lastVerifiedRecordBackupAt'] as num).toInt()).toLocal()} — records and tombstones only'
+                      :'No verified current-generation record backup'),
+                  ],
                   metric(
                     'Next recovery retry',
                     engine.nextRetryAt?.toLocal().toString() ??
@@ -261,6 +279,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     onPressed: active ? null : () => _run(_restoreRehearsal),
                     child: const Text('Verify Backup Restore'),
                   ),
+                  if(db.activeProfileIdentity['schoolSyncId']=='vs-db8afb01a3be46a983c8284714d06e5d')
+                    OutlinedButton(onPressed:active?null:()=>_run(_cloudRecordBackup),child:const Text('TEST Cloud Record Backup')),
                   OutlinedButton(
                     onPressed: active ? null : () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsRecycleBin())),
                     child: const Text('Recycle Bin'),

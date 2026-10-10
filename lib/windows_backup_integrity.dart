@@ -75,12 +75,17 @@ class WindowsBackupIntegrity {
       throw StateError('Choose a separate restore rehearsal folder');
     if (await FileSystemEntity.type(destination.path, followLinks: false) != FileSystemEntityType.notFound)
       throw StateError('Restore destination already exists; retained without changes');
-    // Resolve the existing parent, preventing a symlink from redirecting the copy.
+    // Resolve the parent before containment checks. Windows may legitimately
+    // expand an 8.3 folder alias; it must not redirect a copy inside the backup.
     final parent = destination.parent;
-    if (!await parent.exists() ||
-        (await parent.resolveSymbolicLinks()).replaceAll(r'\', '/').toLowerCase() !=
-            parent.absolute.path.replaceAll(r'\', '/').toLowerCase())
+    if (!await parent.exists())
       throw StateError('Restore parent requires review');
+    final resolvedParent = (await parent.resolveSymbolicLinks()).replaceAll(r'\', '/').toLowerCase();
+    final name = destination.uri.pathSegments.where((part) => part.isNotEmpty).last;
+    final resolvedTarget = '$resolvedParent/${name.toLowerCase()}';
+    if (resolvedTarget == normalizedSource || resolvedTarget.startsWith('$normalizedSource/') ||
+        normalizedSource.startsWith('$resolvedTarget/'))
+      throw StateError('Choose a separate restore rehearsal folder');
     await destination.create();
     await for (final entity in backup.list(recursive: true, followLinks: false)) {
       if (entity is Link) throw StateError('Backup changed during restore rehearsal');
