@@ -36,12 +36,12 @@ void main(){
  testWidgets('TEST disaster controls require explicit approval and do not present unverified restore success', (tester) async {
    final db=FirebaseFirestore.instance;
    await tester.runAsync(()=>db.switchProfile('disaster-widget-test',identity:{'schoolSyncId':'vs-db8afb01a3be46a983c8284714d06e5d'}));
-   await tester.pumpWidget(const MaterialApp(home:WindowsDisasterRehearsal()));await tester.pumpAndSettle();
+   await tester.pumpWidget(MaterialApp(home:WindowsDisasterRehearsal(loadJobs:()async=>{'backup':null,'rehearse':null})));await tester.pumpAndSettle();
    expect(find.text('Completion unverified'),findsNWidgets(2));
    final restore=tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Authorize separate TEST restore'));expect(restore.onPressed,isNull);
    await tester.tap(find.text('New TEST backup generation'));await tester.pumpAndSettle();
    expect(find.text('Authorize TEST copy'),findsOneWidget);await tester.tap(find.text('Cancel'));await tester.pumpAndSettle();
-   expect((await db.collection('_windows_disaster_jobs').get()).docs,isEmpty);
+   expect((await tester.runAsync(()=>db.collection('_windows_disaster_jobs').get()))!.docs,isEmpty);
    await tester.pumpWidget(const SizedBox.shrink());
  });
  test('hourly standby, wake and reconnect use bounded engine scheduling without duplicate timers', () {
