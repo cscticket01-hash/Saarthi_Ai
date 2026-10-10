@@ -35,11 +35,21 @@ async function run(){
  const pdf=Buffer.from('%PDF-1.4\nSynthetic TEST disaster binary\n%%EOF\n'),uploadKey=crypto.createHash('sha256').update(id).digest('hex');
  const upload=await call({action:'managed/file/upload',name:id+'.pdf',mime:'application/pdf',base64:pdf.toString('base64'),uploadKey});
  const original=await call({action:'managed/records',operation:'write',collection:'school_notices',id,syncProtocol:2,operationId:op,expectedRecordRevision:'',data:{schoolId,syntheticTest:true,title:'Disposable disaster recovery fixture',fileId:upload.fileId,capturedAt:12345}});assert.ok(original.recordRevision);pass('Original operation and file durable ACK');
- const monitoring=await call({action:'managed/sync/status'});
- assert.equal(monitoring.serverEvidence.outcome,'durable_ack');assert.equal(monitoring.serverEvidence.stage,'managed_records');assert.equal(monitoring.serverEvidence.protocol,2);assert.ok(monitoring.serverEvidence.observedAt>0);
- assert.ok(Object.keys(monitoring.serverEvidence).every(key=>['version','observedAt','outcome','stage','protocol'].includes(key)));
- assert.ok(monitoring.latestWindowsReport===null||monitoring.latestWindowsReport.source==='latest_windows_client_report');
- report.centralMonitor={backendAckVerified:true,windowsReportObserved:monitoring.latestWindowsReport!==null};pass('Actual central monitor backend ACK evidence; missing client report stays unknown');
+ // Monitoring is independently checked; a metadata failure must not block
+ // verification of the already acknowledged, immutable recovery checkpoint.
+ try {
+  const monitoring=await call({action:'managed/sync/status'}),evidence=monitoring.serverEvidence||{};
+  const shape=Object.keys(evidence).every(key=>['version','observedAt','outcome','stage','protocol'].includes(key));
+  const verified=evidence.outcome==='durable_ack'&&evidence.stage==='managed_records'&&evidence.protocol===2&&Number.isSafeInteger(evidence.observedAt)&&evidence.observedAt>0&&shape&&
+    (monitoring.latestWindowsReport===null||monitoring.latestWindowsReport.source==='latest_windows_client_report');
+  const safeCodes=['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_TIMEOUT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED'];
+  report.centralMonitor={verified,stage:'central_monitor_validation',backendDurableAckObserved:evidence.outcome==='durable_ack',evidenceShapeVerified:shape,
+    observedAt:Number.isSafeInteger(evidence.observedAt)?evidence.observedAt:null,
+    residualFailureCode:evidence.code===undefined?null:safeCodes.includes(evidence.code)?evidence.code:'SCRIPT_UNVERIFIED',
+    windowsReportObserved:monitoring.latestWindowsReport!==null};
+ } catch (_) {report.centralMonitor={verified:false,stage:'central_monitor_validation',category:'MONITOR_STATUS_UNAVAILABLE'};}
+ report.checks.push({name:'Actual central monitor backend ACK evidence; missing client report stays unknown',status:report.centralMonitor.verified?'PASS':'FAIL'});
+ console.log(JSON.stringify({check:'Central monitor validation',...report.centralMonitor}));
  const execute=async request=>{let result,retries=0;for(let step=0;step<400;step++){
    try{result=await call({action:'managed/disaster',...request});retries=0;}catch(error){if(++retries>3)throw error;await delay(Math.min(30000,4000*2**retries)+Math.floor(Math.random()*1000));continue;}
    assert.equal(result.disasterVersion,5);assert.equal(result.operationId,request.operationId);assert.equal(result.activeStorageChanged,false);
@@ -51,6 +61,6 @@ async function run(){
  const records=(await call({action:'managed/records',collection:'school_notices',operation:'read',syncProtocol:2})).records,row=records[id];assert.equal(row._syncRevision,original.recordRevision);assert.equal(row._syncOperationId,op);assert.equal(row.capturedAt,12345);assert.equal(row.fileId,upload.fileId);pass('Active Sheets records, revision, operation, timestamp and original file link unchanged');
  const originalFile=await call({action:'managed/file/read',fileId:upload.fileId});assert.deepEqual(Buffer.from(originalFile.base64,'base64'),pdf);pass('Original Drive bytes retained without QR regeneration');
  const foreign=await post(endpoint,{action:'managed/disaster',operation:'backup',operationId:'f'.repeat(64),schoolId:'vs-ffffffffffffffffffffffffffffffff'},token);assert.notEqual(foreign.http,200);pass('Foreign school disaster access rejected');
- report.status='PASS';report.activeCutoverVerified=false;report.localPendingQueuesIncluded=false;report.firebaseCredentialsIncluded=false;
+ report.status=report.centralMonitor.verified?'PASS':'FAIL';if(report.status==='FAIL')process.exitCode=1;report.activeCutoverVerified=false;report.localPendingQueuesIncluded=false;report.firebaseCredentialsIncluded=false;
 }
 run().catch(()=>{report.status='FAIL';process.exitCode=1;}).finally(()=>{fs.mkdirSync('build/cloud-prerequisites',{recursive:true});fs.writeFileSync('build/cloud-prerequisites/disaster-live.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));});
