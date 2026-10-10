@@ -1,0 +1,34 @@
+name: Isolated TEST recycle acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - .github/workflows/recycle-test.yml
+      - .github/scripts/test_recycle_live.cjs
+permissions:
+  contents: read
+concurrency:
+  group: isolated-test-recycle-acceptance
+  cancel-in-progress: false
+jobs:
+  recycle-live:
+    if: github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: TEST-only create, verified snapshot, restore and duplicate prevention
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_recycle_live.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-test-recycle-readback
+          path: build/cloud-prerequisites/recycle-live.json
