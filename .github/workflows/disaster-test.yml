@@ -29,6 +29,7 @@ jobs:
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
           GITHUB_TOKEN: ${{ github.token }}
           # Continue the already acknowledged isolated TEST fixture/checkpoints.
+          # Recovered monitoring requires fresh cloud proof for changed runtime.
           # Runtime provenance is verified against this successful cloud run;
           # changed backend/engine code cannot reuse its evidence.
           VS_TEST_CLOUD_EVIDENCE_RUN_ID: '38020985995'

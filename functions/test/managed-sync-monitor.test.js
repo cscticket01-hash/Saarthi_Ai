@@ -21,7 +21,7 @@ test('monitor rejects record bodies, impossible counts and timestamps without to
 });
 test('monitor write failures do not turn durable storage ACKs into failures, and safe errors stay distinct',async()=>{
  const f=fixture(async(_,options)=>{const b=JSON.parse(options.body);return {ok:true,status:200,text:async()=>JSON.stringify({schoolId:b.schoolId,success:true,syncProtocol:2,recordRevision:'confirmed'})};});
- const doc=f.db.doc;f.db.doc=path=>{const ref=doc(path);if(path==='platform_schools/'+A)ref.set=async()=>{throw Error('metadata unavailable');};return ref;};
+ const doc=f.db.doc;f.db.doc=path=>{const ref=doc(path);if(path==='platform_schools/'+A)ref.set=ref.update=async()=>{throw Error('metadata unavailable');};return ref;};
  const ack=await f.call({action:'managed/records',operation:'delete',collection:'school_notices',id:'n',syncProtocol:2,operationId:'monitor-delete-0001',expectedRecordRevision:''});assert.equal(ack.recordRevision,'confirmed');
  const bad=fixture(async(_,options)=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:JSON.parse(options.body).schoolId,code:'SCRIPT_TIMEOUT'})}));
  await assert.rejects(bad.call({action:'managed/records',operation:'read',collection:'school_notices'}));

@@ -153,7 +153,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(syncEvidenceWrites.size>=1000)syncEvidenceWrites.delete(syncEvidenceWrites.keys().next().value);
   syncEvidenceWrites.set(schoolId,{at:now(),outcome:evidence.outcome});
   // Monitoring is best-effort; its failure never reverses a verified storage ACK.
-  try{await db.doc('platform_schools/'+schoolId).set({syncServerEvidence:{version:1,observedAt:now(),...evidence}},{merge:true});}catch(_){}
+  try{await db.doc('platform_schools/'+schoolId).update({syncServerEvidence:{version:1,observedAt:now(),...evidence}});}catch(_){}
  }
  async function signed(m,body){
   try{const result=await signedRequest(m,body);

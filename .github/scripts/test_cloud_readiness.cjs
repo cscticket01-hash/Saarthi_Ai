@@ -47,6 +47,14 @@ async function run() {
     report.status = 'BLOCKED'; report.blocker = 'Authorized isolated TEST Apps Script storage connection is not ready.'; return;
   }
   check('Owner-connected TEST storage', r, true);
+  r = await request(endpoint, {action: 'managed/records', schoolId, collection: 'school_settings', operation: 'read', syncProtocol: 2}, token);
+  check('Read-only TEST settings protocol', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && r.data.syncProtocol === 2);
+  r = await request(endpoint, {action: 'managed/sync/status', schoolId}, token);
+  const evidence = r.data.serverEvidence;
+  check('Authenticated monitoring evidence after readback', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId &&
+    evidence && ['verified_response', 'durable_ack'].includes(evidence.outcome) && evidence.protocol === 2 && Number.isSafeInteger(evidence.observedAt) && evidence.observedAt > 0 &&
+    Object.keys(evidence).every(key => ['version', 'observedAt', 'outcome', 'stage', 'protocol'].includes(key)) &&
+    (r.data.latestWindowsReport === null || r.data.latestWindowsReport.source === 'latest_windows_client_report'));
   report.status = 'PASS';
   report.remaining = 'No mutations, attendance ACK, migration or application UI acceptance performed by this harness.';
 }
