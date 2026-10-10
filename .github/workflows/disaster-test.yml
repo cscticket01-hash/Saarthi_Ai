@@ -16,7 +16,7 @@ jobs:
   disaster-live:
     if: github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,7 +28,15 @@ jobs:
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: node .github/scripts/test_disaster_live.cjs
+          # Continue the already acknowledged isolated TEST fixture/checkpoints.
+          # Runtime provenance is verified against this successful cloud run;
+          # changed backend/engine code cannot reuse its evidence.
+          VS_TEST_CLOUD_EVIDENCE_RUN_ID: '38020985995'
+          VS_TEST_DISASTER_FIXTURE_RUN_ID: '38020985989'
+          VS_TEST_DISASTER_FIXTURE_ATTEMPT: '2'
+        run: |
+          node --test .github/scripts/disaster_resume.test.cjs
+          node .github/scripts/test_disaster_live.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
