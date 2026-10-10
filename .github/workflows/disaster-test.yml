@@ -6,6 +6,13 @@ on:
     paths:
       - .github/workflows/disaster-test.yml
       - .github/scripts/test_disaster_live.cjs
+      - .github/scripts/disaster_resume.cjs
+      - .github/scripts/test_runtime_identity.cjs
+      - lib/windows_local_firestore.dart
+      - lib/windows_sync_engine.dart
+      - functions/**
+      - staging-school-cloud/**
+      - school-backend/managed/**
 permissions:
   contents: read
   actions: read

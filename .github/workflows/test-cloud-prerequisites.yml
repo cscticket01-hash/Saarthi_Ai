@@ -6,6 +6,9 @@ on:
     paths:
       - .github/scripts/test_cloud_readiness.cjs
       - .github/scripts/connect_isolated_test_storage.cjs
+      - .github/scripts/test_runtime_identity.cjs
+      - staging-school-cloud/**
+      - functions/**
       - .github/scripts/isolated_live_sync.cjs
       - .github/scripts/run_android_live_test.sh
       - .github/tests/isolated_engine_live_test.dart
