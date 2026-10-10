@@ -10,20 +10,31 @@ The control center now shows own-profile category counts, actual queue/conflict/
 
 Central monitoring accepts bounded client version/conflict/document/checkpoint fields, replaces the whole report to prevent stale optional metadata, and distinguishes client observations from server durable-ACK evidence. Reports older than ten minutes are stale. Successful server evidence clears residual failure fields.
 
-Offline tracked deletes now retain their original local snapshot and stable delete operation ID in the same database transaction as the hidden row and outbox. Snapshots remain school-scoped, survive restart, do not invent cloud deletion ACKs and do not purge financial evidence or file bytes. This preservation does not implement an offline restore choice.
+Offline tracked deletes now retain their original local snapshot and stable delete operation ID in the same database transaction as the hidden row and outbox. Snapshots remain school-scoped and survive restart. A verified durable delete receipt records the deletion revision without removing the original snapshot. Failed/unacknowledged deletes stay unverified; financial evidence and file bytes are not purged. This preservation does not implement an offline restore choice.
 
-## Verified evidence and active acceptance
+## Verified acceptance (2026-10-10, UTC)
 
-- Local backend: 268 tests pass; focused monitoring includes school-scoped measured storage, malformed cache rejection and optional report replacement.
-- Local OAuth/recovery/runtime checks: 21 tests pass. Shell syntax and source checks pass.
-- Commit `d486f06d7e21a3a62872a2534c17b854ef5a7da1`: hosted backend, OAuth, school-isolation and Dart analysis pass. Web regression found three off-screen control-center test taps after added cards. Tests now explicitly reveal target controls and metrics; fresh hosted results are required.
-- Isolated Render TEST deployment `dep-db4tjhajnfac738gbh60` is live at `d486f06d7e21a3a62872a2534c17b854ef5a7da1`. Production service is not changed.
-- Exact-commit runtime health is required before TEST pairing/fixture writes. Missing, foreign or old runtime identity cannot authorize fixture writes.
-- Native Android acceptance now renders the first frame before async plugin/network work and has a bounded twelve-minute driver timeout. A successful current-commit native chain is still required; previous emulator timeouts are not passes.
-- Historical `f34dceee8d60c36cc17dccdc790b86cd0beceed5` cloud run 38025377350 passed storage, real engine and Chromium checks, then its Android job timed out. Downstream native readback was skipped.
-- Historical recovery run 38024900611 verified an archive of 19 uploaded binaries, then failed in the private spreadsheet restore phase. Its original backup/restore operation IDs are preserved for bounded resume. The old diagnostic cache expired; a fresh failure must be inspected before assigning a cause.
+Application/runtime commit: `0a3a4ead56646e8069865347bc3addf04f53dc43`. Documentation-only commits do not change this tested runtime. Existing TEST Apps Script Version 7 is unchanged.
 
-Local Flutter setup was automatically blocked after a cloud metadata endpoint access was detected. That setup route is not retried; Flutter verification uses existing GitHub CI. Offline source formatting is separate.
+| Acceptance | Verified result |
+| --- | --- |
+| Platform push / PR | All five jobs PASS in 38031214142 and 38031218222: Windows, Android, Web, backend, school-security. |
+| Windows durable SQLite | 25 SQLite tests PASS, including original offline financial delete snapshot, stable delete ID, school isolation, reopen and verified-ACK linkage. Production screen/queue/startup group: 93 PASS. OS process crash recovery PASS; EXE build/restart smoke PASS. Suite groups overlap and must not be summed as unique tests. |
+| Backend / OAuth / rules | 268 backend, 14 OAuth and 25 Firestore isolation/security regressions PASS; seven runtime/provenance tests PASS. |
+| Real TEST cloud | All five jobs PASS in 38031214129: signed preflight, production-class engines, Chromium UI, Android API 35, native Android-to-Windows readback. Exact deployed runtime identity verified before pairing or fixture writes. |
+| Preflight / measurements | 32 pairing/live checks and 10 read-only prerequisite checks PASS, including own-school measured Drive usage and monitoring readback. Fresh attendance queue-to-ACK: 10,821 ms. |
+| Production-class engines | Local SQLite durable save: 44 ms; Windows queue-to-ACK: 9,513 ms. Controlled client-boundary 502 retains original operation, followed by automatic jittered retry and actual cloud ACK/readback. Photo original retained after SQLite reopen, duplicate cloud upload idempotent. |
+| Chromium | Real school login, Windows notice visibility, CAS write/readback, persisted offline draft/reload and duplicate ACK/readback PASS. Website write/readback: 31,642 ms. |
+| Native Android | Native SQLite/secure-storage plugins and production dashboard PASS. Injected offline-boundary save: 37 ms. Queue-to-verified cloud read: 59,782 ms. Windows and website notices visible without Windows running. This is an emulator/injected-boundary test, not physical Wi-Fi or process-kill acceptance. |
+| Native Android to Windows | Original capture time and record integrity PASS; newer local edit protected; foreign school rejected. Windows cloud read: 11,250 ms. One deliberately created newer local edit remains durably pending. |
+| Disaster / monitor | Eight checks PASS in 38031214153: original operation resumed, complete archive and separate Sheets/Drive restore readback, active revision/operation/timestamp/file link unchanged, original bytes retained, foreign school rejected. **348 records and 19 uploaded binaries** restored into private TEST recovery storage. Monitor server durable ACK verified, residual failure code absent; no Windows report was observed and stays unknown. |
+| TEST deployment | Render `dep-db4tnf7lk1mc7380h3ug` live at the tested application commit, 06:32:05.999 UTC. Production untouched. |
+
+The first-frame Android harness change passed fresh native acceptance; the previous APK-install/driver hang did not recur. The twelve-minute driver timeout remains a bounded failure path, not a substitute for successful evidence. Earlier interrupted recovery checkpoints were retained and the final same-operation readback passed; the prior generic restore exception is not retrospectively assigned an unproven cause.
+
+Full active disaster cutover, never-uploaded queues and Firebase credentials are **not included** in the cloud rehearsal. No active storage pointers or original school data were replaced.
+
+Local Flutter setup was automatically blocked after cloud metadata endpoint access was detected. That setup route was not retried; Flutter verification completed through existing GitHub CI.
 
 ## Fourteen requirements
 
@@ -33,16 +44,16 @@ Local Flutter setup was automatically blocked after a cloud metadata endpoint ac
 | Intelligent safe repair | Bounded typed retries, retained conflict history and explicit financial review implemented; unknown errors retain data. Original incident cause remains unconfirmed. |
 | Hourly standby | Hourly/wake/reconnect scheduling tested with controlled timers; real elapsed-hour and physical sleep/wake remain unverified. |
 | Instant local entry sync | Local durable saves and versioned TEST cloud ACK evidence exist; infrastructure latency is measured, not guaranteed instant. |
-| Bidirectional recovery | Missing local-cache inventory, pending-edit/tombstone protection and verified cloud-record backup recovery implemented; full current-cloud acceptance remains required. |
+| Bidirectional recovery | Missing local-cache inventory, pending-edit/tombstone protection and verified cloud-record backup recovery implemented; fresh live cloud chain and bounded record/archive recovery pass; full clean-install activation remains unverified. |
 | Protected 24-hour recycle | Signed cloud snapshot/restore, TEST expiry scheduler and local inventory UI implemented; offline local snapshot preservation added; integrated local restore remains incomplete. |
-| Android independent of Windows | Shared school session and native harness implemented; current-commit native emulator acceptance pending. |
-| Offline attendance | Durable SQLite queue, original capture time and duplicate protection implemented; current native restart/reconnect acceptance pending. |
+| Android independent of Windows | Shared school session and native harness implemented; fresh current-commit Android API 35 dashboard/session/cloud acceptance PASS; physical-device acceptance remains. |
+| Offline attendance | Durable SQLite queue, original capture time and duplicate protection implemented; fresh native SQLite/secure-session reopen and injected-offline real-cloud acceptance PASS; physical restart/network acceptance remains. |
 | Massive concurrency | 1k/5k/15k durable component benchmark passes with mocked delivery; no measured provider throughput claim. |
 | Photos | Original retention, distinct-original identity, approximately 30 KB best effort and actual synthetic cloud readback implemented; representative visual quality remains unverified. |
 | Documents | Original retention, durable queue and approximately 50 KB best effort implemented; physical scan/seal/signature legibility acceptance pending. |
-| Disaster recovery | Hash-verified local staging and separate private Sheets/Drive rehearsal implemented; cloud spreadsheet rehearsal and clean-install active cutover remain incomplete. Cloud cannot recover never-uploaded queues or credentials. |
-| School isolation | Backend/Firestore/session tests and historical TEST foreign-school rejection pass; new exact-commit live acceptance pending. |
-| Accurate central monitoring | School-scoped timestamped storage and separate client/server evidence implemented; fresh live monitoring acceptance pending. |
+| Disaster recovery | Hash-verified local staging and separate private Sheets/Drive rehearsal implemented; 348-record/19-binary private cloud rehearsal PASS; clean-install active cutover remains incomplete. Cloud cannot recover never-uploaded queues or credentials. |
+| School isolation | Backend/Firestore/session tests and historical TEST foreign-school rejection pass; fresh exact-commit live foreign-school rejection PASS. |
+| Accurate central monitoring | School-scoped timestamped storage and separate client/server evidence implemented; fresh server durable-ACK and own-school measured-storage acceptance PASS; latest Windows client/fleet report was not observed and stays unknown. |
 
 ## Device acceptance procedure
 
@@ -56,4 +67,4 @@ Live 1k/5k/15k simultaneous provider tests require a separately approved capacit
 
 Request `7a8e0438-cc6c-443b-947b-14f7eb68f86f` at `2026-10-09T14:59:01.439Z`: HTTP 502, `SCRIPT_OPERATION_FAILED`. Underlying Apps Script category/source line remains unconfirmed. The original fee and two document pending entries remain untouched. No main merge, production release/deployment, billing change or pending clearing is performed.
 
-Production readiness: **BLOCKED** until current acceptance and the explicitly incomplete requirements are resolved. Historical passes are not relabelled as current-runtime evidence.
+Production readiness: **BLOCKED** until the explicitly incomplete clean-install/offline-restore/download-inventory requirements and physical/capacity acceptance are resolved. All listed hosted current-application acceptance runs PASS. Historical passes are not relabelled as current-runtime evidence.
