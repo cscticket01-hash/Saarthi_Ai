@@ -36,6 +36,23 @@ Full active disaster cutover, never-uploaded queues and Firebase credentials are
 
 Local Flutter setup was automatically blocked after cloud metadata endpoint access was detected. That setup route was not retried; Flutter verification completed through existing GitHub CI.
 
+## Latest hosted verification (2026-10-10, UTC)
+
+Exact reviewed source: `f6fe4a1ebe79104fc0e462eb7a83a66fb2d9744d`; [Platform review builds run 38033317079](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38033317079) completed **success** after rerunning the failed job.
+
+| Job | Result |
+| --- | --- |
+| Backend | PASS, including backend regression checks, OAuth broker security tests, unpublished container build, and safe Google Desktop OAuth configuration probe. |
+| Windows | PASS, including SQLite migration/integrity/atomicity and production API regression, Windows app analysis/tests, compile, fresh-start/duplicate-launch/restart smoke, and exact-commit review package. |
+| Android | PASS; shared Windows QR compatibility checks and unsigned review APK build passed. |
+| Web | PASS; platform analysis/regressions and developer website build passed. |
+| Firestore school security | PASS; emulator rules isolation checks passed. |
+| Isolated TEST cloud | SKIPPED by this workflow's branch condition. This run supplies no new live-cloud or physical-device acceptance. |
+
+The initial attempt stopped in the safe OAuth probe after its 90-second health check and emitted only the generic failure message. The rerun passed the same probe. The underlying cause of the first timeout remains unconfirmed; no credential, OAuth configuration, or staging deployment was changed. Review artifacts were created for `windows-review-build`, `android-review-apk`, and the web preview. These are unpublished CI review artifacts, not release downloads.
+
+This run does not close the remaining production limits below: integrated local snapshot restore, pending-download inventory, clean-install disaster cutover, physical device/sleep/wake/media checks, real provider concurrency, and the original school's HTTP 502 cause remain unresolved or unverified. The prior TEST cloud and disaster-recovery evidence remains tied to its stated runtime and runs; it is not reclassified as part of run 38033317079.
+
 ## Fourteen requirements
 
 | Requirement | Current implementation / remaining acceptance |
