@@ -1,0 +1,52 @@
+name: Isolated TEST disaster recovery acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - .github/workflows/disaster-test.yml
+      - .github/scripts/test_disaster_live.cjs
+      - .github/scripts/disaster_resume.cjs
+      - .github/scripts/test_runtime_identity.cjs
+      - lib/windows_local_firestore.dart
+      - lib/windows_sync_engine.dart
+      - functions/**
+      - staging-school-cloud/**
+      - school-backend/managed/**
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: isolated-test-disaster-acceptance
+  cancel-in-progress: false
+jobs:
+  disaster-live:
+    if: github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: TEST-only bounded backup and separate Sheets/Drive restore readback
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+          GITHUB_TOKEN: ${{ github.token }}
+          # Continue the already acknowledged isolated TEST fixture/checkpoints.
+          # Recovered monitoring requires fresh cloud proof for changed runtime.
+          # Runtime provenance is verified against this successful cloud run;
+          # changed backend/engine code cannot reuse its evidence.
+          VS_TEST_CLOUD_EVIDENCE_RUN_ID: '38025377350'
+          VS_TEST_DISASTER_FIXTURE_RUN_ID: '38020985989'
+          VS_TEST_DISASTER_FIXTURE_ATTEMPT: '2'
+        run: |
+          node --test .github/scripts/disaster_resume.test.cjs
+          node .github/scripts/test_disaster_live.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-test-disaster-readback
+          path: build/cloud-prerequisites/disaster-live.json

@@ -3,13 +3,18 @@ import '../lib/windows_sync_conflict_review.dart';
 import '../lib/windows_connect/managed_school_session.dart';
 import '../lib/windows_exam_service.dart';
 import 'dart:convert';
+import '../lib/windows_backup_integrity.dart';
+import '../lib/windows_recycle_bin.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import '../lib/windows_settings_panel.dart';
 import '../lib/school_cloud_engine.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -20,9 +25,119 @@ import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_platform_client.dart';
 import '../lib/windows_sync_engine.dart';
+import '../lib/windows_sync_recovery.dart';
+import '../lib/windows_sync_schedule.dart';
+import '../lib/windows_disaster_rehearsal.dart';
+import '../lib/sync_recovery_policy.dart';
+import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/platform/platform_config.dart';
 void main(){
+ test('interrupted restore resumes verified files and repairs incomplete staging bytes', () async {
+   final root = await Directory.systemTemp.createTemp('vs-resume-');
+   try {
+     final backup = await Directory('${root.path}/backup').create();
+     await File('${backup.path}/a.json').writeAsString('{"operationId":"original","pending":true}',flush:true);
+     await File('${backup.path}/b.pdf').writeAsBytes([4,5,6],flush:true);
+     await WindowsBackupIntegrity.seal(backup);
+     final target = Directory('${root.path}/restore');
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,target,onFileVerified:(count)async {
+       if(count==1) throw StateError('interrupted TEST copy');
+     }),throwsStateError);
+     expect(await File('${target.path}/a.json').exists(),true);
+     await File('${target.path}/a.json').writeAsString('partial',flush:true);
+     expect(await WindowsBackupIntegrity.resumeRestore(backup,target),2);
+     expect(await File('${target.path}/a.json').readAsString(),await File('${backup.path}/a.json').readAsString());
+     expect(await WindowsBackupIntegrity.verify(target),2);
+     expect(await WindowsBackupIntegrity.resumeRestore(backup,target),2);
+     await File('${backup.path}/b.pdf').writeAsBytes([7,8,9],flush:true);
+     await WindowsBackupIntegrity.seal(backup);
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,target),throwsStateError);
+     expect(await File('${target.path}/b.pdf').readAsBytes(),[4,5,6]);
+   } finally {await root.delete(recursive:true);}
+ });
+ test('resumable restore rejects unowned destinations, extra files and containment', () async {
+   final root = await Directory.systemTemp.createTemp('vs-resume-protection-');
+   try {
+     final backup = await Directory('${root.path}/backup').create();
+     await File('${backup.path}/original').writeAsBytes([1]);
+     await WindowsBackupIntegrity.seal(backup);
+     final existing = await Directory('${root.path}/existing').create();
+     await File('${existing.path}/pending').writeAsBytes([9]);
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,existing),throwsStateError);
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,Directory('${backup.path}/nested')),throwsStateError);
+     final target = Directory('${root.path}/restore');
+     await WindowsBackupIntegrity.resumeRestore(backup,target);
+     await File('${target.path}/unlisted').writeAsBytes([8]);
+     await expectLater(WindowsBackupIntegrity.resumeRestore(backup,target),throwsStateError);
+     expect(await File('${existing.path}/pending').readAsBytes(),[9]);
+   } finally {await root.delete(recursive:true);}
+ });
+ testWidgets('TEST disaster controls require explicit approval and do not present unverified restore success', (tester) async {
+   final db=FirebaseFirestore.instance;
+   await tester.runAsync(()=>db.switchProfile('disaster-widget-test',identity:{'schoolSyncId':'vs-db8afb01a3be46a983c8284714d06e5d'}));
+   await tester.pumpWidget(MaterialApp(home:WindowsDisasterRehearsal(loadJobs:()async=>{'backup':null,'rehearse':null})));await tester.pumpAndSettle();
+   expect(find.text('Completion unverified'),findsNWidgets(2));
+   final restore=tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Authorize separate TEST restore'));expect(restore.onPressed,isNull);
+   await tester.tap(find.text('New TEST backup generation'));await tester.pumpAndSettle();
+   expect(find.text('Authorize TEST copy'),findsOneWidget);await tester.tap(find.text('Cancel'));await tester.pumpAndSettle();
+   expect((await tester.runAsync(()=>db.collection('_windows_disaster_jobs').get()))!.docs,isEmpty);
+   await tester.pumpWidget(const SizedBox.shrink());
+ });
+ test('hourly standby, wake and reconnect use bounded engine scheduling without duplicate timers', () {
+   final timers=<Timer>[],intervals=<Duration>[],signals=<Duration>[],callbacks=<void Function(Timer)>[];
+   final schedule=WindowsSyncSchedule(signals.add,periodic:(duration,callback){
+     final timer=_TestSyncTimer();timers.add(timer);intervals.add(duration);callbacks.add(callback);return timer;
+   });
+   schedule.start(WindowsSyncEngine.reconciliationInterval);
+   expect(intervals,[const Duration(minutes:4),const Duration(hours:1)]);
+   callbacks[1](timers[1]);schedule.wake();schedule.reconnected();
+   expect(signals,[const Duration(milliseconds:250),const Duration(milliseconds:250),const Duration(seconds:2)]);
+   schedule.start(WindowsSyncEngine.reconciliationInterval);expect(timers.take(2).every((t)=>!t.isActive),true);
+   schedule.stop();expect(timers.every((t)=>!t.isActive),true);
+ });
+ test('restore rehearsal preserves queue IDs and document bytes without activating or overwriting storage', () async {
+   final root = await Directory.systemTemp.createTemp('vs-restore-rehearsal-');
+   try {
+     final backup = await Directory('${root.path}/backup').create();
+     final pending = jsonEncode({'pending':[{'operationId':'original-operation','amount':100,'state':'pending'}]});
+     await File('${backup.path}/local_database_v1.json').writeAsString(pending,flush:true);
+     await Directory('${backup.path}/LocalFiles').create();
+     await File('${backup.path}/LocalFiles/original.pdf').writeAsBytes([4,5,6],flush:true);
+     await WindowsBackupIntegrity.seal(backup);
+     final destination = Directory('${root.path}/rehearsal');
+     expect(await WindowsBackupIntegrity.stageRestore(backup,destination),2);
+     expect(await File('${destination.path}/local_database_v1.json').readAsString(),pending);
+     expect(await File('${destination.path}/LocalFiles/original.pdf').readAsBytes(),[4,5,6]);
+     await expectLater(WindowsBackupIntegrity.stageRestore(backup,destination),throwsStateError);
+     await expectLater(WindowsBackupIntegrity.stageRestore(backup,Directory('${backup.path}/nested')),throwsStateError);
+     expect(await File('${backup.path}/local_database_v1.json').readAsString(),pending);
+     await File('${backup.path}/unlisted.sqlite').writeAsBytes([1]);
+     await expectLater(WindowsBackupIntegrity.verify(backup),throwsStateError);
+   } finally {await root.delete(recursive:true);}
+ });
+ test('backup generation verifies originals and rejects corruption or missing files', () async {
+   final dir = await Directory.systemTemp.createTemp('vs-backup-integrity-');
+   try {
+     final file = File('${dir.path}/original.pdf');
+     await file.writeAsBytes([1,2,3],flush:true);
+     await WindowsBackupIntegrity.seal(dir);
+     expect(await WindowsBackupIntegrity.verify(dir),1);
+     expect(await file.readAsBytes(),[1,2,3]);
+     await file.writeAsBytes([1,2,4],flush:true);
+     await expectLater(WindowsBackupIntegrity.verify(dir),throwsStateError);
+     await file.delete();
+     await expectLater(WindowsBackupIntegrity.verify(dir),throwsStateError);
+   } finally {await dir.delete(recursive:true);}
+ });
+ test('backup verification refuses traversal without accessing external records', () async {
+   final dir = await Directory.systemTemp.createTemp('vs-backup-path-');
+   try {
+     await File('${dir.path}/${WindowsBackupIntegrity.manifestName}').writeAsString(jsonEncode({
+       'version':1,'files':[{'path':'../outside.sqlite','bytes':0,'sha256':'untrusted'}]}));
+     await expectLater(WindowsBackupIntegrity.verify(dir),throwsStateError);
+   } finally {await dir.delete(recursive:true);}
+ });
  TestWidgetsFlutterBinding.ensureInitialized();
  const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';final db=FirebaseFirestore.instance;
  setUp(()async{
@@ -30,6 +145,251 @@ void main(){
    'projectId':platformProjectId,'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseRefreshToken':'refresh','storageReady':false})});
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('revision-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});
+ });
+ test('typed outage evidence is retryable while permission failure is retained for review', () async {
+   expect(windowsSyncRecovery(TimeoutException('fixture')).kind, SyncFailureKind.timeout);
+   expect(windowsSyncRecovery(const SocketException('fixture')).kind, SyncFailureKind.networkPath);
+   await db.collection('fee_payments').doc('retained-payment').set({'amount':100});
+   final before=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+   await expectLater(WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+     send:(a,b,c,d)async{},sendVersioned:(item)async=>throw CentralCloudException(502,'school_cloud',
+       'Storage permission check failed',diagnosticCode:'SCRIPT_PERMISSION_DENIED')),throwsStateError);
+   final retained=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+   expect(retained['operationId'],before['operationId']);expect(retained['data']['amount'],100);
+   expect(retained['syncState'],'needsAttention');expect(retained['failureCategory'],'authorization');
+   await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async=>fail('No automatic permission bypass'));
+   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+ });
+ test('structural failure does not starve independent records or manufacture ACK', () async {
+   await db.collection('students_directory').doc('a-broken').set({'name':'Retained'});
+   await db.collection('students_directory').doc('b-working').set({'name':'Independent'});
+   await expectLater(WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+     send:(a,b,c,d)async{},sendVersioned:(item)async {
+       if(item['documentId']=='a-broken')throw CentralCloudException(502,'school_cloud','Storage review required',diagnosticCode:'SCRIPT_RECORD_VERIFY_FAILED');
+       return 'verified-working-revision';
+     }),throwsStateError);
+   final queue=(await db.collection('_windows_firebase_outbox').get()).docs;
+   expect(queue,hasLength(1));expect(queue.single.data()['documentId'],'a-broken');
+   expect(queue.single.data()['syncState'],'needsAttention');
+   expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(1));
+   await db.collection('school_notices').doc('later-notice').set({'message':'New independent edit'});
+   await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+     send:(a,b,c,d)async{},sendVersioned:(item)async {
+       expect(item['documentId'],'later-notice');return 'verified-later-revision';
+     });
+   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['documentId'],'a-broken');
+   expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(2));
+ });
+ test('shared storage identity error stops the batch after one failed request', () async {
+   for (var i=0;i<3;i++) await db.collection('students_directory').doc('identity-$i').set({'name':'Retained'});
+   var calls=0;
+   await expectLater(WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+     send:(a,b,c,d)async{},sendVersioned:(item)async {
+       calls++;
+       throw CentralCloudException(502,'school_cloud','School storage identity mismatch',diagnosticCode:'SCRIPT_WORKBOOK_IDENTITY_MISMATCH');
+     }),throwsStateError);
+   expect(calls,1);expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(3));
+   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+ });
+ testWidgets('control center reports unknown connectivity and retains original queue', (tester) async {
+   tester.view.physicalSize = const Size(1200, 1800);
+   tester.view.devicePixelRatio = 1;
+   addTearDown(tester.view.resetPhysicalSize);
+   addTearDown(tester.view.resetDevicePixelRatio);
+   await tester.runAsync(() async {
+     await db.collection('fee_payments').doc('pending-preview').set({'amount':100});
+     await WindowsSyncEngine.instance.refreshDetails();
+     final font=FontLoader('ControlCenterPreview');
+     font.addFont(File('assets/id_card_regular.ttf').readAsBytes().then((bytes)=>ByteData.sublistView(bytes)));
+     await font.load();
+     final icons=FontLoader('MaterialIcons');
+     icons.addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+     await icons.load();
+   });
+   final previewKey=GlobalKey();
+   await tester.pumpWidget(RepaintBoundary(key:previewKey,child:MaterialApp(theme:ThemeData.dark().copyWith(
+     scaffoldBackgroundColor:const Color(0xFF0B141A),appBarTheme:const AppBarTheme(backgroundColor:Color(0xFF1F2C34)),
+     textTheme:ThemeData.dark().textTheme.apply(fontFamily:'ControlCenterPreview')),
+     home:WindowsSyncControlCenter(refreshOnOpen:()async{}))));
+   await tester.pumpAndSettle();
+   expect(find.text('Sync & Backup Control Center'),findsOneWidget);
+   expect(find.text('Not independently verified'),findsOneWidget);
+   expect(find.text('Not yet verified'),findsWidgets);
+   expect(find.textContaining('Operation in progress.'),findsNothing);
+   expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Sync Now')).onPressed,isNotNull);
+   final pending=await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get());
+   expect(pending!.docs,hasLength(1));
+   await tester.runAsync(() async {
+     final boundary=previewKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+     final image=await boundary.toImage(pixelRatio:1).timeout(const Duration(seconds:15));
+     try {
+       final bytes=await image.toByteData(format:ui.ImageByteFormat.png).timeout(const Duration(seconds:15));
+       final target=File('build/sync-control-preview/synthetic-test-school.png');
+       await target.parent.create(recursive:true);
+       await target.writeAsBytes(bytes!.buffer.asUint8List(),flush:true);
+     } finally {image.dispose();}
+   });
+   await tester.pumpWidget(const SizedBox());
+ });
+ testWidgets('download observations from a previously active school are not rendered', (tester) async {
+   final engine=WindowsSyncEngine.instance,previous=WindowsSyncEngine.instance.details.value;
+   engine.details.value={'downloads':[
+     {'schoolId':school,'collection':'own-observation','state':'verified','remaining':0,'verified':1,'blocked':0},
+     {'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','collection':'foreign-observation','state':'verified','remaining':0,'verified':999,'blocked':0},
+   ]};
+   try {
+     await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(refreshOnOpen:()async{})));
+     await tester.pumpAndSettle();
+     await tester.scrollUntilVisible(find.text('own-observation • verified'),300,scrollable:find.byType(Scrollable).first);
+     expect(find.text('own-observation • verified'),findsOneWidget);
+     expect(find.textContaining('foreign-observation'),findsNothing);
+   } finally {
+     await tester.pumpWidget(const SizedBox());engine.details.value=previous;
+   }
+ });
+ testWidgets('cloud health requires authenticated own-school readiness and rejects a foreign result', (tester) async {
+   for(final own in [true,false]) {
+     await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(
+       key:ValueKey(own),refreshOnOpen:()async{},healthProbe:(requested)async{
+         expect(requested,school);
+         return {'success':true,'storageReady':true,'schoolId':own?school:'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'};
+       })));
+     await tester.pumpAndSettle();
+     await tester.scrollUntilVisible(find.text('Check Cloud Health'),300,scrollable:find.byType(Scrollable).first);
+     await tester.ensureVisible(find.text('Check Cloud Health'));
+   await tester.pumpAndSettle();
+   await tester.tap(find.text('Check Cloud Health'));
+     await tester.pumpAndSettle();
+     await tester.scrollUntilVisible(find.text('School cloud health'),-300,scrollable:find.byType(Scrollable).first);
+     await tester.pumpAndSettle();
+     expect(find.textContaining('Authenticated school storage handshake verified at'),own?findsOneWidget:findsNothing);
+     for(final label in ['Drive school root','Google Sheets access']) {
+       expect(find.text(label),own?findsOneWidget:findsNothing);
+       if(own)expect(find.descendant(of:find.ancestor(of:find.text(label),matching:find.byType(Card)),matching:find.text('Not independently verified')),findsOneWidget);
+     }
+     if(!own)expect(find.textContaining('cloud readiness unverified'),findsOneWidget);
+     await tester.pumpWidget(const SizedBox());
+   }
+ });
+  testWidgets(
+    'Drive usage distinguishes partial measurements and rejects foreign or old unscoped responses',
+    (tester) async {
+      for (final variant in ['partial', 'foreign', 'old']) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: WindowsSyncControlCenter(
+              key: ValueKey(variant),
+              refreshOnOpen: () async {},
+              storageProbe: (requested) async {
+                expect(requested, school);
+                if (variant == 'old') return {'success': true};
+                return {
+                  'success': true,
+                  'schoolId': variant == 'foreign'
+                      ? 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+                      : school,
+                  'driveBytes': 2048,
+                  'partial': true,
+                  'measuredAt': 123456,
+                };
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text('School Drive Usage'),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.ensureVisible(find.text('School Drive Usage'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('School Drive Usage'));
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<OutlinedButton>(
+                find.widgetWithText(OutlinedButton, 'School Drive Usage'),
+              )
+              .onPressed,
+          isNotNull,
+        );
+        await tester.scrollUntilVisible(find.text('School Drive storage'),-300,scrollable:find.byType(Scrollable).first);
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('At least 2.00 KB'),
+          variant == 'partial' ? findsOneWidget : findsNothing,
+        );
+        await tester.pumpWidget(const SizedBox());
+      }
+    },
+  );
+ testWidgets('timed-out cloud health stays unverified and releases controls', (tester) async {
+   await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(
+     refreshOnOpen:()async{},healthProbe:(_)async{
+       throw TimeoutException('Private upstream detail must not be rendered');
+     })));
+   await tester.pumpAndSettle();
+   await tester.scrollUntilVisible(find.text('Check Cloud Health'),300,scrollable:find.byType(Scrollable).first);
+   await tester.ensureVisible(find.text('Check Cloud Health'));
+   await tester.pumpAndSettle();
+   await tester.tap(find.text('Check Cloud Health'));
+   await tester.pumpAndSettle();
+   await tester.scrollUntilVisible(find.text('Action timed out. Completion is unverified; local data is retained.'),300,scrollable:find.byType(Scrollable).first);
+   expect(find.text('Action timed out. Completion is unverified; local data is retained.'),findsOneWidget);
+   expect(find.textContaining('Private upstream detail'),findsNothing);
+   expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Check Cloud Health')).onPressed,isNotNull);
+   await tester.scrollUntilVisible(find.text('School cloud health'),-300,scrollable:find.byType(Scrollable).first);
+   await tester.pumpAndSettle();
+   expect(find.text('Health check timed out — cloud readiness unverified'),findsOneWidget);
+   expect(find.textContaining('Authenticated backend and school storage verified at'),findsNothing);
+   await tester.pumpWidget(const SizedBox());
+ });
+ testWidgets('offline recycle view retains original intent and rejects foreign local snapshots', (tester) async {
+   await tester.runAsync(()async {
+     await db.collection('students_directory').doc('retained-offline').set({'schoolId':school,'name':'Retained offline pupil'});
+     await db.collection('students_directory').doc('retained-offline').delete();
+     await db.collection('_windows_local_deletions').doc('foreign').set({'version':1,
+       'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','collection':'students_directory',
+       'documentId':'foreign','operationId':'foreign','deletedAt':1,'snapshot':{'name':'Foreign private snapshot'}});
+   });
+   final pending=(await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get()))!.docs.single.data();
+   final snapshots=(await tester.runAsync(()=>db.collection('_windows_local_deletions').get()))!.docs.map((row)=>row.data()).toList();
+   await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(readLocal:()async=>snapshots,call:(_,__)async=>throw TimeoutException('private upstream'))));
+   await tester.pumpAndSettle();
+   await tester.scrollUntilVisible(find.text('Local snapshot: Retained offline pupil'),200,scrollable:find.byType(Scrollable).first);
+   expect(find.text('Local snapshot: Retained offline pupil'),findsOneWidget);
+   expect(find.textContaining('Foreign private snapshot'),findsNothing);
+   expect(find.textContaining('Cloud deletion ACK not verified'),findsOneWidget);
+   expect((await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get()))!.docs.single.data()['operationId'],pending['operationId']);
+   expect((await tester.runAsync(()=>db.collection('students_directory').doc('retained-offline').get()))!.exists,false);
+   await tester.pumpWidget(const SizedBox());
+ });
+ testWidgets('recycle inventory rejects foreign school and expires restore from server time', (tester) async {
+   for(final foreign in [false,true]) {
+     await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(key:ValueKey(foreign),readLocal:()async=>[],call:(requested,body)async{
+       expect(requested,school);expect(body['operation'],'list');
+       return {'success':true,'schoolId':foreign?'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb':school,'recycleVersion':1,'serverNow':2000,'partial':false,'nextAfter':null,
+         'entries':[{'id':'synthetic-deleted','collection':'students_directory','fileId':'snapshot-safe','deletedRevision':'deleted-revision','name':'Synthetic deleted record','deletedAt':1000,'recoverUntil':2000,'status':'expired'}]};
+     })));
+     await tester.pumpAndSettle();
+     if(foreign) {
+       expect(find.text('Cloud deletion inventory unverified.'),findsOneWidget);
+       expect(find.textContaining('Synthetic deleted record'),findsNothing);
+     } else {
+       expect(find.textContaining('1 entries loaded'),findsOneWidget);
+       expect(tester.widget<TextButton>(find.widgetWithText(TextButton,'Restore')).onPressed,isNull);
+     }
+     await tester.pumpWidget(const SizedBox());
+   }
+ });
+ testWidgets('recycle unavailable response never invents a deletion ACK or exposes private errors', (tester) async {
+   await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(readLocal:()async=>[],call:(_,__)async{throw TimeoutException('secret detail');})));
+   await tester.pumpAndSettle();
+   expect(find.text('Cloud deletion inventory unverified.'),findsOneWidget);
+   expect(find.textContaining('secret detail'),findsNothing);
+   expect(find.textContaining('No recycle entries'),findsNothing);
+   await tester.pumpWidget(const SizedBox());
  });
  test('legacy queue binding preserves its original operation ID across failed retries', () async {
    final row=db.collection('_windows_firebase_outbox').doc('legacy-operation');
@@ -538,4 +898,11 @@ void main(){
    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
  });
 
+}
+
+class _TestSyncTimer implements Timer {
+  bool active=true;
+  @override void cancel(){active=false;}
+  @override bool get isActive=>active;
+  @override int get tick=>0;
 }

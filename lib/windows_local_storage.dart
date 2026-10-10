@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'windows_service_status.dart';
 import 'storage/windows_sqlite_store.dart';
+import 'windows_backup_integrity.dart';
 
 class WindowsLocalStorage {
   WindowsLocalStorage._();
@@ -152,7 +153,7 @@ class WindowsLocalStorage {
     final stamp = '${now.year}${two(now.month)}${two(now.day)}_'
         '${two(now.hour)}${two(now.minute)}${two(now.second)}';
     final destination = Directory(
-      '${backupRoot.path}${Platform.pathSeparator}backup_$stamp',
+      '${backupRoot.path}${Platform.pathSeparator}backup_${stamp}_${now.microsecondsSinceEpoch}',
     );
     await destination.create(recursive: true);
 
@@ -186,6 +187,7 @@ class WindowsLocalStorage {
       );
     }
 
+    await WindowsBackupIntegrity.seal(destination);
     return destination.path;
   }
 

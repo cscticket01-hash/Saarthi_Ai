@@ -46,6 +46,7 @@ jobs:
         node --check platform.js
         node --check domain.js
         npm test
+        node --test ../.github/scripts/test_runtime_identity.test.cjs
     - name: Benchmark isolated durable attendance queue
       run: node .github/scripts/attendance_queue_load.cjs build/review-metrics/attendance-queue-load.json
     - uses: actions/upload-artifact@v4
@@ -88,7 +89,7 @@ jobs:
         lib/school_text_data.dart lib/school_backend_transport.dart test/school_text_data_test.dart lib/platform/developer_service.dart lib/platform/spark_client.dart
         lib/platform/github_updates.dart lib/platform/monitor_summary.dart lib/mobile/school_messaging.dart
         lib/managed_developer_panel.dart lib/developer_account_widgets.dart lib/firebase_monitor_panel.dart lib/school_password_panel.dart
-        test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
+        test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Analyze developer portal
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart lib/platform
     - name: Analyze Windows school source
@@ -99,7 +100,7 @@ jobs:
         lib/managed_developer_panel.dart lib/developer_account_widgets.dart lib/firebase_monitor_panel.dart lib/school_password_panel.dart lib/windows_settings_panel.dart lib/windows_managed_school_gate.dart
         lib/windows_staff_payroll.dart lib/windows_app_reset.dart lib/windows_license_gate.dart lib/windows_admin_setup.dart lib/windows_connect
     - name: Verify documents and mobile school boundaries
-      run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
+      run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Verify durable document queue and retained originals
       timeout-minutes: 3
       env:
@@ -129,7 +130,7 @@ jobs:
         flutter test test/windows_easy_connect_test.dart --dart-define=SAARTHI_LEGACY_PROVISIONING_TEST_ONLY=true
     - name: Build developer website
       env:
-        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: flutter build web --release --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
     - uses: actions/upload-artifact@v4
       with:
@@ -166,7 +167,7 @@ jobs:
           lib/mobile/school_messaging.dart
           test/monitor_summary_test.dart test/firebase_metric_samples_test.dart
           test/spark_license_test.dart
-          test/github_update_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
+          test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
           test/document_renderer_test.dart
 
           lib/windows_school_identity.dart
@@ -226,7 +227,7 @@ jobs:
       run: |
         $env:APPDATA = Join-Path $env:RUNNER_TEMP 'sqlite-production-screen'
         $env:LOCALAPPDATA = $env:APPDATA
-        flutter test --concurrency=1 test/windows_document_queue_test.dart test/windows_document_screen_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
+        flutter test --concurrency=1 test/windows_smart_recovery_test.dart test/smart_media_compression_test.dart test/windows_document_queue_test.dart test/windows_document_screen_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
         if ($LASTEXITCODE -ne 0) { throw 'SQLite production screen/queue/startup regressions failed' }
     - name: Real OS SQLite process crash recovery and controlled local benchmark
       run: |
@@ -249,7 +250,7 @@ jobs:
         SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ inputs.test_oauth_broker_url || vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         OAUTH_SECRET_PRESENT: ${{ secrets.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET != '' }}
-        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: |
         if ($env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID -notmatch '^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$') { throw 'Valid repository Desktop OAuth Client ID is required for this preview.' }
         Write-Host 'Public OAuth Client ID configured; compiling verification test with the build definition.'
@@ -292,7 +293,7 @@ jobs:
         SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ inputs.test_oauth_broker_url || vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
         SAARTHI_GOOGLE_REQUIRES_BROKER: ${{ needs.backend.outputs.requires_secret }}
         SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google_oauth_client_id || vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
-        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: flutter build windows --release -t lib/main_windows.dart --build-name=2.1.106 --build-number=106 --dart-define=APP_VERSION=2.1.106-sync-test --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=$env:SAARTHI_GOOGLE_REQUIRES_BROKER
     - name: Record hosted Windows Defender review evidence
       run: |
@@ -328,6 +329,11 @@ jobs:
         Copy-Item school-backend/managed/SaarthiManagedAll.gs build/windows-review/REVIEW-SCHOOL-STORAGE.gs
     # The production upload path is verified with the injected native adapter.
     # Hosted-runner Win32 picker control automation has repeatedly timed out.
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: smart-sync-control-center-synthetic-preview
+        path: build/sync-control-preview
     # Only the final OS selection is reserved for the owner's real Windows PC.
     - uses: actions/upload-artifact@v4
       with:
@@ -396,10 +402,10 @@ jobs:
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
-      run: flutter test test/android_startup_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
+      run: flutter test test/android_startup_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Build unsigned Android preview
       env:
-        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: flutter build apk --debug -t lib/main_android.dart --build-name=1.0.500 --build-number=500 --dart-define=APP_VERSION=1.0.500-sync-test --dart-define=APP_BUILD=500 --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
     - name: Record Android TEST source commit
       run: echo "$GITHUB_SHA" > build/app/outputs/flutter-apk/TEST-COMMIT.txt
@@ -413,6 +419,7 @@ jobs:
   push:
     branches:
     - windows/easy-connect-draft
+    - feature/smart-sync-3
     - feature/managed-school-accounts
     - fix/existing-school-restore-20261005
     - fix/legacy-school-recovery-latency

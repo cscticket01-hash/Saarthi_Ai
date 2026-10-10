@@ -189,6 +189,16 @@ class FirebaseFirestore {
     ]));
   }
 
+  /// Readback evidence only. A retained newer edit must never count as a download.
+  Future<bool> syncedDocumentMatches(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? expected) async {
+    ref.requireOriginProfile();
+    final actual = (await ref.get()).data();
+    ref.requireOriginProfile();
+    if (expected == null) return actual == null;
+    if (actual == null) return false;
+    return _database._jsonStableMap(_encodeMap(actual)) == _database._jsonStableMap(_encodeMap(expected));
+  }
+
   /// Explicit operator review only. Creates a new CAS operation; never ACKs
   /// the conflicting operation or deletes its retained copies.
   Future<void> enqueueReviewedConflict({required String queueId,
@@ -996,6 +1006,7 @@ class _LocalSchoolDatabase {
           ...operations.map((operation)=>operation.collection),
           '_windows_firebase_outbox','_windows_sync_baselines','_windows_sync_receipts',
           '_windows_sync_conflict_history','_windows_sync_resolution_history',
+          '_windows_local_deletions',
         },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_')).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
@@ -1027,6 +1038,12 @@ class _LocalSchoolDatabase {
           );
 
           collections[operation.collection] = docs;
+          final deletedSnapshot = operation.type == _WriteType.delete &&
+              WindowsLocalFirestoreSyncControl.trackingEnabled &&
+              _shouldTrackForFirebase(operation.collection) &&
+              docs[operation.documentId] is Map
+              ? Map<String,dynamic>.from(docs[operation.documentId] as Map)
+              : null;
 
           switch (operation.type) {
             case _WriteType.delete:
@@ -1041,6 +1058,15 @@ class _LocalSchoolDatabase {
                   'schoolId':sent['schoolId'],'operationId':sent['operationId'],
                   'collection':sent['collection'],'recordRevision':revision,
                   'acknowledgedAt':DateTime.now().millisecondsSinceEpoch});
+                final snapshot = (collections['_windows_local_deletions'] as Map?)?[sent['operationId']];
+                if (sent['operation'] == 'delete' && snapshot is Map &&
+                    snapshot['schoolId'] == sent['schoolId'] &&
+                    snapshot['collection'] == sent['collection'] &&
+                    snapshot['documentId'] == sent['documentId']) {
+                  snapshot['cloudDeletionVerified'] = true;
+                  snapshot['deletedRevision'] = revision;
+                  snapshot['acknowledgedAt'] = DateTime.now().millisecondsSinceEpoch;
+                }
 
                 final queued = docs[operation.documentId];
                 if (queued is Map && queued['operationId'] != sent['operationId'] &&
@@ -1122,6 +1148,20 @@ class _LocalSchoolDatabase {
               operation,
               docs,
             );
+            if (deletedSnapshot != null) {
+              final queue = collections['_windows_firebase_outbox'] as Map;
+              final key = base64Url.encode(utf8.encode('${operation.collection}\\n${operation.documentId}')).replaceAll('=', '');
+              final intent = queue[key] as Map;
+              final snapshots = collections.putIfAbsent('_windows_local_deletions',()=> <String,dynamic>{}) as Map;
+              snapshots[intent['operationId']] = {
+                'version':1,'schoolId':_activeIdentity['schoolSyncId'] ?? '',
+                'collection':operation.collection,'documentId':operation.documentId,
+                'operationId':intent['operationId'],'deletedAt':DateTime.now().millisecondsSinceEpoch,
+                'snapshot':deletedSnapshot,'cloudDeletionVerified':false,
+              };
+              // The snapshot, hidden local row and original delete intent commit
+              // together. Never expire financial evidence or delete file bytes here.
+            }
             trackedMutation = true;
           }
         }

@@ -70,3 +70,16 @@ test('only verified allowlisted sync conflict context is exposed; raw request id
   assert.equal(blocked.body.schoolId,undefined);assert.equal(blocked.logs[0].schoolId,undefined);
  }
 });
+
+test('verified Script transport diagnostics expose only fixed stages and categories',async()=>{
+ const context={schoolId:'vs-'+ 'a'.repeat(32),syncProtocol:2,operationId:'transport-operation-12345',scriptStage:'response',transportKind:'socket',token:'NEVER_LOG_THIS'};
+ const failure={status:503,code:'SCRIPT_RESPONSE_READ_FAILED',syncDiagnostic:context};
+ const r=await request(Object.assign(new Error('NEVER_LOG_THIS'),failure));
+ for(const value of [r.body,r.logs[0]]){assert.equal(value.schoolId,context.schoolId);assert.equal(value.scriptStage,'response');assert.equal(value.transportKind,'socket');assert.equal(value.operationId,context.operationId);}
+ assert.equal(r.body.success,false);assert.equal(JSON.stringify(r).includes('NEVER_LOG_THIS'),false);
+ for(const change of [{status:403},{code:'UNKNOWN'},{syncDiagnostic:{...context,schoolId:'../private'}}]){
+  const rejected=await request(Object.assign(new Error('NEVER_LOG_THIS'),failure,change));assert.equal(rejected.body.schoolId,undefined);assert.equal(rejected.body.scriptStage,undefined);
+ }
+ const malformed=await request(Object.assign(new Error('NEVER_LOG_THIS'),failure,{syncDiagnostic:{...context,scriptStage:'private URL',transportKind:'private key'}}));
+ assert.equal(malformed.body.schoolId,context.schoolId);assert.equal(malformed.body.scriptStage,undefined);assert.equal(malformed.body.transportKind,undefined);
+});

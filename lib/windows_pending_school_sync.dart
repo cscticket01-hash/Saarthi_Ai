@@ -1,5 +1,7 @@
 import 'windows_local_firestore.dart';
 import 'windows_connect/central_school_cloud.dart';
+import 'windows_sync_recovery.dart';
+import 'sync_recovery_policy.dart';
 
 bool isRecordSyncConflict(Object error) => error is CentralCloudException
     ? error.recordConflict
@@ -57,12 +59,16 @@ class WindowsPendingSchoolSync {
         if (sendVersioned == null) await send(collection,id,operation,raw is Map?Map<String,dynamic>.from(raw):null);
       } catch (e) {
         unchanged();
+        final decision = windowsSyncRecovery(e);
+        final recordConflict = isRecordSyncConflict(e) || decision.kind == SyncFailureKind.conflict;
+        final code = e is CentralCloudException ? e.diagnosticCode : '';
         final latest = (await queued.reference.get()).data();
         if(latest?['operationId'] == item['operationId']) {
-          await queued.reference.update({'syncState': isRecordSyncConflict(e) ? 'conflict' : 'retry',
+          await queued.reference.update({'syncState': recordConflict ? 'conflict' : decision.review ? 'needsAttention' : 'retry',
+            'failureCategory': decision.kind.name,
             'retryCount':(item['retryCount'] as num? ?? 0).toInt()+1, 'lastError': e.toString()});
         }
-        if (isRecordSyncConflict(e)) {
+        if (recordConflict || {'SCRIPT_RECORD_VERIFY_FAILED', 'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED'}.contains(code)) {
           firstConflict ??= e;
           continue; // Independent rows must not be starved by a conflict.
         }

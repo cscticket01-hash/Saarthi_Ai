@@ -25,8 +25,16 @@ const fs=require('node:fs'),path=require('node:path');
  const page=await context.newPage();
  async function typeField(label,value){
   const input=page.getByRole('textbox',{name:label,exact:true});
-  await input.click();await input.press('ControlOrMeta+A');
-  await input.pressSequentially(value,{delay:5});await input.press('Tab');
+  // Flutter installs its focused DOM editing bridge on a subsequent frame.
+  // Sending the first key immediately after click can drop it on hosted Chromium.
+  for(let attempt=0;attempt<3;attempt++){
+   await input.click();
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   await input.press('ControlOrMeta+A');
+   await input.pressSequentially(value,{delay:15});
+   if(await input.inputValue()===value){await input.press('Tab');return;}
+  }
+  throw Error('TEST field input did not match; no write attempted');
  }
  async function publishAndReadback(id){
   function requestBody(response){try{return JSON.parse(response.request().postData());}catch(_){return {};}}

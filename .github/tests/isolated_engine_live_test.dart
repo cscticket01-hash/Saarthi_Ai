@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:image/image.dart' as img;
+import '../../lib/windows_connect/managed_record_media.dart';
+import '../../lib/windows_school_image_cache.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -9,12 +12,14 @@ import '../../lib/windows_connect/managed_school_session.dart';
 import '../../lib/windows_pending_school_sync.dart';
 import '../../lib/windows_local_firestore.dart';
 import '../../lib/mobile/school_session.dart';
+import '../../lib/school_backend_transport.dart';
 import '../../lib/mobile/attendance_store.dart';
 class OfflineBoundary extends http.BaseClient {
- final http.Client inner=http.Client();bool offline=false;
+ final http.Client inner=http.Client();bool offline=false;bool serverFailure=false;
  final samples=<Map<String,dynamic>>[];
  @override Future<http.StreamedResponse> send(http.BaseRequest request) async {
   if(offline)throw const SocketException('Synthetic offline boundary');
+  if(serverFailure)return http.StreamedResponse(Stream.value(utf8.encode(jsonEncode({'success':false,'code':'SCRIPT_TIMEOUT'}))),502);
   String stage=request.url.host=='identitytoolkit.googleapis.com'?'firebase-auth':'other';
   if(request is http.Request){try{final body=jsonDecode(request.body) as Map;final action=body['request'] is Map?body['request']['action']:body['action'];if(action is String&&RegExp(r'^[a-z_/]{1,50}$').hasMatch(action))stage=action;}catch(_){} }
   final watch=Stopwatch()..start();final response=await inner.send(request);final bytes=await response.stream.toBytes();
@@ -53,9 +58,27 @@ void main() {
    final unique='${Platform.environment['GITHUB_RUN_ID']}-${Platform.environment['GITHUB_RUN_ATTEMPT']??'1'}';
    final person='synthetic-hosted-person-$unique';
    final linkToken=sha256.convert(utf8.encode('hosted-fresh/$unique')).toString();
-   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken}});
+   final portrait=img.Image(width:640,height:960)..textData={'Synthetic run':unique};
+   img.fill(portrait,color:img.ColorRgb8(190,210,220));
+   final originalPortrait=img.encodePng(portrait),rawPortrait='data:image/png;base64,${base64Encode(originalPortrait)}';
+   final photoInput={'schoolId':school,'photoUrl':rawPortrait};
+   Future<Map<String,dynamic>> photoUpload(String action,Map<String,dynamic> body)=>ManagedSchoolSession.callForSchool(school,action,body);
+   final preparedPortrait=await prepareManagedRecord(photoInput,school,photoUpload);
+   final retriedPortrait=await prepareManagedRecord(photoInput,school,photoUpload);
+   expect(retriedPortrait['photoFileId'],preparedPortrait['photoFileId']);
+   final cloudPortrait=await ManagedSchoolSession.callForSchool(school,'managed/file/read',{'fileId':preparedPortrait['photoFileId']});
+   final portraitBytes=base64Decode(cloudPortrait['base64']);
+   final decodedPortrait=img.decodeImage(portraitBytes)!;
+   expect(decodedPortrait.width/decodedPortrait.height,closeTo(2/3,.01));
+   expect(portraitBytes.length,lessThanOrEqualTo(30*1024));
+   await db.resetVolatileSession();
+   expect(await WindowsSchoolImageCache.read(school,preparedPortrait['photoFileId']),originalPortrait);
+   report['portraitCloudBytes']=portraitBytes.length;report['portraitOriginalBytes']=originalPortrait.length;
+   report['portraitCloudRetryIdempotent']=true;report['portraitOriginalRetainedAfterRestart']=true;
+   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
    final existingDocuments=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'read','syncProtocol':2});
-   final fixture=(existingDocuments['records'] as Map).values.firstWhere((r)=>r['syntheticTest']==true&&r['personId']=='isolated-v2-20261009-student'&&r['documentKind']=='idCard') as Map;
+   final fixturePerson='isolated-v2-$unique-student';
+   final fixture=(existingDocuments['records'] as Map).values.firstWhere((r)=>r['syntheticTest']==true&&r['personId']==fixturePerson&&r['documentKind']=='idCard') as Map;
    await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'personId':person,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixture['sizeBytes'],'contentHash':fixture['contentHash'],'documentRevision':fixture['documentRevision']}});
    report['conditions']='Fresh synthetic person and attendance; authenticated/warmed TEST service; unchanged deployed backend/Script; no physical devices';
    final clock=Stopwatch()..start();
@@ -65,6 +88,13 @@ void main() {
    report['windowsLocalBackend']='SQLite WAL/FULL';
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
    await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async=>throw const SocketException('Synthetic offline boundary')),throwsA(isA<SocketException>()));
+   final operationBeforeFault=(await db.collection('_windows_firebase_outbox').get()).docs.single.data()!['operationId'];
+   await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,
+     send:(a,b,c,d)async=>throw SchoolApiFailure(502,code:'SCRIPT_TIMEOUT'),
+     sendVersioned:(item)async=>throw SchoolApiFailure(502,code:'SCRIPT_TIMEOUT')),
+     throwsA(isA<SchoolApiFailure>()));
+   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()!['operationId'],operationBeforeFault);
+   report['controlledWindows502']='outbox retained original operation ID; no ACK before subsequent real TEST cloud write';
    await db.switchProfile('TEST-unbound');await db.switchProfile(profile,identity:{'schoolId':school,'schoolSyncId':school});
    expect((await db.collection('school_notices').doc(id).get()).exists,true);
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
@@ -82,6 +112,18 @@ void main() {
    await mobile.refreshDashboard();
    expect((mobile.dashboard['notices'] as List).any((n)=>n['id']==id),true);
    expect(mobile.connectionState,SchoolConnectionState.connected);
+   final verifiedBeforeFault=mobile.lastDashboardVerifiedAt;
+   transport.serverFailure=true;
+   await expectLater(mobile.refreshDashboard(),throwsA(isA<SchoolApiFailure>()));
+   expect(mobile.loggedIn,true);expect(mobile.lastDashboardVerifiedAt,verifiedBeforeFault);
+   expect((mobile.dashboard['notices'] as List).any((n)=>n['id']==id),true);
+   expect(mobile.connectionState,SchoolConnectionState.connectionError);
+   transport.serverFailure=false;
+   final recoveryDeadline=DateTime.now().add(const Duration(seconds:75));
+   while(mobile.connectionState!=SchoolConnectionState.connected && DateTime.now().isBefore(recoveryDeadline)){await Future<void>.delayed(const Duration(seconds:1));}
+   expect(mobile.connectionState,SchoolConnectionState.connected);
+   expect(mobile.lastDashboardVerifiedAt!.isAfter(verifiedBeforeFault!),true);
+   report['controlled502Recovery']='client-boundary HTTP 502; real TEST readback after automatic jittered retry; server not mutated';
    report['windowsToActualMobileReadMs']=clock.elapsedMilliseconds;
    final bytes=await mobile.publishedIdCard();expect(bytes,isNotNull);expect(bytes!.length,greaterThan(0));
    final existingAttendance=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'attendance_records','operation':'read','syncProtocol':2});
