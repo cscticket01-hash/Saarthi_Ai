@@ -115,7 +115,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     if (mounted)
       setState(
         () => notice =
-            'Local backup created: $path. Cloud backup and restore have not been verified.',
+            'Local backup created and file hashes verified: $path. Cloud backup and restore have not been verified.',
       );
   }
 

@@ -3,6 +3,7 @@ import '../lib/windows_sync_conflict_review.dart';
 import '../lib/windows_connect/managed_school_session.dart';
 import '../lib/windows_exam_service.dart';
 import 'dart:convert';
+import '../lib/windows_backup_integrity.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -29,6 +30,28 @@ import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/platform/platform_config.dart';
 void main(){
+ test('backup generation verifies originals and rejects corruption or missing files', () async {
+   final dir = await Directory.systemTemp.createTemp('vs-backup-integrity-');
+   try {
+     final file = File('${dir.path}/original.pdf');
+     await file.writeAsBytes([1,2,3],flush:true);
+     await WindowsBackupIntegrity.seal(dir);
+     expect(await WindowsBackupIntegrity.verify(dir),1);
+     expect(await file.readAsBytes(),[1,2,3]);
+     await file.writeAsBytes([1,2,4],flush:true);
+     await expectLater(WindowsBackupIntegrity.verify(dir),throwsStateError);
+     await file.delete();
+     await expectLater(WindowsBackupIntegrity.verify(dir),throwsStateError);
+   } finally {await dir.delete(recursive:true);}
+ });
+ test('backup verification refuses traversal without accessing external records', () async {
+   final dir = await Directory.systemTemp.createTemp('vs-backup-path-');
+   try {
+     await File('${dir.path}/${WindowsBackupIntegrity.manifestName}').writeAsString(jsonEncode({
+       'version':1,'files':[{'path':'../outside.sqlite','bytes':0,'sha256':'untrusted'}]}));
+     await expectLater(WindowsBackupIntegrity.verify(dir),throwsStateError);
+   } finally {await dir.delete(recursive:true);}
+ });
  TestWidgetsFlutterBinding.ensureInitialized();
  const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';final db=FirebaseFirestore.instance;
  setUp(()async{
