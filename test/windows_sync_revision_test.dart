@@ -180,7 +180,10 @@ void main(){
      await tester.drag(find.byType(ListView),const Offset(0,1000));
      await tester.pumpAndSettle();
      expect(find.textContaining('Authenticated school storage handshake verified at'),own?findsOneWidget:findsNothing);
-     expect(find.text('Not independently verified'),own?findsNWidgets(2):findsNothing);
+     for(final label in ['Drive school root','Google Sheets access']) {
+       expect(find.text(label),own?findsOneWidget:findsNothing);
+       if(own)expect(find.descendant(of:find.ancestor(of:find.text(label),matching:find.byType(Card)),matching:find.text('Not independently verified')),findsOneWidget);
+     }
      if(!own)expect(find.textContaining('cloud readiness unverified'),findsOneWidget);
      await tester.pumpWidget(const SizedBox());
    }

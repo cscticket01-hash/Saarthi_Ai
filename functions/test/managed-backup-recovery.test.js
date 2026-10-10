@@ -26,6 +26,23 @@ test('unchanged hourly delta checkpoint still detects missing backed-up rows',()
 test('owner recovery rehearsal injects only its fresh backed-up synthetic row',()=>{
  const f=setup();const result=f.context.VS_testMissingRecordRecoveryRehearsal();assert.equal(result.success,true);assert.equal(result.operationIdentityPreserved,true);assert.equal(result.originalSchoolTouched,false);
 });
+test('backup releases collection locks before Drive copy and rejects a concurrently changed capture',()=>{
+ const f=setup();write(f,'lock-check');const prior=f.context.VS_createVerifiedRecordBackup();let held=false,changeOnRelease=false;
+ f.context.LockService={getScriptLock:()=>({waitLock(){assert.equal(held,false);held=true;},releaseLock(){held=false;if(changeOnRelease){changeOnRelease=false;f.props.set('VS_RECORD_REV_school_notices','new-cloud-generation');}}})};
+ const folder=f.context.VS_managedFolder(f.context.VS_managedRoot(),'Backups'),create=folder.createFile;
+ folder.createFile=function(...args){assert.equal(held,false,'Drive copy must not hold the school sync lock');return create.apply(this,args);};
+ assert.equal(f.context.VS_createVerifiedRecordBackup().verified,true);
+ const latest=f.props.get('VS_LAST_VERIFIED_RECORD_BACKUP');changeOnRelease=true;
+ assert.throws(()=>f.context.VS_createVerifiedRecordBackup(),/Backup changed during capture/);
+ assert.equal(f.props.get('VS_LAST_VERIFIED_RECORD_BACKUP'),latest);assert.notEqual(prior.fileId,latest);
+});
+test('one delta request verifies its Drive backup once and a later record request rechecks integrity',()=>{
+ const f=setup();write(f,'notice');write(f,'pupil','students_directory');const backup=f.context.VS_createVerifiedRecordBackup();const file=f.all.get(backup.fileId),blob=file.getBlob;let reads=0;
+ file.getBlob=function(){reads++;return blob.apply(this,arguments);};
+ f.context.VS_managedDelta({collections:['school_notices','students_directory'],knownRevisions:{}});assert.equal(reads,1);
+ file.text='corrupted later';assert.equal(read(f).records.notice.title,'Retained');assert.equal(reads,2);
+ assert.equal(JSON.parse(f.props.get('VS_LAST_RECORD_RECOVERY')).code,'BACKUP_INTEGRITY_UNVERIFIED');
+});
 test('financial and document rows never recover automatically and queues are outside the cloud backup',()=>{
  const f=setup();write(f,'fee','fee_payments');write(f,'document','documents');const backup=f.context.VS_createVerifiedRecordBackup();
  erase(f,'fee','fee_payments');erase(f,'document','documents');assert.equal(read(f,'fee_payments').records.fee,undefined);assert.equal(read(f,'documents').records.document,undefined);
