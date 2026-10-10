@@ -27,3 +27,14 @@ test('monitor write failures do not turn durable storage ACKs into failures, and
  await assert.rejects(bad.call({action:'managed/records',operation:'read',collection:'school_notices'}));
  const result=await bad.call({action:'managed/sync/status'});assert.equal(result.serverEvidence.outcome,'failed');assert.equal(result.serverEvidence.code,'SCRIPT_TIMEOUT');
 });
+
+test('a successful durable ACK replaces obsolete failure evidence without replacing school or client metadata',async()=>{
+ const f=fixture(async(_,options)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(options.body).schoolId,success:true,syncProtocol:2,recordRevision:'confirmed'})}));
+ const school=f.docs.get('platform_schools/'+A);school.syncServerEvidence={version:1,observedAt:time-1000,outcome:'failed',stage:'managed_records',code:'SCRIPT_TIMEOUT'};
+ school.syncWindowsReport={source:'latest_windows_client_report',pending:3};
+ await f.call({action:'managed/records',operation:'write',collection:'school_notices',id:'notice',syncProtocol:2,operationId:'monitor-recovery-0001',expectedRecordRevision:'',data:{title:'Synthetic'}});
+ const result=await f.call({action:'managed/sync/status'});
+ assert.equal(result.serverEvidence.outcome,'durable_ack');
+ assert.equal(Object.hasOwn(result.serverEvidence,'code'),false,'Recovered ACK must not retain the preceding failure category');
+ assert.equal(result.latestWindowsReport.pending,3);assert.equal(f.docs.get('platform_schools/'+A).managed,true);assert.equal(f.docs.get('platform_schools/'+A).authUid,'A');
+});
