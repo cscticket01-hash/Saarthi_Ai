@@ -140,6 +140,24 @@ void main(){
      await tester.pumpWidget(const SizedBox());
    }
  });
+ testWidgets('timed-out cloud health stays unverified and releases controls', (tester) async {
+   await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(
+     refreshOnOpen:()async{},healthProbe:(_)async{
+       throw TimeoutException('Private upstream detail must not be rendered');
+     })));
+   await tester.pumpAndSettle();
+   await tester.scrollUntilVisible(find.text('Check Cloud Health'),300,scrollable:find.byType(Scrollable).first);
+   await tester.tap(find.text('Check Cloud Health'));
+   await tester.pumpAndSettle();
+   expect(find.text('Action timed out. Completion is unverified; local data is retained.'),findsOneWidget);
+   expect(find.textContaining('Private upstream detail'),findsNothing);
+   expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Check Cloud Health')).onPressed,isNotNull);
+   await tester.drag(find.byType(ListView),const Offset(0,1000));
+   await tester.pumpAndSettle();
+   expect(find.text('Health check timed out — cloud readiness unverified'),findsOneWidget);
+   expect(find.textContaining('Authenticated backend and school storage verified at'),findsNothing);
+   await tester.pumpWidget(const SizedBox());
+ });
  test('legacy queue binding preserves its original operation ID across failed retries', () async {
    final row=db.collection('_windows_firebase_outbox').doc('legacy-operation');
    await row.set({'collection':'teachers_directory','documentId':'retained-teacher','operation':'set',

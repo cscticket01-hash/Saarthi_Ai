@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
 import 'windows_sync_engine.dart';
+import 'windows_sync_recovery.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_sync_conflict_review.dart';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
@@ -54,10 +56,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       await action();
       if (db.activeProfileId != origin)
         throw StateError('School changed. Reopen this page.');
-    } catch (_) {
+    } catch (error) {
+      final decision = windowsSyncRecovery(error);
       if (mounted)
         setState(
-          () => notice = 'Action could not complete. Data is retained; check the current school and diagnostics.',
+          () => notice = error is TimeoutException
+              ? 'Action timed out. Completion is unverified; local data is retained.'
+              : decision.message,
         );
     } finally {
       if (mounted) setState(() => busy = false);
@@ -88,11 +93,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           () => cloudHealth =
               'Authenticated backend and school storage verified at ${DateTime.now().toLocal()}',
         );
-    } catch (_) {
+    } catch (error) {
       if (mounted)
         setState(
           () => cloudHealth =
-              'Check failed — local data retained; cloud readiness unverified',
+              error is TimeoutException
+                  ? 'Health check timed out — cloud readiness unverified'
+                  : 'Check failed — local data retained; cloud readiness unverified',
         );
       rethrow;
     }
