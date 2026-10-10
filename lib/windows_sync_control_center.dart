@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart' as files;
 
 import 'windows_sync_engine.dart';
 import 'windows_sync_recovery.dart';
@@ -124,9 +124,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   }
 
   Future<void> _restoreRehearsal() async {
-    final backup = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select a verified local backup generation');
+    final backup = await files.getDirectoryPath(confirmButtonText: 'Select Backup');
     if (backup == null || !mounted) return;
-    final parent = await FilePicker.platform.getDirectoryPath(dialogTitle: 'Select a separate folder for restore rehearsal');
+    final parent = await files.getDirectoryPath(confirmButtonText: 'Select Rehearsal Folder');
     if (parent == null || !mounted || db.activeProfileId != origin) return;
     final approved = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
       title: const Text('Verify backup restore?'),
