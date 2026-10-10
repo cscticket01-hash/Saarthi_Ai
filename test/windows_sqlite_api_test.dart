@@ -62,6 +62,11 @@ void main() {
     await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>db.collection('school_notices').doc('cloud-tombstone').delete());
     expect((await db.collection('_windows_local_deletions').get()).docs,hasLength(1));
     expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'],pending['operationId']);
+    await WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async{},sendVersioned:(row)async=>'verified-delete-revision');
+    final acknowledged = (await db.collection('_windows_local_deletions').get()).docs.single.data();
+    expect(acknowledged['cloudDeletionVerified'],true);
+    expect(acknowledged['deletedRevision'],'verified-delete-revision');
+    expect(acknowledged['snapshot'],retained['snapshot']);
   });
   test(
       'production API offline save retains stable operation, pending count and original time after close/reopen',

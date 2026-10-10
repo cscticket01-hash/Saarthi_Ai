@@ -1048,6 +1048,15 @@ class _LocalSchoolDatabase {
                   'schoolId':sent['schoolId'],'operationId':sent['operationId'],
                   'collection':sent['collection'],'recordRevision':revision,
                   'acknowledgedAt':DateTime.now().millisecondsSinceEpoch});
+                final snapshot = (collections['_windows_local_deletions'] as Map?)?[sent['operationId']];
+                if (sent['operation'] == 'delete' && snapshot is Map &&
+                    snapshot['schoolId'] == sent['schoolId'] &&
+                    snapshot['collection'] == sent['collection'] &&
+                    snapshot['documentId'] == sent['documentId']) {
+                  snapshot['cloudDeletionVerified'] = true;
+                  snapshot['deletedRevision'] = revision;
+                  snapshot['acknowledgedAt'] = DateTime.now().millisecondsSinceEpoch;
+                }
 
                 final queued = docs[operation.documentId];
                 if (queued is Map && queued['operationId'] != sent['operationId'] &&
