@@ -17,6 +17,17 @@ function afterWindow(t,run) {
  t.f.context.Date=class extends RealDate {static now(){return t.tomb._syncRecycleUntil+1;}};
  try{return run();}finally{t.f.context.Date=RealDate;}
 }
+test('owner TEST recycle opt-in verifies existing root and refuses original or foreign schools',()=>{
+ const f=storage();assert.throws(()=>f.context.VS_enableTestRecycle(),/TEST recycle activation/);
+ assert.equal(f.props.has('VS_RECYCLE_VERSION'),false);
+ const school='vs-db8afb01a3be46a983c8284714d06e5d';f.props.set('VS_MANAGED_SCHOOL_ID',school);
+ assert.throws(()=>f.context.VS_enableTestRecycle(),/root mismatch/);
+ assert.equal(f.props.has('VS_RECYCLE_VERSION'),false);
+ f.roots[A].getDescription=()=> 'VIDYA_MANAGED_SCHOOL:'+school;
+ assert.equal(f.context.VS_enableTestRecycle().existingStorageRetained,true);
+ assert.equal(f.props.get('VS_RECYCLE_VERSION'),'1');
+ assert.equal(f.props.get('VS_MANAGED_ROOT_ID'),'rootA');
+});
 test('recycle inventory verifies snapshots and derives expiry without purging audit data',()=>{
  const t=setup();
  const read=()=>t.f.call({action:'managed_recycle',operation:'list',collection:t.collection,after:''});

@@ -6766,6 +6766,17 @@ function VS_requireTestRecycleScheduler() {
   if(p.getProperty('VS_MANAGED_SCHOOL_ID')!=='vs-db8afb01a3be46a983c8284714d06e5d'||!VS_recycleEnabled())throw new Error('Isolated TEST recycle authorization required');
   return p;
 }
+/** Owner-editor opt-in for the one isolated TEST school. Never API-routed. */
+function VS_enableTestRecycle() {
+  const p=PropertiesService.getScriptProperties();
+  if(p.getProperty('VS_MANAGED_SCHOOL_ID')!=='vs-db8afb01a3be46a983c8284714d06e5d')
+    throw new Error('TEST recycle activation requires the isolated TEST school');
+  VS_managedRoot(); // Verify existing school storage; never create or rebind it.
+  p.setProperty('VS_RECYCLE_VERSION','1');
+  const result={success:true,recycleVersion:1,existingStorageRetained:true,destructive:false};
+  if(typeof console!=='undefined')console.log(JSON.stringify(result));
+  return result;
+}
 function VS_installTestRecycleExpiryScheduler() {
   VS_requireTestRecycleScheduler();
   const existing=ScriptApp.getProjectTriggers().filter(t=>t.getHandlerFunction()==='VS_testRecycleExpiryTick');
