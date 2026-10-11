@@ -15,8 +15,6 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
-    env:
-      APPDATA: ${{ runner.temp }}/ten-bug-tests
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -32,6 +30,8 @@ jobs:
           dart .github/tests/windows_sync_projection_test.dart
           dart .github/tests/windows_sync_dispatch_burst_test.dart
       - name: Queue, UI, encryption and inventory regressions
+        env:
+          APPDATA: ${{ runner.temp }}/ten-bug-tests
         run: flutter test --concurrency=1 test/windows_pending_auto_repair_test.dart test/windows_sync_modern_ui_test.dart test/windows_sync_control_cleanup_test.dart test/windows_sync_revision_test.dart test/windows_sync_durable_admission_test.dart test/windows_school_backup_export_test.dart test/windows_school_backup_snapshot_test.dart test/windows_drive_quota_test.dart test/windows_disk_storage_test.dart test/student_inventory_policy_test.dart test/document_processing_engine_test.dart test/smart_media_compression_test.dart test/document_upload_flow_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/windows_local_first_save_test.dart test/windows_startup_test.dart
       - uses: actions/upload-artifact@v4
         if: always()
