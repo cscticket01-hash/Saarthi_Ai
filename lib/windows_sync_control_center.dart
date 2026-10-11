@@ -24,8 +24,12 @@ class WindowsSyncControlCenter extends StatefulWidget {
     this.refreshOnOpen,
     this.healthProbe,
     this.storageProbe,
+    this.syncRequest,
+    this.pauseRequest,
   });
   final Future<void> Function()? refreshOnOpen;
+  final Future<void> Function()? syncRequest;
+  final Future<void> Function(Duration)? pauseRequest;
   final Future<Map<String, dynamic>> Function(String school)? healthProbe;
   final Future<Map<String, dynamic>> Function(String school)? storageProbe;
   static const categories = [
@@ -51,6 +55,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   final db = FirebaseFirestore.instance;
   late final origin = db.activeProfileId;
   bool busy = false;
+  bool syncCommandRunning = false;
   Timer? pauseDisplayTimer;
   bool showDiagnostics = false;
   bool showQueue = false;
@@ -257,6 +262,25 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   void dispose() {
     pauseDisplayTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _startManualSync() async {
+    if (syncCommandRunning && !engine.isPaused) return;
+    if (syncCommandRunning) {
+      await _run(widget.syncRequest ?? engine.requestSync);
+      return;
+    }
+    setState(() { syncCommandRunning = true; notice = ''; });
+    try {
+      if (db.activeProfileId != origin) throw StateError('School changed. Reopen this page.');
+      await (widget.syncRequest ?? engine.requestSync)();
+    } catch (error) {
+      if (mounted && db.activeProfileId == origin) {
+        setState(() => notice = windowsSyncRecovery(error).message);
+      }
+    } finally {
+      if (mounted) setState(() => syncCommandRunning = false);
+    }
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -878,7 +902,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       _nav(Icons.settings_outlined, 'Advanced Sync Settings', () => _jump(_settingsKey)),
       _nav(Icons.info_outline, 'Measured Status', () => _jump(_statusKey)),
       const Divider(),
-      _controls(busy || engine.isSyncing || db.activeProfileId != origin),
+      _controls(busy || engine.isSyncing || syncCommandRunning || db.activeProfileId != origin),
     ],
   );
 
@@ -958,18 +982,18 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     onPressed:
                         busy || db.activeProfileId != origin
                             ? null
-                            : () => _run(engine.isSyncing && !engine.isPaused
-                                ? () => engine.pauseSync(const Duration(hours: 24))
-                                : engine.requestSync),
-                    icon: Icon(engine.isSyncing && !engine.isPaused ? Icons.pause : Icons.sync),
-                    label: Text(engine.isSyncing && !engine.isPaused ? 'Pause Sync' : 'Sync Now'),
+                            : () => (engine.isSyncing || syncCommandRunning) && !engine.isPaused
+                                ? _run(() => (widget.pauseRequest ?? engine.pauseSync)(const Duration(hours: 24)))
+                                : _startManualSync(),
+                    icon: Icon((engine.isSyncing || syncCommandRunning) && !engine.isPaused ? Icons.pause : Icons.sync),
+                    label: Text((engine.isSyncing || syncCommandRunning) && !engine.isPaused ? 'Pause Sync' : 'Sync Now'),
                   ),
                 ),
               ),
               PopupMenuButton<int>(
                 tooltip: 'Schedule sync pause',
                 enabled: !busy && db.activeProfileId == origin,
-                onSelected: (hours) => _run(() => engine.pauseSync(Duration(hours: hours))),
+                onSelected: (hours) => _run(() => (widget.pauseRequest ?? engine.pauseSync)(Duration(hours: hours))),
                 itemBuilder: (_) => const [
                   PopupMenuItem(value: 1, child: Text('Pause Sync for 1 Hour')),
                   PopupMenuItem(value: 12, child: Text('Pause Sync for 12 Hours')),
@@ -993,7 +1017,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         final items = ownSchool
                             ? (details['items'] as List? ?? [])
                             : <dynamic>[];
-                        final active = busy || engine.isSyncing;
+                        final active = busy || engine.isSyncing || syncCommandRunning;
                         return ListView(
                           key: _overviewKey,
                           padding: const EdgeInsets.all(24),

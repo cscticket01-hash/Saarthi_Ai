@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -45,6 +46,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Pending Queue & Conflict Review'), findsOneWidget);
     expect(find.text('students_directory • conflict'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('manual sync keeps pause admission available before completion', (tester) async {
+    final completion = Completer<void>();
+    var starts = 0;
+    final pauses = <Duration>[];
+    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(
+      refreshOnOpen: () async {},
+      syncRequest: () async { starts++; await completion.future; },
+      pauseRequest: (duration) async { pauses.add(duration); },
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Sync Now'));
+    await tester.pump();
+    expect(starts, 1);
+    final pause = find.widgetWithText(FilledButton, 'Pause Sync');
+    expect(tester.widget<FilledButton>(pause).onPressed, isNotNull);
+    await tester.tap(pause);
+    await tester.pumpAndSettle();
+    expect(pauses, [const Duration(hours: 24)]);
+    expect(completion.isCompleted, false);
+    expect(engine.details.value['pending'], 3);
+    completion.complete();
+    await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox());
   });
 
