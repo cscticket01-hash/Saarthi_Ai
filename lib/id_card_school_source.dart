@@ -48,6 +48,27 @@ class IdCardSchoolSource {
     return IdCardSchoolSource(schoolId: school, profile: profile, records: records, connection: connection, ensureActive: guard);
   }
 
+  /// Never preview a deleted or explicitly foreign school record. Unscoped
+  /// legacy local records remain readable in the active profile, but an
+  /// explicitly school-bound record must match the active school identity.
+  static Map<String, dynamic>? previewSample(
+      Iterable<Map<String, dynamic>> rows, String? currentSchoolId) {
+    final activeSchool = currentSchoolId?.trim() ?? '';
+    for (final row in rows) {
+      if (row['_syncDeleted'] == true || row['deleted'] == true) continue;
+      var foreign = false;
+      for (final field in ['schoolId', 'schoolSyncId']) {
+        final bound = row[field]?.toString().trim() ?? '';
+        if (bound.isNotEmpty && bound != activeSchool) {
+          foreign = true;
+          break;
+        }
+      }
+      if (!foreign) return row;
+    }
+    return null;
+  }
+
   static String classOf(Map<String, dynamic> data) => (data['studentClass'] ?? data['class'] ?? '').toString().trim();
   List<String> get classes => (records.map(classOf).where((v) => v.isNotEmpty).toSet().toList()..sort());
   List<Map<String, dynamic>> forClass(String value) => records.where((r) => classOf(r) == value).toList();
