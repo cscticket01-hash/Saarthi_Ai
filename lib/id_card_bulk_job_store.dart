@@ -115,7 +115,7 @@ class IdCardBulkJobStore {
     final bytes = rendered.pdf;
     final hash = sha256.convert(bytes).toString();
     // Never publish the PDF before its exact source and scope are checked.
-    await Isolate.run(() => _withJobLock(rootPath, schoolId, jobId, (meta, pdf) {
+    await _serial(jobId, () => Isolate.run(() => _withJobLock(rootPath, schoolId, jobId, (meta, pdf) {
       final state = _decode(meta.readAsStringSync(), schoolId, jobId);
       if (state['fingerprint'] != plan.selectionFingerprint) {
         throw StateError('Bulk job changed before export commit');
@@ -158,7 +158,7 @@ class IdCardBulkJobStore {
         if (bytes == null) throw StateError('Completed PDF integrity check failed');
         return bytes;
       }),
-    );
+    ));
   }
 }
 
