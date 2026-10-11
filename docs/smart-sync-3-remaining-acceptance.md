@@ -4,6 +4,12 @@
 
 # Smart Sync 3.0 current acceptance — 2026-10-11 UTC
 
+## Approved broader real recovery result
+
+Real TEST cloud [38107737043](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38107737043), exact reviewed/deployed source `ede88c1d44de5345ac43c3d5e8f8707adeb9e2ea`: prerequisites PASS and actual Windows production engines PASS. Artifact `11691170620` retains the sanitized `actual-engines.json`. Five actual first-page Drive binaries verified by size/hash, cached reopening, disposable missing-cache recovery, injected503 retry and corrupt actual-download response rejection followed by verified retry. Original portrait cache retained after restart; duplicate portrait upload returns the same file. Windows/mobile pending counts0; binary acceptance leaves local outbox unchanged. Inventory remains PARTIAL: later pages and native Google documents are not certified.
+
+Measured this run only: Windows local save12ms, Windows queue-to-durableACK5767ms, actual mobile queue-to-Windows authoritative read55246ms, portrait cloud3079bytes versus original3849bytes. The portrait is synthetic solid color, so this is transport/integrity evidence, not facial visual-quality approval. Authenticated hosted Windows report observed pending0; the previously documented freshness/throttle limitation remains. Website/Android/downstream readback stages are still running or pending and are not inferred PASS. Later capacity commits alter only scripts/docs/a credential-free review workflow; production engine and recovery-test bytes are unchanged from this real acceptance source.
+
 This checkpoint supersedes the historical pre-integration audit below. Source inspected: `eb6addc9e9c77b1925e98a73487427986ba72c8d`, PR #23 OPEN/DRAFT, 56 commits, 91 changed files. Application/runtime code remains unchanged by the scheduler acceptance correction.
 
 | Area | Code status | Automated test | Real cloud | Physical device | Remaining blocker |
