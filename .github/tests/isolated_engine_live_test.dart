@@ -1,11 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:image/image.dart' as img;
+import '../../lib/windows_connect/managed_record_media.dart';
+import '../../lib/windows_school_image_cache.dart';
+import '../../lib/windows_binary_downloads.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../../lib/windows_connect/managed_school_session.dart';
+import '../../lib/windows_sync_engine.dart';
 import '../../lib/windows_pending_school_sync.dart';
 import '../../lib/windows_local_firestore.dart';
 import '../../lib/mobile/school_session.dart';
@@ -55,9 +60,96 @@ void main() {
    final unique='${Platform.environment['GITHUB_RUN_ID']}-${Platform.environment['GITHUB_RUN_ATTEMPT']??'1'}';
    final person='synthetic-hosted-person-$unique';
    final linkToken=sha256.convert(utf8.encode('hosted-fresh/$unique')).toString();
-   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken}});
+   final portrait=img.Image(width:640,height:960)..textData={'Synthetic run':unique};
+   img.fill(portrait,color:img.ColorRgb8(190,210,220));
+   final originalPortrait=img.encodePng(portrait),rawPortrait='data:image/png;base64,${base64Encode(originalPortrait)}';
+   final photoInput={'schoolId':school,'photoUrl':rawPortrait};
+   Future<Map<String,dynamic>> photoUpload(String action,Map<String,dynamic> body)=>ManagedSchoolSession.callForSchool(school,action,body);
+   final preparedPortrait=await prepareManagedRecord(photoInput,school,photoUpload);
+   final retriedPortrait=await prepareManagedRecord(photoInput,school,photoUpload);
+   expect(retriedPortrait['photoFileId'],preparedPortrait['photoFileId']);
+   final cloudPortrait=await ManagedSchoolSession.callForSchool(school,'managed/file/read',{'fileId':preparedPortrait['photoFileId']});
+   final portraitBytes=base64Decode(cloudPortrait['base64']);
+   final decodedPortrait=img.decodeImage(portraitBytes)!;
+   expect(decodedPortrait.width/decodedPortrait.height,closeTo(2/3,.01));
+   expect(portraitBytes.length,lessThanOrEqualTo(30*1024));
+   await db.resetVolatileSession();
+   expect(await WindowsSchoolImageCache.read(school,preparedPortrait['photoFileId']),originalPortrait);
+   report['portraitCloudBytes']=portraitBytes.length;report['portraitOriginalBytes']=originalPortrait.length;
+   report['portraitCloudRetryIdempotent']=true;report['portraitOriginalRetainedAfterRestart']=true;
+   // Bounded real Drive acceptance: at most five first-page files. No provider load.
+   var binaryFault=true,corruptBinary=false;
+   Future<Map<String,dynamic>> binaryRequest(Map<String,dynamic> body) async {
+    if(binaryFault&&body['action']=='managed/file/download')throw SchoolApiFailure(503,code:'TEST_CONTROLLED_UNAVAILABLE');
+    final response=await ManagedSchoolSession.callForSchool(school,body['action'] as String,{...body}..remove('action'));
+    if(corruptBinary&&body['action']=='managed/file/download'){
+     final bytes=base64Decode(response['base64'] as String);bytes[0]^=1;
+     return {...response,'base64':base64Encode(bytes)};
+    }
+    return response;
+   }
+   final binaryDirectory=Directory('${tmp.path}/isolated-binary-cache');
+   final binaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest,jitter:()=>.5);
+   await binaries.refreshInventory();
+   expect(binaries.entries,isNotEmpty);
+   final targets=binaries.entries.where((item)=>item['verification']=='bytes_hashed').toList();
+   expect(targets.length,inInclusiveRange(2,5));
+   final binaryId=targets.first['fileId'] as String;
+   final binaryHash=targets.first['sha256'] as String;
+   final queueBeforeBinary=(await db.collection('_windows_firebase_outbox').get()).docs.length;
+   await expectLater(binaries.repairNext(),throwsA(isA<SchoolApiFailure>().having((failure)=>failure.status,'HTTP status',503)));
+   expect(await binaries.verifiedPath(binaryId),isNull);
+   binaryFault=false;
+   await Future<void>.delayed(const Duration(seconds:6)); // Real capped retry deadline, no fake clock.
+   expect(await binaries.repairNext(),true);
+   final downloaded=File((await binaries.verifiedPath(binaryId))!);
+   expect(sha256.convert(await downloaded.readAsBytes()).toString(),binaryHash);
+   for(var attempt=1;attempt<targets.length;attempt++){
+    var missing=false;
+    // The production cache serializes verification; never call its guarded
+    // methods concurrently while assessing shared content-addressed files.
+    for(final item in targets){
+     if((await binaries.verifiedPath(item['fileId'] as String))==null){missing=true;break;}
+    }
+    if(!missing)break;
+    expect(await binaries.repairNext(),true);
+   }
+   // Keep retry jitter deterministic in this elapsed-delay acceptance. The
+   // production maximum (6.25s) can otherwise exceed the observed 6s wait.
+   final reopenedBinaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest,jitter:()=>.5);
+   await reopenedBinaries.load();
+   for(final item in targets){
+    final path=await reopenedBinaries.verifiedPath(item['fileId'] as String);expect(path,isNotNull);
+    final bytes=await File(path!).readAsBytes();expect(bytes.length,item['sizeBytes']);
+    expect(sha256.convert(bytes).toString(),item['sha256']);
+   }
+   // Delete only this run's disposable cache, never a school original/Drive file.
+   await downloaded.delete();
+   corruptBinary=true;
+   await expectLater(reopenedBinaries.repairNext(),throwsA(isA<StateError>()));
+   expect(await reopenedBinaries.verifiedPath(binaryId),isNull);
+   corruptBinary=false;
+   await Future<void>.delayed(const Duration(seconds:6));
+   // Shared hashes may have multiple inventory IDs; repairing one restores the
+   // verified content-addressed copy for all of them, without replacing originals.
+   expect(await reopenedBinaries.repairNext(),true);
+   expect(await reopenedBinaries.verifiedPath(binaryId),isNotNull);
+   expect(sha256.convert(await File((await reopenedBinaries.verifiedPath(binaryId))!).readAsBytes()).toString(),binaryHash);
+   expect(await WindowsSchoolImageCache.read(school,preparedPortrait['photoFileId']),originalPortrait);
+   expect((await db.collection('_windows_firebase_outbox').get()).docs.length,queueBeforeBinary);
+   report['actualBinary503RecoveryVerified']=true;
+   report['actualBinaryBytesHashVerified']=true;
+   report['actualBinaryCacheRestartVerified']=true;
+   report['actualBinaryMissingCacheRecoveryVerified']=true;
+   report['actualBinaryCorruptDownloadRejected']=true;
+   report['actualBinaryVerifiedFileCount']=targets.length;
+   report['binaryInventoryCoverage']=binaries.summary['inventory'];
+   report['binaryAcceptanceScope']='At most five first-page TEST Drive binaries; hashes/cache restart/missing cache/corrupt response checked. Remaining files and native Google documents not certified.';
+
+   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
    final existingDocuments=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'read','syncProtocol':2});
-   final fixture=(existingDocuments['records'] as Map).values.firstWhere((r)=>r['syntheticTest']==true&&r['personId']=='isolated-v2-20261009-student'&&r['documentKind']=='idCard') as Map;
+   final fixturePerson='isolated-v2-$unique-student';
+   final fixture=(existingDocuments['records'] as Map).values.firstWhere((r)=>r['syntheticTest']==true&&r['personId']==fixturePerson&&r['documentKind']=='idCard') as Map;
    await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'personId':person,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixture['sizeBytes'],'contentHash':fixture['contentHash'],'documentRevision':fixture['documentRevision']}});
    report['conditions']='Fresh synthetic person and attendance; authenticated/warmed TEST service; unchanged deployed backend/Script; no physical devices';
    final clock=Stopwatch()..start();
@@ -125,8 +217,18 @@ void main() {
    final fromMobile=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'attendance_records','operation':'read','syncProtocol':2});
    expect((fromMobile['records'] as Map).values.any((row)=>row['personId']==person&&row['entryCapturedAt']==captured),true);
    report['actualMobileQueueToWindowsReadMs']=reverse.elapsedMilliseconds;report['mobilePending']=0;
+   await WindowsSyncEngine.instance.reportCurrentSyncMonitor();
+   final monitor=await ManagedSchoolSession.callForSchool(school,'managed/sync/status',{});
+   final actualPending=(await db.collection('_windows_firebase_outbox').get()).docs.length+(await db.collection('_windows_document_outbox').get()).docs.length;
+   expect(monitor['schoolId'],school);
+   expect(monitor['latestWindowsReport'],isA<Map>());
+   expect(monitor['latestWindowsReport']['pending'],actualPending);
+   expect(monitor['latestWindowsReport']['appVersion'],isA<String>());
+   expect(monitor['latestWindowsReport']['receivedAt'],greaterThan(DateTime.now().subtract(const Duration(minutes:10)).millisecondsSinceEpoch));
+   report['actualWindowsClientReportVerified']=true;
+   report['actualWindowsReportedPending']=actualPending;
    report['mobileRequests']=transport.samples;report['status']='PASS';
   }catch(_){report['status']='FAIL';rethrow;}
   finally{transport.close();await store.close();await Directory('build/cloud-prerequisites').create(recursive:true);await File('build/cloud-prerequisites/actual-engines.json').writeAsString(jsonEncode(report));print(jsonEncode(report));}
- },timeout:const Timeout(Duration(minutes:8)));
+ },timeout:const Timeout(Duration(minutes:12)));
 }

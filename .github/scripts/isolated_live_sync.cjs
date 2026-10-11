@@ -1,10 +1,12 @@
 'use strict';
 // Real TEST-only protocol acceptance. No app UI/emulator/physical-device claims.
 const {createHash}=require('node:crypto');
+const {isolatedRunPrefix,isolatedAttendanceDay}=require('./isolated_fixture_identity.cjs');
 module.exports=async function({post,check,endpoint,schoolId,token,report}){
- const admin=body=>post(endpoint,{...body,schoolId},token);
+ const safeRead=require('./safe_test_read_retry.cjs');
+ const admin=body=>safeRead(post,endpoint,{...body,schoolId},token,report);
  const mobile=request=>post(endpoint,{action:'managed/mobile',schoolId,request});
- const prefix='isolated-v2-20261009';
+ const prefix=isolatedRunPrefix();
  async function write(collection,id,data){
   const prior=await admin({action:'managed/records',operation:'read',collection,syncProtocol:2});
   check('Read TEST '+collection,prior,prior.http===200&&prior.data.schoolId===schoolId);
@@ -19,6 +21,9 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  }
  let r=await admin({action:'managed/profile',operation:'initialize',schoolName:'TEST Sync V2',principalName:'Synthetic TEST Administrator'});
  check('TEST registration identity',r,r.http===200&&r.data.profile?.schoolName==='TEST Sync V2');
+ // A TEST-only dated opening avoids treating Sunday's legitimate closure as sync failure.
+ // Existing non-synthetic calendar entries are never overwritten by write().
+ await write('school_calendar',isolatedAttendanceDay(schoolId),{isOpen:true,purpose:'isolated-attendance-acceptance'});
  await write('school_settings','school_location',{latitude:24.8,longitude:92.7,radiusMeters:100});
  const personId=prefix+'-student',linkToken=createHash('sha256').update(prefix+'/synthetic-qr').digest('hex');
  await write('students_directory',personId,{name:'Synthetic TEST Student',class:'1',rollNo:'900001',dob:'2015-01-01',mobileStableId:personId,mobileLinkToken:linkToken});
@@ -33,7 +38,7 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  const revisions=r.data.revisions,priorCard=r.data.idCardPackage;
  r=await mobile({action:'mobile_refresh',sessionToken,projectId:schoolId});
  check('Actual Android queue refresh provides signed attendance permit',r,r.http===200&&typeof r.data.attendancePermit==='string');
- const permit=r.data.attendancePermit;
+ let permit=r.data.attendancePermit;
  const pdf=Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n');
  const upload={action:'managed/file/upload',name:prefix+'-fixture.pdf',mime:'application/pdf',base64:pdf.toString('base64'),uploadKey:prefix+'-fixture'};
  r=await admin(upload);check('Real Drive upload ACK',r,r.http===200&&typeof r.data.fileId==='string');const fileId=r.data.fileId;
@@ -61,7 +66,12 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  const priorAttendance=await admin({action:'managed/records',operation:'read',collection:'attendance_records',syncProtocol:2});
  if(priorAttendance.http!==200)throw Error('Attendance readback required');
  const priorEntry=Object.values(priorAttendance.data.records||{}).find(row=>row.personId===personId&&Number.isSafeInteger(row.entryCapturedAt));
- const captured=priorEntry?priorEntry.entryCapturedAt:Date.now()-1000;
+ r=await mobile({action:'mobile_refresh',sessionToken,projectId:schoolId});
+ check('Fresh capture-authorizing TEST permit',r,r.http===200&&typeof r.data.attendancePermit==='string');
+ const capturePolicy=JSON.parse(Buffer.from(r.data.attendancePermit.split('.')[0],'base64url').toString('utf8'));
+ check('TEST capture policy confirms dated school opening',r,capturePolicy.open===true&&capturePolicy.day===isolatedAttendanceDay(schoolId));
+ permit=r.data.attendancePermit;
+ const captured=priorEntry?priorEntry.entryCapturedAt:Date.now();
  report.attendanceSampleAlreadyCompleted=Boolean(priorEntry);
  const attendance={action:'mobile_mark_attendance',sessionToken,attendancePermit:permit,projectId:schoolId,role:'student',personId,linkToken,latitude:24.8,longitude:92.7,accuracy:5,mode:'entry',clientCapturedAt:captured};
  r=await mobile(attendance);check('Actual isolated durable attendance acceptance',r,r.http===200&&r.data.accepted===true&&typeof r.data.operationId==='string');

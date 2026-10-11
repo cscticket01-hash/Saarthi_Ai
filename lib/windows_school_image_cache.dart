@@ -1,6 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:io';
+import 'package:image/image.dart' as image;
 import 'windows_local_firestore.dart';
+import 'windows_binary_downloads.dart';
+import 'windows_local_storage.dart';
 
 /// Private Drive media is cached only inside its immutable school database.
 class WindowsSchoolImageCache {
@@ -27,8 +31,24 @@ class WindowsSchoolImageCache {
     if(db.activeProfileIdentity['schoolSyncId']!=school)return null;
     final ref=db.collection('_windows_school_image_cache').doc(base64UrlEncode(utf8.encode(fileId)).replaceAll('=',''));
     final cached=(await ref.get()).data();
-    if(db.activeProfileId!=origin||db.activeProfileIdentity['schoolSyncId']!=school||cached?['schoolId']!=school||cached?['fileId']!=fileId)return null;
+    if(db.activeProfileId!=origin||db.activeProfileIdentity['schoolSyncId']!=school)return null;
     final raw=cached?['dataUrl'];
-    return raw is String&&raw.startsWith('data:image/')?UriData.parse(raw).contentAsBytes():null;
+    if(cached?['schoolId']==school && cached?['fileId']==fileId && raw is String && raw.startsWith('data:image/')) {
+      try {
+        final bytes=UriData.parse(raw).contentAsBytes();
+        if(image.decodeImage(bytes)!=null)return bytes;
+      } catch (_) {/* A damaged original cache must not prevent verified repair. */}
+    }
+    try {
+      final downloads=WindowsBinaryDownloads(schoolId:school,
+        storageDirectory:Directory('${(await WindowsLocalStorage.localFilesDirectory()).path}/Verified_Cloud_Cache'),
+        currentSchool:()=>db.activeProfileId==origin?db.activeProfileIdentity['schoolSyncId']?.toString()??'':'',
+        request:(_)async=>throw StateError('Offline cache read does not start a cloud request.'));
+      final path=await downloads.verifiedPath(fileId);
+      if(path==null)return null;
+      final bytes=await File(path).readAsBytes();
+      if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school || image.decodeImage(bytes)==null)return null;
+      return bytes;
+    } catch (_) {return null;}
   }
 }

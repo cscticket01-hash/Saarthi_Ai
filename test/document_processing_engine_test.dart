@@ -20,13 +20,13 @@ void main() {
     expect(restored.width,1000);expect(restored.height,1400);
     expect(restored.getPixel(900,1300).r,255);
   });
-  test('80 KB target reports real source/output sizes without changing source bytes', () {
+  test('50 KB target reports real source/output sizes without changing source bytes', () {
     final image=img.Image(width:200,height:300);
     img.fill(image,color:img.ColorRgb8(255,255,255));
     final source=Uint8List.fromList(img.encodePng(image));
     final original=List<int>.from(source);
     final result=DocumentProcessingEngine.process({'bytes':source});
-    expect(result['targetBytes'],80*1024);
+    expect(result['targetBytes'],50*1024);
     expect(result['originalBytes'],source.length);
     expect(result['actualBytes'],(result['optimized'] as Uint8List).length);
     expect(source,original);
@@ -40,6 +40,12 @@ void main() {
       final result=DocumentProcessingEngine.process({'bytes':source});final optimized=result['optimized'] as Uint8List;
       expect(result['actualBytes'],optimized.length);expect(img.decodeImage(optimized),isNotNull);
       expect((result['quality'] as int),greaterThanOrEqualTo(78));
+      final previews=Directory('build/media-readability');await previews.create(recursive:true);
+      final sourceExtension=n.isEven?'png':'jpg';
+      final optimizedExtension=result['mimeType']=='image/png'?'png':'jpg';
+      await File('${previews.path}/scan-${n+1}-original.$sourceExtension').writeAsBytes(source,flush:true);
+      await File('${previews.path}/scan-${n+1}-optimized.$optimizedExtension').writeAsBytes(optimized,flush:true);
+      await File('${previews.path}/scan-${n+1}-high-quality.jpg').writeAsBytes(result['highQuality'] as Uint8List,flush:true);
       measurements.add({'sourceBytes':source.length,'optimizedBytes':optimized.length,'savingsPercent':100*(1-optimized.length/source.length),'targetMet':result['targetMet']});
     }
     final total=measurements.fold<int>(0,(sum,row)=>sum+(row['optimizedBytes'] as int));

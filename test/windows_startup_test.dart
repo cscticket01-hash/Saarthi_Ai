@@ -183,4 +183,63 @@ void main() {
     expect(WindowsLocalSecurity.verifyPassword('school-login-123'), false);
     expect(WindowsLocalSecurity.verifyPassword('section-only-123'), false);
   });
+  testWidgets('fresh authenticated install offers backup before cloud hydration', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({
+      CentralSchoolCloud.key:jsonEncode({
+        'managed':true,'projectId':platformProjectId,
+        'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','uid':'A',
+        'email':'a@school.example','folderId':'managed','firebaseRefreshToken':'refresh',
+        'endpoint':'https://school.example/school-cloud',
+      }),
+    });
+    var hydrated=0,checked=0,probed=0;
+    await tester.pumpWidget(MaterialApp(home:WindowsStartupFlow(
+      offerRestore:true,
+      freshInstallationProbe:()async {probed++;return true;},
+      initializeConnections:()async {hydrated++;},
+      checkSetup:()async {checked++;throw StateError('registration unavailable');},
+    )));
+    await tester.pump();await tester.pump();await tester.pump();
+    expect(probed,1);
+    expect(find.text('Restore Existing School'),findsOneWidget);
+    expect(find.text('Continue school setup'),findsOneWidget);
+    expect(hydrated,0);
+    expect(checked,0);
+    expect(find.text('Save & Open App'),findsNothing);
+    await tester.tap(find.text('Continue school setup'));
+    await tester.pump();await tester.pump();await tester.pump();
+    expect(hydrated,1);
+    expect(checked,1);
+    expect(probed,1); // Explicit continue bypasses only the offer, not login.
+    expect(find.text('Restore Existing School'),findsNothing);
+    expect(find.text('Retry school profile restore'),findsOneWidget);
+    expect(find.text('Save & Open App'),findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('failed freshness verification shows retry without opening setup or hydrating', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({
+      CentralSchoolCloud.key:jsonEncode({
+        'managed':true,'projectId':platformProjectId,
+        'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','uid':'A',
+        'email':'a@school.example','folderId':'managed','firebaseRefreshToken':'refresh',
+        'endpoint':'https://school.example/school-cloud',
+      }),
+    });
+    var hydrated=0,checked=0;
+    await tester.pumpWidget(MaterialApp(home:WindowsStartupFlow(
+      offerRestore:true,
+      freshInstallationProbe:()async {throw StateError('identity not verified');},
+      initializeConnections:()async {hydrated++;},
+      checkSetup:()async {checked++;return false;},
+    )));
+    await tester.pump();await tester.pump();await tester.pump();
+    expect(hydrated,0);
+    expect(checked,0);
+    expect(find.text('Restore Existing School'),findsNothing);
+    expect(find.text('Save & Open App'),findsNothing);
+    expect(find.text('Retry school profile restore'),findsOneWidget);
+    expect(find.byType(CircularProgressIndicator),findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
 }

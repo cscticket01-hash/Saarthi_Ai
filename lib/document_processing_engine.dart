@@ -1,4 +1,5 @@
 import 'school_image_input.dart';
+
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -8,7 +9,8 @@ import 'package:image/image.dart' as img;
 /// caller retains original bytes separately and displays the actual output size.
 class DocumentProcessingEngine {
   static const sourceLimit = 50 * 1024 * 1024;
-  static const photoTarget = 80 * 1024;
+  static const photoTarget = 50 * 1024;
+  static const portraitTarget = 30 * 1024;
   // Retain the existing eight-document aggregate measurement contract.
   static const setTarget = 8 * photoTarget;
   static Map<String, dynamic> process(Map<String, dynamic> input) {
@@ -21,7 +23,9 @@ class DocumentProcessingEngine {
       throw const FormatException('Image cannot be safely decoded.');
     }
   }
+
   static Map<String, dynamic> _process(Map<String, dynamic> input) {
+    final portrait = input['kind'] == 'portrait';
     final bytes = input['bytes'] as Uint8List;
     if (bytes.length < 12 || bytes.length > sourceLimit)
       throw const FormatException('Source exceeds document safety limit.');
@@ -53,20 +57,21 @@ class DocumentProcessingEngine {
     image = image.convert(numChannels: 3);
 
     final longest = math.max(image.width, image.height);
-    if (longest > 2200)
+    final maxEdge = portrait ? 1280 : 2200;
+    if (longest > maxEdge)
       image = img.copyResize(
         image,
-        width: image.width >= image.height ? 2200 : null,
-        height: image.height > image.width ? 2200 : null,
+        width: image.width >= image.height ? maxEdge : null,
+        height: image.height > image.width ? maxEdge : null,
         interpolation: img.Interpolation.average,
       );
-    final detected = _paperCorners(image);
+    final detected = portrait ? null : _paperCorners(image);
     bool corrected = false;
     if (detected != null) {
       image = _rectify(image, detected);
       corrected = true;
     }
-    final deskew = _textAngle(image);
+    final deskew = portrait ? 0.0 : _textAngle(image);
     if (deskew.abs() >= 0.5) {
       image.backgroundColor = img.ColorRgb8(255, 255, 255);
       image = img.copyRotate(
@@ -91,7 +96,10 @@ class DocumentProcessingEngine {
     image.textData = null;
     image.iccProfile = null;
     final highQuality = Uint8List.fromList(img.encodeJpg(image, quality: 94));
-    final target = (input['targetBytes'] as num? ?? photoTarget).toInt();
+    final target =
+        (input['targetBytes'] as num? ??
+                (portrait ? portraitTarget : photoTarget))
+            .toInt();
     var optimized = highQuality;
     var optimizedWidth = image.width, optimizedHeight = image.height;
     var quality = 94;
@@ -102,16 +110,18 @@ class DocumentProcessingEngine {
     }
     // Keep at least a 1600px long edge when present in the original. Never
     // reduce to thumbnail dimensions just to meet the storage target.
+    final minimumEdge = portrait ? 640 : 1600;
     if (optimized.length > target &&
-        math.max(image.width, image.height) > 1600) {
+        math.max(image.width, image.height) > minimumEdge) {
       final smaller = img.copyResize(
         image,
-        width: image.width >= image.height ? 1600 : null,
-        height: image.height > image.width ? 1600 : null,
+        width: image.width >= image.height ? minimumEdge : null,
+        height: image.height > image.width ? minimumEdge : null,
         interpolation: img.Interpolation.average,
       );
       optimized = Uint8List.fromList(img.encodeJpg(smaller, quality: 78));
-      optimizedWidth = smaller.width; optimizedHeight = smaller.height;
+      optimizedWidth = smaller.width;
+      optimizedHeight = smaller.height;
       quality = 78;
     }
     // Text and line scans often compress better losslessly than as JPEG.
@@ -121,15 +131,20 @@ class DocumentProcessingEngine {
     // This retains the processed page and all pixel values without quantization.
     var neutral = true;
     for (final pixel in image) {
-      if (pixel.r != pixel.g || pixel.g != pixel.b) { neutral = false; break; }
+      if (pixel.r != pixel.g || pixel.g != pixel.b) {
+        neutral = false;
+        break;
+      }
     }
-    final lossless = Uint8List.fromList(img.encodePng(
-      neutral ? image.convert(numChannels: 1) : image, level: 9));
+    final lossless = Uint8List.fromList(
+      img.encodePng(neutral ? image.convert(numChannels: 1) : image, level: 9),
+    );
     var optimizedMime = 'image/jpeg';
     if (lossless.length < optimized.length) {
       optimized = lossless;
       optimizedMime = 'image/png';
-      optimizedWidth = image.width; optimizedHeight = image.height;
+      optimizedWidth = image.width;
+      optimizedHeight = image.height;
     }
     return {
       'optimized': optimized,
@@ -228,9 +243,11 @@ class DocumentProcessingEngine {
     for (var y = 1; y < gh - 1; y++) {
       for (var x = 1; x < gw - 1; x++) {
         final pixel = sample.getPixel(x * 2, y * 2);
-        final spread = math.max(pixel.r, math.max(pixel.g, pixel.b)) -
+        final spread =
+            math.max(pixel.r, math.max(pixel.g, pixel.b)) -
             math.min(pixel.r, math.min(pixel.g, pixel.b));
-        if (light(x * 2, y * 2) > math.max(205, background + 45) && spread < 32) {
+        if (light(x * 2, y * 2) > math.max(205, background + 45) &&
+            spread < 32) {
           mask[y * gw + x] = 1;
         }
       }
@@ -258,7 +275,8 @@ class DocumentProcessingEngine {
         runnerUp = component.length;
       }
     }
-    if (points.length < gw * gh * 0.30 || runnerUp > points.length * 0.25) return null;
+    if (points.length < gw * gh * 0.30 || runnerUp > points.length * 0.25)
+      return null;
     img.Point extreme(num Function(img.Point) score, bool minimum) =>
         points.reduce(
           (a, b) =>
@@ -277,7 +295,8 @@ class DocumentProcessingEngine {
     }
     final quadArea = area.abs() / 2;
     if (quadArea < sample.width * sample.height * 0.30 ||
-        points.length * 4 / quadArea < 0.70) return null;
+        points.length * 4 / quadArea < 0.70)
+      return null;
     // Preserve a small margin so border text/seals are not shaved off.
     final cx = p.fold<double>(0, (v, p) => v + p.x.toDouble()) / 4,
         cy = p.fold<double>(0, (v, p) => v + p.y.toDouble()) / 4;

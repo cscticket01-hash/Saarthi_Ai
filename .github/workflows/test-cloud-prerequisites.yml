@@ -2,10 +2,13 @@ name: Isolated TEST cloud prerequisites
 on:
   workflow_dispatch:
   push:
-    branches: [windows/easy-connect-draft]
+    branches: [windows/easy-connect-draft, feature/smart-sync-3]
     paths:
       - .github/scripts/test_cloud_readiness.cjs
       - .github/scripts/connect_isolated_test_storage.cjs
+      - .github/scripts/test_runtime_identity.cjs
+      - staging-school-cloud/**
+      - functions/**
       - .github/scripts/isolated_live_sync.cjs
       - .github/scripts/run_android_live_test.sh
       - .github/tests/isolated_engine_live_test.dart
@@ -16,11 +19,17 @@ on:
       - school-backend/managed/**
       - lib/mobile/school_session.dart
       - lib/mobile/attendance_store.dart
+      - lib/windows_connect/managed_record_media.dart
+      - lib/windows_school_image_cache.dart
+      - lib/document_processing_engine.dart
       - lib/windows_connect/managed_school_session.dart
       - lib/windows_connect/central_school_cloud.dart
       - lib/school_timestamp.dart
       - test/windows_sqlite_storage_test.dart
       - oauth-broker/test/central-staging.test.cjs
+      - lib/windows_sync_engine.dart
+      - lib/windows_sync_recovery.dart
+      - lib/sync_recovery_policy.dart
       - lib/windows_pending_school_sync.dart
       - lib/windows_local_firestore.dart
       - .github/tests/sqlite_benchmark.dart
@@ -37,9 +46,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   windows-live-prerequisites:
-    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,7 +73,7 @@ jobs:
           path: build/cloud-prerequisites
   actual-engines-live:
     needs: windows-live-prerequisites
-    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -88,7 +97,7 @@ jobs:
 
   website-ui-live:
     needs: actual-engines-live
-    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -122,7 +131,7 @@ jobs:
           build/sync-review-web
   android-os-live:
     needs: website-ui-live
-    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -225,7 +234,7 @@ jobs:
 
   native-android-windows-readback:
     needs: android-os-live
-    if: github.ref == 'refs/heads/windows/easy-connect-draft'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
