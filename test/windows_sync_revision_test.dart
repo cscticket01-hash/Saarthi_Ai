@@ -360,7 +360,9 @@ void main(){
               .onPressed,
           isNotNull,
         );
-        await tester.pumpAndSettle();
+        // Reopening a control returns to Overview. Reveal the retained
+        // measurement through the status destination without repeating its request.
+        await selectSyncTool(tester, 'Measured Status');
         await tester.scrollUntilVisible(find.text('School Drive storage'),300,scrollable:find.byType(Scrollable).first);
         await tester.pumpAndSettle();
         expect(
@@ -383,8 +385,10 @@ void main(){
    expect(find.textContaining('Private upstream detail'),findsNothing);
    await openSyncTool(tester, 'Check Cloud Health');
    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Check Cloud Health')).onPressed,isNotNull);
-   await tester.pumpAndSettle();
-   await tester.scrollUntilVisible(find.text('School cloud health'),-300,scrollable:find.byType(Scrollable).first);
+   // Check the retained failed result after returning from the controls,
+   // without rerunning the health probe.
+   await selectSyncTool(tester, 'Measured Status');
+   await tester.scrollUntilVisible(find.text('School cloud health'),300,scrollable:find.byType(Scrollable).first);
    await tester.pumpAndSettle();
    expect(find.text('Health check timed out — cloud readiness unverified'),findsOneWidget);
    expect(find.textContaining('Authenticated backend and school storage verified at'),findsNothing);
