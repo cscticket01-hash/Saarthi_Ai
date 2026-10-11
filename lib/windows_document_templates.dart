@@ -8,6 +8,7 @@ import 'windows_backend_bridge.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'id_card_catalog.dart';
 import 'id_card_engine.dart';
+import 'id_card_manifest.dart';
 import 'windows_id_card_designer_entry.dart';
 import 'fitted_document_preview.dart';
 import 'windows_connect/school_drive_images.dart';
@@ -28,13 +29,14 @@ class WindowsDocumentTemplates {
     Map<String, dynamic> data, {
     String qr = '',
     String templateId = 'school-id-v1',
+    IdCardManifest? reviewedManifest,
     Uint8List? photo,
     Uint8List? logo,
     Uint8List? signature,
     Uint8List? seal,
   }) async {
     final entry = await IdCardCatalog.find(templateId);
-    final manifest = await entry.manifest();
+    final manifest = reviewedManifest ?? await entry.manifest();
     return IdCardEngine.render(
       manifest,
       data,
@@ -292,7 +294,10 @@ class WindowsDocumentTemplates {
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
-    if ((v is String && v.startsWith('manifest:')) || kind == 'otherStaffId') {
+    if ((v is String && (v.startsWith('manifest:') || v.startsWith('reviewed:'))) || kind == 'otherStaffId') {
+      final reviewed = kind=='studentId' && v is String && v.startsWith('reviewed:')
+          ? await WindowsIdCardDesignerEntry.reviewed(v,FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'local:$origin') : null;
+      if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed during reviewed preview');
       return manifestId(
         {
           ...profile,
@@ -308,7 +313,8 @@ class WindowsDocumentTemplates {
           'parentName': data['parentName'] ?? data['fatherName'] ?? '',
         },
         qr: qr,
-        templateId: v is String && v.startsWith('manifest:')
+        reviewedManifest: reviewed,
+        templateId: reviewed!=null ? reviewed.id : v is String && v.startsWith('manifest:')
             ? v.substring(9)
             : (await IdCardCatalog.load())
                   .firstWhere((e) => e.kinds.contains(kind))
@@ -619,7 +625,7 @@ class _SchoolDocumentTemplatesScreenState
     final templateId =
         selected is String && selected.startsWith('manifest:')
             ? selected.substring('manifest:'.length)
-            : 'school-id-v1';
+            : selected is String && selected.startsWith('reviewed:') ? selected.split(':')[1] : 'school-id-v1';
     setState(() => _openingDesigner = true);
     try {
       final entry = await IdCardCatalog.find(templateId);
@@ -634,6 +640,18 @@ class _SchoolDocumentTemplatesScreenState
     } finally {
       if (mounted) setState(() => _openingDesigner = false);
     }
+  }
+
+  Future<void> _openBulk() async {
+    if(_openingDesigner)return;
+    setState(()=>_openingDesigner=true);
+    try {
+      final value=_selected['studentId'];
+      final id=value is String && value.startsWith('manifest:')?value.substring(9):value is String&&value.startsWith('reviewed:')?value.split(':')[1]:'school-id-v1';
+      final entry=await IdCardCatalog.find(id);
+      if(mounted)await WindowsIdCardDesignerEntry.openBulk(context,entry:entry,selection:value is String?value:null);
+    } catch(e) {if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Bulk ID unavailable: $e')));}
+    finally{if(mounted)setState(()=>_openingDesigner=false);}
   }
 
   Future<void> _preview(int index) async {
@@ -704,6 +722,7 @@ class _SchoolDocumentTemplatesScreenState
           ),
           const SizedBox(height: 20),
           if (_kind == 'studentId') ...[
+            if(WindowsIdCardDesignerEntry.enabled) Align(alignment:Alignment.centerLeft,child:OutlinedButton.icon(onPressed:_loading||_openingDesigner?null:_openBulk,icon:const Icon(Icons.print),label:const Text('Class bulk front/back PDF'))),
             Align(
               alignment: Alignment.centerLeft,
               child: OutlinedButton.icon(

@@ -35,13 +35,23 @@ function createManagedCardReader({db,enforced=false,privateKey,now=Date.now}){
    const c={version:1,schoolId:input.schoolId,role:input.role,personId:input.personId,registryPersonId:row?.personId||input.personId,documentId:verifiedLogin.person.id||input.personId,cardIssueId:input.cardIssueId||null,qrHash,sessionHash:hash(sessionToken),deviceHash:hash(input.deviceId)};
    return output(c,cardState,t,limit);
   },
-  async authorizeOnline({schoolId,deviceId,sessionToken,cardAuthorizationToken}){
+  async authorizeOnline({schoolId,deviceId,sessionToken,cardAuthorizationToken,role,personId,linkToken,cardIssueId}){
    if(!enforced)return {cardReaderEnforced:false};
    const t=now();if(!Number.isSafeInteger(t)||t<0)deny(503,'CARD_SERVER_CLOCK_INVALID');const c=claims(cardAuthorizationToken,publicKey,'card-online-session',t);
    if(c.schoolId!==schoolId||c.deviceHash!==hash(String(deviceId))||c.sessionHash!==hash(String(sessionToken)))deny(403,'CARD_SESSION_BINDING_MISMATCH');
+   if(role!==undefined&&role!==c.role||personId!==undefined&&personId!==c.personId||linkToken!==undefined&&hash(c.role+'/'+c.personId+'/'+String(linkToken))!==c.qrHash||cardIssueId!==undefined&&cardIssueId!==c.cardIssueId)deny(403,'CARD_PERSON_BINDING_MISMATCH');
    const row=await registry(schoolId,c.role,c.registryPersonId,c.documentId),cardState=state(row,c.cardIssueId,c.qrHash,t);
    // Original session expiry remains the upper bound, never extended by refresh.
    return output(c,cardState,t,Math.min(c.expiresAt,row?.expiresAt||c.expiresAt));
+  },
+  verifyCapture({schoolId,request,acceptedAt}) {
+   if(!enforced)return {cardReaderEnforced:false};
+   const t=now(),captured=request?.clientCapturedAt;
+   if(!Number.isSafeInteger(captured)||captured<=0||captured>t+120000||typeof request.originalAttendancePermit!=='string'||request.originalPermitHash!==hash(request.originalAttendancePermit)||request.attendancePermit!==request.originalAttendancePermit)deny(409,'CARD_CAPTURE_APPROVAL_INVALID');
+   const c=claims(request.originalCardOfflineLease,publicKey,'card-offline',captured);
+   const received=acceptedAt===undefined?t:acceptedAt;
+   if(!Number.isSafeInteger(received)||received>t||received>=c.expiresAt||c.expiresAt-c.issuedAt>TTL||c.schoolId!==schoolId||c.role!==request.role||c.personId!==request.personId||c.cardIssueId!==(request.cardIssueId||null)||c.deviceHash!==hash(String(request.deviceId))||c.sessionHash!==hash(String(request.sessionToken))||c.qrHash!==hash(request.role+'/'+request.personId+'/'+request.linkToken))deny(409,'CARD_CAPTURE_APPROVAL_EXPIRED');
+   return {cardReaderEnforced:true,originalApprovedUntil:c.expiresAt};
   },
   publicKeyRaw(){return publicKey?publicKey.export({format:'der',type:'spki'}).subarray(-32).toString('base64url'):null;},
  };

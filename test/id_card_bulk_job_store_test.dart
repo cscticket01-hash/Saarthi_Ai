@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -50,11 +51,27 @@ void main() {
     if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
+  test('bulk metadata and completed PDF are protected; inventory omits credentials', () async {
+    final plan=selection(1);
+    final store=IdCardBulkJobStore(rootPath:root.path,schoolId:school,keyProvider:()async=>Uint8List.fromList(List.filled(32,7)));
+    await store.savePending('protected-test',plan);
+    final meta=root.listSync().whereType<File>().firstWhere((f)=>f.path.endsWith('.json'));
+    expect(meta.readAsStringSync(),isNot(contains('Synthetic Test School')));
+    expect(meta.readAsStringSync(),isNot(contains(plan.students.first.qr)));
+    final list=await store.listJobs();
+    expect(list.single['count'],1);
+    expect(list.single.containsKey('selection'),false);
+    final result=await store.resumeAndRender('protected-test');
+    final pdf=root.listSync().whereType<File>().firstWhere((f)=>f.path.endsWith('.pdf'));
+    expect(pdf.readAsStringSync().startsWith('%PDF'),false);
+    expect(await store.readCompletedPdf('protected-test'),result.pdf);
+  });
+
   test('durable immutable selection survives restart and retains stable identity', () async {
     final plan = selection(2);
-    final store = IdCardBulkJobStore(rootPath: root.path, schoolId: school);
+    final store = IdCardBulkJobStore(rootPath: root.path, keyProvider: () async => Uint8List.fromList(List.filled(32, 7)), schoolId: school);
     await store.savePending('class-5-2026', plan);
-    final next = IdCardBulkJobStore(rootPath: root.path, schoolId: school);
+    final next = IdCardBulkJobStore(rootPath: root.path, keyProvider: () async => Uint8List.fromList(List.filled(32, 7)), schoolId: school);
     final recovered = await next.resumePlan('class-5-2026');
     expect(recovered.selectionFingerprint, plan.selectionFingerprint);
     expect(recovered.students.length, 2);
@@ -66,14 +83,14 @@ void main() {
   });
 
   test('cancellation leaves pending journal; restart completes once', () async {
-    final store = IdCardBulkJobStore(rootPath: root.path, schoolId: school);
+    final store = IdCardBulkJobStore(rootPath: root.path, keyProvider: () async => Uint8List.fromList(List.filled(32, 7)), schoolId: school);
     await store.savePending('job-1', selection(1));
     await expectLater(
       store.resumeAndRender('job-1', isCancelled: () => true),
       throwsA(isA<IdCardBulkCancelled>()),
     );
     expect(await store.readCompletedPdf('job-1'), isNull);
-    final fresh = IdCardBulkJobStore(rootPath: root.path, schoolId: school);
+    final fresh = IdCardBulkJobStore(rootPath: root.path, keyProvider: () async => Uint8List.fromList(List.filled(32, 7)), schoolId: school);
     final result = await fresh.resumeAndRender('job-1');
     expect(result.pdf.isNotEmpty, true);
     final verified = await fresh.readCompletedPdf('job-1');
@@ -85,21 +102,21 @@ void main() {
 
   test('foreign school and corrupted checkpoint fail closed', () async {
     final plan = selection(1);
-    final a = IdCardBulkJobStore(rootPath: root.path, schoolId: school);
-    final b = IdCardBulkJobStore(rootPath: root.path, schoolId: 'another-school');
+    final a = IdCardBulkJobStore(rootPath: root.path, keyProvider: () async => Uint8List.fromList(List.filled(32, 7)), schoolId: school);
+    final b = IdCardBulkJobStore(rootPath: root.path, keyProvider: () async => Uint8List.fromList(List.filled(32, 7)), schoolId: 'another-school');
     await a.savePending('A', plan);
     await expectLater(b.resumePlan('A'), throwsStateError);
     await expectLater(b.savePending('A', plan), throwsFormatException);
     final file = root.listSync().whereType<File>()
         .firstWhere((f) => f.path.endsWith('.json'));
     final parsed = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-    (parsed['selection']['students'][0] as Map)['studentId'] = 'wrong';
+    parsed['mac'] = base64Encode(List.filled(16, 0));
     file.writeAsStringSync(jsonEncode(parsed), flush: true);
     await expectLater(a.resumePlan('A'), throwsFormatException);
   });
 
   test('tampered complete PDF never passes verified output readback', () async {
-    final a = IdCardBulkJobStore(rootPath: root.path, schoolId: school);
+    final a = IdCardBulkJobStore(rootPath: root.path, keyProvider: () async => Uint8List.fromList(List.filled(32, 7)), schoolId: school);
     await a.savePending('A', selection(1));
     await a.resumeAndRender('A');
     final file = root.listSync().whereType<File>()

@@ -7,7 +7,12 @@ import 'school_qr_link.dart';
 /// Public key comes from reviewed app configuration, never from QR/server JSON.
 class QrCardAuthorization {
   static const configuredPublicKey = String.fromEnvironment('SAARTHI_QR_ED25519_PUBLIC_KEY');
-  static Future<int?> verifyOffline(String? lease, SchoolLink link, {
+  static Future<int?> verifyOffline(String? lease,SchoolLink link,{required String deviceId,required String sessionToken,required int now,String publicKey=configuredPublicKey}) =>
+      _verify(lease,link,deviceId:deviceId,sessionToken:sessionToken,now:now,publicKey:publicKey,purpose:'card-offline',maximumDuration:900000);
+  static Future<int?> verifyOnline(String? receipt,SchoolLink link,{required String deviceId,required String sessionToken,required int now,String publicKey=configuredPublicKey}) =>
+      _verify(receipt,link,deviceId:deviceId,sessionToken:sessionToken,now:now,publicKey:publicKey,purpose:'card-online-session',maximumDuration:30*86400000);
+  static Future<int?> _verify(String? lease, SchoolLink link, {
+    required String purpose, required int maximumDuration,
     required String deviceId, required String sessionToken, required int now,
     String publicKey = configuredPublicKey,
   }) async {
@@ -23,12 +28,12 @@ class QrCardAuthorization {
       if(claims is! Map) return null;
       final issued = claims['issuedAt'], expires = claims['expiresAt'];
       String fingerprint(String value) => sha256.convert(utf8.encode(value)).toString();
-      if(claims['version'] != 1 || claims['purpose'] != 'card-offline' || claims['schoolId'] != link.schoolId ||
+      if(claims['version'] != 1 || claims['purpose'] != purpose || claims['schoolId'] != link.schoolId ||
           claims['role'] != link.role || claims['personId'] != link.personId ||
           claims['cardIssueId'] != (link.cardIssueId.isEmpty ? null : link.cardIssueId) ||
           claims['deviceHash'] != fingerprint(deviceId) || claims['sessionHash'] != fingerprint(sessionToken) ||
           claims['qrHash'] != fingerprint('${link.role}/${link.personId}/${link.linkToken}') ||
-          issued is! int || expires is! int || now < issued || now >= expires || expires <= issued || expires-issued > 900000) return null;
+          issued is! int || expires is! int || now < issued || now >= expires || expires <= issued || expires-issued > maximumDuration) return null;
       return expires;
     } catch (_) { return null; }
   }

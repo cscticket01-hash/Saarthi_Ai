@@ -41,7 +41,7 @@ test('every online use reads revocation and old issue remains rejected after rei
 test('signed receipt replay cannot move to another session, device or school',async()=>{
  const f=fixture(),result=await f.reader.verifyLogin(f.input,f.login);
  for(const patch of [{schoolId:B},{deviceId:'x'.repeat(43)},{sessionToken:'x'.repeat(64)}])await assert.rejects(call(f,result,patch),{code:'CARD_SESSION_BINDING_MISMATCH'});
- await assert.rejects(call(f,result,{cardAuthorizationToken:result.cardAuthorizationToken.slice(0,-3)+'AAA'}),{code:'CARD_RECEIPT_INVALID'});
+ await assert.rejects(call(f,result,{cardAuthorizationToken:result.cardAuthorizationToken.split('.')[0]+'.'+(result.cardAuthorizationToken.split('.')[1][0]==='A'?'B':'A')+result.cardAuthorizationToken.split('.')[1].slice(1)}),{code:'CARD_RECEIPT_INVALID'});
  f.setTime(f.login.expiresAt);await assert.rejects(call(f,result),{code:'CARD_RECEIPT_EXPIRED'});
 });
 test('legacy receipt remains non-active and cannot bypass newly registered/revoked card',async()=>{
@@ -56,4 +56,14 @@ test('registry aliases are provider-bound and ambiguous/foreign entries rejected
  await assert.rejects(f.reader.verifyLogin(f.input,{...f.login,person:{id:'provider-doc-id'}}),{code:'CARD_IDENTITY_AMBIGUOUS'});
  f.rows.delete(otherKey);f.rows.get(f.key).schoolId=B;
  await assert.rejects(f.reader.verifyLogin(f.input,f.login),{code:'CARD_SCHOOL_MISMATCH'});
+});
+test('original capture approval cannot be replaced, expired-replayed or moved to another device',async()=>{
+ const f=fixture(),approval=await f.reader.verifyLogin(f.input,f.login),permit='synthetic-original-permit';
+ const request={...f.input,sessionToken:f.login.sessionToken,clientCapturedAt:f.time(),attendancePermit:permit,originalAttendancePermit:permit,originalPermitHash:hash(permit),originalCardOfflineLease:approval.cardOfflineLease};
+ assert.equal(f.reader.verifyCapture({schoolId:A,request}).cardReaderEnforced,true);
+ assert.throws(()=>f.reader.verifyCapture({schoolId:A,request:{...request,attendancePermit:'fresh-replacement'}}),{code:'CARD_CAPTURE_APPROVAL_INVALID'});
+ assert.throws(()=>f.reader.verifyCapture({schoolId:A,request:{...request,deviceId:'x'.repeat(43)}}),{code:'CARD_CAPTURE_APPROVAL_EXPIRED'});
+ const acceptedAt=f.time();f.setTime(acceptedAt+900000);
+ assert.throws(()=>f.reader.verifyCapture({schoolId:A,request}),{code:'CARD_CAPTURE_APPROVAL_EXPIRED'});
+ assert.equal(f.reader.verifyCapture({schoolId:A,request,acceptedAt}).cardReaderEnforced,true);
 });

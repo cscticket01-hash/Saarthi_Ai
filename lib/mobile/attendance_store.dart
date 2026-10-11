@@ -3,7 +3,8 @@ import 'package:crypto/crypto.dart';
 import 'package:sqflite/sqflite.dart';
 
 /// Platform storage for SchoolSession's existing sync worker, not a second engine.
-/// Payloads contain GPS/time metadata only; session, QR and permit tokens stay out.
+/// GPS/time and original signed capture approvals are durable; raw session, QR
+/// and device credentials stay out. Approval expiry never clears pending rows.
 class AttendanceStore {
   AttendanceStore({this.openDatabaseOverride});
   final Future<Database> Function()? openDatabaseOverride;
@@ -26,6 +27,8 @@ class AttendanceStore {
   Future<String> save(String owner, String day, String mode, int capturedAt,
       Map<String, dynamic> gps) async {
     if(gps['cardIssueId'] != null && !RegExp(r'^[a-f0-9]{64}$').hasMatch(gps['cardIssueId'].toString())) throw StateError('Invalid attendance card identity.');
+    for(final key in ['originalAttendancePermit','originalCardOfflineLease']) {if(gps[key]!=null && (gps[key] is! String || (gps[key] as String).length>5000)) throw StateError('Invalid capture approval.');}
+    if(gps['originalAttendancePermit']!=null && gps['originalPermitHash']!=sha256.convert(utf8.encode(gps['originalAttendancePermit'] as String)).toString()) throw StateError('Capture approval fingerprint mismatch.');
     final id = sha256.convert(utf8.encode(jsonEncode([owner, day, mode]))).toString();
     await (await database).insert('attendance', {
       'id': id, 'owner': owner, 'day': day, 'mode': mode,
@@ -33,6 +36,7 @@ class AttendanceStore {
         'latitude': gps['latitude'], 'longitude': gps['longitude'],
         'accuracy': gps['accuracy'], 'clientCapturedAt': capturedAt,
         if(gps['cardIssueId'] != null)'cardIssueId':gps['cardIssueId'],
+        for(final key in ['originalAttendancePermit','originalPermitHash','originalCardOfflineLease'])if(gps[key]!=null)key:gps[key],
       }), 'state': 'pending',
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
     return id; // Only after the durable transaction commits.

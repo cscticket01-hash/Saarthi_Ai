@@ -16,6 +16,9 @@ class IdCardDesignerScreen extends StatefulWidget {
     this.data = const {},
     this.images = const {},
     this.qr = '',
+    this.onPreview,
+    this.onApply,
+    this.onRecover,
   });
   final IdCardDesigner designer;
   /// Stable schema/template version supplied by the hosting school UI.
@@ -24,6 +27,8 @@ class IdCardDesignerScreen extends StatefulWidget {
   final Map<String, dynamic> data;
   final Map<String, Uint8List> images;
   final String qr;
+  final Future<void> Function(Map<String, dynamic>)? onPreview, onApply;
+  final Future<Map<String, dynamic>?> Function()? onRecover;
   @override
   State<IdCardDesignerScreen> createState() => _DesignerState();
 }
@@ -82,6 +87,28 @@ class _DesignerState extends State<IdCardDesignerScreen> {
             tooltip: 'Redo',
             onPressed: editor.canRedo ? () => setState(editor.redo) : null,
             icon: const Icon(Icons.redo),
+          ),
+          if (widget.onRecover != null) IconButton(
+            tooltip: 'Recover previous draft revision', icon: const Icon(Icons.history),
+            onPressed: saving ? null : () async {
+              try { final recovered = await widget.onRecover!(); if (recovered != null && mounted) edit(() => editor.restore(recovered)); }
+              catch (e) { if (mounted) setState(() => error = 'Recovery unavailable: $e'); }
+            },
+          ),
+          if (widget.onPreview != null) IconButton(
+            tooltip: 'Preview exact front/back PDF', icon: const Icon(Icons.preview),
+            onPressed: saving ? null : () async {
+              try { await widget.onPreview!(editor.exportDraft(templateVersion: widget.templateVersion)); }
+              catch (e) { if (mounted) setState(() => error = 'Preview failed: $e'); }
+            },
+          ),
+          if (widget.onApply != null) TextButton(
+            onPressed: saving ? null : () async {
+              setState(() => saving = true);
+              try { await widget.onApply!(editor.exportDraft(templateVersion: widget.templateVersion)); }
+              catch (e) { if (mounted) setState(() => error = 'Apply failed: $e'); }
+              finally { if (mounted) setState(() => saving = false); }
+            }, child: const Text('Review & apply'),
           ),
           TextButton(
             onPressed: saving ? null : save,

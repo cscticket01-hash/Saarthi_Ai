@@ -88,6 +88,7 @@ class IdCardBulkStudent {
     required this.classId,
     required this.studentId,
     required this.cardIssueId,
+    this.identityKind = 'existing-reference',
     required String qr,
     required Map<String, dynamic> data,
     Map<String, Uint8List> images = const {},
@@ -106,6 +107,14 @@ class IdCardBulkStudent {
         'Bulk selection requires school, class, student and existing issue identity.',
       );
     }
+    if (!{'existing-reference', 'legacy-qr-reference', 'issued-reference'}.contains(identityKind)) throw const FormatException('Invalid bulk identity reference kind');
+    if (identityKind == 'legacy-qr-reference' &&
+        (cardIssueId != 'legacy-qr:${sha256.convert(utf8.encode(this.qr))}' || SchoolLink.detectVersion(this.qr) > 3)) {
+      throw const FormatException('Legacy bulk reference must match the existing QR');
+    }
+    if (this.qr.startsWith('VS4|') && (identityKind != 'issued-reference' || this.qr.split('|').last != cardIssueId)) {
+      throw const FormatException('Issued bulk identity does not match QR');
+    }
     final link = SchoolLink.parse(this.qr);
     final issuingSchool = link.managed ? link.schoolId : link.projectId;
     if (issuingSchool != schoolId ||
@@ -116,13 +125,14 @@ class IdCardBulkStudent {
       );
     }
   }
-  final String schoolId, classId, studentId, cardIssueId, qr, _dataJson;
+  final String schoolId, classId, studentId, cardIssueId, qr, _dataJson, identityKind;
   final Map<String, Uint8List> _images, _backgrounds;
   Map<String, dynamic> get durableSnapshot => {
     'schoolId': schoolId,
     'classId': classId,
     'studentId': studentId,
     'cardIssueId': cardIssueId,
+    'identityKind': identityKind,
     'qr': qr,
     'data': data,
     'images': {
@@ -148,6 +158,7 @@ class IdCardBulkStudent {
       classId: value['classId'] as String,
       studentId: value['studentId'] as String,
       cardIssueId: value['cardIssueId'] as String,
+      identityKind: value['identityKind']?.toString() ?? 'existing-reference',
       qr: value['qr'] as String,
       data: Map<String, dynamic>.from(value['data'] as Map),
       images: bytes(value['images']),
@@ -167,6 +178,7 @@ class IdCardBulkStudent {
     'classId': classId,
     'studentId': studentId,
     'cardIssueId': cardIssueId,
+    if (identityKind != 'existing-reference') 'identityKind': identityKind,
     'qrSha256': sha256.convert(utf8.encode(qr)).toString(),
     'dataSha256': _digest(jsonDecode(_dataJson)),
     'imageHashes': {

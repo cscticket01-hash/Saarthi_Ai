@@ -2,6 +2,10 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:saarthi_ai/mobile/school_session.dart';
 import 'package:saarthi_ai/school_qr_link.dart';
 import 'package:saarthi_ai/qr_card_authorization.dart';
 import 'package:saarthi_ai/qr_authentication_engine.dart';
@@ -40,7 +44,31 @@ void main(){
   expect(await check(token,device:'another'),isNull);expect(await check(token,session:'another'),isNull);
   expect(await check(await signed({...claims,'cardIssueId':'c'*64})),isNull);
   expect(await check(await signed({...claims,'expiresAt':902000})),isNull);
-  expect(await check('${token.substring(0,token.length-3)}AAA'),isNull);
+  final parts=token.split('.');final tampered='${parts[0]}.${parts[1][0]=='A'?'B':'A'}${parts[1].substring(1)}';
+  expect(await check(tampered),isNull);
   expect(await QrCardAuthorization.verifyOffline(token,link,deviceId:'device',sessionToken:'session',now:1500,publicKey:''),isNull);
  });
+ test('issued login proof failure rolls back and enforced sessions reject downgrade/missing freshness',() async {
+  TestWidgetsFlutterBinding.ensureInitialized();FlutterSecureStorage.setMockInitialValues({});
+  final algorithm=Ed25519(),pair=await Ed25519().newKeyPairFromSeed(List<int>.filled(32,2));
+  final public=base64Url.encode((await pair.extractPublicKey()).bytes).replaceAll('=','');
+  final link=SchoolLink.parse(SchoolLink.encodeIssued(fields));var mode='valid';var failPersist=false;
+  final session=SchoolSession(cardPublicKey:public,persistSession:(value)async{if(failPersist)throw StateError('Synthetic persistence failure');await const FlutterSecureStorage().write(key:'vs_mobile_session',value:value);},client:MockClient((request) async {
+   final r=(jsonDecode(request.body) as Map)['request'] as Map,at=DateTime.now().millisecondsSinceEpoch;
+   String digest(String value)=>sha256.convert(utf8.encode(value)).toString();
+   final claims={'version':1,'schoolId':link.schoolId,'role':link.role,'personId':link.personId,'cardIssueId':link.cardIssueId,
+    'issuedAt':at-1000,'deviceHash':digest(r['deviceId'] as String),'sessionHash':digest('t'*64),'qrHash':digest('${link.role}/${link.personId}/${link.linkToken}')};
+   Future<String> proof(String purpose,int expires) async {final payload=base64Url.encode(utf8.encode(jsonEncode({...claims,'purpose':purpose,'expiresAt':expires}))).replaceAll('=','');final sig=await algorithm.sign(utf8.encode(payload),keyPair:pair);return '$payload.${base64Url.encode(sig.bytes).replaceAll('=','')}';}
+   final data=<String,dynamic>{'success':true,'schoolId':link.schoolId,'projectId':link.schoolId,'role':link.role,'personId':link.personId,'person':<String,dynamic>{},'sessionToken':'t'*64,'expiresAt':at+3600000};
+   if(mode!='downgrade') data.addAll({'cardReaderEnforced':true,'cardIssueId':link.cardIssueId});
+   if(mode!='missing') data.addAll({'cardAuthorizationToken':await proof('card-online-session',at+3600000),'cardOfflineLease':mode=='invalid'?'invalid':await proof('card-offline',at+899000)});
+   return http.Response(jsonEncode(data),200);
+  }));
+  mode='invalid';await expectLater(session.login(link),throwsStateError);expect(session.loggedIn,false);expect(await const FlutterSecureStorage().read(key:'vs_mobile_session'),isNull);
+  mode='valid';await session.login(link);expect(session.cachedAccessAllowed,true);
+  mode='downgrade';await expectLater(session.schoolCall('mobile_refresh',{}),throwsStateError);
+  mode='missing';await expectLater(session.schoolCall('mobile_refresh',{}),throwsStateError);
+  await session.clear();mode='valid';failPersist=true;await expectLater(session.login(link),throwsStateError);expect(session.loggedIn,false);expect(await const FlutterSecureStorage().read(key:'vs_mobile_session'),isNull);
+ });
+
 }

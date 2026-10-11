@@ -23518,7 +23518,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
     final note = TextEditingController();
     String category = 'General';
     bool saving = false;
-    final saved = await showDialog<bool>(
+    final route = DialogRoute<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
@@ -23575,6 +23575,10 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
         ),
       ),
     );
+    final saved = await Navigator.of(context, rootNavigator: true).push(route);
+    // The popped dialog remains mounted during its exit transition.
+    // Keep controllers alive until its widgets have actually been removed.
+    await route.completed;
     title.dispose(); amount.dispose(); paidTo.dispose(); note.dispose();
     if (saved == true) await _load();
   }

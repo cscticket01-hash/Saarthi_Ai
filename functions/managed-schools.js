@@ -1,4 +1,5 @@
 'use strict';
+const {createManagedCardReader}=require('./managed-card-reader');
 const {createManagedDeviceAccess}=require('./managed-device-access');
 const {createManagedCardIssueAuthority}=require('./managed-card-issue-authority');
 const {firestoreManagedDeviceStore}=require('./managed-device-registry');
@@ -13,9 +14,12 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKey,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKey,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,offlinePrivateKey:deviceOfflinePrivateKey,now});
  const cardAuthority=createManagedCardIssueAuthority({db,now});
+ const cardReader=createManagedCardReader({db,enforced:cardReaderEnforced,privateKey:cardReaderPrivateKey,now});
+ if(cardIssueEnabled&&!cardReaderEnforced)throw Error('Card issuance requires all-reader enforcement');
+ const readCard=(schoolId,request)=>cardReader.authorizeOnline({schoolId,deviceId:request.deviceId,sessionToken:request.sessionToken,cardAuthorizationToken:request.cardAuthorizationToken,role:request.role,personId:request.personId,linkToken:request.linkToken,cardIssueId:request.cardIssueId});
  if(!['attendance_outbox','attendance_test_outbox'].includes(attendanceCollection))throw Error('Invalid attendance collection');
  const mobileStates=new Map(),storageStates=new Map(),developerViews=new Map(),readViews=new Map();
  let readBytes=0,viewHits=0,viewMisses=0;
@@ -84,11 +88,18 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   }
   const m={schoolId,entitlement:e};
   if(!lease(m).allowed||e.status!=='trial'&&!e.activated)return items.map(i=>({operationId:i.operationId,success:false,authoritative:true}));
-  const result=await signed(m,{action:'managed_attendance_batch',lease:{schoolId,expiresAt:lease(m).expiresAt},
-   operations:items.map(i=>({operationId:i.operationId,request:{...JSON.parse(unprotect(i.payload,encryptionKey)),operationId:i.operationId,submittedAt:i.createdAt}}))});
+  const permitted=[],rejected=[];
+  for(const item of items){const request=JSON.parse(unprotect(item.payload,encryptionKey));
+   if(cardReaderEnforced){try{await readCard(schoolId,request);cardReader.verifyCapture({schoolId,request:{...request,attendancePermit:request.originalAttendancePermit},acceptedAt:item.createdAt});}catch(error){
+    if([400,401,403,409].includes(error.status)){rejected.push({operationId:item.operationId,success:false,authoritative:true});continue;}throw error;
+   }}
+   permitted.push({operationId:item.operationId,request:{...request,operationId:item.operationId,submittedAt:item.createdAt}});
+  }
+  if(!permitted.length)return rejected;
+  const result=await signed(m,{action:'managed_attendance_batch',lease:{schoolId,expiresAt:lease(m).expiresAt},operations:permitted});
   if(!Array.isArray(result.acknowledgements))throw Error('Attendance acknowledgement missing');
   if(result.acknowledgements.some(ack=>ack.success===true)){invalidate(schoolId);await notifyChanged(schoolId,'attendance-ack',false).catch(()=>{});}
-  return result.acknowledgements;
+  return [...result.acknowledgements,...rejected];
  }});
  const pushDevices=new Map();
  async function registerDevice(schoolId,request,verified) {
@@ -308,6 +319,8 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   // Windows presence is monitoring only. Signed school storage and current licence
   // authorize mobile access independently of the management PC's availability.
   if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(b.request.action==='mobile_login'&&b.request.cardIssueId&&!cardReaderEnforced)fail(503,'Issued card readers are not enabled','CARD_READER_DISABLED');
+  const cardContext=b.request.action==='mobile_login'?null:await readCard(b.schoolId,b.request);
   if(b.request.action==='mobile_attendance_status'){
    const permit=verifyAttendanceIdentity(b.schoolId,b.request),ids=b.request.operationIds;
    if(!Array.isArray(ids)||ids.length<1||ids.length>25||ids.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(ids).size!==ids.length)fail(400,'Invalid attendance status batch');
@@ -320,24 +333,26 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
     return {operationId:ids[index],state:value.state,createdAt:value.createdAt,
       ...(value.state==='completed'?{completedAt:value.completedAt}:{})};
    });
-   return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,operations};
+   return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,operations,...cardContext};
   }
   if(b.request.action==='mobile_mark_attendance'&&b.request.attendancePermit){
    const permit=verifyAttendance(b.schoolId,b.request);
+   if(cardReaderEnforced)cardReader.verifyCapture({schoolId:b.schoolId,request:b.request});
    const captured=b.request.clientCapturedAt;
    if(captured!==undefined&&(!Number.isSafeInteger(captured)||captured<=0||captured>now()+120000||new Date(captured+19800000).toISOString().slice(0,10)!==permit.day))fail(409,'Attendance capture date needs school review; original data retained.','ATTENDANCE_CAPTURE_REVIEW');
    const result=await queue.enqueue({schoolId:b.schoolId,role:permit.role,personId:permit.personId,day:permit.day,mode:b.request.mode==='exit'?'exit':'entry',payload:protect(JSON.stringify({...b.request,attendancePermit:undefined}),encryptionKey)});
    attendanceWake();
-   return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,...result};
+   return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,...result,...cardContext};
   }
   const body={action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}};
   const result=b.request.action==='mobile_dashboard'
    ?await readView(m.schoolId,body,()=>signed(m,body),true):await signed(m,body);
   if(['mobile_logout','mobile_mark_attendance','mobile_complaint'].includes(b.request.action))invalidate(m.schoolId);
+  const verifiedCard=b.request.action==='mobile_login'?await cardReader.verifyLogin({schoolId:b.schoolId,role:b.request.role,personId:b.request.personId,linkToken:b.request.linkToken,deviceId:b.request.deviceId,cardIssueId:b.request.cardIssueId},result):cardContext;
   await registerDevice(b.schoolId,b.request,result);
   if(result.attendancePolicy) result.attendancePermit=attendancePermit(b.schoolId,b.request.sessionToken||result.sessionToken,result.attendancePolicy,e.expiresAt);
   delete result.attendancePolicy;
-  return {...result,policyExpiresAt:Math.min(e.expiresAt,now()+72*3600000)};
+  return {...result,...verifiedCard,policyExpiresAt:Math.min(e.expiresAt,now()+72*3600000)};
  }
  const m=await identity(req,b.schoolId);
  const deviceDecision=await deviceAccess.authorize({req,body:b,identity:m,entitlement:lease(m)});if(deviceDecision.handled)return deviceDecision.result;

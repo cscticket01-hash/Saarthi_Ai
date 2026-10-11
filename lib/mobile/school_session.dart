@@ -35,28 +35,36 @@ enum SchoolConnectionState { connected, syncing, cachedOffline, connectionError 
 
 class SchoolSession {
   SchoolSession({http.Client? client, this.cacheDirectory, AttendanceStore? attendanceStore,
-      Future<void> Function(String value)? persistSession})
+      Future<void> Function(String value)? persistSession,this.cardPublicKey=QrCardAuthorization.configuredPublicKey})
     : _client = client ?? http.Client(), _attendanceStore = attendanceStore ?? AttendanceStore(),
       _persistSession = persistSession;
   final Future<void> Function(String value)? _persistSession;
   final http.Client _client;
+  final String cardPublicKey;
   final AttendanceStore _attendanceStore;
   Future<void>? _attendanceFlush;
   String? _cachedAttendancePermit;
   String? _cardAuthorizationToken, _cardOfflineLease;
   int _cardOfflineUntil = 0;
   bool _cardReaderEnforced = false;
-  Future<void> _adoptCardAuthorization(Map<String,dynamic> response, {String? session}) async {
+  Future<void> _adoptCardAuthorization(Map<String,dynamic> response, {String? session,bool restoring=false}) async {
     final current=link, generation=_generation;
     if(current == null) return;
     if(response['cardReaderEnforced'] == true) {
-      final receipt=response['cardAuthorizationToken'] is String?response['cardAuthorizationToken'] as String:_cardAuthorizationToken;
-      final offline=response['cardOfflineLease'] is String?response['cardOfflineLease'] as String:_cardOfflineLease;
-      final expires=await QrCardAuthorization.verifyOffline(offline,current,deviceId:deviceId,
-          sessionToken:session??schoolToken,now:DateTime.now().millisecondsSinceEpoch)??0;
+      final receipt=response['cardAuthorizationToken'],offline=response['cardOfflineLease'];
+      if(receipt is! String || offline is! String || receipt.isEmpty || offline.isEmpty ||
+          response['cardIssueId'] != (current.cardIssueId.isEmpty?null:current.cardIssueId)) {
+        throw SchoolAccessDenied('Fresh card verification is incomplete. School data is retained.');
+      }
+      final at=DateTime.now().millisecondsSinceEpoch,token=session??schoolToken;
+      final onlineExpires=await QrCardAuthorization.verifyOnline(receipt,current,deviceId:deviceId,sessionToken:token,now:at,publicKey:cardPublicKey);
+      final expires=await QrCardAuthorization.verifyOffline(offline,current,deviceId:deviceId,sessionToken:token,now:at,publicKey:cardPublicKey);
       if(generation!=_generation || !identical(current,link)) throw SchoolAccessDenied('School session changed.');
-      _cardReaderEnforced=true;_cardAuthorizationToken=receipt;_cardOfflineLease=offline;_cardOfflineUntil=expires;
-    } else if(current.cardIssueId.isNotEmpty) {
+      if(!restoring && (onlineExpires==null || expires==null || expires>onlineExpires)) {
+        throw SchoolAccessDenied('Signed card verification failed. School data is retained.');
+      }
+      _cardReaderEnforced=true;_cardAuthorizationToken=receipt;_cardOfflineLease=offline;_cardOfflineUntil=onlineExpires==null || expires==null || expires>onlineExpires?0:expires;
+    } else if(_cardReaderEnforced || current.cardIssueId.isNotEmpty) {
       throw SchoolAccessDenied('Issued card verification is unavailable. School data is retained.');
     }
   }
@@ -108,12 +116,21 @@ class SchoolSession {
   }
 
   Future<void> saveAttendance(Map<String, dynamic> gps, int capturedAt, String mode) async {
-    final owner = _attendanceOwner;
-    if (owner == null || !cachedAccessAllowed) throw SchoolAccessDenied('Verified school access required.');
+    final owner = _attendanceOwner,current=link,generation=_generation;
+    if (owner == null || current==null || !cachedAccessAllowed) throw SchoolAccessDenied('Verified school access required.');
     if (!['entry', 'exit'].contains(mode) || capturedAt <= 0) throw StateError('Invalid attendance capture.');
     final day = DateTime.fromMillisecondsSinceEpoch(capturedAt, isUtc: true).add(const Duration(hours: 5, minutes: 30));
     final date = '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
-    await _attendanceStore.save(owner, date, mode, capturedAt, {...gps,if(link!.cardIssueId.isNotEmpty)'cardIssueId':link!.cardIssueId});
+    final approval=<String,dynamic>{};
+    if(_cardReaderEnforced || current.cardIssueId.isNotEmpty) {
+      final permit=_currentAttendancePermit,offline=_cardOfflineLease;
+      final expires=await QrCardAuthorization.verifyOffline(offline,current,deviceId:deviceId,sessionToken:schoolToken,now:capturedAt,publicKey:cardPublicKey);
+      if(permit==null || offline==null || expires==null || capturedAt>DateTime.now().millisecondsSinceEpoch+120000) throw SchoolAccessDenied('Original attendance approval is unavailable.');
+      approval.addAll({'originalAttendancePermit':permit,'originalPermitHash':sha256.convert(utf8.encode(permit)).toString(),'originalCardOfflineLease':offline});
+    }
+    if(generation!=_generation || !identical(current,link)) throw SchoolAccessDenied('School session changed.');
+    await _attendanceStore.save(owner, date, mode, capturedAt, {...gps,...approval,if(current.cardIssueId.isNotEmpty)'cardIssueId':current.cardIssueId});
+    if(generation!=_generation || !identical(current,link)) throw SchoolAccessDenied('School session changed; original capture retained.');
     await refreshAttendanceStatus();
     unawaited(flushAttendance().catchError((_) {}));
   }
@@ -160,9 +177,17 @@ class SchoolSession {
       try {
         final payload = Map<String, dynamic>.from(jsonDecode(row['payload'] as String));
         final request = {...payload, 'role': current.role, 'personId': current.personId,
-          'linkToken': current.linkToken, 'mode': row['mode'], 'attendancePermit': permitToken};
+          'linkToken': current.linkToken, 'mode': row['mode'], 'attendancePermit': payload['originalAttendancePermit']??permitToken};
         if (row['state'] == 'pending') {
           if(payload['cardIssueId'] != null && payload['cardIssueId'] != current.cardIssueId) throw StateError('Attendance card changed; school review required; original capture retained.');
+          if(_cardReaderEnforced || current.cardIssueId.isNotEmpty) {
+            final original=payload['originalAttendancePermit'],proof=payload['originalCardOfflineLease'];
+            if(original is! String || proof is! String || payload['originalPermitHash']!=sha256.convert(utf8.encode(original)).toString()) throw StateError('Original attendance approval needs school review; capture retained.');
+            final captured=payload['clientCapturedAt'];
+            final originalExpiry=captured is int?await QrCardAuthorization.verifyOffline(proof,current,deviceId:deviceId,sessionToken:schoolToken,now:captured,publicKey:cardPublicKey):null;
+            final oldPermit=jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(original.split('.').first)))) as Map;
+            if(originalExpiry==null || originalExpiry<=at || oldPermit['expiresAt'] is! int || oldPermit['expiresAt']<=at) throw StateError('Original attendance approval expired; school review required; capture retained.');
+          }
           if (row['day'] != permit['day']) throw StateError('Attendance day needs school review; original capture retained.');
           final expectedId = sha256.convert(utf8.encode(jsonEncode([
             current.schoolId, permit['role'], permit['personId'], row['day'], row['mode']]))).toString();
@@ -257,7 +282,7 @@ class SchoolSession {
       );
       link = restoredLink;
       schoolToken = d['schoolToken'];
-      await _adoptCardAuthorization(Map<String,dynamic>.from(d));
+      await _adoptCardAuthorization(Map<String,dynamic>.from(d),restoring:true);
       messaging = d['messaging'] is Map
           ? Map<String, dynamic>.from(d['messaging'])
           : null;
@@ -471,6 +496,7 @@ class SchoolSession {
       await clear();
       throw StateError('School returned an invalid login session.');
     }
+    try {
     schoolToken = login['sessionToken'] as String;
     await _adoptCardAuthorization(login,session:schoolToken);
     if(login['attendancePermit'] is String)_cachedAttendancePermit=login['attendancePermit'] as String;
@@ -485,6 +511,7 @@ class SchoolSession {
       throw StateError('School messaging project mismatch');
     }
     await _persist();
+    } catch (_) { if(generation==_generation) await clear(); rethrow; }
   }
 
   Future<void> _persist() async {
@@ -499,6 +526,7 @@ class SchoolSession {
       'expiresAt': _expiresAt,
       'policyExpiresAt': _policyExpiresAt,
       'cardReaderEnforced':_cardReaderEnforced,
+      'cardIssueId':link!.cardIssueId.isEmpty?null:link!.cardIssueId,
       if(_cardAuthorizationToken != null)'cardAuthorizationToken':_cardAuthorizationToken,
       if(_cardOfflineLease != null)'cardOfflineLease':_cardOfflineLease,
       'cacheSchool': link!.projectId,
