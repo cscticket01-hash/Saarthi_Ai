@@ -11,6 +11,19 @@ void main(){
   IdCardSchoolSource source(List<Map<String,dynamic>> rows)=>IdCardSchoolSource(schoolId:school,profile:{'schoolName':'Synthetic School'},records:rows,connection:{'schoolId':school,'managed':fixture['managed'],'endpoint':fixture['centralEndpoint'],'projectId':fixture['firebaseProjectId'],'scriptUrl':fixture['googleScriptUrl']},ensureActive:(){});
   Map<String,dynamic> row(String id)=>{'_recordId':id,'name':'Student $id','studentClass':'5','mobileLinkToken':fixture['linkToken'],'rollNo':'1'};
   final template=IdCardManifest.fromJson(Map<String,dynamic>.from(jsonDecode(File('assets/school_id_manifest_v1.json').readAsStringSync()) as Map));
+  test('designer preview never uses deleted or foreign-school student photos and QR', () {
+    final foreign = {...row('foreign'), 'schoolId': 'vs-${'b' * 32}', 'photoUrl': 'foreign-private-photo'};
+    final deleted = {...row('deleted'), '_syncDeleted': true};
+    final eligible = {...row('eligible'), 'schoolId': school};
+    expect(IdCardSchoolSource.previewSample([foreign, deleted, eligible], school)?['_recordId'], 'eligible');
+    expect(IdCardSchoolSource.previewSample([foreign, deleted], school), isNull);
+    expect(IdCardSchoolSource.previewSample([foreign], null), isNull);
+    expect(IdCardSchoolSource.previewSample([
+      {...row('foreign-alt'), 'schoolSyncId': 'vs-${'b' * 32}'},
+      {...row('deleted-alt'), 'deleted': true},
+      {...row('unscoped')},
+    ], school)?['_recordId'], 'unscoped');
+  });
   test('source only reuses exact legitimate existing credentials',(){
     final s=source([row('first')]);
     expect(s.existingQr(s.records.first),isNotEmpty);
