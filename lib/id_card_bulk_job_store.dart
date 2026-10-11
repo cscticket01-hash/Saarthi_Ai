@@ -224,9 +224,23 @@ void _writeAtomically(File target, String content) =>
 
 void _writeBytesAtomically(File target, Uint8List bytes) {
   final tmp = File('${target.path}.tmp.$pid.${DateTime.now().microsecondsSinceEpoch}');
+  File? previous;
   try {
     tmp.writeAsBytesSync(bytes, flush: true);
-    tmp.renameSync(target.path);
+    if (target.existsSync()) {
+      previous = File('${target.path}.previous.$pid.'
+          '${DateTime.now().microsecondsSinceEpoch}');
+      target.renameSync(previous.path);
+    }
+    try {
+      tmp.renameSync(target.path);
+    } catch (_) {
+      if (previous != null && !target.existsSync()) {
+        previous.renameSync(target.path);
+      }
+      rethrow;
+    }
+    // Intentionally retain previous metadata for manual recovery.
   } finally {
     if (tmp.existsSync()) tmp.deleteSync();
   }
