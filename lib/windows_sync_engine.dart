@@ -7,6 +7,7 @@ import 'windows_connect/central_school_cloud.dart';
 
 import 'dart:async';
 import 'windows_sync_schedule.dart';
+import 'windows_local_restore_sync.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -125,11 +126,18 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final receipts = await db.collection('_windows_sync_receipts').get();
     final backup = await db.collection('_windows_sync_status').doc('backup').get();
     final downloads = await db.collection('_windows_sync_downloads').get();
+    final binary=(await db.collection('_windows_binary_status').doc('current').get()).data();
+    final restoreInventory = await db.collection('_windows_recycle_requests').get();
+    final restores=restoreInventory.docs.where((d)=>d.data()['localRestore']==true && d.data()['schoolId']==db.activeProfileIdentity['schoolSyncId'] && d.data()['state']!='verified').toList();
     if (db.activeProfileId != origin) return;
-    final items = [...general.docs, ...documents.docs];
+    final items = [...general.docs, ...documents.docs, ...restores];
     details.value = {
       'pending': items.length,
-      'conflictCount': items.where((d)=>d.data()['syncState']=='conflict').length,
+      'conflictCount': items.where((d)=>d.data()['syncState']=='conflict' || d.data()['state']=='conflict').length,
+      'pendingRestores':restores.length,
+      'mediaInventoryState':binary?['schoolId']==db.activeProfileIdentity['schoolSyncId']?binary?['inventory']:'UNKNOWN',
+      if(binary?['schoolId']==db.activeProfileIdentity['schoolSyncId'] && binary?['inventory']!='UNKNOWN')
+        'mediaPending':(binary?['pending'] as int? ?? 0)+(binary?['failed'] as int? ?? 0)+(binary?['interrupted'] as int? ?? 0)+(binary?['missing'] as int? ?? 0)+(binary?['damaged'] as int? ?? 0)+(binary?['unavailable'] as int? ?? 0),
       'documentPending': documents.docs.length + general.docs.where((d)=>d.data()['collection']=='documents').length,
       'lastLocalBackupMillis': backup.data()?['createdAt'] is int ? backup.data()!['createdAt'] : 0,
       'verifiedReceiptCount': receipts.docs.length,
@@ -140,11 +148,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'needsAttention': items
           .where(
             (d) =>
-                {'conflict', 'needsAttention'}.contains(d.data()['syncState']),
+                {'conflict', 'needsAttention'}.contains(d.data()['syncState']) || d.data()['state']=='conflict',
           )
           .length,
       'items': [for(final d in general.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_firebase_outbox'},
-        for(final d in documents.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_document_outbox'}],
+        for(final d in documents.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_document_outbox'},
+        for(final d in restores){'id':d.id,...d.data(),'_queueCollection':'_windows_recycle_requests'}],
       'metrics': Map<String, int>.from(metrics),
       'performance': performanceSummary,
       'downloads': [for (final row in downloads.docs)
@@ -153,14 +162,23 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (_initialized) unawaited(_reportSyncMonitor(origin, Map<String,dynamic>.from(details.value)));
   }
 
-  Future<void> _reportSyncMonitor(String origin, Map<String,dynamic> observed) async {
-    if (_lastMonitorProfile == origin && _lastMonitorReport != null && DateTime.now().difference(_lastMonitorReport!) < const Duration(minutes:5)) return;
+  Future<void> reportCurrentSyncMonitor() async {
+    final origin=FirebaseFirestore.instance.activeProfileId;
+    await refreshDetails();
+    await _reportSyncMonitor(origin,Map<String,dynamic>.from(details.value),force:true);
+  }
+
+  Future<void> _reportSyncMonitor(String origin, Map<String,dynamic> observed,{bool force=false}) async {
+    if (!force && _lastMonitorProfile == origin && _lastMonitorReport != null && DateTime.now().difference(_lastMonitorReport!) < const Duration(minutes:5)) return;
     _lastMonitorProfile=origin;_lastMonitorReport=DateTime.now();
     try {
       final central=await CentralSchoolCloud.saved();
-      if (FirebaseFirestore.instance.activeProfileId!=origin || central['managed']!=true || central['schoolId']!=_activeSchoolSyncId) return;
-      await ManagedSchoolSession.callForSchool(_activeSchoolSyncId,'managed/sync/status',{'report':{
+      if (FirebaseFirestore.instance.activeProfileId!=origin || central['managed']!=true || central['schoolId']!=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']) return;
+      await ManagedSchoolSession.callForSchool(central['schoolId'] as String,'managed/sync/status',{'report':{
         'pending':observed['pending'],'needsAttention':observed['needsAttention'],
+        'mediaInventoryState':observed['mediaInventoryState'],
+        if(observed['mediaPending'] is int)'mediaPending':observed['mediaPending'],
+        'lastClientSyncMillis':lastSuccessfulSync?.millisecondsSinceEpoch??0,
         'appVersion':WindowsPlatformClient.version,'conflictCount':observed['conflictCount'],'documentPending':observed['documentPending'],
         'lastReconciliationMillis':lastVerifiedCheckpoint?.millisecondsSinceEpoch??0,
         'lastLocalBackupMillis':observed['lastLocalBackupMillis'],
@@ -996,6 +1014,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         } catch (e) {
           if (!isRecordSyncConflict(e)) rethrow;
         }
+        await syncLocalRestoreRequests(FirebaseFirestore.instance,_activeSchoolSyncId,
+          (body)=>ManagedSchoolSession.callForSchool(_activeSchoolSyncId,'managed/recycle',body));
         await WindowsDocumentTemplates.publishChangedIdCards();
         // ID preparation may create credential metadata; drain only those new
         // durable operations before uploading their published files.
@@ -1265,6 +1285,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         await db.applySyncedDocument(
           db.collection(collection).doc(entry.key),
           data['_syncDeleted'] == true ? null : data,
+          tombstoneRevision:data['_syncDeleted']==true?data['_syncRevision']?.toString():null,
+          tombstoneUpdatedAt:data['_syncDeleted']==true && data['_syncUpdatedAt'] is int ? data['_syncUpdatedAt'] as int:null,
         );
         if (await db.syncedDocumentMatches(db.collection(collection).doc(entry.key),
             data['_syncDeleted'] == true ? null : data)) {

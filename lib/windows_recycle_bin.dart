@@ -64,6 +64,12 @@ class _WindowsRecycleBinState extends State<WindowsRecycleBin> {
       if(rows.any((row)=>row['version']!=1 || row['operationId'] is! String ||
           row['documentId'] is! String || row['snapshot'] is! Map || row['deletedAt'] is! int))
         throw StateError('Local deletion evidence requires review');
+      final requests = await db.collection('_windows_recycle_requests').get();
+      checkOrigin();
+      for(final row in rows) {
+        final matches=requests.docs.where((r)=>r.data()['schoolId']==school && r.data()['deletionOperationId']==row['operationId']);
+        if(matches.isNotEmpty)row['restoreState']=matches.first.data()['state'];
+      }
       if(mounted)setState(() {localEntries=rows;localVerified=true;});
     } catch (_) {
       if(mounted)setState(() {localEntries=[];localVerified=false;});
@@ -114,6 +120,24 @@ class _WindowsRecycleBinState extends State<WindowsRecycleBin> {
       if(mounted)setState(()=>message='Restore not verified. Snapshot and any pending intent are retained; review conflicts or retry the same item.');
     } finally {if(mounted)setState(()=>busy=false);}
   }
+  Future<void> restoreLocal(Map<String,dynamic> row) async {
+    final approved = await showDialog<bool>(context:context,builder:(context)=>AlertDialog(
+      title:const Text('Offline administrator restore approval'),
+      content:const Text('Retain the original deletion and request this exact snapshot restore? The deletion must receive its real cloud ACK before protected revision-checked restore. Financial and document records remain hidden until cloud approval. Other records show a locally verified pending view; editing waits for coordination.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(context,false),child:const Text('Cancel')),
+        FilledButton(onPressed:()=>Navigator.pop(context,true),child:const Text('Approve restore'))]));
+    if(approved!=true || !mounted || busy)return;
+    setState(() {busy=true;message='';});
+    try {
+      checkOrigin();
+      await db.requestLocalRestore(row['operationId'].toString(),approved:true).timeout(const Duration(seconds:30));
+      checkOrigin();
+      if(mounted)setState(()=>message='Local restore request durably retained. Original deletion remains queued until verified ACK; cloud restore is pending.');
+      unawaited(WindowsSyncEngine.instance.requestSync());
+    } catch(_) {
+      if(mounted)setState(()=>message='Restore requires review, current school administrator authorization, or an existing request retry. Deletion, snapshots and pending records are retained.');
+    } finally {if(mounted)setState(()=>busy=false);}
+  }
   String stamp(dynamic value)=>value is int ? DateTime.fromMillisecondsSinceEpoch(value).toLocal().toString() : 'Not recorded';
   @override
   Widget build(BuildContext context)=>Scaffold(
@@ -125,10 +149,11 @@ class _WindowsRecycleBinState extends State<WindowsRecycleBin> {
       if(busy)const LinearProgressIndicator(),if(message.isNotEmpty)SelectableText(message),
       const Text('Retained offline deletion snapshots',style:TextStyle(fontSize:20)),
       Text(localVerified && db.activeProfileId==origin ? '${localEntries.length} retained snapshots in this school/category.' : 'Local snapshot inventory unverified.'),
-      const Text('These are retained local evidence, not a verified restore or proof of a current server restore window. Offline snapshot activation is not yet implemented. Original deletion intents, financial evidence and file bytes are retained.'),
+      const Text('These are retained local evidence, not a verified restore or proof of a current server restore window. Offline administrator requests preserve deletion ordering; pending views are not cloud success. Original deletion intents, financial evidence and file bytes are retained.'),
       if(db.activeProfileId==origin)for(final row in localEntries)Card(child:ListTile(
         title:Text('Local snapshot: ${(row['snapshot'] as Map)['name'] ?? row['documentId']}'),
-        subtitle:Text('Device deletion time: ${stamp(row['deletedAt'])}\nOriginal deletion identity retained • ${row['cloudDeletionVerified']==true && row['deletedRevision'] is String ? 'Stored verified deletion receipt linked' : 'Cloud deletion ACK not verified'}'))),
+        subtitle:Text('Device deletion time: ${stamp(row['deletedAt'])}\nRestore: ${row['restoreState'] ?? 'Not requested'}\nOriginal deletion identity retained • ${row['cloudDeletionVerified']==true && row['deletedRevision'] is String ? 'Stored verified deletion receipt linked' : 'Cloud deletion ACK not verified'}'),
+        trailing:TextButton(onPressed:busy||!localVerified?null:()=>restoreLocal(row),child:const Text('Restore offline')))),
       const Divider(),
       Text(verified ? 'Cloud deletion inventory verified; ${entries.length} entries loaded${partial ? ' (more available)' : ''}.' : 'Cloud deletion inventory unverified.'),
       if(verified && entries.isEmpty)const Text('No recycle entries in the selected category. This does not verify other categories.'),

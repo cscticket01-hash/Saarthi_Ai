@@ -14,6 +14,8 @@ import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'windows_local_storage.dart';
 import 'windows_backup_integrity.dart';
 import 'windows_disaster_rehearsal.dart';
+import 'windows_binary_downloads.dart';
+import 'windows_clean_install_entry.dart';
 
 /// Evidence-driven own-school controls. No guessed health, ACKs or conflict repair.
 class WindowsSyncControlCenter extends StatefulWidget {
@@ -59,6 +61,29 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   int? localBytes;
   bool localBytesPartial = false;
   int? lastBackupAt;
+  WindowsBinaryDownloads? binaryDownloads;
+  Map<String,dynamic>? binaryEvidence;
+
+  Future<void> _binaryAction(String action) async {
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    if(db.activeProfileId!=origin || school.isEmpty)throw StateError('Current school required');
+    binaryDownloads ??= WindowsBinaryDownloads(schoolId:school,
+      storageDirectory:Directory('${(await WindowsLocalStorage.localFilesDirectory()).path}/Verified_Cloud_Cache'),
+      currentSchool:()=>db.activeProfileId==origin?db.activeProfileIdentity['schoolSyncId']?.toString()??'':'',
+      request:(body)=>ManagedSchoolSession.callForSchool(school,body['action'] as String,{...body}..remove('action')));
+    final downloads=binaryDownloads!;
+    try {
+      if(action=='inventory')await downloads.refreshInventory();
+      else if(action=='repair')await downloads.repairNext();
+      else await downloads.inspectLocal();
+    } finally {
+      if(mounted && db.activeProfileId==origin) {
+        final summary=downloads.summary;
+        await db.collection('_windows_binary_status').doc('current').set({...summary,'measuredAt':DateTime.now().millisecondsSinceEpoch});
+        setState(()=>binaryEvidence=summary);
+      }
+    }
+  }
 
   Future<void> _storageDetails() async {
     final counts = <String, int>{};
@@ -397,8 +422,14 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     'Pending downloads',
                     'Partial — observed record inventories below; unmeasured categories are Unknown',
                   ),
-                  metric('Document binaries awaiting download', 'Unknown — record metadata does not verify file bytes'),
-                  metric('Photos / media requiring restoration', 'Unknown — binary inventory not measured'),
+                  metric('Binary inventory',binaryEvidence?['inventory']?.toString()??'UNKNOWN'),
+                  metric('Known files / verified locally',binaryEvidence==null?'Unknown':'${binaryEvidence!['knownFiles']} / ${binaryEvidence!['verifiedFiles']}'),
+                  metric('Pending / failed / interrupted files',binaryEvidence==null?'Unknown':'${binaryEvidence!['pending']} / ${binaryEvidence!['failed']} / ${binaryEvidence!['interrupted']}'),
+                  metric('Missing / damaged files',binaryEvidence==null?'Unknown':'${binaryEvidence!['missing']} / ${binaryEvidence!['damaged']}'),
+                  metric('Verified local cloud-copy bytes',binaryEvidence==null?'Unknown':bytesLabel(binaryEvidence!['verifiedBytes'] as int)),
+                  metric('Last verified binary download',stamp(binaryEvidence?['lastVerifiedDownloadAt'])),
+                  metric('Media inventory scope','Application media folders; archives/native documents excluded'),
+                  metric('Pending protected restores','${details['pendingRestores']??'Unknown'}'),
                   metric(
                     'Conflict count',
                     details['items'] is! List
@@ -507,6 +538,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     icon: const Icon(Icons.build_outlined),
                     label: const Text('Smart Repair — safe retry'),
                   ),
+                  OutlinedButton(onPressed:active?null:()=>_run(()=>_binaryAction('inventory')),child:const Text('Check / continue file inventory')),
+                  OutlinedButton(onPressed:active?null:()=>_run(()=>_binaryAction('inspect')),child:const Text('Verify local file bytes')),
+                  OutlinedButton(onPressed:active?null:()=>_run(()=>_binaryAction('repair')),child:const Text('Recover next missing file')),
+                  OutlinedButton(onPressed:active?null:()=>_run(engine.reportCurrentSyncMonitor),child:const Text('Report current measured sync status')),
+                  OutlinedButton(onPressed:active?null:()=>openCleanInstallRestore(context),child:const Text('Restore Existing School — fresh install only')),
                   OutlinedButton(
                     onPressed: active ? null : () => _run(_checkCloudHealth),
                     child: const Text('Check Cloud Health'),

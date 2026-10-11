@@ -25,6 +25,8 @@ class WindowsLocalStorage {
     );
   }
 
+  static Directory get controlDirectory => _controlDirectory;
+
   static File get _configFile => File(
         '${_controlDirectory.path}${Platform.pathSeparator}storage_config_v1.json',
       );

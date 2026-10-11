@@ -181,11 +181,12 @@ class FirebaseFirestore {
   }
 
   /// Check the live outbox inside the serialized disk write, not a stale pull snapshot.
-  Future<void> applySyncedDocument(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? data) {
+  Future<void> applySyncedDocument(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? data, {String? tombstoneRevision, int? tombstoneUpdatedAt}) {
     ref.requireOriginProfile();
     return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>_database.applyOperations([
       _WriteOperation._(type:data==null?_WriteType.delete:_WriteType.set,
-        collection:ref.collectionPath,documentId:ref.id,data:data,preservePending:true),
+        collection:ref.collectionPath,documentId:ref.id,data:data,preservePending:true,
+        tombstoneRevision:tombstoneRevision,tombstoneUpdatedAt:tombstoneUpdatedAt),
     ]));
   }
 
@@ -205,6 +206,26 @@ class FirebaseFirestore {
     required Map<String,dynamic> expected, required Map<String,dynamic> remote,
     required String choice, required String reason}) =>
       _database.enqueueReviewedConflict(queueId, expected, remote, choice, reason);
+
+  /// Cached verified managed-session authorization supports offline admin review;
+  /// the server reauthorizes the school before the protected cloud restore.
+  Future<void> requestLocalRestore(String deletionOperationId, {required bool approved}) async {
+    final saved = await CentralSchoolCloud.saved();
+    final access = saved['verifiedAccess'];
+    if (!approved || saved['managed'] != true || access is! Map ||
+        access['success'] != true || access['allowed'] != true ||
+        access['expiresAt'] is! int || (access['expiresAt'] as int)<=DateTime.now().millisecondsSinceEpoch ||
+        access['schoolId'] != activeProfileIdentity['schoolSyncId'] ||
+        saved['schoolId'] != access['schoolId'] || saved['uid'] != access['uid']) {
+      throw StateError('Current verified school administrator approval required.');
+    }
+    await _database.localRestoreMutation(deletionOperationId, school:saved['schoolId'].toString());
+  }
+
+  Future<void> finishLocalRestore(String deletionOperationId, {required String expectedDeletedRevision,
+      required String restoredRevision}) => _database.localRestoreMutation(deletionOperationId,
+        school:activeProfileIdentity['schoolSyncId']?.toString() ?? '',
+        expectedDeletedRevision:expectedDeletedRevision,restoredRevision:restoredRevision);
 
   Future<T> runTransaction<T>(
     Future<T> Function(Transaction transaction) action,
@@ -694,6 +715,8 @@ class _WriteOperation {
     this.merge = false,
     this.preservePending = false,
     this.acknowledgedRevision,
+    this.tombstoneRevision,
+    this.tombstoneUpdatedAt,
   });
 
   factory _WriteOperation.set(
@@ -742,6 +765,8 @@ class _WriteOperation {
   final bool merge;
   final bool preservePending;
   final String? acknowledgedRevision;
+  final String? tombstoneRevision;
+  final int? tombstoneUpdatedAt;
 }
 
 class _LocalSchoolDatabase {
@@ -1006,7 +1031,7 @@ class _LocalSchoolDatabase {
           ...operations.map((operation)=>operation.collection),
           '_windows_firebase_outbox','_windows_sync_baselines','_windows_sync_receipts',
           '_windows_sync_conflict_history','_windows_sync_resolution_history',
-          '_windows_local_deletions',
+          '_windows_local_deletions','_windows_recycle_requests',
         },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_')).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
@@ -1014,6 +1039,28 @@ class _LocalSchoolDatabase {
         var trackedMutation = false;
 
         for (final operation in operations) {
+          final restores = collections['_windows_recycle_requests'];
+          final protected = restores is Map ? restores.values.where((r)=>r is Map &&
+              r['localRestore'] == true && r['schoolId'] == _activeIdentity['schoolSyncId'] &&
+              r['collection'] == operation.collection && r['documentId'] == operation.documentId).toList() : [];
+          if (protected.any((r)=>(r as Map)['state'] != 'verified')) {
+            if (operation.preservePending) continue;
+            if (WindowsLocalFirestoreSyncControl.trackingEnabled && _shouldTrackForFirebase(operation.collection)) {
+              throw StateError('Restore coordination pending; original deletion and snapshot retained.');
+            }
+          }
+          // A stale tombstone has no restore revision; it cannot remove the
+          // locally verified authorized restore. A subsequent user delete is
+          // still tracked normally and replaces this baseline via its own ACK.
+          if (operation.preservePending && operation.data == null && protected.isNotEmpty) {
+            final current=(collections[operation.collection] as Map?)?[operation.documentId];
+            final currentTime=current is Map?current['_syncUpdatedAt']:null;
+            if(operation.tombstoneRevision==null || operation.tombstoneRevision!.isEmpty ||
+                operation.tombstoneUpdatedAt==null || currentTime is! int ||
+                operation.tombstoneUpdatedAt!<=currentTime || protected.any((r)=>
+                  (r as Map)['recordRevision']==operation.tombstoneRevision ||
+                  ((collections['_windows_local_deletions'] as Map?)?[r['deletionOperationId']] as Map?)?['deletedRevision']==operation.tombstoneRevision)) continue;
+          }
           if(operation.preservePending) {
             final pending=collections['_windows_firebase_outbox'];
             if(pending is Map && pending.values.any((item)=>item is Map &&
@@ -1066,6 +1113,10 @@ class _LocalSchoolDatabase {
                   snapshot['cloudDeletionVerified'] = true;
                   snapshot['deletedRevision'] = revision;
                   snapshot['acknowledgedAt'] = DateTime.now().millisecondsSinceEpoch;
+                  final restore = (collections['_windows_recycle_requests'] as Map?)?['local-restore-${sent['operationId']}'];
+                  if(restore is Map && restore['schoolId']==sent['schoolId'] && restore['state']=='awaitingDeleteAck') {
+                    restore['state']='awaitingCloudRestore';restore['expectedDeletedRevision']=revision;
+                  }
                 }
 
                 final queued = docs[operation.documentId];
@@ -1201,6 +1252,98 @@ class _LocalSchoolDatabase {
       }
     });
 
+    return completer.future;
+  }
+
+  Future<void> localRestoreMutation(String deletionId, {required String school,
+      String? expectedDeletedRevision, String? restoredRevision}) {
+    final origin = _activeProfileId;
+    final completer = Completer<void>();
+    _writeTail = _writeTail.then((_) async {
+      try {
+        if (school.isEmpty || _activeIdentity['schoolSyncId'] != school || _activeProfileId != origin) {
+          throw StateError('Same school context required.');
+        }
+        final root = await _readRoot();
+        if (_activeProfileId != origin) throw StateError('School changed during restore.');
+        final collections = _collections(root);
+        final evidence = (collections['_windows_local_deletions'] as Map?)?[deletionId];
+        if (evidence is! Map || evidence['version'] != 1 || evidence['schoolId'] != school ||
+            evidence['operationId'] != deletionId || evidence['snapshot'] is! Map ||
+            evidence['collection'] is! String || evidence['documentId'] is! String) {
+          throw StateError('Verified same-school deletion evidence required.');
+        }
+        final collection = evidence['collection'] as String, id = evidence['documentId'] as String;
+        if (!_shouldTrackForFirebase(collection)) throw StateError('School record required.');
+        final snapshot = Map<String,dynamic>.from(evidence['snapshot'] as Map);
+        if (snapshot['schoolId'] != null && snapshot['schoolId'] != school) throw StateError('Mixed school snapshot.');
+        final requests = collections.putIfAbsent('_windows_recycle_requests',()=> <String,dynamic>{}) as Map;
+        final requestId = 'local-restore-'+deletionId;
+        final previous = requests[requestId];
+        final docs = collections.putIfAbsent(collection,()=> <String,dynamic>{}) as Map;
+        final queue = collections['_windows_firebase_outbox'];
+        final pending = queue is Map ? queue.values.where((r)=>r is Map && r['collection']==collection && r['documentId']==id).toList() : [];
+        final documentQueue = collections['_windows_document_outbox'];
+        if (documentQueue is Map && documentQueue.values.any((r)=>r is Map && r['documentId']==id)) {
+          throw StateError('Pending document bytes require separate review.');
+        }
+        if (restoredRevision == null) {
+          if (evidence['deletedAt'] is! int || DateTime.now().millisecondsSinceEpoch < (evidence['deletedAt'] as int) ||
+              DateTime.now().millisecondsSinceEpoch-(evidence['deletedAt'] as int)>const Duration(hours:24).inMilliseconds) {
+            throw StateError('Local restore window expired or clock requires review; evidence retained.');
+          }
+          if (previous != null) throw StateError('Restore request already retained; retry existing request.');
+          if (docs[id] != null || pending.any((r)=>r['operation']!='delete' || r['operationId']!=deletionId ||
+              {'conflict','needsAttention'}.contains(r['syncState']))) throw StateError('Newer local version or deletion conflict requires review.');
+          if (evidence['cloudDeletionVerified'] != true && pending.isEmpty) throw StateError('Original deletion intent missing.');
+          final deferLocal = {'documents','fee_payments','fee_ledger','teacher_salary','school_expenses'}.contains(collection);
+          if (!deferLocal) docs[id] = snapshot;
+          requests[requestId] = {'version':1,'localRestore':true,'schoolId':school,
+            'collection':collection,'documentId':id,'deletionOperationId':deletionId,
+            'operationId':base64Url.encode(List<int>.generate(24,(_)=>Random.secure().nextInt(256))).replaceAll('=',''),
+            'state':evidence['cloudDeletionVerified']==true?'awaitingCloudRestore':'awaitingDeleteAck',
+            'localVerified':!deferLocal,'administratorApproved':true,
+            'approvedAt':DateTime.now().millisecondsSinceEpoch};
+        } else {
+          if (previous is! Map || previous['schoolId'] != school || evidence['cloudDeletionVerified'] != true ||
+              evidence['deletedRevision'] != expectedDeletedRevision || expectedDeletedRevision == null ||
+              restoredRevision.isEmpty || restoredRevision == expectedDeletedRevision || pending.isNotEmpty) {
+            throw StateError('Authoritative matching deletion and restore revisions required.');
+          }
+          if (previous['state']=='verified') {
+            if(previous['recordRevision']!=restoredRevision)throw StateError('Different restore receipt.');
+            completer.complete();return;
+          }
+          if (docs[id] != null && _jsonStableMap(Map<String,dynamic>.from(docs[id] as Map)) != _jsonStableMap(snapshot)) {
+            throw StateError('Newer local version retained.');
+          }
+          docs[id] = {...snapshot,'_syncRevision':restoredRevision};
+          previous['state']='verified';previous['localVerified']=true;
+          previous['recordRevision']=restoredRevision;previous['verifiedAt']=DateTime.now().millisecondsSinceEpoch;
+          final baselines=collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
+          final key=base64Url.encode(utf8.encode('$collection\\n$id')).replaceAll('=','');
+          baselines[key]={'revision':restoredRevision};
+        }
+        _storeCollections(root,collections);await _writeRoot(root);
+        if(_activeProfileId!=origin)throw StateError('School changed after restore write.');
+        final persisted=_collections(await _readRoot());
+        if(_activeProfileId!=origin)throw StateError('School changed during restore readback.');
+        final durableRequest=(persisted['_windows_recycle_requests'] as Map?)?[requestId];
+        if(durableRequest is! Map || _jsonStableMap(Map<String,dynamic>.from(durableRequest))!=
+            _jsonStableMap(Map<String,dynamic>.from(requests[requestId] as Map))) {
+          throw StateError('Durable restore request readback required; original evidence retained.');
+        }
+        final storedDocument=(persisted[collection] as Map?)?[id];
+        if(docs[id]!=null && (storedDocument is! Map ||
+            _jsonStableMap(Map<String,dynamic>.from(storedDocument))!=_jsonStableMap(Map<String,dynamic>.from(docs[id] as Map)))) {
+          throw StateError('Durable local restore record readback required.');
+        }
+        for(final name in [collection,'_windows_recycle_requests']) {
+          final signal=_signals[name];if(signal!=null&&!signal.isClosed)signal.add(null);
+        }
+        completer.complete();
+      } catch(error,stack) {completer.completeError(error,stack);}
+    });
     return completer.future;
   }
 

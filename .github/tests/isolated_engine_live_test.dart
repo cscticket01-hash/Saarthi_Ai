@@ -9,6 +9,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../../lib/windows_connect/managed_school_session.dart';
+import '../../lib/windows_sync_engine.dart';
 import '../../lib/windows_pending_school_sync.dart';
 import '../../lib/windows_local_firestore.dart';
 import '../../lib/mobile/school_session.dart';
@@ -146,6 +147,16 @@ void main() {
    final fromMobile=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'attendance_records','operation':'read','syncProtocol':2});
    expect((fromMobile['records'] as Map).values.any((row)=>row['personId']==person&&row['entryCapturedAt']==captured),true);
    report['actualMobileQueueToWindowsReadMs']=reverse.elapsedMilliseconds;report['mobilePending']=0;
+   await WindowsSyncEngine.instance.reportCurrentSyncMonitor();
+   final monitor=await ManagedSchoolSession.callForSchool(school,'managed/sync/status',{});
+   final actualPending=(await db.collection('_windows_firebase_outbox').get()).docs.length+(await db.collection('_windows_document_outbox').get()).docs.length;
+   expect(monitor['schoolId'],school);
+   expect(monitor['latestWindowsReport'],isA<Map>());
+   expect(monitor['latestWindowsReport']['pending'],actualPending);
+   expect(monitor['latestWindowsReport']['appVersion'],isA<String>());
+   expect(monitor['latestWindowsReport']['receivedAt'],greaterThan(DateTime.now().subtract(const Duration(minutes:10)).millisecondsSinceEpoch));
+   report['actualWindowsClientReportVerified']=true;
+   report['actualWindowsReportedPending']=actualPending;
    report['mobileRequests']=transport.samples;report['status']='PASS';
   }catch(_){report['status']='FAIL';rethrow;}
   finally{transport.close();await store.close();await Directory('build/cloud-prerequisites').create(recursive:true);await File('build/cloud-prerequisites/actual-engines.json').writeAsString(jsonEncode(report));print(jsonEncode(report));}
