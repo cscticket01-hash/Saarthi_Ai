@@ -6,7 +6,7 @@ Previous unintegrated preparation commits `3fa874f` and `8c6d473` were not avail
 
 ## Final PDF tool
 
-`tool/idqr_acceptance/verify_pdf.py` inspects an existing PDF read-only. Requires PyMuPDF and a separately installed `zbarimg` executable. It invokes the decoder without a shell and uses bounded subprocess timeouts and disposable render files. No network or photo processing occurs.
+`tool/idqr_acceptance/verify_pdf.py` inspects an existing PDF read-only. Requires PyMuPDF, Pillow, pinned zxing-cpp and a separately installed `zbarimg` executable. It invokes the decoder without a shell and uses bounded subprocess timeouts and disposable render files. No network or photo processing occurs.
 
 ```sh
 python tool/idqr_acceptance/verify_pdf.py exported.pdf export-verification-manifest.json
@@ -83,3 +83,9 @@ Local fixtures/contract tests use an injected decoder because local zbar is unav
 Preparation run38129760040 passed real-decoder smoke and16contract tests, but50/100/500synthetic bulk jobs failed with decoder errors. No bulk PASS or root cause is claimed. Failure reporting now identifies inventory index and DPI without identities/payloads; the synthetic benchmark can preserve the actual failed raster and minimal geometry context in its7-day diagnostic artifact. Verification is not relaxed. The earlier two-QR smoke remains separate from bulk coverage.
 
 Run38130010681 narrowed every bulk failure to the first declared QR at600DPI, zbar exit4;150and300DPI succeeded. This does not yet establish the cause. Additional **diagnostic-only** checks resize that exact failed raster to widths256/384/512with aspect ratio preserved and try QR-only zbar decoding. A second pinned zxing-cpp decoder checks only QR symbols in the original raster. Diagnostics report exact identity matches without exposing payloads. Neither resized nor second-decoder success changes the original FAIL verdict; no resolution is removed from acceptance. At most three extra bounded zbar subprocesses run for the first failure. The independent decoder is used only for synthetic diagnosis here.
+
+### Demonstrated original-raster decoder limitation and strict fallback
+
+Run38130274024 diagnostic artifact11699155560 demonstrated that the unchanged first600DPI raster (662×663pixels) decoded to exactly its intended identity with QR-only ZXing-cpp. QR-only zbar also decoded exact identities after diagnostic resizing to256/384/512pixels. The original zbar scan returned exit4 (no symbol). This establishes a decoder limitation for that original raster, not a malformed synthetic QR. The earlier bulk runs remain FAIL.
+
+Acceptance now permits one strict fallback: **only zbar exit4/no-symbol** invokes pinned QR-only ZXing-cpp on the original unchanged raster. No resizing is used for acceptance. Other transport/process errors fail; a wrong or multiple primary decoded payload is never overridden. Missing fallback dependencies fail closed. Final verification still requires exactly one expected identity at every150/300/600DPI output. Bulk reports record actual original-raster fallback count and measured fallback wall time as a subset of decoder time. Real fixture non-QR and wrong-identity negatives remain mandatory, supplemented by fallback missing/wrong/multiple contract tests. New policy awaits its exact-source hosted result and does not establish actual application export acceptance.

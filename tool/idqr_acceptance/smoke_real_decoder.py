@@ -82,7 +82,7 @@ def run_smoke(directory, decoder='zbarimg'):
             continue
         raise AssertionError(f'Invalid export accepted: {label}')
     return {'verdict': 'PASS', 'fixture': 'synthetic PDF only', 'realDecoder': decoder,
-            'actualQrCount': 2, 'resolutionChecks': 6,
+            'decoderPolicy': positive['decoderPolicy'], 'actualQrCount': 2, 'resolutionChecks': 6,
             'negativeChecks': ['non-QR fixture independently decoded by unrestricted control', 'matching-payload non-QR rejected', 'last-card identity mismatch rejected'],
             'applicationExportAcceptance': 'UNVERIFIED', 'physicalPrintAcceptance': 'UNVERIFIED'}
 

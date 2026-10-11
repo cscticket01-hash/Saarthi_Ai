@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import fitz
 from verify_pdf import AcceptanceError, decode_png, verify
@@ -176,6 +177,56 @@ class FinalPdfAcceptanceTests(unittest.TestCase):
         run.assert_called_once_with(
             ['zbarimg', '--quiet', '--raw', '--set', 'disable', '--set', 'qrcode.enable', 'synthetic.png'],
             capture_output=True, timeout=15, check=False)
+
+    def test_no_symbol_fallback_uses_original_raster_qr_only(self):
+        from PIL import Image
+        path = Path(self.temporary.name) / 'original-600.png'
+        Image.new('RGB', (662, 663), 'white').save(path)
+        captured = []
+        def read(image, *, formats):
+            captured.append((image.size, formats))
+            return [SimpleNamespace(text='EXPECTED')]
+        zxing = SimpleNamespace(read_barcodes=read, BarcodeFormat=SimpleNamespace(QRCode='QR_ONLY'))
+        no_symbol = subprocess.CompletedProcess([], 4, stdout=b'', stderr=b'')
+        measured = []
+        with patch('verify_pdf.subprocess.run', return_value=no_symbol), patch.dict('sys.modules', {'zxingcpp': zxing}):
+            self.assertEqual(decode_png(path, 'zbarimg', on_fallback=measured.append), ['EXPECTED'])
+        self.assertEqual(captured, [((662, 663), 'QR_ONLY')])
+        self.assertEqual(len(measured), 1)
+
+    def test_missing_fallback_decoder_fails_closed(self):
+        no_symbol = subprocess.CompletedProcess([], 4, stdout=b'', stderr=b'')
+        with patch('verify_pdf.subprocess.run', return_value=no_symbol), patch.dict('sys.modules', {'zxingcpp': None}):
+            with self.assertRaisesRegex(AcceptanceError, 'fallback unavailable'):
+                decode_png(Path('original.png'), 'zbarimg')
+
+    def test_exit4_with_output_cannot_override_primary_symbols(self):
+        with patch('verify_pdf.subprocess.run', return_value=subprocess.CompletedProcess([], 4, stdout=b'WRONG\n', stderr=b'')), patch('verify_pdf.decode_original_qr_fallback') as fallback:
+            with self.assertRaises(AcceptanceError):
+                decode_png(Path('original.png'), 'zbarimg')
+            fallback.assert_not_called()
+
+    def test_other_decoder_error_never_invokes_fallback(self):
+        with patch('verify_pdf.subprocess.run', return_value=subprocess.CompletedProcess([], 2, stdout=b'', stderr=b'')), patch('verify_pdf.decode_original_qr_fallback') as fallback:
+            with self.assertRaises(AcceptanceError):
+                decode_png(Path('original.png'), 'zbarimg')
+            fallback.assert_not_called()
+
+    def test_primary_wrong_identity_and_multiple_symbols_never_get_fallback(self):
+        for output in (b'WRONG\n', b'synthetic-identity-0\nSECOND\n'):
+            with patch('verify_pdf.subprocess.run', return_value=subprocess.CompletedProcess([], 0, stdout=output, stderr=b'')), patch('verify_pdf.decode_original_qr_fallback') as fallback:
+                with self.assertRaises(AcceptanceError):
+                    verify(self.path, self.manifest)
+                fallback.assert_not_called()
+
+    def test_independent_wrong_identity_multiple_and_nonqr_are_rejected(self):
+        no_symbol = subprocess.CompletedProcess([], 4, stdout=b'', stderr=b'')
+        for symbols in ([], [SimpleNamespace(text='WRONG')], [SimpleNamespace(text='synthetic-identity-0'), SimpleNamespace(text='SECOND')]):
+            # Empty QR-only result represents a non-QR barcode/no QR.
+            zxing = SimpleNamespace(read_barcodes=lambda *args, **kwargs: symbols, BarcodeFormat=SimpleNamespace(QRCode='QR_ONLY'))
+            with patch('verify_pdf.subprocess.run', return_value=no_symbol), patch.dict('sys.modules', {'zxingcpp': zxing}):
+                with self.assertRaises(AcceptanceError):
+                    verify(self.path, self.manifest)
 
     def test_missing_decoder_is_failure_not_skip(self):
         with self.assertRaisesRegex(AcceptanceError, 'unavailable'):

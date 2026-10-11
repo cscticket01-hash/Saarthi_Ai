@@ -75,7 +75,7 @@ def diagnose_failed_raster(path, expected_payload, destination, *, decode=decode
             variant = Path(destination) / f'diagnostic-width-{width}.png'
             source.resize((width, height), Image.Resampling.LANCZOS).save(variant)
             try:
-                values = decode(variant, 'zbarimg')
+                values = (decode_png(variant, 'zbarimg', allow_fallback=False) if decode is decode_png else decode(variant, 'zbarimg'))
                 results.append({'width': width, 'height': height, 'status': 'DECODED',
                                 'symbolCount': len(values), 'exactExpectedIdentity': values == [expected_payload]})
             except AcceptanceError as error:
@@ -102,6 +102,13 @@ def benchmark(directory, count, *, decode=decode_png, clock=time.perf_counter, b
     generated = clock()
     decode_seconds = 0.0
     decode_calls = 0
+    fallback_count = 0
+    fallback_seconds = 0.0
+
+    def fallback_measured(seconds):
+        nonlocal fallback_count, fallback_seconds
+        fallback_count += 1
+        fallback_seconds += seconds
 
     def measured_decode(path, decoder):
         nonlocal decode_seconds, decode_calls
@@ -109,7 +116,7 @@ def benchmark(directory, count, *, decode=decode_png, clock=time.perf_counter, b
             raise AcceptanceError('Synthetic benchmark wall-time budget exceeded')
         before = clock()
         try:
-            decoded = decode(path, decoder)
+            decoded = (decode_png(path, decoder, on_fallback=fallback_measured) if decode is decode_png else decode(path, decoder))
         except AcceptanceError:
             if diagnostic_directory is not None:
                 destination = Path(diagnostic_directory)
@@ -141,6 +148,8 @@ def benchmark(directory, count, *, decode=decode_png, clock=time.perf_counter, b
             'pdfBytes': pdf.stat().st_size, 'pdfSha256': result['pdfSha256'],
             'generationWallSeconds': generated - start, 'verificationWallSeconds': finished - generated,
             'totalWallSeconds': finished - start, 'decoderWallSeconds': decode_seconds,
+            'decoderPolicy': result['decoderPolicy'],
+            'originalRasterFallbackCount': fallback_count, 'originalRasterFallbackWallSeconds': fallback_seconds,
             'profileGetPixmapSeconds': profile_seconds(profile, {'get_pixmap'}),
             'profilePngSaveSeconds': profile_seconds(profile, {'save'}),
             'parentPeakRssKiB': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,

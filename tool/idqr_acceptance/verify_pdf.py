@@ -6,12 +6,27 @@ import math
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 
 import fitz
 
 
 class AcceptanceError(ValueError):
     pass
+
+
+def decode_original_qr_fallback(path):
+    try:
+        import zxingcpp
+        from PIL import Image
+    except ImportError as error:
+        raise AcceptanceError('Independent QR fallback unavailable') from error
+    try:
+        with Image.open(path) as image:
+            symbols = zxingcpp.read_barcodes(image.convert('RGB'), formats=zxingcpp.BarcodeFormat.QRCode)
+        return [symbol.text for symbol in symbols]
+    except Exception as error:
+        raise AcceptanceError('Independent original-raster QR decoder failed') from error
 
 
 def positive_number(value):
@@ -82,11 +97,18 @@ def validate_manifest(manifest, document):
         raise AcceptanceError('PDF contains pages absent from card inventory')
 
 
-def decode_png(path, decoder):
+def decode_png(path, decoder, *, on_fallback=None, allow_fallback=True):
     try:
         result = subprocess.run([decoder, '--quiet', '--raw', '--set', 'disable', '--set', 'qrcode.enable', str(path)], capture_output=True, timeout=15, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise AcceptanceError('QR decoder unavailable or timed out') from error
+    if result.returncode == 4 and allow_fallback and not result.stdout.strip():
+        # zbar's no-symbol result only: never override decoded identities or other errors.
+        started = time.perf_counter()
+        values = decode_original_qr_fallback(path)
+        if on_fallback is not None:
+            on_fallback(time.perf_counter() - started)
+        return values
     if result.returncode != 0:
         raise AcceptanceError(f'QR decoder failed with exit code {result.returncode}')
     try:
@@ -115,6 +137,7 @@ def verify(pdf_path, manifest, *, dpis=(150, 300, 600), decoder='zbarimg', decod
                     checks.append({'cardIndex': index, 'dpi': dpi, 'status': 'PASS'})
     return {'verdict': 'PASS', 'pdfSha256': hashlib.sha256(Path(pdf_path).read_bytes()).hexdigest(),
             'cardCount': len(manifest['cards']), 'checks': checks,
+            'decoderPolicy': 'QR-only zbar; exit4 no-symbol only allows QR-only ZXing on original unchanged raster; exactly one expected payload required',
             'scope': 'Declared QR regions decoded at every requested resolution; physical printing, complete inventory provenance, text shaping and visual contrast remain UNVERIFIED.'}
 
 
