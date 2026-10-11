@@ -31,3 +31,13 @@ Persisted designer/versionhistory and realUIrouting, durableclassjobresume/stora
 Live universalupgrade and signedhealth, real SchoolA/B import/isolation and fivePC registration/revoke/offlineexpiry tests remain blocked by actualaccess/configuration; do not enable flags on oldbundle. PhysicalPC/mobile/printer unverified. Retaineddayfixture unchanged:12October06:35:19.426IST deadline; sameautomation06:36:20IST guardedrejectionprobe, no purge/recreation. Supporteddispatchmust be checked at execution.
 
 DraftPR26 is reviewableimplementation; no mainmerge, TEST/productiondeploy, release/downloadlinks/billing or originalpendingoperation changes.
+
+
+## Follow-up: safe draft persistence foundation (same draft PR)
+
+- Implemented isolated `lib/id_card_draft_storage_io.dart` with school-hashed filenames, school-scoped manifest validation, SHA-256 accidental-corruption detection, bounded JSON, an OS file lock, flushed temporary writes and rename commit. Existing valid revision is retained as a separate backup when replaced. It never deletes data or calls the cloud. JSON remains plaintext and its hash is **not** an authentication signature.
+- `loadDraft` refuses corrupt current data instead of silently taking an older revision. `readPreviousRevision` offers explicit read-only recovery; actual in-app recovery UI and automatic migration are not implemented.
+- Designer screen now accepts a stable caller-supplied `templateVersion` instead of incorrectly recording current wall time as the schema version. Existing `onSave` callback can use `IdCardDraftStorageIo.saveDraft` when a real trusted per-school application storage directory and verified school context are supplied.
+- Added six targeted regression tests for restart, tenant isolation, prior revision, invalid save retention, corrupted current data and concurrent save atomicity. Wired them into the isolated ID/QR review workflow.
+- Historical red CI on commit `05d7515`: 35 existing tests PASS and six added tests FAIL due to an incomplete synthetic fixture missing a required back region; corrected in `15610ced`. Dart analysis and the Flutter regression step PASSED on `15610ced`; full independent PDF verifier and latest `ebb140c2` workflow require separately checking their final run status.
+- **Still partial:** No production screen/route activation, existing-school storage path selection, real Windows PC restart, encrypted-at-rest storage, durable bulk-job resume, server-issued QR lifecycle, Indic font shaping, Google Script upgrade or device/printer acceptance. No main merge or deployment performed.
