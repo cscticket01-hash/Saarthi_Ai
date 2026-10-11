@@ -90,6 +90,45 @@ class FinalPdfAcceptanceTests(unittest.TestCase):
                 validate_manifest(expected, document)
                 self.assertEqual(len(document), 1)
 
+    def test_bulk_fixture_50_class_students_have_valid_a4_geometry(self):
+        from benchmark_synthetic_bulk import create_bulk_fixture
+        from verify_pdf import validate_manifest
+        path = Path(self.temporary.name) / 'bulk.pdf'
+        manifest = create_bulk_fixture(path, 50)
+        self.assertEqual(len(manifest['cards']), 50)
+        self.assertEqual(len(manifest['pageSizesPt']), 6)
+        self.assertEqual(len({c['studentId'] for c in manifest['cards']}), 50)
+        self.assertEqual({c['classId'] for c in manifest['cards']}, {'SYNTHETIC-CLASS-1'})
+        with fitz.open(path) as document:
+            validate_manifest(manifest, document)
+
+    def test_synthetic_bulk_benchmark_measures_every_card_and_resolution(self):
+        from benchmark_synthetic_bulk import benchmark
+        def decode(path, decoder):
+            index = int(path.name.split('-')[0])
+            return [f'TEST-A-C1-S{index:04d}']
+        report = benchmark(self.temporary.name, 10, decode=decode)
+        self.assertEqual(report['decodeCount'], 30)
+        self.assertEqual(report['pageCount'], 2)
+        self.assertGreater(report['pdfBytes'], 0)
+        self.assertGreater(report['totalWallSeconds'], 0)
+        self.assertGreater(report['profileGetPixmapSeconds'], 0)
+        self.assertGreater(report['profilePngSaveSeconds'], 0)
+        self.assertEqual(report['applicationExportAcceptance'], 'UNVERIFIED')
+
+    def test_bulk_benchmark_rejects_expired_wall_budget(self):
+        from benchmark_synthetic_bulk import benchmark
+        with self.assertRaisesRegex(AcceptanceError, 'budget'):
+            benchmark(self.temporary.name, 1, budget_seconds=0, decode=lambda *_: [])
+
+    def test_bulk_benchmark_does_not_accept_wrong_last_student(self):
+        from benchmark_synthetic_bulk import benchmark
+        def decode(path, decoder):
+            index = int(path.name.split('-')[0])
+            return [f'TEST-A-C1-S{index:04d}' if index != 9 else 'WRONG']
+        with self.assertRaises(AcceptanceError):
+            benchmark(self.temporary.name, 10, decode=decode)
+
     def test_all_pdf_pages_must_be_in_inventory(self):
         with fitz.open(self.path) as pdf:
             pdf.new_page(width=595.276, height=841.89)
