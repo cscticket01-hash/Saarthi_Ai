@@ -158,7 +158,7 @@ class IdCardSchoolSource {
         }
         if (missing) {onProgress?.call(rows.indexOf(row)+1, rows.length);continue;}
         final issued = link.cardIssueId.isNotEmpty;
-        final issue = issued ? qr.split('|').last : 'legacy-qr:${sha256.convert(utf8.encode(IdCardEngine.compactQr(qr)))}';
+        final issue = issued ? link.cardIssueId : 'legacy-qr:${sha256.convert(utf8.encode(IdCardEngine.compactQr(qr)))}';
         students.add(IdCardBulkStudent(schoolId:schoolId,classId:classId,studentId:link.personId,
           cardIssueId:issue,identityKind:issued?'issued-reference':'legacy-qr-reference',qr:qr,data:data,images:images,backgrounds:backgrounds));
       } catch (_) { findings.add({'studentId':id,'severity':'error','code':'IDENTITY_OR_INPUT_REVIEW'}); }
