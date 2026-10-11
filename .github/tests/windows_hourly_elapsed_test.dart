@@ -37,8 +37,11 @@ void main() {
       expect(hourlyEvents, hasLength(1));
       expect(hourlyEvents.single['elapsedMilliseconds'],
           greaterThanOrEqualTo(const Duration(hours: 1).inMilliseconds));
-      expect(DateTime.now().toUtc().difference(started).inMilliseconds,
-          greaterThanOrEqualTo(const Duration(hours: 1).inMilliseconds));
+      // Stopwatch is monotonic. UTC timestamps are diagnostic only: hosted OS
+      // clock adjustments/precision can put wall time just below a full hour
+      // even when the actual scheduler event passed the strict elapsed bound.
+      expect(stopwatch.elapsedMicroseconds,
+          greaterThanOrEqualTo(const Duration(hours: 1).inMicroseconds));
       expect(hourlyEvents.single['requestedDelayMilliseconds'], 250);
 
       phase = 'wake_signal';
@@ -72,12 +75,14 @@ void main() {
       schedule.stop();
       stopwatch.stop();
       final report = <String, dynamic>{
-        'version': 1,
+        'version': 2,
         'sourceSha': Platform.environment['GITHUB_SHA'] ?? 'local-uncommitted',
         'sourceRef': Platform.environment['GITHUB_REF'] ?? 'local',
         'startedAtUtc': started.toIso8601String(),
         'finishedAtUtc': DateTime.now().toUtc().toIso8601String(),
         'elapsedMilliseconds': stopwatch.elapsedMilliseconds,
+        'elapsedTimeSource': 'monotonic Stopwatch',
+        'wallClockElapsedMilliseconds': DateTime.now().toUtc().difference(started).inMilliseconds,
         'status': status,
         if (errorCategory != null) 'errorCategory': errorCategory,
         'hourlyRequestCount': events.where((e) => e['source'] == 'hourly_wait').length,

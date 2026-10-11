@@ -1,3 +1,43 @@
+# Smart Sync 3.0 current acceptance — 2026-10-11 UTC
+
+This checkpoint supersedes the historical pre-integration audit below. Source inspected: `eb6addc9e9c77b1925e98a73487427986ba72c8d`, PR #23 OPEN/DRAFT, 56 commits, 91 changed files. Application/runtime code remains unchanged by the scheduler acceptance correction.
+
+| Area | Code status | Automated test | Real cloud | Physical device | Remaining blocker |
+| --- | --- | --- | --- | --- | --- |
+| Platform regression | Implemented | Exact-source push [38102879875](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38102879875): Windows/Android/Web/Backend/Security PASS; backend 295, OAuth 14, Firestore 25 | Separate live chain below | UNVERIFIED | New documentation/test commit needs its own CI |
+| Hourly scheduler | Production timer unchanged; acceptance uses strict monotonic Stopwatch, UTC diagnostic only | Old [38101196941](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38101196941) FAIL: event 3,600,007 ms, separate wall-clock 3,599,999 ms. Corrected real-hour rerun PENDING | No provider calls by design | UNVERIFIED | Exact corrected-source elapsed-hour result |
+| Disaster recovery | Implemented | Five resume tests PASS | [38102879856](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38102879856) nine checks PASS, fresh read-only audit of retained rehearsal: 348/348 rows, 19/19 hashes | UNVERIFIED | Active cutover, local queues and Firebase credentials excluded from cloud rehearsal |
+| Recycle restore/expiry | Implemented | [38100482579](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38100482579): restore 11 checks PASS; baseline 2 checks PASS | Restore PASS; real 24-hour expiry PENDING | UNVERIFIED | Same fixture deadline 2026-10-12 01:05:19.426 UTC / 06:35:19.426 IST |
+| Windows/Android/Web sync | Implemented | Windows groups 25/143/181 PASS, overlapping; not summed | [38102879867](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38102879867): all five stages PASS, exact source | UNVERIFIED | Physical restart, OS wake/minimized hour, network interruption, printer and QR |
+| Central monitoring | Implemented; missing/stale and tenant checks present | Isolation/staleness tests PASS | Actual authenticated hosted Windows report path observed, pending 0 | UNVERIFIED | Report freshness allows ten minutes while backend throttle is five: cannot conclusively exclude recent prior identical report; fleet unknown |
+| Binary recovery/quality | Implemented | Corrupt/hash/retry/cache checks PASS | One file verified after injected 503 and restart; inventory PARTIAL | UNVERIFIED | Representative human readability and broader file coverage |
+| Attendance capacity | Planning and mocked component benchmarks available | Component evidence only | 1,000/5,000/15,000 real-provider scenarios NOT RUN | UNVERIFIED | Explicit TEST school/workload/quota/concurrency/cost/isolation approval |
+| Original-school 502 | Unknown provider exception; pending operations preserved | TEST boundary failure/recovery evidence only | Original cause UNCONFIRMED | Original PC untouched | Owner-only Apps Script diagnostic needs separate authorization |
+
+## Measurements tied to exact historical run
+
+Run 38102879867: Windows local save 15 ms, queue-to-ACK 5,334 ms; Android API 35 emulator offline save 44 ms, queue-to-cloud-read 52,670 ms; Android-to-Windows readback 5,839 ms. These are individual measurements, not throughput guarantees. A deliberately newer TEST Windows edit remains pending and protected.
+
+Fresh disaster verification rereads the retained recovery generation (fixture run 38020985989, attempt 2); it is not a new independent backup generation or an atomic multi-file snapshot. Original fixture row/file revision, operation ID, timestamp and bytes remain protected. Artifact 11689340864 retains the evidence.
+
+## Retained real-day fixture
+
+`recycle-expiry-v1-20261011-resume-acceptance`, deletion `1791680719426`, deadline `1791767119426`, baseline artifact `11688200206`. Do not recreate it, change timestamps, shorten retention or infer real expiry from mocked clocks. At/after the real deadline verify authenticated expiry, rejected restore, retained audit and no unexpected destructive cleanup.
+
+## Scheduler failure and correction
+
+The failed assertion was the wall-clock difference at test line 40, not the event's monotonic elapsed bound. UTC event timestamps also place the event before the earlier UTC start despite positive monotonic elapsed, demonstrating inconsistent wall-time measurement. The exact OS clock adjustment/precision mechanism is unconfirmed. Elapsed acceptance now uses monotonic Stopwatch for both the event and post-event strict full-hour bound. UTC timestamps and wall-clock difference are retained as diagnostic evidence. One hourly request, wake/reconnect signals and timer cancellation assertions remain unchanged; no tolerance, clock manipulation, shortened interval or skipped test.
+
+Local Flutter regressions were blocked by automatic approval review because the command attempted cloud instance-metadata access. No bypass was attempted. Local backend initial run had 290 PASS and one file-load failure caused by missing firebase-admin/app dependency; this is not a current-source regression claim. Hosted exact-source CI remains authoritative until local dependencies are available.
+
+## Release gate
+
+BLOCKED pending corrected-source CI/hour result, real-day expiry, physical Windows/Android, representative media quality, scoped provider-load approval and original owner diagnostics. No merge, production deploy, EXE/APK publication, download-link update, billing or original-school mutation authorized.
+
+---
+
+## Historical audit (superseded where current evidence differs)
+
 # Smart Sync 3.0 acceptance audit — 2026-10-11 UTC
 
 Read-only checkpoint: branch HEAD `1647e09835758166adb0eb93fb8372e629417d38`; existing PR #23 OPEN/DRAFT, 46 commits and 69 changed files. This is the pre-integration checkpoint, not certification of subsequent code. PR comments endpoint returned no comments. No successful historical workflow was rerun.

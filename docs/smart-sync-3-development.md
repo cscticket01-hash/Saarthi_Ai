@@ -1,3 +1,5 @@
+> Current 2026-10-11 verification supersedes older in-progress labels: see [remaining acceptance](smart-sync-3-remaining-acceptance.md). Exact-source platform/live cloud and fresh retained disaster audit passed; corrected monotonic elapsed-hour acceptance still pending.
+
 # Smart Sync 3.0 development evidence
 
 Branch: `feature/smart-sync-3`; draft PR #23. Main starts at `de547d2c0a025db815ce97479e3f4f3fc4f8f1a8`. Production publication is not authorized.
