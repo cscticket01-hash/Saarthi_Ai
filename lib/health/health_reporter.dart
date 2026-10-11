@@ -9,8 +9,9 @@ enum HealthSendResult { accepted, retryable, attention, unavailable }
 
 /// One coalesced, persistent diagnostic report; no credential is queued.
 class HealthReporter {
-  HealthReporter(this.engine,{required this.platform,required this.version,required this.send});
+  HealthReporter(this.engine,{required this.platform,required this.version,required this.send,DateTime Function()? now}):now=now??DateTime.now;
   final UniversalHealth engine;
+  final DateTime Function() now;
   final String platform,version;
   final Future<HealthSendResult> Function(HealthContext,Map<String,dynamic>) send;
   Timer? _timer;
@@ -28,7 +29,9 @@ class HealthReporter {
     if(_stopped||engine.paused||bound==null||bound.school.isEmpty||_sending)return;
     final scope=bound.fingerprint;
     if(_scope!=scope){_scope=scope;_attempts=0;_next=null;_blocked=null;}
-    if(_blocked==scope||_attempts>=3||_next?.isAfter(DateTime.now())==true)return;
+    if(_blocked==scope||_next?.isAfter(now())==true)return;
+    // Three failed sends open a cooldown, not a permanent outage latch.
+    if(_attempts>=3)_attempts=0;
     _sending=true;
     var requestPending=false, releaseWhenSettled=false;
     try {
@@ -46,11 +49,11 @@ class HealthReporter {
       unawaited(source.then<void>((_){requestPending=false;if(releaseWhenSettled)_sending=false;},onError:(Object _,StackTrace __){requestPending=false;if(releaseWhenSettled)_sending=false;}));
       final result=await source.timeout(const Duration(seconds:8),onTimeout:()=>HealthSendResult.retryable);
       if(_stopped||engine.context?.same(bound)!=true)return;
-      if(result==HealthSendResult.accepted){_attempts=0;_next=DateTime.now().add(const Duration(minutes:5));await preferences.setString('universal_health_pending_v2','');}
-      else if(result==HealthSendResult.unavailable){_next=DateTime.now().add(const Duration(minutes:5));}
+      if(result==HealthSendResult.accepted){_attempts=0;_next=now().add(const Duration(minutes:5));await preferences.setString('universal_health_pending_v2','');}
+      else if(result==HealthSendResult.unavailable){_next=now().add(const Duration(minutes:5));}
       else if(result==HealthSendResult.attention){_blocked=scope;}
-      else {_attempts++;_next=DateTime.now().add(Duration(minutes:5*(1<<_attempts)));}
-    }catch(_){_attempts++;_next=DateTime.now().add(const Duration(minutes:15));}
+      else {_attempts++;_next=now().add(Duration(minutes:5*(1<<_attempts)));}
+    }catch(_){_attempts++;_next=now().add(const Duration(minutes:15));}
     finally{if(requestPending){releaseWhenSettled=true;}else{_sending=false;}}
   }
 }
