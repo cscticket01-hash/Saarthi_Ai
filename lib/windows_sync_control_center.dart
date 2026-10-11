@@ -659,6 +659,91 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           },
         ),
         const SizedBox(height: 18),
+        _panelBox(
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Data Sync Status',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          Wrap(spacing: 12, runSpacing: 12, children: [
+            for (final category in const [
+              'students_directory',
+              'attendance_records',
+              'fee_payments',
+              'documents'
+            ])
+              SizedBox(
+                  width: 190,
+                  child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                          color: _panel,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFF21475D))),
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                                category == 'students_directory'
+                                    ? Icons.groups_outlined
+                                    : category == 'attendance_records'
+                                        ? Icons.fact_check_outlined
+                                        : category == 'fee_payments'
+                                            ? Icons.payments_outlined
+                                            : Icons.folder_outlined,
+                                color: _cyan),
+                            const SizedBox(height: 10),
+                            Text(
+                                category == 'students_directory'
+                                    ? 'Students'
+                                    : category == 'attendance_records'
+                                        ? 'Attendance'
+                                        : category == 'fee_payments'
+                                            ? 'Fees'
+                                            : 'Photos & Documents',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 10),
+                            Text(
+                                '${items.where((row) => row is Map && row['collection'] == category).length} queued',
+                                style:
+                                    const TextStyle(color: Color(0xFFFFC153))),
+                            Text(
+                                categoryCounts?[category] == null
+                                    ? 'Local count not checked'
+                                    : '${categoryCounts![category]} local records',
+                                style: const TextStyle(
+                                    color: Color(0xFF9AB4C9), fontSize: 12)),
+                          ]))),
+          ]),
+        ])),
+        const SizedBox(height: 18),
+        _panelBox(
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Backup & Recovery',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          const Text('Protect local records and verify recovery safely.',
+              style: TextStyle(color: Color(0xFF9AB4C9))),
+          const SizedBox(height: 16),
+          Wrap(spacing: 12, runSpacing: 12, children: [
+            FilledButton.icon(
+                onPressed: active ? null : () => _run(_backup),
+                icon: const Icon(Icons.backup_outlined),
+                label: const Text('Create Local Backup')),
+            OutlinedButton.icon(
+                onPressed: active ? null : () => _run(_restoreRehearsal),
+                icon: const Icon(Icons.restore),
+                label: const Text('Verify Restore')),
+            OutlinedButton.icon(
+                onPressed: active
+                    ? null
+                    : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                        builder: (_) => const WindowsRecycleBin())),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Recycle Bin')),
+          ]),
+        ])),
+        const SizedBox(height: 18),
         Wrap(
           spacing: 12,
           children: [
