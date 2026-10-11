@@ -1,0 +1,37 @@
+import 'dart:async';
+import '../../lib/windows_sync_schedule.dart';
+
+class ObservedTimer implements Timer {
+  ObservedTimer(this.callback);
+  final void Function() callback;
+  bool active=true;
+  @override bool get isActive=>active;
+  @override int get tick=>0;
+  @override void cancel()=>active=false;
+  void fire(){if(active){active=false;callback();}}
+}
+void main(){
+  var now=DateTime.utc(2026,10,11), calls=0;
+  final timers=<ObservedTimer>[];
+  final dispatch=WindowsSyncDispatch(()=>calls++,now:()=>now,once:(delay,callback){
+    final timer=ObservedTimer(callback);timers.add(timer);return timer;
+  });
+  void check(bool value){if(!value)throw StateError('Dispatch regression');}
+  // Checkpoint and startup request coalesce into one admitted attempt.
+  dispatch.request(const Duration(milliseconds:250));
+  dispatch.request(const Duration(milliseconds:800));
+  check(timers.length==1);timers.last.fire();check(calls==1);
+  dispatch.request(const Duration(minutes:5));
+  now=now.add(const Duration(seconds:1));
+  dispatch.request(const Duration(milliseconds:250),localMutation:true);
+  for(var i=0;i<100;i++){
+    now=now.add(const Duration(milliseconds:1));
+    dispatch.request(const Duration(milliseconds:250),localMutation:true);
+  }
+  check(timers.length==3);check(!timers[1].isActive);
+  timers[1].fire();check(calls==1);timers.last.fire();check(calls==2);
+  // Stop/restart drops stale dispatch without dropping durable queue data.
+  dispatch.request(Duration.zero);dispatch.cancel();timers.last.fire();check(calls==2);
+  dispatch.request(Duration.zero);timers.last.fire();check(calls==3);
+  print('8 startup, rapid mutation and restart dispatch checks passed');
+}

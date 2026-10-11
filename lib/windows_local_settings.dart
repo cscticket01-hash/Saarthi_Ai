@@ -1,5 +1,6 @@
 import 'windows_connect/central_school_cloud.dart';
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'dart:io';
 
 import 'windows_secure_storage.dart';
@@ -127,7 +128,13 @@ class WindowsLocalSecurity {
 
   static bool verifyPassword(String password) {
     if (!configured) return false;
-    return password == _adminPassword;
+    final supplied = sha256.convert(utf8.encode(password)).bytes;
+    final expected = sha256.convert(utf8.encode(_adminPassword!)).bytes;
+    var difference = 0;
+    for (var index = 0; index < expected.length; index++) {
+      difference |= supplied[index] ^ expected[index];
+    }
+    return difference == 0;
   }
 }
 

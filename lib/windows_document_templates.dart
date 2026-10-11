@@ -618,30 +618,6 @@ class _SchoolDocumentTemplatesScreenState
     'paymentMode': 'Cash',
   };
   bool _openingDesigner = false;
-  Future<void> _openDraftDesigner() async {
-    if (_openingDesigner || _loading || _catalogError != null) return;
-    // Use the active bundled template, or the original school default.
-    final selected = _selected['studentId'];
-    final templateId =
-        selected is String && selected.startsWith('manifest:')
-            ? selected.substring('manifest:'.length)
-            : selected is String && selected.startsWith('reviewed:') ? selected.split(':')[1] : 'school-id-v1';
-    setState(() => _openingDesigner = true);
-    try {
-      final entry = await IdCardCatalog.find(templateId);
-      if (!mounted) return;
-      await WindowsIdCardDesignerEntry.open(context, entry: entry);
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('ID designer unavailable: $error')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _openingDesigner = false);
-    }
-  }
-
   Future<void> _openBulk() async {
     if(_openingDesigner)return;
     setState(()=>_openingDesigner=true);
@@ -723,23 +699,6 @@ class _SchoolDocumentTemplatesScreenState
           const SizedBox(height: 20),
           if (_kind == 'studentId') ...[
             if(WindowsIdCardDesignerEntry.enabled) Align(alignment:Alignment.centerLeft,child:OutlinedButton.icon(onPressed:_loading||_openingDesigner?null:_openBulk,icon:const Icon(Icons.print),label:const Text('Class bulk front/back PDF'))),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: _loading || _openingDesigner || _catalogError != null
-                    ? null
-                    : _openDraftDesigner,
-                icon: const Icon(Icons.draw_outlined),
-                label: Text(_openingDesigner
-                    ? 'Opening designer…'
-                    : 'Edit ID design (local draft)'),
-              ),
-            ),
-            const Text(
-              'Saved locally for this school and template. Drafts do not '
-              'change printed school IDs until separately reviewed and applied.',
-              style: TextStyle(fontSize: 11, color: Colors.white54),
-            ),
             const SizedBox(height: 10),
           ],
           if (_loading) const LinearProgressIndicator(),

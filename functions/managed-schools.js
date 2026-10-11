@@ -444,6 +444,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   const row=await db.doc('platform_schools/'+m.schoolId).get(),data=row.data()||{};
   return {success:true,schoolId:m.schoolId,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
  }
+ if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
  if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
@@ -619,6 +620,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
      b.operation==='rehearse'&&!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||b.operation==='backup'&&b.fileId!==undefined)fail(400,'Invalid disaster operation');
   return signed(m,{action:'managed_disaster',operation:b.operation,operationId:b.operationId,...(b.operation==='rehearse'?{fileId:b.fileId}:{})});
  }
+ if(action==='managed/backup/snapshot')return signed(m,{action:'managed_backup_snapshot',schoolId:m.schoolId});
  if(action==='managed/backup')return signed(m,{action:'managed_backup'});
  if(action==='managed/restore'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid backup file ID');return signed(m,{action:'managed_restore',fileId:b.fileId});}
  fail(400,'Unknown managed school operation');

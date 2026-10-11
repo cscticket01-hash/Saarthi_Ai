@@ -1,3 +1,4 @@
+import 'student_inventory_policy.dart';
 import 'windows_fee_structure.dart';
 import 'fitted_document_preview.dart';
 import 'document_upload_dialog.dart';
@@ -20439,6 +20440,7 @@ class _StudentDocumentsScreenState
           ? raw
               .whereType<Map>()
               .map((e) => Map<String, dynamic>.from(e))
+              .where(StudentInventoryPolicy.visible)
               .toList()
           : <Map<String, dynamic>>[];
       if (!mounted||generation!=_loadGeneration||FirebaseFirestore.instance.activeProfileId!=_schoolProfile) return;
@@ -20655,7 +20657,7 @@ class _StudentDocumentsScreenState
                               color: Colors.white,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Expanded(child:Text('${_documents.length} documents • ${_documents.every((d)=>d['sourceBytes'] is num) ? _formatBytes(_documents.fold<int>(0,(sum,d)=>sum+(d['sourceBytes'] as num).toInt())) : 'Not fully recorded'} original • ${_formatBytes(_totalBytes)} optimized • target ~300 KB • ${_uploading ? 'Optimizing / pending' : _totalBytes > 300*1024 ? 'Readability Protected' : _documents.isEmpty ? 'Awaiting documents' : 'Optimized'}',
+                      Expanded(child:Text('${_documents.length} documents • ${_documents.every((d)=>d['sourceBytes'] is num) ? _formatBytes(_documents.fold<int>(0,(sum,d)=>sum+(d['sourceBytes'] as num).toInt())) : 'Not fully recorded'} original • ${_formatBytes(_totalBytes)} optimized • image target ~80 KB; quality protected • ${_uploading ? 'Optimizing / pending' : _totalBytes > 640*1024 ? 'Readability Protected' : _documents.isEmpty ? 'Awaiting documents' : 'Optimized'}',
                           textAlign:TextAlign.right,maxLines:3,
                           style: const TextStyle(
                               color: Colors.white54, fontSize: 10.5))),
@@ -20667,14 +20669,14 @@ class _StudentDocumentsScreenState
                     minHeight: 7,
                     backgroundColor: Colors.white10,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      _uploading ? Colors.amber : _totalBytes > 300*1024 ? Colors.orangeAccent : const Color(0xFF00A884),
+                      _uploading ? Colors.amber : _totalBytes > 640*1024 ? Colors.orangeAccent : const Color(0xFF00A884),
                     ),
                   ),
                   const SizedBox(height: 7),
                   const Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'PDF/JPG/JPEG/PNG • source up to 50 MB. Target: about 300 KB for 7–8 normal scans; quality takes priority. Preview uses original. Actual optimized sizes shown.',
+                      'PDF/JPG/JPEG/PNG • source up to 50 MB. Target: about 80 KB per image where readable; quality takes priority. Preview uses original. Actual optimized sizes shown.',
                       style: TextStyle(color: Colors.white38, fontSize: 10),
                     ),
                   ),

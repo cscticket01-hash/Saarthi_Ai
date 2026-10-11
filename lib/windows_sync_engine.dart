@@ -7,6 +7,7 @@ import 'windows_connect/central_school_cloud.dart';
 
 import 'dart:async';
 import 'windows_sync_schedule.dart';
+import 'windows_sync_projection.dart';
 import 'windows_sync_pause.dart';
 import 'windows_secure_storage.dart';
 import 'windows_local_restore_sync.dart';
@@ -153,10 +154,28 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _nextRetry = DateTime.fromMillisecondsSinceEpoch(event['retryAt'] as int);
       if (event['failureCategory']=='quota') _quotaRetryAt = _nextRetry;
     }
+    if (event['stage'] == 'automaticRepair' ||
+        (event['stage'] == 'verified' && _activity.any((previous) =>
+          previous['stage']=='automaticRepair' && previous['operationId']==event['operationId']))) {
+      if (recoveryHistory.length >= 100) recoveryHistory.removeAt(0);
+      recoveryHistory.add({'atUtc':DateTime.now().toUtc().toIso8601String(),
+        'category':event['failureCategory'] ?? 'recoverable',
+        'outcome':event['stage']=='verified' ? 'repaired_and_verified' : 'safe_retry_reopened'});
+      unawaited(_persistRepairHistory(FirebaseFirestore.instance.activeProfileId));
+    }
     if (_activity.length >= 100) _activity.removeAt(0);
     _activity.add(Map<String,dynamic>.from(event));
     details.value = {...details.value,
       'activity': [for(final row in _activity) Map<String,dynamic>.from(row)]};
+  }
+
+  Future<void> _persistRepairHistory(String origin) async {
+    try {
+      if (FirebaseFirestore.instance.activeProfileId != origin) return;
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+        FirebaseFirestore.instance.collection('_windows_sync_status').doc('recovery')
+          .set({'events':List<Map<String,dynamic>>.from(recoveryHistory)}));
+    } catch (_) { /* Diagnostic failure cannot remove or ACK a queue row. */ }
   }
 
   static Duration retryDelayForFailure(int failures, {bool quotaLimited = false}) {
@@ -217,7 +236,19 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       final deadlines = outbound.map((row)=>row['retryAtMillis'] as int).toList()..sort();
       _nextRetry = DateTime.fromMillisecondsSinceEpoch(deadlines.first);
     }
+    final liveQueue = <Map<String,dynamic>>[
+      for(final d in general.docs) {'id':d.id,...d.data(),'_queueCollection':'_windows_firebase_outbox'},
+      for(final d in documents.docs) {'id':d.id,...d.data(),'_queueCollection':'_windows_document_outbox'},
+      for(final d in legacy.docs) {'id':d.id,...d.data(),'_queueCollection':'_windows_google_outbox'},
+      for(final d in restores) {'id':d.id,...d.data(),'_queueCollection':'_windows_recycle_requests'},
+    ];
     details.value = {
+      'liveQueue': liveQueue,
+      'displayState': projectWindowsSyncState(liveQueue, nowMillis:nowMillis,
+        syncing:_syncing, paused:isPaused, blocked:_syncBlocked,
+        offline:state.value==SchoolCloudState.offline ||
+          recoveryDecision?.kind==SyncFailureKind.networkPath,
+        failed:lastError!=null, reviewRequired:recoveryDecision?.review==true),
       'activity': [for(final row in _activity) Map<String,dynamic>.from(row)],
       'remotePollIntervalMillis':reconciliationInterval.inMilliseconds,
       'idleReconciliationIntervalMillis':const Duration(hours:1).inMilliseconds,
@@ -1164,8 +1195,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         if ((details.value['pending'] as num? ?? 0) > 0) {
           // Legacy Drive requests are visible for review but are not serviced
           // by the managed protocol. Their presence must not spin this engine.
-          _rerunRequested = (details.value['items'] as List? ?? []).any(
-            (row) => row is Map && row['_queueCollection'] != '_windows_google_outbox');
+          // Queue presence is not a new mutation. Re-dispatching unchanged
+          // blocked/legacy rows every 250 ms creates an infinite upload loop.
+          // Only the durable commit callback requests an immediate rerun.
+          final deadline = nextWindowsQueueRetry(
+            (details.value['liveQueue'] as List).cast<Map<String,dynamic>>(),
+            DateTime.now().millisecondsSinceEpoch);
+          if (deadline != null) {
+            _nextRetry = DateTime.fromMillisecondsSinceEpoch(deadline);
+            _dispatch.request(_nextRetry!.difference(DateTime.now()));
+          }
           state.value = SchoolCloudState.syncPending;
           return;
         }

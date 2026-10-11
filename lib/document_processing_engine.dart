@@ -9,7 +9,7 @@ import 'package:image/image.dart' as img;
 /// caller retains original bytes separately and displays the actual output size.
 class DocumentProcessingEngine {
   static const sourceLimit = 50 * 1024 * 1024;
-  static const photoTarget = 50 * 1024;
+  static const photoTarget = 80 * 1024;
   static const portraitTarget = 30 * 1024;
   // Retain the existing eight-document aggregate measurement contract.
   static const setTarget = 8 * photoTarget;
@@ -43,8 +43,15 @@ class DocumentProcessingEngine {
     final decoded = decoder!.decodeFrame(0);
     if (decoded == null)
       throw const FormatException('Image cannot be decoded.');
-    var image = img.bakeOrientation(
-      decoded.convert(format: img.Format.uint8, numChannels: 4),
+    // JPEG decoding already applies and removes its EXIF orientation. Read
+    // only the bounded source orientation before stripping its metadata, so
+    // retained compressed samples still carry the original display transform.
+    final sourceOrientation =
+        _jpegSourceOrientation(bytes) ?? decoded.exif.imageIfd.orientation ?? 1;
+    final orientedSource = img.bakeOrientation(decoded);
+    var image = orientedSource.convert(
+      format: img.Format.uint8,
+      numChannels: 4,
     );
     // PNG/PDF raster transparency must become white paper, not black JPEG ink.
     for (final pixel in image) {
@@ -91,6 +98,8 @@ class DocumentProcessingEngine {
       filter: [0, -1, 0, -1, 5, -1, 0, -1, 0],
       amount: 0.12,
     );
+    // Retain normalized source pixels as a fallback if sharpening expands a
+    // previously compressed upload. Orientation and transparency were baked.
     // Re-encoding strips EXIF/GPS and unrelated source metadata.
     image.exif = img.ExifData();
     image.textData = null;
@@ -100,6 +109,9 @@ class DocumentProcessingEngine {
         (input['targetBytes'] as num? ??
                 (portrait ? portraitTarget : photoTarget))
             .toInt();
+    if (target <= 0 || target > sourceLimit) {
+      throw const FormatException('Invalid optimization target.');
+    }
     var optimized = highQuality;
     var optimizedWidth = image.width, optimizedHeight = image.height;
     var quality = 94;
@@ -146,12 +158,35 @@ class DocumentProcessingEngine {
       optimizedWidth = image.width;
       optimizedHeight = image.height;
     }
+    // A recompression must not consume more than the safe existing source.
+    // Retain the original container when processing expands it: this is an
+    // explicitly reported fallback, not a claim that cleanup was applied.
+    final sourceContainer = _sanitizedSource(bytes, sourceOrientation);
+    final retainedSource =
+        sourceContainer != null && optimized.length > sourceContainer.length;
+    if (retainedSource) {
+      optimized = sourceContainer!;
+      optimizedMime = bytes[0] == 137 ? 'image/png' : 'image/jpeg';
+      optimizedWidth = orientedSource.width;
+      optimizedHeight = orientedSource.height;
+    }
+    final targetMet = optimized.length <= target;
     return {
       'optimized': optimized,
+      'sourceRetained': retainedSource,
+      'optimizationReason': targetMet
+          ? 'Target met; actual encoded size measured'
+          : 'Requested target not met without crossing the quality/resolution floor',
       'mimeType': optimizedMime,
       'highQuality': highQuality,
-      'quality': quality,
-      'targetMet': optimized.length <= target,
+      'quality': retainedSource ? null : quality,
+      'attemptedJpegQuality': quality,
+      'outputQualityReason': retainedSource
+          ? 'Existing compressed samples retained; original encoder quality unknown'
+          : optimizedMime == 'image/png'
+          ? 'Lossless processed pixels'
+          : 'JPEG quality floor preserved',
+      'targetMet': targetMet,
       'actualBytes': optimized.length,
       'originalBytes': bytes.length,
       'targetBytes': target,
@@ -160,10 +195,147 @@ class DocumentProcessingEngine {
       'deskewDegrees': deskew,
       'width': optimizedWidth,
       'height': optimizedHeight,
-      'cleanupStatus': corrected
+      'cleanupStatus': retainedSource
+          ? 'Original container retained: cleanup encoding would enlarge upload'
+          : corrected
           ? 'Detected paper boundary corrected'
           : 'No confident boundary; full image preserved',
     };
+  }
+
+  static int? _jpegSourceOrientation(Uint8List source) {
+    if (source[0] != 255 || source[1] != 216) return null;
+    var offset = 2;
+    while (offset + 4 <= source.length) {
+      if (source[offset] != 255) return null;
+      final marker = source[offset + 1];
+      if (marker == 218 || marker == 217) return null;
+      final length = (source[offset + 2] << 8) | source[offset + 3];
+      final end = offset + 2 + length;
+      if (length < 2 || end > source.length) return null;
+      final payload = offset + 4;
+      if (marker == 225 &&
+          length >= 16 &&
+          source[payload] == 69 &&
+          source[payload + 1] == 120 &&
+          source[payload + 2] == 105 &&
+          source[payload + 3] == 102 &&
+          source[payload + 4] == 0 &&
+          source[payload + 5] == 0) {
+        final tiff = payload + 6;
+        final order = source[tiff] == 73 && source[tiff + 1] == 73
+            ? Endian.little
+            : source[tiff] == 77 && source[tiff + 1] == 77
+            ? Endian.big
+            : null;
+        if (order == null) return null;
+        final data = ByteData.sublistView(source);
+        if (data.getUint16(tiff + 2, order) != 42) return null;
+        final ifd = tiff + data.getUint32(tiff + 4, order);
+        if (ifd < tiff + 8 || ifd + 2 > end) return null;
+        final count = data.getUint16(ifd, order);
+        if (count > 512 || ifd + 2 + count * 12 > end) return null;
+        for (var i = 0; i < count; i++) {
+          final entry = ifd + 2 + i * 12;
+          if (data.getUint16(entry, order) == 0x112 &&
+              data.getUint16(entry + 2, order) == 3 &&
+              data.getUint32(entry + 4, order) == 1) {
+            final value = data.getUint16(entry + 8, order);
+            return value >= 1 && value <= 8 ? value : null;
+          }
+        }
+      }
+      offset = end;
+    }
+    return null;
+  }
+
+  /// Keep compressed image samples without copying location/comment metadata.
+  /// JPEG orientation is the only EXIF entry retained so the fallback remains
+  /// correctly displayed; the separate processed preview has baked orientation.
+  static Uint8List? _sanitizedSource(Uint8List source, int orientation) {
+    final result = BytesBuilder(copy: false);
+    if (source[0] == 137 && source[1] == 80) {
+      if (orientation != 1) return null;
+      result.add(source.sublist(0, 8));
+      final data = ByteData.sublistView(source);
+      var offset = 8;
+      while (offset + 12 <= source.length) {
+        final length = data.getUint32(offset);
+        final end = offset + length + 12;
+        if (end > source.length) return null;
+        final kind = String.fromCharCodes(
+          source.sublist(offset + 4, offset + 8),
+        );
+        if (!{'eXIf', 'tEXt', 'zTXt', 'iTXt'}.contains(kind)) {
+          result.add(source.sublist(offset, end));
+        }
+        offset = end;
+      }
+      return result.takeBytes();
+    }
+    if (source[0] != 255 || source[1] != 216) return null;
+    result.add([255, 216]);
+    var offset = 2;
+    while (offset + 4 <= source.length) {
+      if (source[offset] != 255) return null;
+      final marker = source[offset + 1];
+      if (marker == 218) {
+        // Image samples, restart markers and end marker are copied unchanged.
+        result.add(source.sublist(offset));
+        return result.takeBytes();
+      }
+      final length = (source[offset + 2] << 8) | source[offset + 3];
+      final end = offset + 2 + length;
+      if (length < 2 || end > source.length) return null;
+      if (marker != 225 && marker != 237 && marker != 254) {
+        result.add(source.sublist(offset, end));
+      }
+      offset = end;
+      // Insert one minimal orientation-only EXIF entry before the next segment.
+      if (orientation >= 2 && orientation <= 8) {
+        result.add([
+          255,
+          225,
+          0,
+          34,
+          69,
+          120,
+          105,
+          102,
+          0,
+          0,
+          73,
+          73,
+          42,
+          0,
+          8,
+          0,
+          0,
+          0,
+          1,
+          0,
+          18,
+          1,
+          3,
+          0,
+          1,
+          0,
+          0,
+          0,
+          orientation,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+        ]);
+        orientation = 1;
+      }
+    }
+    return null;
   }
 
   static double _textAngle(img.Image source) {

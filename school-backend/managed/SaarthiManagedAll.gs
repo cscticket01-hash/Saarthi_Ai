@@ -7127,6 +7127,59 @@ function VS_managedDiagnostic(error) {
   return 'SCRIPT_OPERATION_FAILED';
 }
 
+/** Account-wide quota requires explicit owner consent; not school file usage. */
+function VS_managedStorageQuota(b) {
+ const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
+ if(!b||b.schoolId!==school)throw new Error('Foreign school record');
+ VS_managedRoot();
+ if(p.getProperty('VS_ALLOW_DRIVE_QUOTA_REPORTING')!=='true')return {success:true,schoolId:school,driveQuotaVersion:1,status:'Unknown',reason:'School owner has not enabled Google account quota reporting'};
+ try {
+  const usage=DriveApp.getStorageUsed(),limit=DriveApp.getStorageLimit();
+  if(!Number.isSafeInteger(usage)||usage<0||!Number.isSafeInteger(limit))throw new Error('Invalid quota');
+  return {success:true,schoolId:school,driveQuotaVersion:1,status:'Measured',usage:usage,limit:limit<0?null:limit,scope:'Google account storage; separate from school application files',measuredAt:Date.now(),reason:limit<0?'Google reports no storage limit for this account':null};
+ }catch(_){return {success:true,schoolId:school,driveQuotaVersion:1,status:'Unknown',reason:'Authorized Google storage quota read unavailable; no additional permission requested'};}
+}
+
+/** Read-only record census. No sheet/folder creation, migration or recovery writes. */
+function VS_managedBackupSnapshot(b) {
+ const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
+ if(!b||b.schoolId!==school)throw new Error('Foreign school record');
+ const root=VS_managedRoot(),collections=VS_LAYOUT_COLLECTIONS.filter(c=>['mobile_sessions','mobile_users','mobile_complaints'].indexOf(c)<0);
+ const records={},heads={},missing=[],initial=p.getProperties();let bytes=0;
+ if(initial.VS_MANAGED_SHEET_PENDING)missing.push({collection:'school workbook',reason:'Pending workbook identity requires owner review'});
+ collections.forEach(col=>{
+  const lock=LockService.getScriptLock();lock.waitLock(5000);
+  try {
+   const state=VS_layoutState(col);let values=Object.create(null);
+   if(state&&['active','rollingBack'].indexOf(state.phase)>=0)values=VS_sheetRecords(VS_layoutStore(state));
+   else {
+    const id=p.getProperty('VS_MANAGED_SHEET_ID');
+    if(id){const f=VS_managedFile(id);if(f.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook identity mismatch');const sheet=SpreadsheetApp.openById(id).getSheetByName(col);if(sheet)values=VS_sheetRecords({sheet:sheet,school:school});else if(p.getProperty('VS_SHEET_MIGRATED_'+col)==='1')missing.push({collection:col,reason:'Verified school tab missing'});}
+    if(p.getProperty('VS_SHEET_MIGRATED_'+col)!=='1'){
+     const folders=root.getFoldersByName('records_'+col);
+     if(folders.hasNext()){
+      const folder=folders.next();if(folders.hasNext())throw new Error('Duplicate collection folders; operator review required');
+      const files=folder.getFiles();
+      while(files.hasNext()){
+       const raw=files.next().getBlob().getDataAsString();bytes+=raw.length*4;if(bytes>20*1024*1024)throw new Error('Backup exceeds verification limit');
+       const item=JSON.parse(raw);if(!item||item.schoolId!==school||typeof item.id!=='string'||!item.data||item.data.schoolId!==school)throw new Error('Foreign school record');
+       if(values[item.id]&&JSON.stringify(values[item.id])!==JSON.stringify(item.data))throw new Error('Migration conflict; both versions retained');
+       values[item.id]=item.data;
+      }
+     }
+    }
+    if(state)missing.push({collection:col,reason:'Organized layout migration is not active; partial census'});
+   }
+   Object.keys(values).forEach(id=>{if(values[id].schoolId!==school)throw new Error('Foreign school record');});
+   bytes+=JSON.stringify(values).length*4;if(bytes>20*1024*1024)throw new Error('Backup exceeds verification limit');
+   records[col]=values;heads[col]=p.getProperty('VS_RECORD_REV_'+col)||'legacy';
+  }finally{lock.releaseLock();}
+ });
+ const check=LockService.getScriptLock();check.waitLock(5000);
+ try {const current=p.getProperties();if(collections.some(col=>(initial['VS_RECORD_REV_'+col]||'legacy')!==heads[col]||heads[col]!== (current['VS_RECORD_REV_'+col]||'legacy')||initial['VS_LAYOUT_'+col]!==current['VS_LAYOUT_'+col]))throw new Error('Backup changed during capture; retry snapshot');}finally{check.releaseLock();}
+ return {success:true,schoolId:school,snapshotProtocol:1,collections:collections,records:records,collectionRevisions:heads,missingData:missing,recordsComplete:missing.length===0,documentBinariesIncluded:false,createdAt:Date.now()};
+}
+
 function VS_managedHandle(e) {
   VS_BACKUP_READ_CACHE=null;
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
@@ -7135,7 +7188,11 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);verified=true;let result;
-    if(b.action==='managed_health'){
+    if(b.action==='managed_backup_snapshot'){
+      result=VS_managedBackupSnapshot(b);
+    }else if(b.action==='managed_storage_quota'){
+      result=VS_managedStorageQuota(b);
+    }else if(b.action==='managed_health'){
       VS_managedRoot();const p=PropertiesService.getScriptProperties();let sheetsVerified=null;
       if(VS_testBackupRecoveryEnabled()){
         const properties=p.getProperties(),collection=VS_LAYOUT_COLLECTIONS.find(col=>properties['VS_SHEET_MIGRATED_'+col]==='1');
@@ -7444,7 +7501,7 @@ function VS_previewOrganizedStorageMigration() {
           if(folders.hasNext()){
             const folder=folders.next();if(folders.hasNext())throw new Error('Duplicate collection folders; operator review required');const files=folder.getFiles(),seen=Object.create(null);let bytes=0;
             while(files.hasNext()){
-              const raw=files.next().getBlob().getDataAsString();bytes+=raw.length;if(bytes>20*1024*1024)throw new Error('Collection migration exceeds safe limit');const item=JSON.parse(raw);
+              const raw=files.next().getBlob().getDataAsString();bytes+=raw.length*4;if(bytes>20*1024*1024)throw new Error('Collection migration exceeds safe limit');const item=JSON.parse(raw);
               if(!item||item.schoolId!==school||typeof item.id!=='string'||!item.data||item.data.schoolId!==school||seen[item.id])throw new Error('Invalid or duplicate legacy record; operator review required');seen[item.id]=true;
               if(records[item.id]&&VS_layoutHash(records[item.id])!==VS_layoutHash(item.data))throw new Error('Migration conflict; both versions retained');records[item.id]=item.data;
             }
