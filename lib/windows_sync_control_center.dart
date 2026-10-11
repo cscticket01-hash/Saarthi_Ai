@@ -12,6 +12,7 @@ import 'windows_connect/managed_school_session.dart';
 import 'windows_sync_conflict_review.dart';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'windows_local_storage.dart';
+import 'windows_disk_storage.dart';
 import 'windows_backup_integrity.dart';
 import 'windows_disaster_rehearsal.dart';
 import 'windows_binary_downloads.dart';
@@ -24,10 +25,16 @@ class WindowsSyncControlCenter extends StatefulWidget {
     this.refreshOnOpen,
     this.healthProbe,
     this.storageProbe,
+    this.diskProbe,
+    this.syncRequest,
+    this.pauseRequest,
   });
   final Future<void> Function()? refreshOnOpen;
+  final Future<void> Function()? syncRequest;
+  final Future<void> Function(Duration)? pauseRequest;
   final Future<Map<String, dynamic>> Function(String school)? healthProbe;
   final Future<Map<String, dynamic>> Function(String school)? storageProbe;
+  final Future<Map<String, dynamic>> Function(String path)? diskProbe;
   static const categories = [
     'students_directory',
     'teachers_directory',
@@ -51,6 +58,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   final db = FirebaseFirestore.instance;
   late final origin = db.activeProfileId;
   bool busy = false;
+  bool syncCommandRunning = false;
+  Timer? pauseDisplayTimer;
+  bool showDiagnostics = false;
+  bool showQueue = false;
   String notice = '';
   String localHealth = 'Not checked in this session';
   Map<String, dynamic>? diagnostics;
@@ -58,6 +69,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   Map<String, dynamic>? cloudEvidence;
   Map<String, int>? categoryCounts;
   Map<String, dynamic>? storageEvidence;
+  final diskStorage = WindowsDiskStorage();
+  Map<String, dynamic>? diskEvidence;
   int? localBytes;
   bool localBytesPartial = false;
   int? lastBackupAt;
@@ -115,6 +128,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   }
 
   Future<void> _storageDetails() async {
+    await _measureDisk();
     final counts = <String, int>{};
     for (final category in WindowsSyncControlCenter.categories) {
       final rows = await db.collection(category).get();
@@ -147,6 +161,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   Future<void> _cloudStorageDetails() async {
     final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
     if (school.isEmpty) throw StateError('School identity required');
+    final previous = storageEvidence;
+    if (previous != null && previous['schoolId'] == school &&
+        DateTime.now().millisecondsSinceEpoch - (previous['measuredAt'] as int) >= 0 &&
+        DateTime.now().millisecondsSinceEpoch - (previous['measuredAt'] as int) < 300000) return;
     if (mounted) setState(() => storageEvidence = null);
     final result = await (widget.storageProbe != null
             ? widget.storageProbe!(school)
@@ -233,18 +251,74 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       );
   }
 
-  String bytesLabel(int bytes) => bytes >= 1048576
+  Future<void> _measureDisk() async {
+    Map<String, dynamic> result;
+    try {
+      final directory = await WindowsLocalStorage.dataDirectory();
+      result = await (widget.diskProbe != null
+          ? widget.diskProbe!(directory.path)
+          : diskStorage.measure(directory.path));
+    } catch (_) {
+      result = {'status': 'Unknown'};
+    }
+    if (mounted && db.activeProfileId == origin) setState(() => diskEvidence = result);
+  }
+
+  String get diskLabel => diskEvidence?['status'] == 'Measured'
+      ? 'Used: ${bytesLabel(diskEvidence!['usedBytes'] as int)} / Total: ${bytesLabel(diskEvidence!['totalBytes'] as int)}\nFree: ${bytesLabel(diskEvidence!['freeBytes'] as int)} • volume ${diskEvidence!['volume']}\nWhole volume; measured ${stamp(diskEvidence!['measuredAt'])}'
+      : 'Unknown — local volume capacity not measured';
+
+  String get driveLabel => storageEvidence == null
+      ? 'School application files: Unknown\nGoogle account quota: Unknown / Not authorized'
+      : '${storageEvidence!['partial'] == true ? 'Partial — at least ' : ''}${bytesLabel(storageEvidence!['driveBytes'] as int)} in school application files\nVerified measurement: ${stamp(storageEvidence!['measuredAt'])}\nGoogle account quota: Unknown / Not authorized';
+
+  String bytesLabel(int bytes) => bytes >= 1099511627776
+      ? '${(bytes / 1099511627776).toStringAsFixed(2)} TB'
+      : bytes >= 1073741824
+      ? '${(bytes / 1073741824).toStringAsFixed(2)} GB'
+      : bytes >= 1048576
       ? '${(bytes / 1048576).toStringAsFixed(2)} MB'
       : '${(bytes / 1024).toStringAsFixed(2)} KB';
 
   @override
   void initState() {
     super.initState();
+    unawaited(_measureDisk());
+    pauseDisplayTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted && (engine.isPaused ||
+          (engine.details.value['activity'] as List? ?? const []).any(
+            (row) => row is Map && row['retryAt'] is int))) setState(() {});
+    });
     _run(
       () => (widget.refreshOnOpen ?? engine.refreshDetails)().timeout(
         const Duration(seconds: 30),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    pauseDisplayTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _startManualSync() async {
+    if (syncCommandRunning && !engine.isPaused) return;
+    if (syncCommandRunning) {
+      await _run(widget.syncRequest ?? engine.requestSync);
+      return;
+    }
+    setState(() { syncCommandRunning = true; notice = ''; });
+    try {
+      if (db.activeProfileId != origin) throw StateError('School changed. Reopen this page.');
+      await (widget.syncRequest ?? engine.requestSync)();
+    } catch (error) {
+      if (mounted && db.activeProfileId == origin) {
+        setState(() => notice = windowsSyncRecovery(error).message);
+      }
+    } finally {
+      if (mounted) setState(() => syncCommandRunning = false);
+    }
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -403,10 +477,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
 
   static const _cyan = Color(0xFF19DCE5);
   static const _panel = Color(0xFF10273E);
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _overviewKey = GlobalKey();
   final _queueKey = GlobalKey();
   final _backupKey = GlobalKey();
   final _activityKey = GlobalKey();
+  final _settingsKey = GlobalKey();
+  final _statusKey = GlobalKey();
 
   Widget _panelBox(Widget child) => Container(
         padding: const EdgeInsets.all(22),
@@ -447,12 +524,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       ));
 
   void _jump(GlobalKey key) {
-    final target = key.currentContext;
-    if (target != null)
-      Scrollable.ensureVisible(
-        target,
-        duration: const Duration(milliseconds: 350),
-      );
+    _scaffoldKey.currentState?.closeDrawer();
+    setState(() {
+      showDiagnostics = key != _overviewKey;
+      showQueue = key == _queueKey;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final target = key.currentContext;
+      if (target != null) Scrollable.ensureVisible(target,
+          duration: const Duration(milliseconds: 350));
+    });
   }
 
   Widget _nav(IconData icon, String title, VoidCallback action) => Padding(
@@ -464,6 +546,47 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ),
       );
 
+  Widget _activityRow(Map<String, dynamic> event, bool active) {
+    const labels = {
+      'localSave': 'Durable local save', 'cloudRequest': 'Cloud request',
+      'waitingForAck': 'Waiting for authoritative ACK', 'verified': 'Verified sync',
+      'retry': 'Retry scheduled', 'conflict': 'Conflict — administrator review',
+      'unauthorized': 'Unauthorized — authentication required',
+      'needsAttention': 'Administrator attention required',
+      'waitingForResponse': 'Waiting for provider response',
+      'requestCompleted': 'Request completed — authoritative ACK unverified',
+    };
+    final stage = event['stage']?.toString() ?? '';
+    final retryAt = event['retryAt'];
+    final remaining = retryAt is int
+        ? retryAt - DateTime.now().millisecondsSinceEpoch : null;
+    final eligible = stage == 'retry' && event['isRetryable'] == true &&
+        event['schoolId'] == db.activeProfileIdentity['schoolSyncId'] &&
+        event['operationId'] is String && (event['operationId'] as String).isNotEmpty &&
+        event['queueId'] is String && (event['queueId'] as String).isNotEmpty &&
+        event['queueCollection'] == '_windows_firebase_outbox';
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(stage == 'verified' ? Icons.check_circle_outline : Icons.sync,
+          color: stage == 'verified' ? Colors.greenAccent : _cyan),
+      title: Text(labels[stage] ?? 'Unknown activity stage'),
+      subtitle: Text('Observed: ${stamp(event['at'])}'
+          '${remaining != null ? '\nRetry: ${remaining > 0 ? '${(remaining / 1000).ceil()} seconds remaining' : 'due when permitted'}' : ''}'),
+      trailing: eligible ? TextButton(
+        onPressed: active || engine.isPaused ? null : () => _run(() async {
+          if (db.activeProfileId != origin) throw StateError('School changed');
+          await engine.retryRecoverableOperation(
+            queueCollection: event['queueCollection'] as String,
+            queueId: event['queueId'] as String,
+            expectedOperationId: event['operationId'] as String,
+            expectedSchoolId: event['schoolId'] as String,
+          );
+        }),
+        child: const Text('Smart Repair — Safe Retry'),
+      ) : null,
+    );
+  }
+
   Widget _hero(Map<String, dynamic> details, List<dynamic> items, bool active) {
     final syncing = engine.isSyncing;
     final ack = details['lastCloudAckMillis'];
@@ -474,18 +597,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           spacing: 14,
           runSpacing: 14,
           children: [
-            metric(
-              'Pending uploads',
-              '${details['pending'] ?? 'Not measured'}',
-            ),
+            InkWell(onTap: () => _jump(_queueKey), child: metric(
+              'Pending Uploads',
+              "${details['pending'] ?? 'Unknown'} Pending · ${details['needsAttention'] ?? 'Unknown'} Need Attention\n${details['conflictCount'] ?? (details['items'] is List ? items.where((row) => row is Map && (row['syncState'] ?? row['state']) == 'conflict').length : 'Unknown')} Conflicts · ${details['items'] is List ? items.where((row) => row is Map && row['syncState'] == 'failed').length : 'Unknown'} Failed",
+            )),
             metric(
               'Verified cloud receipts',
               '${details['verifiedReceiptCount'] ?? 'Not measured'}',
             ),
-            metric(
-              'Needs attention',
-              '${details['needsAttention'] ?? 'Not measured'}',
-            ),
+
             metric('Last local backup', stamp(lastBackupAt)),
           ],
         ),
@@ -533,10 +653,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 const SizedBox(height: 12),
                                 Text(
                                   syncing
-                                      ? 'Syncing'
+                                      ? (engine.isPaused ? 'Pausing' : 'Syncing')
                                       : busy
                                           ? 'Checking'
-                                          : 'Idle',
+                                          : engine.isPaused ? 'Paused' : 'Idle',
                                   style: const TextStyle(
                                     fontSize: 26,
                                     fontWeight: FontWeight.bold,
@@ -561,7 +681,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             _connection(
                               Icons.computer,
                               'Local PC',
-                              'School storage active',
+                              diskLabel,
                               const Color(0xFF24DD9B),
                             ),
                             _connection(
@@ -577,9 +697,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             _connection(
                               Icons.folder_outlined,
                               'Google Drive',
-                              cloudEvidence?['driveRootVerified'] == true
-                                  ? 'Verified in this session'
-                                  : 'Not independently checked',
+                              driveLabel,
                               const Color(0xFFFFC153),
                             ),
                           ],
@@ -614,6 +732,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     ],
                   ),
                   const SizedBox(height: 18),
+                  for (final event in (details['activity'] as List? ?? const [])
+                      .where((row) => row is Map && row['schoolId'] == db.activeProfileIdentity['schoolSyncId'])
+                      .take(8))
+                    _activityRow(Map<String, dynamic>.from(event as Map), active),
                   if (items.isEmpty)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 24),
@@ -662,113 +784,200 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             );
           },
         ),
-        const SizedBox(height: 18),
-        _panelBox(
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Data Sync Status',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 16),
-          Wrap(spacing: 12, runSpacing: 12, children: [
-            for (final category in const [
-              'students_directory',
-              'attendance_records',
-              'fee_payments',
-              'documents'
-            ])
-              SizedBox(
-                  width: 190,
-                  child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                          color: _panel,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFF21475D))),
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                                category == 'students_directory'
-                                    ? Icons.groups_outlined
-                                    : category == 'attendance_records'
-                                        ? Icons.fact_check_outlined
-                                        : category == 'fee_payments'
-                                            ? Icons.payments_outlined
-                                            : Icons.folder_outlined,
-                                color: _cyan),
-                            const SizedBox(height: 10),
-                            Text(
-                                category == 'students_directory'
-                                    ? 'Students'
-                                    : category == 'attendance_records'
-                                        ? 'Attendance'
-                                        : category == 'fee_payments'
-                                            ? 'Fees'
-                                            : 'Photos & Documents',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 10),
-                            Text(
-                                '${items.where((row) => row is Map && row['collection'] == category).length} queued',
-                                style:
-                                    const TextStyle(color: Color(0xFFFFC153))),
-                            Text(
-                                categoryCounts?[category] == null
-                                    ? 'Local count not checked'
-                                    : '${categoryCounts![category]} local records',
-                                style: const TextStyle(
-                                    color: Color(0xFF9AB4C9), fontSize: 12)),
-                          ]))),
-          ]),
-        ])),
-        const SizedBox(height: 18),
-        _panelBox(
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Backup & Recovery',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text('Protect local records and verify recovery safely.',
-              style: TextStyle(color: Color(0xFF9AB4C9))),
-          const SizedBox(height: 16),
-          Wrap(spacing: 12, runSpacing: 12, children: [
-            FilledButton.icon(
-                onPressed: active ? null : () => _run(_backup),
-                icon: const Icon(Icons.backup_outlined),
-                label: const Text('Create Local Backup')),
-            OutlinedButton.icon(
-                onPressed: active ? null : () => _run(_restoreRehearsal),
-                icon: const Icon(Icons.restore),
-                label: const Text('Verify Restore')),
-            OutlinedButton.icon(
-                onPressed: active
-                    ? null
-                    : () => Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => const WindowsRecycleBin())),
-                icon: const Icon(Icons.delete_outline),
-                label: const Text('Recycle Bin')),
-          ]),
-        ])),
-        const SizedBox(height: 18),
-        Wrap(
-          spacing: 12,
-          children: [
-            _nav(Icons.list_alt, 'Pending Queue', () => _jump(_queueKey)),
-            _nav(
-              Icons.backup_outlined,
-              'Backup & Recovery',
-              () => _jump(_backupKey),
-            ),
-            _nav(Icons.history, 'Recovery Activity', () => _jump(_activityKey)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          'Detailed status & safe controls',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 16),
+
       ],
     );
   }
+
+  Future<void> _tool(Future<void> Function() action) async {
+    _scaffoldKey.currentState?.closeDrawer();
+    setState(() {showDiagnostics = true; showQueue = false;});
+    await _run(action);
+  }
+
+  Widget _controls(bool active) => Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: [
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(
+                                            () => _binaryAction('inventory')),
+                                    child: const Text(
+                                        'Check / continue file inventory'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(
+                                            () => _binaryAction('restart')),
+                                    child: const Text(
+                                        'Restart file inventory check'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : _administratorBinaryRetry,
+                                    child:
+                                        const Text('Review capped file retry'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(
+                                            () => _binaryAction('inspect')),
+                                    child:
+                                        const Text('Verify local file bytes'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () =>
+                                            _tool(() => _binaryAction('repair')),
+                                    child:
+                                        const Text('Recover next missing file'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(
+                                            engine.reportCurrentSyncMonitor),
+                                    child: const Text(
+                                        'Report current measured sync status'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(() =>
+                                            openCleanInstallRestore(context)),
+                                    child: const Text(
+                                      'Restore Existing School — fresh install only',
+                                    ),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(_checkCloudHealth),
+                                    child: const Text('Check Cloud Health'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(_storageDetails),
+                                    child: const Text('Local Storage Details'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(_cloudStorageDetails),
+                                    child: const Text('School Drive Usage'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(_exportDiagnostics),
+                                    child:
+                                        const Text('Export Sanitized Report'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed:
+                                        active ? null : () => _tool(_backup),
+                                    child: const Text('Backup Now'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(_restoreRehearsal),
+                                    child: const Text('Verify Backup Restore'),
+                                  ),
+                                  if (db.activeProfileIdentity[
+                                          'schoolSyncId'] ==
+                                      'vs-db8afb01a3be46a983c8284714d06e5d')
+                                    OutlinedButton(
+                                      onPressed: active
+                                          ? null
+                                          : () => _tool(_cloudRecordBackup),
+                                      child: const Text(
+                                          'TEST Cloud Record Backup'),
+                                    ),
+                                  if (db.activeProfileIdentity[
+                                          'schoolSyncId'] ==
+                                      'vs-db8afb01a3be46a983c8284714d06e5d')
+                                    OutlinedButton(
+                                      onPressed: active
+                                          ? null
+                                          : () => Navigator.of(context).push(
+                                                MaterialPageRoute<void>(
+                                                  builder: (_) =>
+                                                      const WindowsDisasterRehearsal(),
+                                                ),
+                                              ),
+                                      child:
+                                          const Text('TEST Disaster Recovery'),
+                                    ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => Navigator.of(context).push(
+                                              MaterialPageRoute<void>(
+                                                builder: (_) =>
+                                                    const WindowsRecycleBin(),
+                                              ),
+                                            ),
+                                    child: const Text('Recycle Bin'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(() async {
+                                              final ok =
+                                                  await WindowsLocalStorage
+                                                      .healthCheck();
+                                              if (mounted)
+                                                setState(
+                                                  () => localHealth = ok
+                                                      ? 'Integrity/read-write check passed'
+                                                      : 'Check failed — retained for diagnosis',
+                                                );
+                                            }),
+                                    child: const Text('Local Data Health'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: active
+                                        ? null
+                                        : () => _tool(() async {
+                                              final report = await engine
+                                                  .safeQueueDiagnostics();
+                                              if (mounted &&
+                                                  db.activeProfileId == origin)
+                                                setState(
+                                                    () => diagnostics = report);
+                                            }),
+                                    child: const Text('Diagnostic Report'),
+                                  ),
+                                ],
+                              );
+
+  Widget _navigation() => ListView(
+    padding: const EdgeInsets.all(18),
+    children: [
+      const Text('Sync tools', style: TextStyle(fontSize: 20)),
+      _nav(Icons.dashboard_outlined, 'Overview', () => _jump(_overviewKey)),
+      _nav(Icons.list_alt, 'Pending Queue', () => _jump(_queueKey)),
+      _nav(Icons.compare_arrows, 'Version Conflicts', () => _jump(_queueKey)),
+      _nav(Icons.warning_amber, 'Needs Administrator Attention', () => _jump(_queueKey)),
+      _nav(Icons.backup_outlined, 'Backup & Restore', () => _jump(_backupKey)),
+      _nav(Icons.inventory_2_outlined, 'File Inventory', () => _jump(_backupKey)),
+      _nav(Icons.healing, 'Missing/Damaged File Recovery', () => _jump(_backupKey)),
+      _nav(Icons.history, 'Smart Repair History', () => _jump(_activityKey)),
+      _nav(Icons.history, 'Recovery Activity', () => _jump(_activityKey)),
+      _nav(Icons.settings_outlined, 'Advanced Sync Settings', () => _jump(_settingsKey)),
+      _nav(Icons.info_outline, 'Measured Status', () => _jump(_statusKey)),
+      const Divider(),
+      _controls(busy || engine.isSyncing || syncCommandRunning || db.activeProfileId != origin),
+    ],
+  );
 
   Widget _connection(
     IconData icon,
@@ -831,35 +1040,38 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           ),
         ),
         child: Scaffold(
+          key: _scaffoldKey,
           backgroundColor: const Color(0xFF071626),
+          drawer: Drawer(width: 340, child: SafeArea(child: _navigation())),
           appBar: AppBar(
             backgroundColor: const Color(0xFF0A1D30),
             title: const Text('Sync Engine 3.0'),
             actions: [
-              const Center(
-                child: Row(
-                  children: [
-                    Icon(Icons.circle, color: _cyan, size: 8),
-                    SizedBox(width: 7),
-                    Text('LIVE UI',
-                        style: TextStyle(color: _cyan, fontSize: 12)),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 20),
               AnimatedBuilder(
                 animation: Listenable.merge([engine.state, engine.details]),
                 builder: (context, _) => Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   child: FilledButton.icon(
                     onPressed:
-                        busy || engine.isSyncing || db.activeProfileId != origin
+                        busy || db.activeProfileId != origin
                             ? null
-                            : () => _run(engine.requestSync),
-                    icon: const Icon(Icons.sync),
-                    label: const Text('Sync Now'),
+                            : () => (engine.isSyncing || syncCommandRunning) && !engine.isPaused
+                                ? _run(() => (widget.pauseRequest ?? engine.pauseSync)(const Duration(hours: 24)))
+                                : _startManualSync(),
+                    icon: Icon((engine.isSyncing || syncCommandRunning) && !engine.isPaused ? Icons.pause : Icons.sync),
+                    label: Text((engine.isSyncing || syncCommandRunning) && !engine.isPaused ? 'Pause Sync' : 'Sync Now'),
                   ),
                 ),
+              ),
+              PopupMenuButton<int>(
+                tooltip: 'Schedule sync pause',
+                enabled: !busy && db.activeProfileId == origin,
+                onSelected: (hours) => _run(() => (widget.pauseRequest ?? engine.pauseSync)(Duration(hours: hours))),
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 1, child: Text('Pause Sync for 1 Hour')),
+                  PopupMenuItem(value: 12, child: Text('Pause Sync for 12 Hours')),
+                  PopupMenuItem(value: 24, child: Text('Pause Sync for 1 Day')),
+                ],
               ),
               const SizedBox(width: 20),
             ],
@@ -867,34 +1079,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           body: LayoutBuilder(
               builder: (context, constraints) => Row(children: [
                     if (constraints.maxWidth >= 1250)
-                      Container(
-                          width: 205,
-                          color: const Color(0xFF0A1D30),
-                          padding: const EdgeInsets.all(18),
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('VIDYA SAARTHI',
-                                    style: TextStyle(
-                                        color: _cyan,
-                                        fontSize: 17,
-                                        fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 30),
-                                _nav(Icons.dashboard_outlined, 'Overview',
-                                    () => _jump(_overviewKey)),
-                                _nav(Icons.list_alt, 'Pending Queue',
-                                    () => _jump(_queueKey)),
-                                _nav(Icons.backup_outlined, 'Backup & Restore',
-                                    () => _jump(_backupKey)),
-                                _nav(Icons.history, 'Activity',
-                                    () => _jump(_activityKey)),
-                                const Spacer(),
-                                const Icon(Icons.school_outlined,
-                                    color: _cyan, size: 48),
-                                const SizedBox(height: 12),
-                                const Text('Local data stays available offline',
-                                    style: TextStyle(color: Color(0xFF9AB4C9))),
-                              ])),
+                      SizedBox(width: 300, child: _navigation()),
                     Expanded(
                         child: AnimatedBuilder(
                       animation:
@@ -905,7 +1090,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         final items = ownSchool
                             ? (details['items'] as List? ?? [])
                             : <dynamic>[];
-                        final active = busy || engine.isSyncing;
+                        final active = busy || engine.isSyncing || syncCommandRunning;
                         return ListView(
                           key: _overviewKey,
                           padding: const EdgeInsets.all(24),
@@ -926,7 +1111,66 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               ),
                             if (ownSchool) ...[
                               const SizedBox(height: 20),
-                              _hero(details, items, active),
+                              if (!showDiagnostics) ...[
+                                _hero(details, items, active),
+                                if (engine.isPaused) Text('Paused on this PC: ${engine.pausedUntil?.difference(DateTime.now()).inMinutes ?? 0} minutes remaining (until ${engine.pausedUntil?.toLocal()})${engine.isSyncing ? ' — finishing the accepted operation' : ''}'),
+                                if (notice.isNotEmpty) SelectableText(notice),
+                                if (engine.recoveryDecision != null)
+                                  Text(engine.recoveryDecision!.message,
+                                      style: const TextStyle(color: Colors.orangeAccent)),
+                              ],
+                              if (showDiagnostics) ...[
+                              if (showQueue) ...[
+                              SizedBox(key: _queueKey),
+                              const Text(
+                                'Pending Queue & Conflict Review',
+                                style: TextStyle(fontSize: 20),
+                              ),
+                              if (items.isEmpty)
+                                const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: Text(
+                                    'No pending entries in this local profile. This alone does not prove cloud completeness.',
+                                  ),
+                                ),
+                              for (final raw in items)
+                                Builder(
+                                  builder: (context) {
+                                    final item =
+                                        Map<String, dynamic>.from(raw as Map);
+                                    return Card(
+                                      child: ListTile(
+                                        title: Text(
+                                          '${item['collection'] ?? item['_queueCollection'] ?? 'documents'} • ${item['documentId'] ?? item['id']}',
+                                        ),
+                                        subtitle: Text(
+                                          'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}',
+                                        ),
+                                        trailing:
+                                            (item['syncState'] ?? item['state']) == 'conflict'
+                                                ? TextButton(
+                                                    onPressed: active
+                                                        ? null
+                                                        : () => _run(() async {
+                                                              if (item['_queueCollection'] == '_windows_recycle_requests') {
+                                                                await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsRecycleBin()));
+                                                              } else {
+                                                                await showWindowsConflictReview(context, item);
+                                                              }
+                                                              await engine
+                                                                  .refreshDetails();
+                                                            }),
+                                                    child: const Text('Review'),
+                                                  )
+                                                : null,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
+                              if (!showQueue) ...[
+                              SizedBox(key: _statusKey),
+                              const Text('Measured status & recovery', style: TextStyle(fontSize: 22)),
                               Wrap(
                                 spacing: 12,
                                 runSpacing: 12,
@@ -935,10 +1179,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                     'Pending uploads',
                                     '${details['pending'] ?? 'Not measured'}',
                                   ),
-                                  metric(
-                                    'Needs administrator attention',
-                                    '${details['needsAttention'] ?? 'Not measured'}',
-                                  ),
+
                                   metric(
                                     'Retained verified cloud receipts',
                                     '${details['verifiedReceiptCount'] ?? 'Not measured'}',
@@ -1045,6 +1286,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         ? 'Not measured'
                                         : '${items.where((item) => item['_queueCollection'] == '_windows_document_outbox' || item['collection'] == 'documents').length}',
                                   ),
+                                  metric('Local PC volume usage', diskLabel),
                                   metric(
                                     'Local application storage',
                                     localBytes == null
@@ -1129,177 +1371,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               if (notice.isNotEmpty) SelectableText(notice),
                               const SizedBox(height: 12),
                               SizedBox(key: _backupKey),
-                              Wrap(
-                                spacing: 12,
-                                runSpacing: 12,
-                                children: [
-                                  OutlinedButton.icon(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(engine.requestSync),
-                                    icon: const Icon(Icons.build_outlined),
-                                    label:
-                                        const Text('Smart Repair — safe retry'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(
-                                            () => _binaryAction('inventory')),
-                                    child: const Text(
-                                        'Check / continue file inventory'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(
-                                            () => _binaryAction('restart')),
-                                    child: const Text(
-                                        'Restart file inventory check'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : _administratorBinaryRetry,
-                                    child:
-                                        const Text('Review capped file retry'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(
-                                            () => _binaryAction('inspect')),
-                                    child:
-                                        const Text('Verify local file bytes'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () =>
-                                            _run(() => _binaryAction('repair')),
-                                    child:
-                                        const Text('Recover next missing file'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(
-                                            engine.reportCurrentSyncMonitor),
-                                    child: const Text(
-                                        'Report current measured sync status'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(() =>
-                                            openCleanInstallRestore(context)),
-                                    child: const Text(
-                                      'Restore Existing School — fresh install only',
-                                    ),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(_checkCloudHealth),
-                                    child: const Text('Check Cloud Health'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(_storageDetails),
-                                    child: const Text('Local Storage Details'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(_cloudStorageDetails),
-                                    child: const Text('School Drive Usage'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(_exportDiagnostics),
-                                    child:
-                                        const Text('Export Sanitized Report'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed:
-                                        active ? null : () => _run(_backup),
-                                    child: const Text('Backup Now'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(_restoreRehearsal),
-                                    child: const Text('Verify Backup Restore'),
-                                  ),
-                                  if (db.activeProfileIdentity[
-                                          'schoolSyncId'] ==
-                                      'vs-db8afb01a3be46a983c8284714d06e5d')
-                                    OutlinedButton(
-                                      onPressed: active
-                                          ? null
-                                          : () => _run(_cloudRecordBackup),
-                                      child: const Text(
-                                          'TEST Cloud Record Backup'),
-                                    ),
-                                  if (db.activeProfileIdentity[
-                                          'schoolSyncId'] ==
-                                      'vs-db8afb01a3be46a983c8284714d06e5d')
-                                    OutlinedButton(
-                                      onPressed: active
-                                          ? null
-                                          : () => Navigator.of(context).push(
-                                                MaterialPageRoute<void>(
-                                                  builder: (_) =>
-                                                      const WindowsDisasterRehearsal(),
-                                                ),
-                                              ),
-                                      child:
-                                          const Text('TEST Disaster Recovery'),
-                                    ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => Navigator.of(context).push(
-                                              MaterialPageRoute<void>(
-                                                builder: (_) =>
-                                                    const WindowsRecycleBin(),
-                                              ),
-                                            ),
-                                    child: const Text('Recycle Bin'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(() async {
-                                              final ok =
-                                                  await WindowsLocalStorage
-                                                      .healthCheck();
-                                              if (mounted)
-                                                setState(
-                                                  () => localHealth = ok
-                                                      ? 'Integrity/read-write check passed'
-                                                      : 'Check failed — retained for diagnosis',
-                                                );
-                                            }),
-                                    child: const Text('Local Data Health'),
-                                  ),
-                                  OutlinedButton(
-                                    onPressed: active
-                                        ? null
-                                        : () => _run(() async {
-                                              final report = await engine
-                                                  .safeQueueDiagnostics();
-                                              if (mounted &&
-                                                  db.activeProfileId == origin)
-                                                setState(
-                                                    () => diagnostics = report);
-                                            }),
-                                    child: const Text('Diagnostic Report'),
-                                  ),
-                                ],
-                              ),
+                              SizedBox(key: _settingsKey),
                               SwitchListTile(
                                 contentPadding: EdgeInsets.zero,
                                 title: const Text('Automatic sync'),
@@ -1391,51 +1463,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                   },
                                 ),
                               const Divider(height: 32),
-                              SizedBox(key: _queueKey),
-                              const Text(
-                                'Pending Queue & Conflict Review',
-                                style: TextStyle(fontSize: 20),
-                              ),
-                              if (items.isEmpty)
-                                const Padding(
-                                  padding: EdgeInsets.all(12),
-                                  child: Text(
-                                    'No pending entries in this local profile. This alone does not prove cloud completeness.',
-                                  ),
-                                ),
-                              for (final raw in items)
-                                Builder(
-                                  builder: (context) {
-                                    final item =
-                                        Map<String, dynamic>.from(raw as Map);
-                                    return Card(
-                                      child: ListTile(
-                                        title: Text(
-                                          '${item['collection'] ?? 'documents'} • ${item['documentId'] ?? item['id']}',
-                                        ),
-                                        subtitle: Text(
-                                          'Status: ${item['syncState'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}',
-                                        ),
-                                        trailing:
-                                            item['syncState'] == 'conflict'
-                                                ? TextButton(
-                                                    onPressed: active
-                                                        ? null
-                                                        : () => _run(() async {
-                                                              await showWindowsConflictReview(
-                                                                context,
-                                                                item,
-                                                              );
-                                                              await engine
-                                                                  .refreshDetails();
-                                                            }),
-                                                    child: const Text('Review'),
-                                                  )
-                                                : null,
-                                      ),
-                                    );
-                                  },
-                                ),
                               const Divider(height: 32),
                               const Text(
                                 'Recovery History — this school',
@@ -1461,6 +1488,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                   const JsonEncoder.withIndent('  ')
                                       .convert(diagnostics),
                                 ),
+                              ],
+                              ],
                               ],
                             ],
                           ],

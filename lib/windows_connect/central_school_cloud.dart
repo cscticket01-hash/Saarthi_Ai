@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import '../platform/platform_config.dart';
 import 'google_authorization.dart';
 import 'firebase_token_cache.dart';
+import 'managed_device_credentials.dart';
 
 Object? migrationJsonValue(Object? value) {
   if (value is Timestamp)
@@ -272,6 +273,14 @@ class CentralSchoolCloud {
       r.headers['Content-Type'] = contentType ?? 'application/json';
       r.body = body is String ? body : jsonEncode(body);
     }
+    if (uri.toString()==endpoint && uri.scheme=='https' && token!=null &&
+        !r.headers.keys.any((key)=>key.toLowerCase()=='x-vidya-device-id')) {
+      final identity=await saved();
+      if(identity['managed']==true && identity['endpoint']==endpoint && identity['uid'] is String) {
+        r.headers.addAll(await ManagedDeviceCredentials.headers(
+          accountUid:identity['uid'],endpoint:endpoint));
+      }
+    }
     final response = await http.Response.fromStream(
       await client.send(r).timeout(const Duration(seconds: 45)),
     );
@@ -322,6 +331,15 @@ class CentralSchoolCloud {
               errorBody['message'] == 'Record revision conflict');
       if (recordConflict) detail = ' Record revision conflict.';
       const syncFailures = {
+        'DEVICE_ROLLOUT_DISABLED': 'Device management is not enabled for this server.',
+        'REAUTHORIZATION_REQUIRES_NEW_CREDENTIAL': 'Fresh school login must authorize a new PC credential.',
+        'DEVICE_LIMIT_REACHED': 'Five PCs are already authorized. Revoke another PC before adding this one.',
+        'DEVICE_AUTHORIZATION_REJECTED': 'This PC authorization was revoked or is invalid. School login is required.',
+        'DEVICE_PROOF_REQUIRED': 'PC authorization proof is required.',
+        'DEVICE_FRESH_LOGIN_REQUIRED': 'Fresh school password login is required to authorize this PC.',
+        'DEVICE_CREDENTIAL_CONFLICT': 'PC authorization needs school administrator review.',
+        'IMPORT_DISABLED': 'Controlled student import is not enabled on this server.',
+        'IMPORT_SOURCE_CHANGED': 'Import Sheet changed after preview. Review a new preview before committing.',
         'SCRIPT_OPERATION_FAILED': 'School Google storage rejected the operation. Existing data and pending changes are retained; owner diagnostics are required.',
         'SCRIPT_TIMEOUT': 'School Google storage timed out. Pending changes are retained; retry is delayed.',
         'SCRIPT_QUOTA_EXCEEDED': 'School Google storage quota is temporarily exhausted. Pending changes are retained.',
@@ -343,6 +361,7 @@ class CentralSchoolCloud {
       // Server messages are accepted only from the configured central endpoint,
       // and only when they exactly match a fixed, non-secret public explanation.
       const publicMessages = {
+        'Import preview changed or expired',
         'School membership is inactive',
         'Another school is not accessible',
         'Legacy school administrator proof is required',

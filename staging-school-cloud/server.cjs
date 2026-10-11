@@ -49,7 +49,7 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
       action=ACTIONS.has(body?.action)?body.action:/^(managed\/|developer\/managed\/)/.test(body?.action||'')?'MANAGED':'UNKNOWN';
       // First Windows login has no saved school ID yet. Bind its authenticated
       // session lookup to the configured TEST school; membership must still match.
-      if(testSchoolId&&body?.action==='managed/session'&&body.schoolId==null)
+      if(testSchoolId&&['managed/session','managed/device/register'].includes(body?.action)&&body.schoolId==null)
         body={...body,schoolId:testSchoolId};
       // Additional TEST fence only; the existing authenticated handler still
       // verifies membership, licence, school identity and signed storage access.
@@ -82,8 +82,19 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
     }
   };
 }
+function managedFeatureOptions(env,testSchoolId) {
+ const flag=name=>{const value=env[name];if(value===undefined||value==='false')return false;
+  if(value!=='true')throw Error('Invalid managed feature configuration');
+  if(!testSchoolId)throw Error('Managed feature rollout requires isolated TEST scope');return true;};
+ const deviceAccessEnforced=flag('SAARTHI_TEST_DEVICE_ACCESS_ENFORCED');
+ const studentImportEnabled=flag('SAARTHI_TEST_STUDENT_IMPORT_ENABLED');
+ if(deviceAccessEnforced&&!env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY)throw Error('TEST offline signing key required');
+ return {deviceAccessEnforced,studentImportEnabled,
+  ...(deviceAccessEnforced?{deviceOfflinePrivateKey:env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY}:{})};
+}
 function fromEnvironment(env) {
   const testSchoolId=isolatedTestSchool(env);
+  const managedFeatures=managedFeatureOptions(env,testSchoolId);
   const runtimeRequire=require('node:module').createRequire(require.resolve('../oauth-broker/package.json'));
   const {initializeApp,getApps,cert}=runtimeRequire('firebase-admin/app');
   const {getAuth}=runtimeRequire('firebase-admin/auth');
@@ -101,7 +112,7 @@ function fromEnvironment(env) {
     const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
     return getAuth(legacy).verifyIdToken(String(token || '')); 
   }});
-  const managed=require('../functions/managed-schools').createManagedSchools({auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
+  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
     monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
   if(env.SAARTHI_ATTENDANCE_QUEUE_ENABLED!=='false'){
@@ -116,4 +127,4 @@ function fromEnvironment(env) {
     try{await auth.getUser('__saarthi_staging_health__');}catch(e){if(e.code!=='auth/user-not-found')throw e;}
   }});
 }
-module.exports={createHandler,fromEnvironment,isolatedTestSchool};
+module.exports={createHandler,fromEnvironment,isolatedTestSchool,managedFeatureOptions};

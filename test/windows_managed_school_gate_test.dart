@@ -18,6 +18,17 @@ import '../lib/windows_connect/managed_school_session.dart';
 void main(){
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  test('web registration metadata never reads native hostname and preserves device admission action', () {
+    final body=ManagedSchoolSession.deviceRegistrationBody(web:true,
+        hostname:()=>throw UnsupportedError('Native hostname unavailable on web'));
+    expect(body,{'action':'managed/device/register','deviceName':'Web browser','deviceOs':'Web','type':'pc'});
+  });
+  test('native registration retains measured hostname with bounded fallback', () {
+    expect(ManagedSchoolSession.deviceRegistrationBody(web:false,hostname:()=>'School PC')['deviceName'],'School PC');
+    for(final name in ['',List.filled(101,'x').join()]) {
+      expect(ManagedSchoolSession.deviceRegistrationBody(web:false,hostname:()=>name)['deviceName'],'Windows PC');
+    }
+  });
   test('legacy branding cache without schoolId is recovered only from its immutable tenant profile', () async {
     final db = FirebaseFirestore.instance;
     final profile = 'registration-cache-${DateTime.now().microsecondsSinceEpoch}';
@@ -84,6 +95,7 @@ void main(){
         expect(body['email'], 'a@school.example');
         return http.Response(jsonEncode({'localId': 'A', 'idToken': 'A-token', 'refreshToken': 'A-refresh'}), 200);
       }
+      if(body['action']=='managed/device/register') return http.Response(jsonEncode({'code':'DEVICE_ROLLOUT_DISABLED'}),503);
       expect(body.containsKey('schoolId'), false); expect(body.containsKey('password'), false);
       return http.Response(jsonEncode({'success': true, 'schoolId': school, 'uid': 'A',
         'projectId': platformProjectId, 'storageReady': true, 'scriptUrl': 'https://script.google.com/macros/s/SchoolADeployment/exec',
@@ -104,6 +116,7 @@ void main(){
           if (mode == 'wrong-password') return http.Response(jsonEncode({'error': {'message': 'INVALID_LOGIN_CREDENTIALS'}}), 400);
           return http.Response(jsonEncode({'localId': 'A', 'idToken': 'A-token', 'refreshToken': 'A-refresh'}), 200);
         }
+        if(jsonDecode(request.body)['action']=='managed/device/register') return http.Response(jsonEncode({'code':'DEVICE_ROLLOUT_DISABLED'}),503);
         return http.Response(jsonEncode({'success': true, 'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'uid': 'B'}), 200);
       });
       await expectLater(ManagedSchoolSession.login('a@school.example', 'wrong',

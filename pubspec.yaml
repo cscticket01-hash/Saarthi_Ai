@@ -16,6 +16,7 @@ dependencies:
 
   sqlite3: 3.7.0
   crypto: ^3.0.6
+  cryptography: ^2.7.0
   http: ^1.2.0
   url_launcher: ^6.3.2
   font_awesome_flutter: ^11.0.0
@@ -64,3 +65,11 @@ flutter:
 
   assets:
     - assets/
+
+  fonts:
+    - family: VidyaNotoBengali
+      fonts:
+        - asset: "assets/fonts/NotoSansBengali[wdth,wght].ttf"
+    - family: VidyaNotoDevanagari
+      fonts:
+        - asset: "assets/fonts/NotoSansDevanagari[wdth,wght].ttf"

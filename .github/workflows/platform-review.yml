@@ -2,11 +2,11 @@ name: Platform review builds
 permissions:
   contents: read
 concurrency:
-  group: platform-review-${{ github.event.pull_request.number || github.run_id }}
+  group: platform-review-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   isolated-test-cloud:
-    if: github.ref == 'refs/heads/windows/easy-connect-draft' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'windows/easy-connect-draft')
+    if: github.ref == 'refs/heads/integration/master-review-20261011' || (github.event_name == 'pull_request' && github.head_ref == 'integration/master-review-20261011' && github.event.pull_request.head.repo.full_name == github.repository) || github.ref == 'refs/heads/feature/smart-sync-3-finalization' || (github.event_name == 'pull_request' && github.head_ref == 'feature/smart-sync-3-finalization' && github.event.pull_request.head.repo.full_name == github.repository) || github.ref == 'refs/heads/windows/easy-connect-draft' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'windows/easy-connect-draft')
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -89,7 +89,7 @@ jobs:
         lib/school_text_data.dart lib/school_backend_transport.dart test/school_text_data_test.dart lib/platform/developer_service.dart lib/platform/spark_client.dart
         lib/platform/github_updates.dart lib/platform/monitor_summary.dart lib/mobile/school_messaging.dart
         lib/managed_developer_panel.dart lib/developer_account_widgets.dart lib/firebase_monitor_panel.dart lib/school_password_panel.dart
-        test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
+        test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_dashboard_timeout_accuracy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Analyze developer portal
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main.dart lib/developer_portal.dart lib/school_document_renderer.dart lib/platform
     - name: Analyze Windows school source
@@ -100,7 +100,7 @@ jobs:
         lib/managed_developer_panel.dart lib/developer_account_widgets.dart lib/firebase_monitor_panel.dart lib/school_password_panel.dart lib/windows_settings_panel.dart lib/windows_managed_school_gate.dart
         lib/windows_staff_payroll.dart lib/windows_app_reset.dart lib/windows_license_gate.dart lib/windows_admin_setup.dart lib/windows_connect
     - name: Verify documents and mobile school boundaries
-      run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
+      run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_dashboard_timeout_accuracy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Verify durable document queue and retained originals
       # Existing synthetic originals/processed copies are retained for actual
       # visual inspection; test PASS alone is not readability approval.
@@ -130,7 +130,7 @@ jobs:
     - name: Verify Windows startup and skip regression
       env:
         APPDATA: ${{ runner.temp }}/windows-startup-tests
-      run: flutter test --concurrency=1 test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/school_qr_login_test.dart
+      run: flutter test --concurrency=1 test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_student_import_retry_test.dart test/windows_sync_durable_admission_test.dart test/windows_financial_analytics_regression_test.dart test/windows_expense_intent_test.dart test/windows_sync_revision_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart
     - name: Verify central school cloud and paths
       run: flutter test test/central_school_cloud_test.dart
     - name: Verify school connection automation
@@ -176,7 +176,7 @@ jobs:
           lib/mobile/school_messaging.dart
           test/monitor_summary_test.dart test/firebase_metric_samples_test.dart
           test/spark_license_test.dart
-          test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
+          test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_dashboard_timeout_accuracy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
           test/document_renderer_test.dart
 
           lib/windows_school_identity.dart
@@ -236,7 +236,7 @@ jobs:
       run: |
         $env:APPDATA = Join-Path $env:RUNNER_TEMP 'sqlite-production-screen'
         $env:LOCALAPPDATA = $env:APPDATA
-        flutter test --concurrency=1 test/windows_clean_install_recovery_test.dart test/windows_offline_restore_test.dart test/windows_local_restore_sync_test.dart test/windows_binary_downloads_test.dart test/windows_smart_recovery_test.dart test/smart_media_compression_test.dart test/windows_document_queue_test.dart test/windows_document_screen_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
+        flutter test --concurrency=1 test/windows_sync_activity_test.dart test/windows_disk_storage_test.dart test/windows_account_tools_test.dart test/windows_sync_pause_test.dart test/windows_sync_control_cleanup_test.dart test/windows_clean_install_recovery_test.dart test/windows_offline_restore_test.dart test/windows_local_restore_sync_test.dart test/windows_binary_downloads_test.dart test/windows_smart_recovery_test.dart test/smart_media_compression_test.dart test/windows_document_queue_test.dart test/windows_document_screen_test.dart test/windows_local_first_save_test.dart test/windows_student_import_retry_test.dart test/windows_sync_durable_admission_test.dart test/windows_financial_analytics_regression_test.dart test/windows_expense_intent_test.dart test/windows_sync_revision_test.dart test/windows_startup_test.dart test/windows_managed_school_gate_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
         if ($LASTEXITCODE -ne 0) { throw 'SQLite production screen/queue/startup regressions failed' }
     - name: Real OS SQLite process crash recovery and controlled local benchmark
       run: |
@@ -270,7 +270,7 @@ jobs:
     - name: Format Windows reference document source
       run: dart format lib/windows_reference_documents.dart test/windows_reference_documents_test.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/managed_developer_panel.dart lib/platform/managed_developer_service.dart
     - name: Verify Windows ID cards, licence date and startup
-      run: flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart test/windows_fee_structure_test.dart
+      run: flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_student_import_retry_test.dart test/windows_sync_durable_admission_test.dart test/windows_financial_analytics_regression_test.dart test/windows_expense_intent_test.dart test/windows_sync_revision_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart test/windows_fee_structure_test.dart
     - name: Verify manifest IDs on Windows
       run: flutter test test/id_card_engine_test.dart
     - name: Verify production Documents screen and durable local queue on Windows
@@ -411,7 +411,7 @@ jobs:
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
-      run: flutter test test/android_startup_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
+      run: flutter test test/android_startup_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/sync_recovery_policy_test.dart test/mobile_dashboard_timeout_accuracy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Build unsigned Android preview
       env:
         SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
@@ -429,6 +429,8 @@ jobs:
     branches:
     - windows/easy-connect-draft
     - feature/smart-sync-3
+    - feature/smart-sync-3-finalization
+    - integration/master-review-20261011
     - feature/managed-school-accounts
     - fix/existing-school-restore-20261005
     - fix/legacy-school-recovery-latency
@@ -444,6 +446,7 @@ jobs:
   pull_request:
     branches:
     - main
+    - feature/smart-sync-3-finalization
   workflow_dispatch:
     inputs:
       google_oauth_client_id:

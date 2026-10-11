@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'package:crypto/crypto.dart';
 
 import 'windows_local_storage.dart';
 import 'storage/windows_sqlite_store.dart';
@@ -178,6 +179,42 @@ class FirebaseFirestore {
     if(ref.collectionPath!='_windows_firebase_outbox') throw ArgumentError('Outbox reference required');
     return _database.applyOperations([_WriteOperation._(type:_WriteType.delete,
       collection:ref.collectionPath, documentId:ref.id, data:expected, acknowledgedRevision:revision)]);
+  }
+
+  /// Binds a legacy row only if its exact durable snapshot is still current.
+  /// A foreign binding is never replaced, and payload fields are never copied
+  /// from a stale reader into a newer operation.
+  Future<Map<String,dynamic>?> migrateOutboxIdentity(
+      DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic> expected,
+      {required String schoolId}) {
+    ref.requireOriginProfile();
+    if (ref.collectionPath != '_windows_firebase_outbox') {
+      throw ArgumentError('Outbox reference required');
+    }
+    return _database.migrateOutboxIdentity(ref.id,expected,schoolId);
+  }
+
+  /// Records a remote conflict only while the observed operation remains the
+  /// exact durable current version. An administrator's newer review wins.
+  Future<bool> recordOutboxConflict(DocumentReference<Map<String,dynamic>> ref,
+      Map<String,dynamic> expected, Map<String,dynamic> remote) {
+    ref.requireOriginProfile();
+    if (ref.collectionPath != '_windows_firebase_outbox') {
+      throw ArgumentError('Outbox reference required');
+    }
+    return _database.recordOutboxConflict(ref.id,expected,remote);
+  }
+
+  /// Failure metadata belongs only to the exact operation that failed.
+  Future<bool> recordOutboxFailure(DocumentReference<Map<String,dynamic>> ref,
+      Map<String,dynamic> expected, {required String state, required String error,
+      String? failureCategory, int? retryCount, int? retryAtMillis}) {
+    ref.requireOriginProfile();
+    if (ref.collectionPath != '_windows_firebase_outbox') {
+      throw ArgumentError('Outbox reference required');
+    }
+    return _database.recordOutboxFailure(ref.id,expected,state:state,error:error,
+      failureCategory:failureCategory,retryCount:retryCount,retryAtMillis:retryAtMillis);
   }
 
   /// Check the live outbox inside the serialized disk write, not a stale pull snapshot.
@@ -1343,6 +1380,138 @@ class _LocalSchoolDatabase {
         }
         completer.complete();
       } catch(error,stack) {completer.completeError(error,stack);}
+    });
+    return completer.future;
+  }
+
+  Future<bool> recordOutboxFailure(String queueId, Map<String,dynamic> expected,
+      {required String state, required String error, String? failureCategory,
+      int? retryCount, int? retryAtMillis}) {
+    final origin = _activeProfileId;
+    final school = _activeIdentity['schoolSyncId'];
+    // Snapshot before queueing: callers cannot alter the comparison while waiting.
+    final encodedExpected = _encodeMap(expected);
+    final completer = Completer<bool>();
+    _writeTail = _writeTail.then((_) async {
+      try {
+        if (_activeProfileId != origin ||
+            (encodedExpected['schoolId'] != null &&
+              encodedExpected['schoolId'] != (school ?? '')) ||
+            !{'retry','conflict','needsAttention'}.contains(state) ||
+            (retryCount != null && retryCount < 0) ||
+            (retryAtMillis != null && retryAtMillis <= 0)) {
+          throw StateError('Original same-school pending failure required.');
+        }
+        final root = await _readRoot(collections:{'_windows_firebase_outbox'});
+        if (_activeProfileId != origin) throw StateError('School changed during failure capture.');
+        final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
+        final current = queue is Map ? queue[queueId] : null;
+        if (current is! Map || _jsonStableMap(Map<String,dynamic>.from(current)) !=
+            _jsonStableMap(encodedExpected)) {
+          completer.complete(false);
+          return;
+        }
+        queue[queueId] = {...Map<String,dynamic>.from(current),
+          'syncState':state,'lastError':error,
+          if (failureCategory != null) 'failureCategory':failureCategory,
+          if (retryCount != null) 'retryCount':retryCount,
+          if (retryAtMillis != null) 'retryAtMillis':retryAtMillis};
+        _storeCollections(root,collections);
+        await _writeRoot(root);
+        final signal = _signals['_windows_firebase_outbox'];
+        if (signal != null && !signal.isClosed) signal.add(null);
+        completer.complete(true);
+      } catch (error,stack) { completer.completeError(error,stack); }
+    });
+    return completer.future;
+  }
+
+  Future<bool> recordOutboxConflict(String queueId,
+      Map<String,dynamic> expected, Map<String,dynamic> remote) {
+    final origin = _activeProfileId, school = _activeIdentity['schoolSyncId'];
+    final completer = Completer<bool>();
+    _writeTail = _writeTail.then((_) async {
+      try {
+        final collection = expected['collection'], id = expected['documentId'];
+        final operationId = expected['operationId'], revision = remote['_syncRevision'];
+        if (_activeProfileId != origin || school is! String || school.isEmpty ||
+            expected['schoolId'] != school || remote['schoolId'] != school ||
+            collection is! String || collection.isEmpty || collection.startsWith('_') ||
+            id is! String || id.isEmpty || operationId is! String || operationId.isEmpty ||
+            revision is! String || revision.isEmpty) {
+          throw StateError('Original same-school operation and verified revision required.');
+        }
+        final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
+          '_windows_sync_conflicts'},recordScope:{collection:[id]});
+        if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
+        final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
+        final current = queue is Map ? queue[queueId] : null;
+        if (current is! Map || current['syncState']=='needsAttention' ||
+            revision == (current['baseCloudRevision'] ?? '') ||
+            _jsonStableMap(Map<String,dynamic>.from(current)) != _jsonStableMap(_encodeMap(expected))) {
+          completer.complete(false);
+          return;
+        }
+        final localRecords = collections[collection];
+        final local = localRecords is Map ? localRecords[id] : null;
+        final history = collections.putIfAbsent('_windows_sync_conflicts',()=> <String,dynamic>{}) as Map;
+        final conflictId = '$operationId-${sha256.convert(utf8.encode(revision))}';
+        history[conflictId] = _encodeMap({'schoolId':school,'collection':collection,
+          'documentId':id,'local':local,'remote':remote,
+          'detectedAt':DateTime.now().millisecondsSinceEpoch});
+        queue[queueId] = {...Map<String,dynamic>.from(current),
+          'syncState':'conflict','lastError':'Record revision conflict'};
+        _storeCollections(root,collections);
+        await _writeRoot(root);
+        for (final name in ['_windows_firebase_outbox','_windows_sync_conflicts']) {
+          final signal = _signals[name];
+          if (signal != null && !signal.isClosed) signal.add(null);
+        }
+        completer.complete(true);
+      } catch (error,stack) { completer.completeError(error,stack); }
+    });
+    return completer.future;
+  }
+
+  Future<Map<String,dynamic>?> migrateOutboxIdentity(String queueId,
+      Map<String,dynamic> expected, String schoolId) {
+    final origin = _activeProfileId;
+    final completer = Completer<Map<String,dynamic>?>();
+    _writeTail = _writeTail.then((_) async {
+      try {
+        if (_activeProfileId != origin || schoolId.isEmpty ||
+            _activeIdentity['schoolSyncId'] != schoolId ||
+            (expected['schoolId'] != null && expected['schoolId'] != schoolId)) {
+          throw StateError('Original same-school pending binding required.');
+        }
+        final root = await _readRoot(collections:{'_windows_firebase_outbox'});
+        if (_activeProfileId != origin) throw StateError('School changed during pending migration.');
+        final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
+        final current = queue is Map ? queue[queueId] : null;
+        if (current is! Map || _jsonStableMap(Map<String,dynamic>.from(current)) !=
+            _jsonStableMap(_encodeMap(expected))) {
+          completer.complete(null);
+          return;
+        }
+        if (current['schoolId'] != null && current['schoolId'] != schoolId) {
+          throw StateError('Pending operation belongs to another school.');
+        }
+        final migrated = Map<String,dynamic>.from(current);
+        final operationId = migrated['operationId'];
+        if (operationId != null && (operationId is! String || operationId.isEmpty)) {
+          throw StateError('Original pending operation identity requires review.');
+        }
+        migrated['operationId'] ??= base64Url.encode(
+          List<int>.generate(24,(_) => Random.secure().nextInt(256))).replaceAll('=','');
+        migrated['schoolId'] ??= schoolId;
+        migrated['baseCloudRevision'] ??= '';
+        queue[queueId] = migrated;
+        _storeCollections(root,collections);
+        await _writeRoot(root);
+        final signal = _signals['_windows_firebase_outbox'];
+        if (signal != null && !signal.isClosed) signal.add(null);
+        completer.complete(_decodeMap(migrated));
+      } catch (error,stack) { completer.completeError(error,stack); }
     });
     return completer.future;
   }

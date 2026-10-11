@@ -55,6 +55,34 @@ void main() {
     verify: verify ?? () async => throw const SocketException('offline'),
     persist: persist ?? (a, b) async {},
   );
+  test('enforced device access never falls back to unsigned offline cache', () async {
+    final saved={...identity({...access(),'deviceEnforced':true}), 'deviceEnforced':true};
+    final e=engine(saved);
+    await e.restore();
+    expect(e.localReady,true);
+    expect(e.canOpen,false);
+    e.dispose();
+  });
+  test('signed device lease expires and enforcement cannot downgrade in memory', () async {
+    var time=now;
+    final expiry=now.add(const Duration(minutes:15)).millisecondsSinceEpoch;
+    final token='${base64UrlEncode(utf8.encode(jsonEncode({'expiresAt':expiry})))}.test-signature';
+    var saved=identity({...access(),'deviceEnforced':true,'offlineLease':token});
+    var response=<String,dynamic>{...access(),'deviceEnforced':false};
+    final e=SchoolCloudEngine(readIdentity:()async=>saved,clock:()=>time,
+      activateLocal:()async{},legacyAccess:()async=>null,touchClock:(a,b)async{},
+      verifyDeviceLease:(a,b,c)async=>b['offlineLease']==token,
+      verify:()async=>response,persist:(a,b)async{saved={...saved,'verifiedAccess':b,'deviceEnforced':true};});
+    await e.restore();
+    await Future<void>.delayed(Duration.zero);
+    expect(e.canOpen,true);
+    await e.verify();
+    expect(e.access?['deviceEnforced'],true);
+    expect(e.canOpen,true);
+    time=time.add(const Duration(minutes:15));
+    expect(e.canOpen,false);
+    e.dispose();
+  });
   test(
     'existing authenticated school restores locally without waiting for cloud',
     () async {

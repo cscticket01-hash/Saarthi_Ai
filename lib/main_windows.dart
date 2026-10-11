@@ -1,3 +1,5 @@
+import 'windows_device_management.dart';
+import 'windows_student_import.dart';
 import 'windows_clean_install_entry.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_managed_school_gate.dart';
@@ -93,6 +95,8 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
         return WindowsManagedSchoolGate(child:content,legacy:WindowsLicenseGate(child:content),onAuthenticated:()=>_schoolNavigatorKey.currentState?.pushNamedAndRemoveUntil('/',(route)=>false));
       },
       routes: {
+        '/admin/device-management': (_) => const WindowsStartupGate(child: WindowsDeviceManagement()),
+        '/admin/student-import': (_) => const WindowsStartupGate(child: WindowsStudentImport()),
         '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
         '/admin-setup': (_) => const WindowsAdminSetupScreen(),
         '/local-login': (_) => const WindowsStartupGate(child: WindowsLocalDashboardGate()),

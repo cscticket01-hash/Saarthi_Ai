@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:image/image.dart' as img;
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_school_operations.dart';
@@ -81,7 +82,7 @@ void main() {
     final photo='data:image/png;base64,${base64Encode(img.encodePng(img.Image(width:64,height:96)))}';
     await db.collection('teachers_directory').doc('same').set({'name':'School A teacher','schoolId':school,'photoUrl':photo});
     final profile=db.activeProfileId;
-    await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(c,id,op,data) async=>throw StateError('Network unavailable')),throwsStateError);
+    await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(c,id,op,data) async=>throw const SocketException('Synthetic network unavailable')),throwsA(isA<SocketException>()));
     expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
     await db.switchProfile('sync-school-B',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
     await expectLater(WindowsPendingSchoolSync.flush(profileId:profile,send:(c,id,op,data) async=>fail('Must not publish A as B')),throwsStateError);
