@@ -43,6 +43,26 @@ void main(){
     expect(()=>s.existingQr({...row('missing'),'mobileLinkToken':''}),throwsStateError);
     expect(()=>s.existingQr({...row('foreign'),'idCardQr':s.existingQr(row('first'))}),throwsStateError);
   });
+  test('managed school rejects matching-looking legacy QR downgrade', () {
+    final raw = jsonEncode({
+      'app': 'VIDYA_SAARTHI', 'v': 2,
+      'firebaseProjectId': school,
+      'googleScriptUrl': 'https://script.google.com/macros/s/synthetic/exec',
+      'type': 'student', 'personId': 'first',
+      'linkToken': fixture['linkToken'],
+    });
+    final s = source([row('first')]);
+    expect(() => s.existingQr({...row('first'), 'idCardQr': raw}), throwsStateError);
+  });
+  test('issued JSON QR retains its original issue ID in bulk snapshot', () async {
+    final issueId = 'a' * 64;
+    final issued = jsonEncode({...fixture, 'cardIssueId': issueId, 'personId': 'first'});
+    final s = source([{...row('first'), 'idCardQr': issued}]);
+    final prepared = await s.preflight('5', {'first'}, template, imageLoader: (_) async => null);
+    expect(prepared.blocked, false);
+    expect(prepared.students.single.identityKind, 'issued-reference');
+    expect(prepared.students.single.cardIssueId, issueId);
+  });
   test('bounded class preflight snapshots source and labels legacy reference',()async{
     final s=source([row('first')]);
     final check=await s.preflight('5',{'first'},template,imageLoader:(_)async=>null);
