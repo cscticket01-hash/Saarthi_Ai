@@ -3,7 +3,29 @@
 Branch: `feature/smart-sync-3`; draft PR #23. Main starts at `de547d2c0a025db815ce97479e3f4f3fc4f8f1a8`. Production publication is not authorized.
 
 
-## Latest verified checkpoint (2026-10-10 UTC, end of continuation)
+## Resumed implementation checkpoint (2026-10-11 UTC)
+
+Continued the existing branch and PR; inspected actual `1647e09` baseline before integration. Development commits: `e779788c0a43e5e88927d972c940fc75e296fbb1`, `f082ac414ee22660beccdb3c8ca68679f85afccf`, `c6c3b11a7da829fc18dc3a1fd866feea2139dc0b`. No original school/PC/pending operation was accessed or changed.
+
+Implemented school-bound sealed-backup validation, fresh-only administrator-approved activation, staged path rebasing, durable queue/ID/timestamp retention, atomic pointer journal, interrupted rollback and startup verification. Guided restore runs before enrollment hydration; Windows relaunch waits for the previous process to exit. Eighteen recovery regressions plus startup choice/error tests are included. Physical clean-install/relaunch remains unverified.
+
+Implemented administrator-approved offline restore intents: original delete remains queued until durable ACK; stable revision-checked cloud restore resumes lost ACKs, terminal conflicts/authorization failures require review, unrelated records continue. Financial/document snapshots stay hidden until authoritative restore. Prior tombstones cannot undo a newer verified restore. Never-uploaded records lacking a cloud snapshot remain `needsReview`; no artificial ACK is generated.
+
+Implemented authenticated signed application-media inventory/download, expected SHA/version checks, temporary durable files and atomic school-scoped cache, retained previous usable bytes, restart journals and three-attempt exponential retry with jitter. Counts explicitly distinguish UNKNOWN/PARTIAL coverage, missing/damaged/pending/failed/interrupted and verified bytes. Control Center exposes bounded repair, inventory restart, explicit administrator retry and verified copy export. Thumbnail lookup verifies only requested bytes rather than hashing every file. Fourteen binary regressions are included. Native Google files/archives are outside this bounded inventory.
+
+Central client reports now include measured media state and actual client sync time separately from server ACK facts. New live harness verifies an actual authenticated client report, one actual Drive download after injected 503 and retained verified bytes after cache restart. Missing report/inventory evidence remains unknown.
+
+Local backend **280/280 PASS**, OAuth/security/platform verification delegated to exact-source hosted CI; expiry harness **4/4 PASS** uses mocks and does not certify an elapsed day. Image dependency pinned to `4.10.0` after CI demonstrated `image 4.11.0` calling an unavailable archive decoder method. Initial integration/fix workflows exposed compilation and fixture/UI regressions; repaired without disabling tests. Actual-source current [platform 38100148319](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38100148319), [real TEST 38100146023](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38100146023), [disaster 38100146018](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38100146018) are **IN PROGRESS at this checkpoint**, not PASS claims.
+
+Existing TEST Render only is live at `c6c3b11` (`dep-db5dtndckfvc739s8bc0`, finished 00:57:40 UTC). Existing TEST Apps Script deployment was updated to **Version 8**, exact committed bundle from `f082ac4` (unchanged at `c6c3b11`); owner, endpoint and access settings retained. Browser source readback exactly matched the bundle. Existing `VS_testRecycleExpiryTick` trigger was observed configured **Every hour**, last run 2026-10-11 06:02:56 IST, displayed 0% error. No trigger was recreated or changed.
+
+Added real elapsed-expiry baseline/check workflow modes. Push starts/resumes only `recycle-expiry-v1-20261011-resume-acceptance` after protected restore acceptance; baseline artifact retains original server deletion/revision/deadline. Read-only `check-expiry` cannot PASS before actual server deadline or if baseline changes. No clocks are faked, snapshots purged or finance altered. Actual 24-hour result remains pending.
+
+Original incident references were freshly correlated in production Render read-only logs; both managed/records HTTP 502 `SCRIPT_OPERATION_FAILED` entries are confirmed. Underlying owner Apps Script diagnostic/source line remains **UNKNOWN**; TEST owner sign-in does not establish the original Script project identity or ownership. See [remaining acceptance audit](smart-sync-3-remaining-acceptance.md) and [physical acceptance procedure](smart-sync-3-device-acceptance.md).
+
+Release **BLOCKED** pending exact-source verification, actual elapsed expiry, physical full-hour/sleep/wake/network acceptance, representative media quality, and explicitly approved real provider capacity. No production deployment, main merge, EXE/APK publication, public download update, billing or original pending replay/delete/force-ACK occurred. Later workflow results and current branch HEAD must be checked before release; this document preserves the implementation checkpoint rather than inventing future results.
+
+## Historical verified checkpoint (2026-10-10 UTC, end of continuation)
 
 Application/UI source: `4547c483ee82ba9001423451bb22e71e77025f6f`. Engine/backend TEST runtime: `33767380ad3e5635824cc94808aabdea5184a27d`; later changes are UI/tests/docs only. Final evidence update is documentation only. PR #23 remains OPEN/DRAFT, unmerged.
 

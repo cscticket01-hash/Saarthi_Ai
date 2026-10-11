@@ -1,6 +1,23 @@
 name: Isolated TEST recycle acceptance
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        default: restore
+        options: [restore, start-expiry, check-expiry]
+      fixture_id:
+        type: string
+        description: "Expiry only: recycle-expiry-v1- followed by 8-61 lowercase letters/digits/hyphens"
+      deleted_revision:
+        type: string
+        description: "Check only: retained start-expiry artifact deletion revision"
+      deleted_at:
+        type: string
+        description: "Check only: retained artifact server deletion milliseconds"
+      recover_until:
+        type: string
+        description: "Check only: retained artifact server deadline milliseconds"
   push:
     branches: [feature/smart-sync-3]
     paths:
@@ -21,8 +38,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Verify expiry harness scope and read-only check modes
+        run: node --test .github/scripts/test_recycle_live_modes.test.cjs
       - name: TEST-only create, verified snapshot, restore and duplicate prevention
         env:
+          VS_TEST_RECYCLE_MODE: ${{ inputs.mode || 'restore' }}
+          VS_TEST_RECYCLE_FIXTURE_ID: ${{ inputs.fixture_id }}
+          VS_TEST_RECYCLE_DELETED_REVISION: ${{ inputs.deleted_revision }}
+          VS_TEST_RECYCLE_DELETED_AT: ${{ inputs.deleted_at }}
+          VS_TEST_RECYCLE_RECOVER_UNTIL: ${{ inputs.recover_until }}
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
@@ -31,4 +55,29 @@ jobs:
         if: always()
         with:
           name: isolated-test-recycle-readback
+          path: build/cloud-prerequisites/recycle-live.json
+  expiry-window-start:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/smart-sync-3'
+    needs: recycle-live
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify expiry harness scope and read-only check modes
+        run: node --test .github/scripts/test_recycle_live_modes.test.cjs
+      - name: Start or resume one retained TEST real-day expiry fixture
+        env:
+          VS_TEST_RECYCLE_MODE: start-expiry
+          VS_TEST_RECYCLE_FIXTURE_ID: recycle-expiry-v1-20261011-resume-acceptance
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_recycle_live.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-test-expiry-window-baseline
           path: build/cloud-prerequisites/recycle-live.json
