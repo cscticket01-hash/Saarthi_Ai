@@ -231,6 +231,7 @@ class WindowsBackendBridge {
 
   static Future<void> flushDocumentPending({
     Future<Map<String, dynamic>> Function(Map<String, dynamic>)? send,
+    bool Function()? canAdmit,
   }) async {
     if (_documentDraining) return;
     _documentDraining = true;
@@ -240,6 +241,7 @@ class WindowsBackendBridge {
           .collection('_windows_document_outbox')
           .get();
       for (final queued in queue.docs) {
+        if (canAdmit?.call() == false) break;
         if (FirebaseFirestore.instance.activeProfileId != origin)
           throw StateError('School changed during document sync.');
         final record = queued.data();
@@ -296,6 +298,9 @@ class WindowsBackendBridge {
             'baseCloudUploadedAt': record['baseCloudUploadedAt'],
             'fileBase64': base64Encode(bytes),
           };
+          // A pause can arrive while preparing file bytes. Finish an admitted
+          // upload and its ACK atomically, but do not start another request.
+          if (canAdmit?.call() == false) break;
           final result = await (send ?? _handleCentral)(payload);
           if (result['success'] != true)
             throw StateError('Document sync failed. Original retained.');
@@ -752,7 +757,7 @@ class WindowsBackendBridge {
     return snapshot.docs.length;
   }
 
-  static Future<int> flushPending() async {
+  static Future<int> flushPending({bool Function()? canAdmit}) async {
     final snapshot = await FirebaseFirestore.instance
         .collection('_windows_google_outbox')
         .get();
@@ -772,15 +777,19 @@ class WindowsBackendBridge {
       });
 
     for (final queued in docs) {
+      if (canAdmit?.call() == false) break;
       final data = queued.data();
       final urlText = data['url']?.toString().trim() ?? '';
       final bodyData = data['body'];
 
       if (urlText.isEmpty || bodyData is! Map) {
-        await queued.reference.delete();
-        completed++;
+        await queued.reference.update({
+          'syncState': 'needsAttention',
+          'lastError': 'Invalid pending request retained for administrator review.',
+        });
         continue;
       }
+      if (data['syncState'] == 'needsAttention' || data['syncState'] == 'conflict') continue;
 
       if (activeUrl.isEmpty ||
           _normalizedUrl(urlText) != _normalizedUrl(activeUrl)) {
@@ -799,6 +808,7 @@ class WindowsBackendBridge {
       }
 
       try {
+        if (canAdmit?.call() == false) break;
         final response = await _postFollowingAppsScriptRedirects(
           Uri.parse(urlText),
           headers: headers.isEmpty

@@ -7,6 +7,8 @@ import 'windows_connect/central_school_cloud.dart';
 
 import 'dart:async';
 import 'windows_sync_schedule.dart';
+import 'windows_sync_pause.dart';
+import 'windows_secure_storage.dart';
 import 'windows_local_restore_sync.dart';
 
 import 'package:flutter/foundation.dart';
@@ -67,6 +69,57 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   late final _schedule = WindowsSyncSchedule((delay) => scheduleSoon(delay: delay));
   Timer? _debounceTimer;
   bool _initialized = false;
+  final _pause = WindowsSyncPause();
+  String? _pauseDeviceId;
+  Future<String> _localPauseDeviceId() async {
+    if (_pauseDeviceId != null) return _pauseDeviceId!;
+    const store = WindowsSecureStorage();
+    const key = 'vidya_saarthi_sync_pause_device_v1';
+    var id = await store.read(key: key);
+    if (id == null || id.isEmpty) {
+      final random = Random.secure();
+      id = base64Url.encode(List<int>.generate(24, (_) => random.nextInt(256)));
+      await store.write(key: key, value: id);
+    }
+    return _pauseDeviceId = id;
+  }
+  Timer? _pauseTimer;
+  Future<void> _pauseWrite = Future<void>.value();
+  int _pauseGeneration = 0;
+  bool get isPaused => _pause.isPaused;
+  DateTime? get pausedUntil => _pause.pausedUntil;
+
+  void _armPauseExpiry() {
+    _pauseTimer?.cancel();
+    final expiry = pausedUntil;
+    if (expiry == null) return;
+    _pauseTimer = Timer(expiry.difference(DateTime.now()), () {
+      if (isPaused) { _armPauseExpiry(); return; }
+      unawaited(refreshDetails());
+      scheduleSoon();
+    });
+  }
+
+  Future<void> pauseSync(Duration duration) async {
+    final ref = FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause');
+    final saved = _pause.pause(duration);
+    _pauseGeneration++;
+    _debounceTimer?.cancel();
+    _rerunRequested = false;
+    _armPauseExpiry();
+    // Gate admission synchronously before awaiting durable persistence.
+    final write = _pauseWrite.catchError((Object _) {}).then((_) async {
+      saved['deviceId'] = await _localPauseDeviceId();
+      await ref.set(saved);
+    });
+    _pauseWrite = write;
+    await write;
+    await refreshDetails();
+  }
+
+  void _admitBatch() {
+    if (isPaused) throw const _SyncAdmissionPaused();
+  }
   bool _syncing = false;
   bool _resetPaused = false;
   int _activating = 0;
@@ -123,6 +176,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         origin = FirebaseFirestore.instance.activeProfileId;
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
+    final legacy = await db.collection('_windows_google_outbox').get();
     final receipts = await db.collection('_windows_sync_receipts').get();
     final backup = await db.collection('_windows_sync_status').doc('backup').get();
     final downloads = await db.collection('_windows_sync_downloads').get();
@@ -130,8 +184,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final restoreInventory = await db.collection('_windows_recycle_requests').get();
     final restores=restoreInventory.docs.where((d)=>d.data()['localRestore']==true && d.data()['schoolId']==db.activeProfileIdentity['schoolSyncId'] && d.data()['state']!='verified').toList();
     if (db.activeProfileId != origin) return;
-    final items = [...general.docs, ...documents.docs, ...restores];
+    final items = [...general.docs, ...documents.docs, ...legacy.docs, ...restores];
     details.value = {
+      'isPaused': isPaused,
+      'pauseBoundaryPending': isPaused && _syncing,
+      'pausedUntilMillis': pausedUntil?.millisecondsSinceEpoch,
       'pending': items.length,
       'conflictCount': items.where((d)=>d.data()['syncState']=='conflict' || d.data()['state']=='conflict').length,
       'pendingRestores':restores.length,
@@ -153,6 +210,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           .length,
       'items': [for(final d in general.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_firebase_outbox'},
         for(final d in documents.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_document_outbox'},
+        for(final d in legacy.docs){'id':d.id,'syncState':d.data()['syncState'] ?? 'pending', 'retryCount':d.data()['retryCount'], 'failureCategory':d.data()['failureCategory'], '_queueCollection':'_windows_google_outbox'},
         for(final d in restores){'id':d.id,...d.data(),'_queueCollection':'_windows_recycle_requests'}],
       'metrics': Map<String, int>.from(metrics),
       'performance': performanceSummary,
@@ -323,7 +381,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   void scheduleSoon({Duration delay = const Duration(milliseconds: 250), bool localMutation = false}) {
-    if (!_initialized || _syncBlocked || _resetPaused || !automaticSyncEnabled) return;
+    if (!_initialized || _syncBlocked || _resetPaused || isPaused || !automaticSyncEnabled) return;
     if (recoveryDecision != null && !recoveryDecision!.retry) {
       if (!localMutation || !recoveryDecision!.independentRecords) return;
       recoveryDecision = null;
@@ -461,6 +519,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   Future<void> pauseForAppReset() async {
     _resetPaused = true;
     _schedule.stop();
+    _pauseTimer?.cancel();
     _debounceTimer?.cancel();
     final deadline = DateTime.now().add(const Duration(seconds: 90));
     while (_syncing || _activating > 0) {
@@ -709,6 +768,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     windows_html.setSchoolStorageNamespace(profile.profileId);
     final preferences = (await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').get()).data();
     automaticSyncEnabled = preferences?['automaticSync'] != false;
+    final storedPause = (await FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause').get()).data();
+    final device = await _localPauseDeviceId();
+    _pause.restore(storedPause?['deviceId'] == device ? storedPause : null);
+    _armPauseExpiry();
     final storedHistory = (await FirebaseFirestore.instance.collection('_windows_sync_status').doc('recovery').get()).data()?['events'];
     recoveryHistory.clear();
     if (storedHistory is List) {
@@ -966,7 +1029,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   Future<void> syncNow() async {
-    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused) return;
+    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused) return;
 
     _syncing = true;
     state.value = SchoolCloudState.syncing;
@@ -1010,19 +1073,25 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _protocolVerifiedAt = DateTime.now();
         }
         try {
+          _admitBatch();
           await _pushManagedOutbox();
         } catch (e) {
           if (!isRecordSyncConflict(e)) rethrow;
         }
+        _admitBatch();
         await syncLocalRestoreRequests(FirebaseFirestore.instance,_activeSchoolSyncId,
-          (body)=>ManagedSchoolSession.callForSchool(_activeSchoolSyncId,'managed/recycle',body));
+          (body) => ManagedSchoolSession.callForSchool(_activeSchoolSyncId,'managed/recycle',body),
+          canAdmit: () => !isPaused);
+        _admitBatch();
         await WindowsDocumentTemplates.publishChangedIdCards();
         // ID preparation may create credential metadata; drain only those new
         // durable operations before uploading their published files.
-        try { await _pushManagedOutbox(); }
+        try { _admitBatch();
+        await _pushManagedOutbox(); }
         catch (e) { if (!isRecordSyncConflict(e)) rethrow; }
         try {
-          await WindowsBackendBridge.flushDocumentPending();
+          _admitBatch();
+          await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused);
         } catch (e) {
           if (!e.toString().toLowerCase().contains('conflict')) rethrow;
         }
@@ -1030,10 +1099,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             DateTime.now().difference(_lastPull!) >=
                 reconciliationInterval ||
             _manualSync || _checkpointDue) {
+          _admitBatch();
           await _pullManagedChanges();
           _lastPull = DateTime.now();
           completedReconciliation = true;
         }
+        _admitBatch();
         await refreshDetails();
         if ((details.value['needsAttention'] as num? ?? 0) > 0)
           throw StateError(
@@ -1077,7 +1148,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           return;
         }
 
+        _admitBatch();
         await _pushFirebaseOutbox(projectId: projectId, idToken: idToken);
+        _admitBatch();
         await _pullFirebase(projectId: projectId, idToken: idToken);
       }
 
@@ -1088,18 +1161,25 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       }
 
       if (scriptUrl.isNotEmpty && central.isEmpty) {
+        _admitBatch();
         await _pullGoogleSnapshot(scriptUrl);
       }
 
       if (scriptUrl.isNotEmpty && central.isEmpty) {
-        await WindowsBackendBridge.flushPending();
+        _admitBatch();
+        await WindowsBackendBridge.flushPending(canAdmit: () => !isPaused);
       }
 
-      if (central['managed'] == true)
-        await WindowsBackendBridge.flushDocumentPending();
+      if (central['managed'] == true) {
+        _admitBatch();
+        await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused);
+      }
 
+      _admitBatch();
       lastSuccessfulSync = DateTime.now();
       if (_activeProfileId == syncOrigin) state.value = SchoolCloudState.synced;
+    } on _SyncAdmissionPaused {
+      // A safe boundary was reached. Pending operations and ACKs remain intact.
     } catch (e) {
       if (_activeProfileId != syncOrigin) return;
       lastError = e.toString();
@@ -1119,6 +1199,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       watch.stop();
       metrics['reconciliationMicros'] = watch.elapsedMicroseconds;
       _syncing = false;
+      if (isPaused && _activeProfileId == syncOrigin) state.value = SchoolCloudState.syncPending;
       await refreshDetails();
       if ((lastError != null && recoveryDecision?.retry == true && _failures <= 5) || _rerunRequested) {
         final independentMutation = _rerunRequested && recoveryDecision?.independentRecords == true;
@@ -1131,7 +1212,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   bool _manualSync = false;
   Future<void> setAutomaticSync(bool enabled) async {
     final origin = _activeProfileId;
-    await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').set({'automaticSync': enabled});
+    await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').set({'automaticSync': enabled}, const SetOptions(merge: true));
     if (_activeProfileId != origin) return;
     automaticSyncEnabled = enabled;
     if (!enabled) { _debounceTimer?.cancel(); _rerunRequested = false; }
@@ -1140,6 +1221,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
   bool _rerunRequested = false;
   Future<void> requestSync() async {
+    final generation = ++_pauseGeneration;
+    final origin = _activeProfileId;
+    final ref = FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause');
+    // Persist cancellation before admitting resumed work.
+    final write = _pauseWrite.catchError((Object _) {}).then((_) => ref.set({'pausedUntilMillis': 0, 'startedAtMillis': 0}));
+    _pauseWrite = write;
+    await write;
+    if (_activeProfileId != origin || generation != _pauseGeneration) return;
+    _pause.resume();
+    _pauseTimer?.cancel();
+    if (_syncing) _rerunRequested = true;
     _debounceTimer?.cancel();
     _nextRetry = null;
     recoveryDecision = null;
@@ -1155,6 +1247,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   Future<void> _pushManagedOutbox() => WindowsPendingSchoolSync.flush(
     profileId: _activeProfileId,
+    canAdmit: () => !isPaused,
     send: (c, id, op, data) async {},
     sendVersioned: (item) async {
       metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
@@ -1216,8 +1309,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       // A new durable notice must not wait for every startup collection read.
       if (_rerunRequested) {
         _rerunRequested = false;
+        _admitBatch();
         await _pushManagedOutbox();
       }
+      _admitBatch();
       final manifest = db
           .collection('_windows_sync_manifest')
           .doc(_manifestId('managed', collection));
@@ -1327,6 +1422,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final pending = await _firebasePendingKeys();
 
     for (final collection in _firebaseCollections) {
+      _admitBatch();
       if (projectId != platformProjectId &&
           _firebaseCollections.indexOf(collection) >= 12)
         continue;
@@ -1479,6 +1575,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     required String idToken,
   }) => WindowsPendingSchoolSync.flush(
     profileId: FirebaseFirestore.instance.activeProfileId,
+    canAdmit: () => !isPaused,
     send: (collection, id, operation, data) async {
       if (operation == 'delete') {
         await WindowsFirebaseRemote.deleteDocument(
@@ -1884,6 +1981,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   void dispose() {
     _schedule.stop();
+    _pauseTimer?.cancel();
     _debounceTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _initialized = false;
@@ -1938,4 +2036,8 @@ class _ResolvedSyncProfile {
       message: message,
     );
   }
+}
+
+class _SyncAdmissionPaused implements Exception {
+  const _SyncAdmissionPaused();
 }

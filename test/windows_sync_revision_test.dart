@@ -32,6 +32,24 @@ import '../lib/sync_recovery_policy.dart';
 import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/platform/platform_config.dart';
+// Exercise the actual narrow-window navigation; tools are intentionally absent
+// from Overview. Drawer scrolling avoids selecting the main content scroller.
+Future<void> openSyncTool(WidgetTester tester, String label) async {
+  await tester.tap(find.byTooltip('Open navigation menu'));
+  await tester.pumpAndSettle();
+  await tester.scrollUntilVisible(find.text(label), 250,
+      scrollable: find.descendant(of: find.byType(Drawer),
+          matching: find.byType(Scrollable)).first);
+  await tester.ensureVisible(find.text(label));
+  await tester.pumpAndSettle();
+}
+
+Future<void> selectSyncTool(WidgetTester tester, String label) async {
+  await openSyncTool(tester, label);
+  await tester.tap(find.text(label));
+  await tester.pumpAndSettle();
+}
+
 void main(){
  test('interrupted restore resumes verified files and repairs incomplete staging bytes', () async {
    final root = await Directory.systemTemp.createTemp('vs-resume-');
@@ -213,10 +231,16 @@ void main(){
      home:WindowsSyncControlCenter(refreshOnOpen:()async{}))));
    await tester.pumpAndSettle();
    expect(find.text('Sync & Backup Control Center'),findsOneWidget);
+   await selectSyncTool(tester, 'Measured Status');
+   await tester.scrollUntilVisible(find.text('Internet connectivity'), 300,
+       scrollable: find.byType(Scrollable).first);
    expect(find.text('Not independently verified'),findsOneWidget);
    expect(find.text('Not yet verified'),findsWidgets);
    expect(find.textContaining('Operation in progress.'),findsNothing);
    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Sync Now')).onPressed,isNotNull);
+   await selectSyncTool(tester, 'Overview');
+   expect(find.text('Live Queue Activity'), findsOneWidget);
+   expect(find.text('Measured status & recovery'), findsNothing);
    final pending=await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get());
    expect(pending!.docs,hasLength(1));
    await tester.runAsync(() async {
@@ -240,6 +264,7 @@ void main(){
    try {
      await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(refreshOnOpen:()async{})));
      await tester.pumpAndSettle();
+     await selectSyncTool(tester, 'Measured Status');
      await tester.scrollUntilVisible(find.text('own-observation • verified'),300,scrollable:find.byType(Scrollable).first);
      expect(find.text('own-observation • verified'),findsOneWidget);
      expect(find.textContaining('foreign-observation'),findsNothing);
@@ -255,19 +280,19 @@ void main(){
          return {'success':true,'storageReady':true,'schoolId':own?school:'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'};
        })));
      await tester.pumpAndSettle();
-     await tester.scrollUntilVisible(find.text('Check Cloud Health'),300,scrollable:find.byType(Scrollable).first);
-     await tester.ensureVisible(find.text('Check Cloud Health'));
-   await tester.pumpAndSettle();
-   await tester.tap(find.text('Check Cloud Health'));
-     await tester.pumpAndSettle();
-     await tester.scrollUntilVisible(find.text('School cloud health'),-300,scrollable:find.byType(Scrollable).first);
+     await selectSyncTool(tester, 'Check Cloud Health');
+     await tester.scrollUntilVisible(find.text('School cloud health'),300,scrollable:find.byType(Scrollable).first);
      await tester.pumpAndSettle();
      expect(find.textContaining('Authenticated school storage handshake verified at'),own?findsOneWidget:findsNothing);
      for(final label in ['Drive school root','Google Sheets access']) {
+       if (own) await tester.scrollUntilVisible(find.text(label),300,scrollable:find.byType(Scrollable).first);
        expect(find.text(label),own?findsOneWidget:findsNothing);
        if(own)expect(find.descendant(of:find.ancestor(of:find.text(label),matching:find.byType(Card)),matching:find.text('Not independently verified')),findsOneWidget);
      }
-     if(!own)expect(find.textContaining('cloud readiness unverified'),findsOneWidget);
+     if(!own) {
+       await tester.scrollUntilVisible(find.textContaining('cloud readiness unverified'),300,scrollable:find.byType(Scrollable).first);
+       expect(find.textContaining('cloud readiness unverified'),findsOneWidget);
+     }
      await tester.pumpWidget(const SizedBox());
    }
  });
@@ -297,15 +322,8 @@ void main(){
           ),
         );
         await tester.pumpAndSettle();
-        await tester.scrollUntilVisible(
-          find.text('School Drive Usage'),
-          300,
-          scrollable: find.byType(Scrollable).first,
-        );
-        await tester.ensureVisible(find.text('School Drive Usage'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('School Drive Usage'));
-        await tester.pumpAndSettle();
+        await selectSyncTool(tester, 'School Drive Usage');
+        await openSyncTool(tester, 'School Drive Usage');
         expect(
           tester
               .widget<OutlinedButton>(
@@ -314,7 +332,9 @@ void main(){
               .onPressed,
           isNotNull,
         );
-        await tester.scrollUntilVisible(find.text('School Drive storage'),-300,scrollable:find.byType(Scrollable).first);
+        tester.state<ScaffoldState>(find.byType(Scaffold).first).closeDrawer();
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(find.text('School Drive storage'),300,scrollable:find.byType(Scrollable).first);
         await tester.pumpAndSettle();
         expect(
           find.textContaining('At least 2.00 KB'),
@@ -330,15 +350,14 @@ void main(){
        throw TimeoutException('Private upstream detail must not be rendered');
      })));
    await tester.pumpAndSettle();
-   await tester.scrollUntilVisible(find.text('Check Cloud Health'),300,scrollable:find.byType(Scrollable).first);
-   await tester.ensureVisible(find.text('Check Cloud Health'));
-   await tester.pumpAndSettle();
-   await tester.tap(find.text('Check Cloud Health'));
-   await tester.pumpAndSettle();
-   await tester.scrollUntilVisible(find.text('Action timed out. Completion is unverified; local data is retained.'),-300,scrollable:find.byType(Scrollable).first);
+   await selectSyncTool(tester, 'Check Cloud Health');
+   await tester.scrollUntilVisible(find.text('Action timed out. Completion is unverified; local data is retained.'),300,scrollable:find.byType(Scrollable).first);
    expect(find.text('Action timed out. Completion is unverified; local data is retained.'),findsOneWidget);
    expect(find.textContaining('Private upstream detail'),findsNothing);
+   await openSyncTool(tester, 'Check Cloud Health');
    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Check Cloud Health')).onPressed,isNotNull);
+   tester.state<ScaffoldState>(find.byType(Scaffold).first).closeDrawer();
+   await tester.pumpAndSettle();
    await tester.scrollUntilVisible(find.text('School cloud health'),-300,scrollable:find.byType(Scrollable).first);
    await tester.pumpAndSettle();
    expect(find.text('Health check timed out — cloud readiness unverified'),findsOneWidget);

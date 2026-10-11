@@ -1,4 +1,7 @@
 import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 Future<Map<String,dynamic>> latestAndroidUpdate({http.Client? client}) async {
@@ -56,4 +59,61 @@ void validateAndroidUpdate(Map<String,dynamic> update) {
   }
   final digest=update['sha256']?.toString();
   if(digest!=null&&!RegExp(r'^(sha256:)?[a-f0-9]{64}$').hasMatch(digest)) throw StateError('Invalid APK digest');
+}
+
+/// Public diagnostics never include provider responses, tokens, or raw exceptions.
+String androidUpdateErrorMessage(Object error) {
+  if (error is TimeoutException) return 'The update service took too long to respond. Try again later.';
+  if (error is SocketException || error is http.ClientException) return 'Unable to reach the update service. Check your connection and try again.';
+  if (error is StateError && const {
+    'No Android update is published yet', 'No update is published yet.',
+    'Update service unavailable. Try again later.', 'Invalid update response',
+    'Invalid update download address', 'Invalid APK digest',
+    'Update download failed.', 'Update verification failed. Download again.',
+  }.contains(error.message)) return error.message.toString();
+  return 'Unable to complete the update. Try again later.';
+}
+
+/// A failed/stalled download removes only its temporary APK, never school data.
+/// The caller retains its busy guard so a second download cannot share this path.
+Future<File> downloadAndroidUpdate(Map<String, dynamic> update, File destination, {
+  http.Client? client,
+  Duration headerTimeout = const Duration(seconds: 20),
+  Duration idleTimeout = const Duration(seconds: 30),
+  Duration overallTimeout = const Duration(minutes: 15),
+}) async {
+  validateAndroidUpdate(update);
+  final transport = client ?? http.Client();
+  final partial = File('${destination.path}.part');
+  IOSink? sink;
+  StreamIterator<List<int>>? chunks;
+  try {
+    final response = await transport.send(http.Request('GET', Uri.parse(update['apkUrl'] as String)))
+        .timeout(headerTimeout);
+    if (response.statusCode != 200) throw StateError('Update download failed.');
+    sink = partial.openWrite();
+    chunks = StreamIterator<List<int>>(response.stream);
+    final elapsed = Stopwatch()..start();
+    while (true) {
+      final remaining = overallTimeout - elapsed.elapsed;
+      if (remaining <= Duration.zero) throw TimeoutException('Update download deadline exceeded');
+      final budget = remaining < idleTimeout ? remaining : idleTimeout;
+      if (!await chunks.moveNext().timeout(budget)) break;
+      sink.add(chunks.current);
+      await sink.flush().timeout(budget);
+    }
+    await sink.close();
+    sink = null;
+    final expected = update['sha256']?.toString().replaceFirst('sha256:', '');
+    if (expected != null && (await sha256.bind(partial.openRead()).first).toString() != expected) {
+      throw StateError('Update verification failed. Download again.');
+    }
+    return await partial.rename(destination.path);
+  } finally {
+    // Close the download transport to cancel stalled network activity.
+    transport.close();
+    if (chunks != null) await chunks.cancel();
+    if (sink != null) { try { await sink.close(); } catch (_) {} }
+    if (await partial.exists()) await partial.delete();
+  }
 }

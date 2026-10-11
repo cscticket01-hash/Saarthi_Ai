@@ -18,6 +18,7 @@ import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'mobile/school_session.dart';
+import 'platform/github_updates.dart';
 import 'mobile/settings_screen.dart';
 import 'mobile/school_notifications.dart';
 import 'mobile/school_messaging.dart';
@@ -865,28 +866,13 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
       if (yes != true) return;
       setState(() => _busy = true);
       final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/vidya-saarthi-update.apk');
-      final client = http.Client();
-      try {
-        final response = await client.send(http.Request('GET', uri));
-        if (response.statusCode != 200)
-          throw StateError('Update download failed.');
-        final sink = file.openWrite();
-        await response.stream.pipe(sink);
-      } finally {
-        client.close();
-      }
-      final expected = u['sha256']?.toString().replaceFirst('sha256:', '');
-      if (expected != null &&
-          (await sha256.bind(file.openRead()).first).toString() != expected) {
-        await file.delete();
-        throw StateError('Update verification failed. Download again.');
-      }
+      final file = await downloadAndroidUpdate(Map<String, dynamic>.from(u),
+          File('${dir.path}/vidya-saarthi-update.apk'));
       await OpenFilex.open(file.path);
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+            .showSnackBar(SnackBar(content: Text(androidUpdateErrorMessage(e))));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

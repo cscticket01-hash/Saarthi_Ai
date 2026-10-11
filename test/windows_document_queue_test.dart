@@ -55,6 +55,31 @@ void main() {
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
   });
+  test('malformed legacy pending request is retained instead of acknowledged', () async {
+    final ref = db.collection('_windows_google_outbox').doc('retained-invalid');
+    await ref.set({'operationId': 'original-operation', 'body': 'invalid', 'queuedAt': 42});
+    expect(await WindowsBackendBridge.flushPending(), 0);
+    final retained = (await ref.get()).data()!;
+    expect(retained['operationId'], 'original-operation');
+    expect(retained['queuedAt'], 42);
+    expect(retained['body'], 'invalid');
+    expect(retained['syncState'], 'needsAttention');
+  });
+  test('pause prevents pending admission without changing queued evidence', () async {
+    final ref = db.collection('_windows_google_outbox').doc('paused-original');
+    await ref.set({'operationId': 'original-operation', 'body': 'invalid', 'queuedAt': 42});
+    final before = (await ref.get()).data();
+    expect(await WindowsBackendBridge.flushPending(canAdmit: () => false), 0);
+    expect((await ref.get()).data(), before);
+    await db.collection('_windows_document_outbox').doc('paused-document').set({
+      'operationId': 'original-document', 'schoolId': school,
+    });
+    await WindowsBackendBridge.flushDocumentPending(
+      canAdmit: () => false,
+      send: (_) async => fail('Paused request must not be sent'),
+    );
+    expect((await db.collection('_windows_document_outbox').get()).docs, hasLength(1));
+  });
   test(
       'synced multilingual inventory JSON is decoded without treating metadata as paths',
       () async {

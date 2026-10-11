@@ -12,7 +12,8 @@ bool isRecordSyncConflict(Object error) => error is CentralCloudException
 class WindowsPendingSchoolSync {
   static Future<void> flush({required String profileId,
     required Future<void> Function(String collection, String id, String operation, Map<String,dynamic>? data) send,
-    Future<String> Function(Map<String,dynamic> item)? sendVersioned}) async {
+    Future<String> Function(Map<String,dynamic> item)? sendVersioned,
+    bool Function()? canAdmit}) async {
     final db=FirebaseFirestore.instance;
     void unchanged() { if(db.activeProfileId != profileId) throw StateError('School changed during sync.'); }
     unchanged();
@@ -35,6 +36,7 @@ class WindowsPendingSchoolSync {
     Object? firstConflict;
     for(final queued in docs) {
       unchanged();queued.reference.requireOriginProfile();
+      if (canAdmit?.call() == false) break;
       final item=queued.data();
       final collection=item['collection']?.toString()??'';
       final id=item['documentId']?.toString()??'';
@@ -53,6 +55,7 @@ class WindowsPendingSchoolSync {
         await queued.reference.update(item);
       }
       if (item['syncState'] == 'conflict' || item['syncState'] == 'needsAttention') continue;
+      if (canAdmit?.call() == false) break;
       String? revision;
       try {
         revision = sendVersioned == null ? null : await sendVersioned(item);

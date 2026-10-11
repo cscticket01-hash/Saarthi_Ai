@@ -8,7 +8,7 @@ typedef LocalRestoreCall = Future<Map<String,dynamic>> Function(Map<String,dynam
 /// Completes an approved restore only after the original delete's durable ACK.
 /// Bounded inventory reads retain both original operations on every failure.
 Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
-    LocalRestoreCall call) async {
+    LocalRestoreCall call, {bool Function()? canAdmit}) async {
   final origin = db.activeProfileId;
   void check() {
     if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school) {
@@ -20,6 +20,7 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
   check();
   for (final row in requests.docs.where((r)=>r.data()['localRestore']==true &&
       r.data()['schoolId']==school && {'awaitingDeleteAck','awaitingCloudRestore','retry'}.contains(r.data()['state'])).take(3)) {
+    if (canAdmit?.call() == false) return;
     final intent = row.data();
     final deletionId = intent['deletionOperationId'];
     if (deletionId is! String || intent['administratorApproved'] != true) continue;
@@ -36,6 +37,7 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
         selected={'fileId':retainedBody['fileId']};
       }
       for (var page=0;selected==null && page<4;page++) {
+        if (canAdmit?.call() == false) return;
         final inventory = await call({'operation':'list','collection':intent['collection'],'after':cursor??''}).timeout(const Duration(seconds:95));
         check();
         if (inventory['success'] != true || inventory['schoolId'] != school || inventory['recycleVersion'] != 1 || inventory['entries'] is! List || inventory['partial'] is! bool) {
@@ -62,6 +64,7 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
       final body={'operation':'restore','fileId':selected['fileId'],'operationId':intent['operationId'],'expectedRecordRevision':revision};
       await row.reference.set({'state':'awaitingCloudRestore','body':body},const SetOptions(merge:true));
       check();
+      if (canAdmit?.call() == false) return;
       final ack=await call(body).timeout(const Duration(seconds:95));
       check();
       if(ack['success']!=true || ack['schoolId']!=school || ack['restored']!=true || ack['syncProtocol']!=2 ||
