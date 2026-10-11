@@ -27,7 +27,7 @@ Future<Map<String, dynamic>> collectWindowsSchoolIdBackup(
       if (entity is! Directory) continue;
       final id = entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
       if (!RegExp(r'^[a-z][a-z0-9-]{1,80}$').hasMatch(id) ||
-          await entity.resolveSymbolicLinks() != entity.absolute.path) {
+          _backupHasLinkedAncestor(entity.path)) {
         missing.add('Designer folder requires review');
         continue;
       }
@@ -39,6 +39,16 @@ Future<Map<String, dynamic>> collectWindowsSchoolIdBackup(
             '${entity.path}${Platform.pathSeparator}$stem.applied.json',
           ).exists())
         continue;
+      final revisions = await entity
+          .list(followLinks: false)
+          .where(
+            (f) => f.uri.pathSegments.last.startsWith('$stem.draft.json.bak.'),
+          )
+          .length;
+      if (revisions > 1)
+        missing.add(
+          'Designer $id: ${revisions - 1} older historical draft revisions are not included; originals retained',
+        );
       try {
         final store = IdCardDraftStorageIo(
           rootPath: entity.path,
@@ -58,7 +68,7 @@ Future<Map<String, dynamic>> collectWindowsSchoolIdBackup(
     '${support.path}${Platform.pathSeparator}id_card_bulk_jobs${Platform.pathSeparator}${sha256.convert(utf8.encode(school))}',
   );
   if (await bulk.exists()) {
-    if (await bulk.resolveSymbolicLinks() != bulk.absolute.path) {
+    if (_backupHasLinkedAncestor(bulk.path)) {
       missing.add('Bulk job folder links require review');
     } else {
       try {
@@ -83,4 +93,17 @@ Future<Map<String, dynamic>> collectWindowsSchoolIdBackup(
   }
   if (!own()) throw StateError('School changed during ID backup');
   return result;
+}
+
+bool _backupHasLinkedAncestor(String path) {
+  var current = Directory(path).absolute;
+  while (true) {
+    if (FileSystemEntity.typeSync(current.path, followLinks: false) ==
+        FileSystemEntityType.link)
+      return true;
+    final parent = current.parent;
+    if (parent.path == current.path) break;
+    current = parent;
+  }
+  return false;
 }

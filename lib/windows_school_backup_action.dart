@@ -143,10 +143,11 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
   for (final entry in roots.entries) {
     final directory = entry.value;
     if (!await directory.exists()) continue;
-    if (await directory.resolveSymbolicLinks() != directory.absolute.path) {
+    if (_backupHasLinkedAncestor(directory.path)) {
       missing.add('${entry.key}: symbolic-link folder requires review');
       continue;
     }
+    final canonicalRoot = await directory.resolveSymbolicLinks();
     await for (final entity in directory.list(
       recursive: true,
       followLinks: false,
@@ -157,17 +158,16 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
       }
       if (entity is! File) continue;
       final canonical = await entity.resolveSymbolicLinks();
-      if (!canonical.startsWith(
-        '${directory.absolute.path}${Platform.pathSeparator}',
-      )) {
+      if (!_backupCanonicalPath(canonical)
+          .startsWith('${_backupCanonicalPath(canonicalRoot)}/')) {
         missing.add('${entry.key}: outside-school file excluded');
         continue;
       }
       final relative = canonical
-          .substring(directory.absolute.path.length + 1)
+          .substring(canonicalRoot.length + 1)
           .replaceAll(Platform.pathSeparator, '/');
       files['${entry.key}/$relative'] = File(canonical);
-      includedPaths.add(canonical);
+      includedPaths.add(_backupCanonicalPath(canonical));
     }
   }
   void inspect(dynamic value, String path) {
@@ -181,7 +181,7 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
             entry.value is String &&
             (entry.value as String).isNotEmpty &&
             !includedPaths.contains(
-              File(entry.value as String).absolute.path,
+              _referenceCanonicalPath(entry.value as String),
             )) {
           missing.add(
             '$path/${entry.key}: local media unavailable or outside current school',
@@ -237,5 +237,36 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
         ],
       ),
     );
+  }
+}
+
+String _backupCanonicalPath(String path) {
+  var value = path.replaceAll(String.fromCharCode(92), '/');
+  if (Platform.isWindows) {
+    if (value.startsWith('//?/')) value = value.substring(4);
+    value = value.toLowerCase();
+  }
+  return value.replaceAll(RegExp(r'/+$'), '');
+}
+
+bool _backupHasLinkedAncestor(String path) {
+  var current = Directory(path).absolute;
+  while (true) {
+    if (FileSystemEntity.typeSync(current.path, followLinks: false) ==
+        FileSystemEntityType.link)
+      return true;
+    final parent = current.parent;
+    if (parent.path == current.path) break;
+    current = parent;
+  }
+  return false;
+}
+
+String _referenceCanonicalPath(String path) {
+  try {
+    if (_backupHasLinkedAncestor(File(path).parent.path)) return '';
+    return _backupCanonicalPath(File(path).resolveSymbolicLinksSync());
+  } catch (_) {
+    return '';
   }
 }

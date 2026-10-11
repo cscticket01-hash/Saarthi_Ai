@@ -1,10 +1,41 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/windows_disk_storage.dart';
 
 void main() {
+  test(
+    'native Windows storage reports actual local capacity and free space',
+    () async {
+      // No injected probe: invokes the production GetDiskFreeSpaceExW FFI path
+      // in its real isolate on the Windows-hosted runner.
+      final measured = await WindowsDiskStorage()
+          .measure(Directory.systemTemp.path)
+          .timeout(const Duration(seconds: 10));
+      expect(
+        measured['status'],
+        'Measured',
+        reason: measured['reason']?.toString(),
+      );
+      final total = measured['totalBytes'] as int;
+      final free = measured['freeBytes'] as int;
+      final available = measured['availableBytes'] as int;
+      expect(total, greaterThan(0));
+      expect(free, greaterThan(0));
+      expect(free, lessThanOrEqualTo(total));
+      expect(available, inInclusiveRange(0, free));
+      expect(measured['usedBytes'], total - free);
+      // Numeric evidence only; omit volume paths and application/user identities.
+      print(
+        'NATIVE_WINDOWS_DISK totalBytes=$total freeBytes=$free availableBytes=$available',
+      );
+    },
+    skip: Platform.isWindows
+        ? false
+        : 'Windows-native FFI acceptance requires a Windows runner',
+  );
   test('whole local volume usage is measured independently of application bytes and cached', () async {
     var calls = 0;
     var now = DateTime(2026, 10, 11);
