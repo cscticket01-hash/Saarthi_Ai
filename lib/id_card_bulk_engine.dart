@@ -118,6 +118,42 @@ class IdCardBulkStudent {
   }
   final String schoolId, classId, studentId, cardIssueId, qr, _dataJson;
   final Map<String, Uint8List> _images, _backgrounds;
+  Map<String, dynamic> get durableSnapshot => {
+    'schoolId': schoolId,
+    'classId': classId,
+    'studentId': studentId,
+    'cardIssueId': cardIssueId,
+    'qr': qr,
+    'data': data,
+    'images': {
+      for (final e in _images.entries) e.key: base64Encode(e.value),
+    },
+    'backgrounds': {
+      for (final e in _backgrounds.entries) e.key: base64Encode(e.value),
+    },
+  };
+  static IdCardBulkStudent fromDurableSnapshot(Map<String, dynamic> value) {
+    Map<String, Uint8List> bytes(Object? raw) {
+      if (raw is! Map || raw.length > 16) {
+        throw const FormatException('Invalid bulk assets.');
+      }
+      return {
+        for (final entry in raw.entries)
+          if (entry.key is String && entry.value is String)
+            entry.key as String: base64Decode(entry.value as String),
+      };
+    }
+    return IdCardBulkStudent(
+      schoolId: value['schoolId'] as String,
+      classId: value['classId'] as String,
+      studentId: value['studentId'] as String,
+      cardIssueId: value['cardIssueId'] as String,
+      qr: value['qr'] as String,
+      data: Map<String, dynamic>.from(value['data'] as Map),
+      images: bytes(value['images']),
+      backgrounds: bytes(value['backgrounds']),
+    );
+  }
   Map<String, dynamic> get data =>
       Map<String, dynamic>.from(jsonDecode(_dataJson) as Map);
   Map<String, Uint8List> get images => {
@@ -272,6 +308,50 @@ class IdCardBulkPlan {
     ],
   };
   String get selectionFingerprint => _digest(manifest);
+
+  /// Self-contained, immutable school-scoped input for offline crash recovery.
+  /// Contains student and image data: the caller MUST use protected app-local
+  /// storage and never upload this checkpoint to analytics or a central server.
+  Map<String, dynamic> get durableSnapshot => {
+    'version': 1,
+    'selectionFingerprint': selectionFingerprint,
+    'template': jsonDecode(_templateJson),
+    'landscape': landscape,
+    'gapMm': gapMm,
+    'minimumMarginMm': minimumMarginMm,
+    'backPlacement': backPlacement.name,
+    'students': [for (final item in students) item.durableSnapshot],
+  };
+
+  static IdCardBulkPlan fromDurableSnapshot(Map<String, dynamic> value) {
+    if (value['version'] != 1 || value['students'] is! List) {
+      throw const FormatException('Unsupported bulk checkpoint.');
+    }
+    final name = value['backPlacement'];
+    final modes = IdCardBackPlacement.values.where((m) => m.name == name);
+    if (modes.length != 1) {
+      throw const FormatException('Invalid bulk back placement.');
+    }
+    final plan = IdCardBulkPlan(
+      template: IdCardManifest.fromJson(
+        Map<String, dynamic>.from(value['template'] as Map),
+      ),
+      students: [
+        for (final row in value['students'] as List)
+          IdCardBulkStudent.fromDurableSnapshot(
+            Map<String, dynamic>.from(row as Map),
+          ),
+      ],
+      landscape: value['landscape'] == true,
+      gapMm: (value['gapMm'] as num).toDouble(),
+      minimumMarginMm: (value['minimumMarginMm'] as num).toDouble(),
+      backPlacement: modes.single,
+    );
+    if (value['selectionFingerprint'] != plan.selectionFingerprint) {
+      throw const FormatException('Bulk checkpoint selection drift detected.');
+    }
+    return plan;
+  }
 }
 
 class IdCardBulkCancelled implements Exception {
