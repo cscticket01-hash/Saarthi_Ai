@@ -30,7 +30,7 @@ void main() {
   tearDown(() => engine.details.value = previous);
 
   testWidgets('overview keeps real queue activity and combined pending counts; queue opens without adding attention twice', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(refreshOnOpen: () async {})));
+    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
     await tester.pumpAndSettle();
     expect(find.text('LIVE UI'), findsNothing);
     expect(find.text('Detailed status & safe controls'), findsNothing);
@@ -53,7 +53,7 @@ void main() {
     final completion = Completer<void>();
     var starts = 0;
     final pauses = <Duration>[];
-    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(
+    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'},
       refreshOnOpen: () async {},
       syncRequest: () async { starts++; await completion.future; },
       pauseRequest: (duration) async { pauses.add(duration); },
@@ -75,7 +75,7 @@ void main() {
   });
 
   testWidgets('narrow window drawer retains recovery and diagnostic controls outside Overview', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(refreshOnOpen: () async {})));
+    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
     await tester.pumpAndSettle();
     expect(find.text('Export Sanitized Report'), findsNothing);
     await tester.tap(find.byTooltip('Open navigation menu'));
@@ -103,7 +103,7 @@ void main() {
          'operationId': 'foreign-op', 'isRetryable': true, 'at': 123456},
       ],
     };
-    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(refreshOnOpen: () async {})));
+    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
     await tester.pump(); await tester.pump(const Duration(milliseconds: 100));
     await tester.scrollUntilVisible(find.text('Smart Repair — Safe Retry'), 200,
         scrollable: find.byType(Scrollable).first);

@@ -25,6 +25,7 @@ class WindowsSyncControlCenter extends StatefulWidget {
     this.refreshOnOpen,
     this.healthProbe,
     this.storageProbe,
+    this.diskProbe,
     this.syncRequest,
     this.pauseRequest,
   });
@@ -33,6 +34,7 @@ class WindowsSyncControlCenter extends StatefulWidget {
   final Future<void> Function(Duration)? pauseRequest;
   final Future<Map<String, dynamic>> Function(String school)? healthProbe;
   final Future<Map<String, dynamic>> Function(String school)? storageProbe;
+  final Future<Map<String, dynamic>> Function(String path)? diskProbe;
   static const categories = [
     'students_directory',
     'teachers_directory',
@@ -253,7 +255,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     Map<String, dynamic> result;
     try {
       final directory = await WindowsLocalStorage.dataDirectory();
-      result = await diskStorage.measure(directory.path);
+      result = await (widget.diskProbe != null
+          ? widget.diskProbe!(directory.path)
+          : diskStorage.measure(directory.path));
     } catch (_) {
       result = {'status': 'Unknown'};
     }

@@ -228,7 +228,7 @@ void main(){
    await tester.pumpWidget(RepaintBoundary(key:previewKey,child:MaterialApp(theme:ThemeData.dark().copyWith(
      scaffoldBackgroundColor:const Color(0xFF0B141A),appBarTheme:const AppBarTheme(backgroundColor:Color(0xFF1F2C34)),
      textTheme:ThemeData.dark().textTheme.apply(fontFamily:'ControlCenterPreview')),
-     home:WindowsSyncControlCenter(refreshOnOpen:()async{}))));
+     home:WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen:()async{}))));
    await tester.pumpAndSettle();
    expect(find.text('Sync & Backup Control Center'),findsOneWidget);
    await selectSyncTool(tester, 'Measured Status');
@@ -262,7 +262,7 @@ void main(){
      {'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','collection':'foreign-observation','state':'verified','remaining':0,'verified':999,'blocked':0},
    ]};
    try {
-     await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(refreshOnOpen:()async{})));
+     await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen:()async{})));
      await tester.pumpAndSettle();
      await selectSyncTool(tester, 'Measured Status');
      await tester.scrollUntilVisible(find.text('own-observation • verified'),300,scrollable:find.byType(Scrollable).first);
@@ -274,7 +274,7 @@ void main(){
  });
  testWidgets('cloud health requires authenticated own-school readiness and rejects a foreign result', (tester) async {
    for(final own in [true,false]) {
-     await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(
+     await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'},
        key:ValueKey(own),refreshOnOpen:()async{},healthProbe:(requested)async{
          expect(requested,school);
          return {'success':true,'storageReady':true,'schoolId':own?school:'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'};
@@ -302,7 +302,7 @@ void main(){
       for (final variant in ['partial', 'foreign', 'old']) {
         await tester.pumpWidget(
           MaterialApp(
-            home: WindowsSyncControlCenter(
+            home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'},
               key: ValueKey(variant),
               refreshOnOpen: () async {},
               storageProbe: (requested) async {
@@ -345,7 +345,7 @@ void main(){
     },
   );
  testWidgets('timed-out cloud health stays unverified and releases controls', (tester) async {
-   await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(
+   await tester.pumpWidget(MaterialApp(home:WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'},
      refreshOnOpen:()async{},healthProbe:(_)async{
        throw TimeoutException('Private upstream detail must not be rendered');
      })));
@@ -418,8 +418,8 @@ void main(){
      await expectLater(WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
        send:(a,b,c,d)async{},sendVersioned:(item)async{
          expect(item['operationId'],'existing-operation-123');expect(item['schoolId'],school);
-         throw StateError('Isolated network failure');
-       }),throwsStateError);
+         throw const SocketException('Isolated network failure');
+       }),throwsA(isA<SocketException>()));
      expect((await row.get()).data()?['operationId'],'existing-operation-123');
      expect((await row.get()).data()?['data'],{'name':'Retained fixture'});
    }

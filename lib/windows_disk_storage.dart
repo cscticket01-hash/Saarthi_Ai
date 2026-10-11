@@ -23,14 +23,18 @@ class WindowsDiskStorage {
     if (!_supported || match == null) return Future.value({
       'status': 'Unknown', 'reason': 'Local Windows volume measurement unavailable',
     });
-    final root = '${match[1]!.toUpperCase()}:\\';
+    final root = '${match[1]!.toUpperCase()}:\';
     final cached = _cache[root];
     if (cached != null && _clock().millisecondsSinceEpoch -
         (cached['measuredAt'] as int) >= 0 && _clock().millisecondsSinceEpoch -
         (cached['measuredAt'] as int) < freshness.inMilliseconds) {
       return Future.value(Map<String, dynamic>.from(cached));
     }
-    return _pending[root] ??= _measure(root).whenComplete(() => _pending.remove(root));
+    return _pending[root] ??= _measure(root).whenComplete(() {
+      // Do not return remove()'s value: it is this same completing Future,
+      // and awaiting it inside whenComplete creates a self-dependent cycle.
+      _pending.remove(root);
+    });
   }
 
   Future<Map<String, dynamic>> _measure(String root) async {

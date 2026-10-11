@@ -11,6 +11,12 @@ import '../lib/windows_connect/central_school_cloud.dart';
 class _ObservedTimer implements Timer {
   bool active = true;
   @override void cancel() => active = false;
+  void fire(void Function() callback) {
+    if (!active) return;
+    // A real one-shot Timer is inactive before its callback runs.
+    active = false;
+    callback();
+  }
   @override bool get isActive => active;
   @override int get tick => 0;
 }
@@ -46,7 +52,8 @@ void main() {
     expect(delays.last,const Duration(minutes:11));
     expect(timers.first.isActive,false);
     now = DateTime.utc(2026,10,11,11);
-    callbacks.last();
+    timers.last.fire(callbacks.last);
+    expect(timers.last.isActive,false);
     expect(signals,[const Duration(milliseconds:250)]);
     expect(syncCheckpointDue(checkpoint,now),true);
     schedule.armCheckpoint(checkpoint);

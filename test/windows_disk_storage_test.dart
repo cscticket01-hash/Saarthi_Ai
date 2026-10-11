@@ -8,10 +8,11 @@ void main() {
     var now = DateTime(2026, 10, 11);
     final disk = WindowsDiskStorage(supported: true, clock: () => now,
       probe: (root) async {
-        calls++; expect(root, 'C:\\');
+        calls++; expect(root, 'C:\');
         return {'totalBytes': 1000, 'freeBytes': 400, 'availableBytes': 300};
       });
-    final first = await disk.measure('C:\\School\\LocalFiles');
+    final first = await disk.measure('C:\\School\\LocalFiles')
+        .timeout(const Duration(seconds: 2));
     expect(first['usedBytes'], 600);
     expect(first['freeBytes'], 400);
     expect(first['availableBytes'], 300);
@@ -46,7 +47,26 @@ void main() {
     final disk = WindowsDiskStorage(supported: true, probe: (_) {calls++; return complete.future;});
     final a = disk.measure('D:\\a'), b = disk.measure('D:\\b');
     complete.complete({'totalBytes': 100, 'freeBytes': 50, 'availableBytes': 50});
-    expect((await a)['usedBytes'], 50); expect((await b)['usedBytes'], 50);
+    final results = await Future.wait([a, b]).timeout(const Duration(seconds: 2));
+    expect(results[0]['usedBytes'], 50); expect(results[1]['usedBytes'], 50);
     expect(calls, 1);
   });
+  testWidgets('timed-out read stays Unknown and its late result is never cached', (tester) async {
+    final lateRead = Completer<Map<String, int>>();
+    var calls = 0;
+    final disk = WindowsDiskStorage(supported: true, probe: (_) {
+      calls++;
+      if (calls == 1) return lateRead.future;
+      return Future.value({'totalBytes': 200, 'freeBytes': 100, 'availableBytes': 100});
+    });
+    final first = disk.measure('C:\\app');
+    await tester.pump(const Duration(seconds: 3));
+    expect((await first)['status'], 'Unknown');
+    lateRead.complete({'totalBytes': 1000, 'freeBytes': 900, 'availableBytes': 900});
+    await tester.pump();
+    final next = await disk.measure('C:\\app');
+    expect(next['totalBytes'], 200);
+    expect(calls, 2);
+  });
+
 }

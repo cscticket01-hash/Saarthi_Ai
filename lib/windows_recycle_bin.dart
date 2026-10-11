@@ -154,24 +154,24 @@ class _WindowsRecycleBinState extends State<WindowsRecycleBin> {
       const Text('Retained offline deletion snapshots',style:TextStyle(fontSize:20)),
       Text(localVerified && db.activeProfileId==origin ? '${localEntries.length} retained snapshots in this school/category.' : 'Local snapshot inventory unverified.'),
       const Text('These are retained local evidence, not a verified restore or proof of a current server restore window. Offline administrator requests preserve deletion ordering; pending views are not cloud success. Original deletion intents, financial evidence and file bytes are retained.'),
-      if(db.activeProfileId==origin)for(final row in localEntries)Card(child:ListTile(
-        title:Text('Local snapshot: ${(row['snapshot'] as Map)['name'] ?? row['documentId']}'),
-        subtitle:Text('School: $school • Category: ${row['collection']}\nDevice deletion time: ${stamp(row['deletedAt'])}\nDeleted by: ${row['deletedBy'] ?? 'Unknown'}\nRecovery deadline: ${stamp(row['recoverUntil'])} (server confirmation required)\nEligibility: ${row['cloudDeletionVerified'] == true ? 'Stored delete ACK; restore still requires current server authorization' : 'Pending / Unknown — delete ACK not verified'}\nRestore: ${row['restoreState'] ?? 'Not requested'}\nOriginal deletion identity retained • ${row['cloudDeletionVerified']==true && row['deletedRevision'] is String ? 'Stored verified deletion receipt linked' : 'Cloud deletion ACK not verified'}'),
-        trailing:SizedBox(width: 180, child: Column(mainAxisSize: MainAxisSize.min, children:[
+      if(db.activeProfileId==origin)for(final row in localEntries)Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        Text('Local snapshot: ${(row['snapshot'] as Map)['name'] ?? row['documentId']}'),
+        Text('School: $school • Category: ${row['collection']}\nDevice deletion time: ${stamp(row['deletedAt'])}\nDeleted by: ${row['deletedBy'] ?? 'Unknown'}\nRecovery deadline: ${stamp(row['recoverUntil'])} (server confirmation required)\nEligibility: ${row['cloudDeletionVerified'] == true ? 'Stored delete ACK; restore still requires current server authorization' : 'Pending / Unknown — delete ACK not verified'}\nRestore: ${row['restoreState'] ?? 'Not requested'}\nOriginal deletion identity retained • ${row['cloudDeletionVerified']==true && row['deletedRevision'] is String ? 'Stored verified deletion receipt linked' : 'Cloud deletion ACK not verified'}'),
+        Wrap(spacing:12,runSpacing:8,children:[
           TextButton(onPressed:busy||!localVerified?null:()=>restoreLocal(row),child:const Text('Restore offline')),
           const Tooltip(message:'Retention-safe server purge unavailable; pending data and financial/document evidence retained',
             child:TextButton(onPressed:null,child:Text('Permanent Delete'))),
-        ])))),
+        ]),]))),
       const Divider(),
       Text(verified ? 'Cloud deletion inventory verified; ${entries.length} entries loaded${partial ? ' (more available)' : ''}.' : 'Cloud deletion inventory unverified.'),
       if(verified && entries.isEmpty)const Text('No recycle entries in the selected category. This does not verify other categories.'),
-      for(final row in entries)Card(child:ListTile(
-        title:Text('${row['name'] ?? row['id']} • ${row['collection']}'),
-        subtitle:Text('School: $school\nDeleted: ${stamp(row['deletedAt'])}\nDeleted by: ${row['deletedBy'] ?? 'Unknown'}\nRecovery deadline: ${stamp(row['recoverUntil'])}\nCloud deletion revision verified; original delete operation ACK: Unknown\nRestore eligibility: ${row['status']} • remaining: ${remaining(row)>0 ? '${(remaining(row)/60000).ceil()} minutes' : 'Restore window unavailable/expired'}'),
-        trailing:SizedBox(width: 180, child: Column(mainAxisSize: MainAxisSize.min, children:[
+      for(final row in entries)Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        Text('${row['name'] ?? row['id']} • ${row['collection']}'),
+        Text('School: $school\nDeleted: ${stamp(row['deletedAt'])}\nDeleted by: ${row['deletedBy'] ?? 'Unknown'}\nRecovery deadline: ${stamp(row['recoverUntil'])}\nCloud deletion revision verified; original delete operation ACK: Unknown\nRestore eligibility: ${row['status']} • remaining: ${remaining(row)>0 ? '${(remaining(row)/60000).ceil()} minutes' : 'Restore window unavailable/expired'}'),
+        Wrap(spacing:12,runSpacing:8,children:[
           TextButton(onPressed:busy||!verified||row['status']!='recoverable'||remaining(row)<=0 ? null : ()=>restore(row),child:const Text('Restore')),
           const Tooltip(message:'Retention-safe server purge unavailable; pending data and financial/document evidence retained',
             child:TextButton(onPressed:null,child:Text('Permanent Delete'))),
-        ])))),
+        ]),]))),
     ]));
 }

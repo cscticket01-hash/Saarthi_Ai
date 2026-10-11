@@ -21,6 +21,7 @@ function check(name, result, ok) {
 async function run() {
   let r = await request(endpoint + '/healthz');
   check('Firebase readiness', r, r.status === 200 && r.data.ready === true && r.data.projectId === 'saarthi-ai-df12b');
+  report.runtimeCommit=/^[a-f0-9]{40}$/.test(r.data.runtimeCommit||'')?r.data.runtimeCommit:'Unknown';
   r = await request(endpoint, {action: 'managed/session', schoolId});
   check('Authentication required', r, r.status === 401);
   r = await request(endpoint, {action: 'managed/session', schoolId: 'vs-' + '0'.repeat(32)});
@@ -47,6 +48,12 @@ async function run() {
     report.status = 'BLOCKED'; report.blocker = 'Authorized isolated TEST Apps Script storage connection is not ready.'; return;
   }
   check('Owner-connected TEST storage', r, true);
+  const version=r.data.scriptBundleVersion;
+  report.deployedScriptEvidence={scope:'existing isolated TEST signed health response',
+    scriptBundleVersion:typeof version==='string'&&/^20\d{2}-\d{2}-\d{2}\.\d{1,3}$/.test(version)?version:'Unknown',
+    studentImportSheetVersion:r.data.studentImportSheetVersion===1?1:'Unknown',
+    studentSlotUniquenessVersion:r.data.studentSlotUniquenessVersion===1?1:'Unknown',
+    expectedReviewedSourceBundle:'2026-10-11.1',matchesReviewedSource:version==='2026-10-11.1'};
   r = await request(endpoint, {action: 'managed/records', schoolId, collection: 'school_settings', operation: 'read', syncProtocol: 2}, token);
   check('Read-only TEST settings protocol', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && r.data.syncProtocol === 2);
   r = await request(endpoint, {action: 'managed/sync/status', schoolId}, token);

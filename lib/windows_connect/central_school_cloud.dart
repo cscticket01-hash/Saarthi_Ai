@@ -361,6 +361,7 @@ class CentralSchoolCloud {
       // Server messages are accepted only from the configured central endpoint,
       // and only when they exactly match a fixed, non-secret public explanation.
       const publicMessages = {
+        'Import preview changed or expired',
         'School membership is inactive',
         'Another school is not accessible',
         'Legacy school administrator proof is required',
