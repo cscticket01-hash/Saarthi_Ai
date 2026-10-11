@@ -322,6 +322,10 @@ class CentralSchoolCloud {
               errorBody['message'] == 'Record revision conflict');
       if (recordConflict) detail = ' Record revision conflict.';
       const syncFailures = {
+        'SCRIPT_OPERATION_FAILED': 'School Google storage rejected the operation. Existing data and pending changes are retained; owner diagnostics are required.',
+        'SCRIPT_TIMEOUT': 'School Google storage timed out. Pending changes are retained; retry is delayed.',
+        'SCRIPT_QUOTA_EXCEEDED': 'School Google storage quota is temporarily exhausted. Pending changes are retained.',
+        'SCRIPT_PERMISSION_DENIED': 'School Google storage authorization needs owner review. Pending changes are retained.',
         'RECORD_REVISION_CONFLICT': 'Record revision conflict.',
         'OPERATION_ID_CONFLICT': 'Sync operation ID conflict. Original operation retained; review before retrying.',
         'SCHOOL_STORAGE_NOT_CONNECTED': 'School storage is not connected. Ask the developer to verify the existing school storage binding.',

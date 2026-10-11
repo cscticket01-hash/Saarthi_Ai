@@ -1,0 +1,71 @@
+name: Smart Sync source review
+
+# Static inspection only: no school credentials, cloud writes, deployments,
+# platform publication or repetition of the real-cloud acceptance workflows.
+'on':
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - .github/workflows/smart-sync-source-review.yml
+      - lib/**
+      - test/**
+      - pubspec.yaml
+      - pubspec.lock
+      - analysis_options.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smart-sync-source-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-recovery-and-cache:
+    if: github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve existing application dependencies
+        run: flutter pub get
+      - name: Analyze exact committed recovery, cache and integration source
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p build/smart-sync-source-review
+          printf '%s\n' "$GITHUB_SHA" > build/smart-sync-source-review/TEST-COMMIT.txt
+          flutter --version > build/smart-sync-source-review/flutter-version.txt
+          flutter analyze --no-fatal-infos --no-fatal-warnings \
+            lib/main_windows.dart \
+            lib/windows_backup_integrity.dart \
+            lib/windows_binary_downloads.dart \
+            lib/windows_clean_install_entry.dart \
+            lib/windows_clean_install_recovery.dart \
+            lib/windows_clean_install_restore_screen.dart \
+            lib/windows_local_firestore.dart \
+            lib/windows_local_restore_sync.dart \
+            lib/windows_local_storage.dart \
+            lib/windows_recycle_bin.dart \
+            lib/windows_school_image_cache.dart \
+            lib/windows_sync_control_center.dart \
+            lib/windows_sync_engine.dart \
+            test/windows_binary_downloads_test.dart \
+            test/windows_clean_install_recovery_test.dart \
+            test/windows_local_first_save_test.dart \
+            test/windows_local_restore_sync_test.dart \
+            test/windows_offline_restore_test.dart \
+            test/windows_startup_test.dart \
+            test/windows_sync_revision_test.dart \
+            2>&1 | tee build/smart-sync-source-review/analysis.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smart-sync-exact-source-analysis
+          path: build/smart-sync-source-review
+          if-no-files-found: warn

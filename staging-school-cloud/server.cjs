@@ -8,7 +8,7 @@ function isolatedTestSchool(env) {
   if(env.SAARTHI_ISOLATED_TEST_MODE!=='true'||!/^vs-[a-f0-9]{32}$/.test(env.SAARTHI_ISOLATED_TEST_SCHOOL_ID||''))throw Error('Isolated TEST school configuration required');
   return env.SAARTHI_ISOLATED_TEST_SCHOOL_ID;
 }
-function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,logger=entry=>console.info(JSON.stringify(entry))}) {
+function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,logger=entry=>console.info(JSON.stringify(entry))}) {
   if(testSchoolId!==null&&!/^vs-[a-f0-9]{32}$/.test(testSchoolId))throw Error('Invalid isolated TEST school');
   let windowStart=Date.now(), requests=0,anonymousRequests=0;
   let healthCache;
@@ -33,7 +33,8 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,logger
     if(req.method==='GET' && req.url==='/school-cloud/healthz'){
       try{
         if(!healthCache || Date.now()-healthCache.at>30000){await health();healthCache={at:Date.now()};}
-        return send(200,{service:'vidya-saarthi-central-staging',projectId:PROJECT,architecture:'central-v2',ready:true});
+        return send(200,{service:'vidya-saarthi-central-staging',projectId:PROJECT,architecture:'central-v2',ready:true,
+          ...(testSchoolId&&/^[a-f0-9]{40}$/.test(runtimeCommit||'')?{runtimeCommit}: {})});
       }catch{return send(503,{service:'vidya-saarthi-central-staging',ready:false});}
     }
     if(req.method!=='POST' || req.url!=='/school-cloud') return send(405,{success:false,message:'POST required'});
@@ -68,10 +69,14 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,logger
       // Log every failure without exception text, request payloads or credentials.
       // Upstream Script failures must not masquerade as a central-service outage.
       const context=e.syncDiagnostic;
-      const diagnostic=status===409&&['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(code)
+      const eligibleDiagnostic=(status===409&&['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(code))||([503,504].includes(status)&&['SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_TIMEOUT'].includes(code));
+      const diagnostic=eligibleDiagnostic
         &&context&&/^vs-[a-f0-9]{32}$/.test(context.schoolId)&&[1,2].includes(context.syncProtocol)
         ?{schoolId:context.schoolId,syncProtocol:context.syncProtocol,
-          ...(typeof context.operationId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(context.operationId)?{operationId:context.operationId}:{})}:{};
+          ...(typeof context.operationId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(context.operationId)?{operationId:context.operationId}:{}),
+          ...(['SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_TIMEOUT'].includes(code)&&
+            ['request','redirect','response'].includes(context.scriptStage)&&['timeout','socket','dns','connection','other'].includes(context.transportKind)
+            ?{scriptStage:context.scriptStage,transportKind:context.transportKind}:{})}:{};
       logger({event:'central_failure',action,...(operation?{operation}:{}),status,code,requestId,...diagnostic});
       return send(status,{success:false,code,...diagnostic,message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
     }
@@ -105,7 +110,7 @@ function fromEnvironment(env) {
   }
   const verifyTest=async()=>{if(testSchoolId){const school=await db.doc('schools/'+testSchoolId).get();if(!school.exists||!/^TEST\b/i.test(school.data().schoolName||''))throw Object.assign(Error('Verified TEST school required'),{status:403,code:'ISOLATED_TEST_SCOPE_REQUIRED'});}};
   const handle=async req => {await verifyTest();return /^(managed\/|developer\/managed\/)/.test(req.body?.action || '') ? managed(req) : legacyHandle(req);};
-  return createHandler({handle,testSchoolId,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
+  return createHandler({handle,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await verifyTest();
     await db.doc('_central_staging_health/runtime').get();
     try{await auth.getUser('__saarthi_staging_health__');}catch(e){if(e.code!=='auth/user-not-found')throw e;}

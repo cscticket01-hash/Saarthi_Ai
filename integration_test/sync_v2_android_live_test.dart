@@ -43,6 +43,11 @@ void main() {
       'status': 'RUNNING'
     };
     try {
+      // Render before native plugins and real network requests so the hosted
+      // Flutter driver can attach while cloud work waits.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      print('VS_ANDROID_TEST_STAGE first_frame');
       await tester.runAsync(() async {
         final transport = _NetworkBoundary();
         var store = AttendanceStore();
@@ -60,6 +65,7 @@ void main() {
               credentials['VS_TEST_LOGIN_PASSWORD'] as String,
               endpoint: endpoint);
           expect(admin['schoolId'], school);
+          print('VS_ANDROID_TEST_STAGE authenticated');
           // Registration label and the operational school profile are separate.
           // Prepare missing synthetic TEST branding with the existing CAS protocol.
           final config = await ManagedSchoolSession.callForSchool(
@@ -135,6 +141,7 @@ void main() {
           await session.login(SchoolLink.parse(raw),
               studentClass: '1', roll: '900002', dob: '2015-01-01');
           await session.refreshDashboard();
+          print('VS_ANDROID_TEST_STAGE dashboard');
           expect(session.schoolName, 'TEST Sync V2');
           final windowsNotice =
               'synthetic-hosted-notice-${run.split('-').first}';
@@ -199,6 +206,7 @@ void main() {
               true);
           metrics['androidQueueToVerifiedCloudReadMs'] =
               ack.elapsedMilliseconds;
+          print('VS_ANDROID_TEST_STAGE attendance_verified');
           await restored.saveAttendance(
               {'latitude': 24.8, 'longitude': 92.7, 'accuracy': 5},
               captured,

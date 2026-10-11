@@ -333,7 +333,7 @@ test('verified attendance permit and final ACK use '+attendanceCollection+'; tam
 }
 
 test('broker forwards only allowlisted Script diagnostic codes and never raw failure details',async()=>{
- for(const [code,expected] of [['SCRIPT_PERMISSION_DENIED','SCRIPT_PERMISSION_DENIED'],['SCRIPT_TYPE_ERROR','SCRIPT_TYPE_ERROR'],['secret-root-token','SCRIPT_OPERATION_FAILED']]) {
+ for(const [code,expected] of [['SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_IDENTITY_MISMATCH'],['SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT'],['SCRIPT_PERMISSION_DENIED','SCRIPT_PERMISSION_DENIED'],['SCRIPT_TYPE_ERROR','SCRIPT_TYPE_ERROR'],['secret-root-token','SCRIPT_OPERATION_FAILED']]) {
   const f=fixture(async(_,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(opt.body).schoolId,success:false,message:'private exception secret-root-token',code})}));
   await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read'}),error=>error.status===502&&error.code===expected&&!error.message.includes('secret-root-token'));
  }
@@ -428,4 +428,20 @@ test('missing school storage is distinct from revision conflict and cannot ACK a
 test('operation ID reuse conflict never becomes an ACK or arbitrary Script exception',async()=>{
  const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:A,message:'Sync operation ID conflict'})}));
  await assert.rejects(f.call({action:'managed/records',collection:'school_expenses',operation:'write',id:'expense',syncProtocol:2,operationId:'retained-operation-123',expectedRecordRevision:'old',data:{amount:100}}),e=>e.status===409&&e.code==='OPERATION_ID_CONFLICT'&&e.syncDiagnostic.operationId==='retained-operation-123');
+});
+
+test('recycle broker requires current school-admin identity and bounded revision-safe request',async()=>{
+ const f=fixture(),body={action:'managed/recycle',operation:'restore',fileId:'snapshot-own',operationId:'restore_operation_0001',expectedRecordRevision:'deleted-version'};
+ await assert.rejects(f.call({...body,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.call({...body,operationId:'short'}),e=>e.status===400);
+ await assert.rejects(f.call({...body,operation:'force'}),e=>e.status===400);
+ assert.equal(f.sent.length,0);
+ await f.call(body);
+ const envelope=JSON.parse(f.sent[0].opt.body),request=JSON.parse(envelope.payload);
+ assert.equal(envelope.schoolId,A);assert.equal(request.action,'managed_recycle');assert.equal(request.expectedRecordRevision,'deleted-version');assert.equal(request.operationId,body.operationId);
+});
+test('revoked school-admin cannot list or mutate recycle snapshots',async()=>{
+ const f=fixture();f.docs.get('school_memberships/A').active=false;
+ await assert.rejects(f.call({action:'managed/recycle',operation:'restore',fileId:'own',operationId:'restore_operation_0001',expectedRecordRevision:'deleted'}),e=>e.status===403);
+ assert.equal(f.sent.length,0);
 });

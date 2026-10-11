@@ -450,6 +450,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _s.attendanceChanges.addListener(_attendanceChanged);
+    _s.connectionChanges.addListener(_connectionChanged);
     _data = Map<String, dynamic>.from(_s.dashboard);
     _loading = _data.isEmpty;
     _load();
@@ -468,12 +469,22 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
     _noticeOpened?.cancel();
     _noticeReceived?.cancel();
     _s.attendanceChanges.removeListener(_attendanceChanged);
+    _s.connectionChanges.removeListener(_connectionChanged);
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) unawaited(_load(afterSignal:true));
+  }
+
+  void _connectionChanged() {
+    if (!mounted) return;
+    setState(() {
+      _data = Map<String, dynamic>.from(_s.dashboard);
+      _error = _s.connectionState == SchoolConnectionState.connected ? null : _s.connectionMessage;
+      _loading = false;
+    });
   }
 
   void _attendanceChanged() { if (mounted) setState(() {}); }
@@ -508,9 +519,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
         setState(() {
           _blocked = !_s.cachedAccessAllowed;
           _error = _blocked ? 'School access needs online verification.'
-              : _s.connectionState == SchoolConnectionState.cachedOffline
-                  ? 'Offline — showing cached school data. Refresh will retry.'
-                  : 'School connection error — showing cached school data. Refresh will retry.';
+              : _s.connectionMessage;
         });
     } finally {
       if (mounted) setState(() => _loading = false);

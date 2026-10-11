@@ -42,6 +42,31 @@ void main() {
     await db.transaction((tx) async { for (var i=0;i<1001;i++) { await tx.insert('attendance', {'id':'row$i','owner':'owner','day':'2026-10-08','mode':'entry','capturedAt':i,'payload':'{}','state':'pending'}); }});
     expect((await store.summary('owner'))['pending'], 1001);
   });
+  test('shared 502 stops the batch and preserves both original captures without ACK', () async {
+    var writes = 0;
+    final day = DateTime.now().toUtc().add(const Duration(hours:5,minutes:30)).toIso8601String().substring(0,10);
+    final permit = {'schoolId':school,'role':fixture['type'],'documentId':fixture['personId'],'personId':'stable','day':day};
+    final token = '${base64UrlEncode(utf8.encode(jsonEncode(permit)))}.fixture';
+    final session = SchoolSession(attendanceStore:store,client:MockClient((r) async {
+      final action = (jsonDecode(r.body)['request'] as Map)['action'];
+      if (action == 'mobile_mark_attendance') {
+        writes++;
+        return http.Response(jsonEncode({'success':false,'code':'SCRIPT_TIMEOUT'}),502);
+      }
+      return http.Response(jsonEncode({'success':true,'schoolId':school,'projectId':school,
+        'sessionToken':'verified','person':{'personId':fixture['personId']},
+        'expiresAt':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch,
+        'attendancePermit':token}),200);
+    }));
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    final owner = AttendanceStore.owner(session.link!.endpoint,school,fixture['type'],fixture['personId']);
+    await store.save(owner,day,'entry',1000,gps); await store.save(owner,day,'exit',2000,gps);
+    await session.flushAttendance();
+    expect(writes,1); expect(session.loggedIn,true);expect(session.attendancePending,2);
+    expect(session.attendanceAccepted,0);expect(session.lastAttendanceAck,isNull);
+    expect((await store.pending(owner)).map((r)=>r['capturedAt']).toSet(),{1000,2000});
+    await session.clear();
+  });
   test('offline save survives logout/restart; accepted is pending until exact final cloud ACK', () async {
     var offline = false, wrongAck = false, completed = false;
     final day = DateTime.now().toUtc().add(const Duration(hours:5,minutes:30)).toIso8601String().substring(0,10);

@@ -1,0 +1,26 @@
+name: Attendance capacity harness review
+on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - .github/scripts/staging_attendance_acceptance.mjs
+      - .github/scripts/staging_attendance_capacity.test.mjs
+      - .github/workflows/attendance-capacity-review.yml
+  pull_request:
+    paths:
+      - .github/scripts/staging_attendance_acceptance.mjs
+      - .github/scripts/staging_attendance_capacity.test.mjs
+      - .github/workflows/attendance-capacity-review.yml
+permissions:
+  contents: read
+jobs:
+  guards-and-measurements:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify capacity guards without credentials or provider traffic
+        run: node --test .github/scripts/staging_attendance_capacity.test.mjs

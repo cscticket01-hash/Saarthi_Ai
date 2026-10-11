@@ -18,6 +18,7 @@ function check(name, r, ok) {
 }
 async function run() {
   if (process.env.GITHUB_ACTIONS!=='true' || process.env.VS_TEST_CONNECT_CONFIRM!==schoolId) throw new Error('Isolated owner-approved runner required');
+  if(process.env.GITHUB_REF==='refs/heads/feature/smart-sync-3') await require('./test_runtime_identity.cjs').waitForRuntime(process.env.GITHUB_SHA);
   const email=process.env.VS_TEST_LOGIN_EMAIL, password=process.env.VS_TEST_LOGIN_PASSWORD;
   if(!email||!password) throw new Error('TEST login unavailable');
   let r=await post('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+apiKey,{email,password,returnSecureToken:true});

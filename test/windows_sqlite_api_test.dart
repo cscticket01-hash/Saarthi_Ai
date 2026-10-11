@@ -43,6 +43,31 @@ void main() {
   tearDown(() async {
     await db.resetVolatileSession();
   });
+  test('offline delete atomically retains original financial snapshot and delete identity after reopen', () async {
+    final profile = db.activeProfileId;
+    final ref = db.collection('fee_payments').doc('retained-fee');
+    await ref.set({'schoolId':school,'amount':500,'capturedAt':1791500000123});
+    await ref.delete();
+    expect((await ref.get()).exists,false);
+    final pending = (await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+    expect(pending['operation'],'delete');
+    await db.resetVolatileSession();
+    await db.switchProfile('away');
+    expect((await db.collection('_windows_local_deletions').get()).docs,isEmpty);
+    await db.switchProfile(profile,identity:{'schoolId':school,'schoolSyncId':school});
+    final retained = (await db.collection('_windows_local_deletions').get()).docs.single.data();
+    expect(retained['operationId'],pending['operationId']);
+    expect(retained['cloudDeletionVerified'],false);
+    expect(retained['snapshot'],{'schoolId':school,'amount':500,'capturedAt':1791500000123});
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>db.collection('school_notices').doc('cloud-tombstone').delete());
+    expect((await db.collection('_windows_local_deletions').get()).docs,hasLength(1));
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'],pending['operationId']);
+    await WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async{},sendVersioned:(row)async=>'verified-delete-revision');
+    final acknowledged = (await db.collection('_windows_local_deletions').get()).docs.single.data();
+    expect(acknowledged['cloudDeletionVerified'],true);
+    expect(acknowledged['deletedRevision'],'verified-delete-revision');
+    expect(acknowledged['snapshot'],retained['snapshot']);
+  });
   test(
       'production API offline save retains stable operation, pending count and original time after close/reopen',
       () async {

@@ -1,3 +1,4 @@
+import 'windows_clean_install_entry.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_managed_school_gate.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -26,6 +27,7 @@ final _schoolNavigatorKey=GlobalKey<NavigatorState>();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await recoverLocalActivationBeforeStorage();
   try {await WindowsLocalSecurity.initialize();}catch(_){debugPrint('App Lock storage will be retried by the startup lock.');}
   await WindowsLocalStorage.initialize();
   try {
@@ -98,6 +100,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
       },
       home: WindowsStartupFlow(
         initializeConnections: initializeConnections,
+        offerRestore:true,
       ),
     ));
   }
@@ -109,10 +112,12 @@ class WindowsStartupFlow extends StatefulWidget {
   const WindowsStartupFlow(
       {super.key,
       this.initializeConnections = WindowsConnectionCenter.initialize,
-      this.checkSetup = WindowsAdminSetup.completed});
+      this.checkSetup = WindowsAdminSetup.completed,this.offerRestore=false,this.freshInstallationProbe});
 
   final Future<void> Function() initializeConnections;
   final Future<bool> Function() checkSetup;
+  final bool offerRestore;
+  final Future<bool> Function()? freshInstallationProbe;
 
   @override
   State<WindowsStartupFlow> createState() => _WindowsStartupFlowState();
@@ -122,6 +127,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
   bool _loading = true;
   bool _setupDone = false;
   bool _managed = false;
+  bool _chooseFresh = false;
   String? _restoreError;
 
   @override
@@ -130,9 +136,16 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     _prepare();
   }
 
-  Future<void> _prepare() async {
+  Future<void> _prepare({bool skipRestoreChoice=false}) async {
     if (mounted) setState(() { _loading = true; _restoreError = null; });
     try {
+      // Offer recovery before cloud cache hydration can populate a fresh install.
+      final saved=await CentralSchoolCloud.saved();
+      if(widget.offerRestore && !skipRestoreChoice && saved['managed']==true && await (widget.freshInstallationProbe!=null ? widget.freshInstallationProbe!() : (await localRecoveryService()).isFreshInstallation())) {
+        if(mounted)setState((){_chooseFresh=true;_loading=false;});
+        return;
+      }
+      _chooseFresh=false;
       // Select the authenticated tenant cache before inspecting registration.
       await widget.initializeConnections();
       await WindowsLocalSecurity.initialize();
@@ -163,6 +176,11 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
         ),
       );
     }
+    if (_chooseFresh) return Scaffold(body:Center(child:Column(mainAxisSize:MainAxisSize.min,children:[
+      const Text('Set up this Windows installation'),
+      FilledButton(onPressed:()=>openCleanInstallRestore(context),child:const Text('Restore Existing School')),
+      TextButton(onPressed:()=>_prepare(skipRestoreChoice:true),child:const Text('Continue school setup')),
+    ])));
     if (_restoreError != null) return Scaffold(body:Center(child:Padding(
       padding:const EdgeInsets.all(24), child:Column(mainAxisSize:MainAxisSize.min,children:[
         Text(_restoreError!),
