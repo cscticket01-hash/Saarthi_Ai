@@ -66,10 +66,10 @@ class IdCardIndicText {
           textDirection: ui.TextDirection.ltr,
           maxLines: maxLines,
           textAlign: align == 'center'
-              ? TextAlign.center
+              ? ui.TextAlign.center
               : align == 'right'
-              ? TextAlign.right
-              : TextAlign.left,
+              ? ui.TextAlign.right
+              : ui.TextAlign.left,
         )..layout(maxWidth: width);
         if (!candidate.didExceedMaxLines &&
             candidate.height <= height &&
