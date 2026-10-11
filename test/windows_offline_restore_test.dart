@@ -9,6 +9,21 @@ import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/platform/platform_config.dart';
 
+// Decoded persistence timestamps are fresh objects on each read. Compare their
+// actual millisecond values while retaining every field and scalar type.
+String _canonicalEvidence(Object? value) {
+  Object? normalize(Object? item) {
+    if (item is Timestamp) return {'timestampMilliseconds':item.toDate().toUtc().millisecondsSinceEpoch};
+    if (item is Map) {
+      final map=Map<String,dynamic>.from(item), keys=Map<String,dynamic>.from(item).keys.toList()..sort();
+      return {for(final key in keys)key:normalize(map[key])};
+    }
+    if (item is List) return item.map(normalize).toList();
+    return item;
+  }
+  return jsonEncode(normalize(value));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final db=FirebaseFirestore.instance;
@@ -39,7 +54,7 @@ void main() {
     final before=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
     await db.requestLocalRestore(id,approved:true);
     expect((await db.collection('school_notices').doc('original').get()).data()?['capturedAt'],1791500000123);
-    expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data(),before);
+    expect(_canonicalEvidence((await db.collection('_windows_firebase_outbox').get()).docs.single.data()),_canonicalEvidence(before));
     final intent=(await db.collection('_windows_recycle_requests').get()).docs.single.data();
     expect(intent['state'],'awaitingDeleteAck');
     await expectLater(db.requestLocalRestore(id,approved:true),throwsStateError);

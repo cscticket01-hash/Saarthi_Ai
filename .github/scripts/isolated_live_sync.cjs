@@ -1,7 +1,7 @@
 'use strict';
 // Real TEST-only protocol acceptance. No app UI/emulator/physical-device claims.
 const {createHash}=require('node:crypto');
-const {isolatedRunPrefix}=require('./isolated_fixture_identity.cjs');
+const {isolatedRunPrefix,isolatedAttendanceDay}=require('./isolated_fixture_identity.cjs');
 module.exports=async function({post,check,endpoint,schoolId,token,report}){
  const safeRead=require('./safe_test_read_retry.cjs');
  const admin=body=>safeRead(post,endpoint,{...body,schoolId},token,report);
@@ -21,6 +21,9 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  }
  let r=await admin({action:'managed/profile',operation:'initialize',schoolName:'TEST Sync V2',principalName:'Synthetic TEST Administrator'});
  check('TEST registration identity',r,r.http===200&&r.data.profile?.schoolName==='TEST Sync V2');
+ // A TEST-only dated opening avoids treating Sunday's legitimate closure as sync failure.
+ // Existing non-synthetic calendar entries are never overwritten by write().
+ await write('school_calendar',isolatedAttendanceDay(schoolId),{isOpen:true,purpose:'isolated-attendance-acceptance'});
  await write('school_settings','school_location',{latitude:24.8,longitude:92.7,radiusMeters:100});
  const personId=prefix+'-student',linkToken=createHash('sha256').update(prefix+'/synthetic-qr').digest('hex');
  await write('students_directory',personId,{name:'Synthetic TEST Student',class:'1',rollNo:'900001',dob:'2015-01-01',mobileStableId:personId,mobileLinkToken:linkToken});
@@ -65,6 +68,8 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  const priorEntry=Object.values(priorAttendance.data.records||{}).find(row=>row.personId===personId&&Number.isSafeInteger(row.entryCapturedAt));
  r=await mobile({action:'mobile_refresh',sessionToken,projectId:schoolId});
  check('Fresh capture-authorizing TEST permit',r,r.http===200&&typeof r.data.attendancePermit==='string');
+ const capturePolicy=JSON.parse(Buffer.from(r.data.attendancePermit.split('.')[0],'base64url').toString('utf8'));
+ check('TEST capture policy confirms dated school opening',r,capturePolicy.open===true&&capturePolicy.day===isolatedAttendanceDay(schoolId));
  permit=r.data.attendancePermit;
  const captured=priorEntry?priorEntry.entryCapturedAt:Date.now();
  report.attendanceSampleAlreadyCompleted=Boolean(priorEntry);

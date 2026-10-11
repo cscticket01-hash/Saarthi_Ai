@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:image/image.dart' as img;
 import '../../lib/windows_connect/managed_record_media.dart';
 import '../../lib/windows_school_image_cache.dart';
+import '../../lib/windows_binary_downloads.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -76,6 +77,36 @@ void main() {
    expect(await WindowsSchoolImageCache.read(school,preparedPortrait['photoFileId']),originalPortrait);
    report['portraitCloudBytes']=portraitBytes.length;report['portraitOriginalBytes']=originalPortrait.length;
    report['portraitCloudRetryIdempotent']=true;report['portraitOriginalRetainedAfterRestart']=true;
+   // Bounded real Drive download acceptance: one first-page file, no provider load.
+   var binaryFault=true;
+   Future<Map<String,dynamic>> binaryRequest(Map<String,dynamic> body) async {
+    if(binaryFault&&body['action']=='managed/file/download')throw SchoolApiFailure(503,code:'TEST_CONTROLLED_UNAVAILABLE');
+    return ManagedSchoolSession.callForSchool(school,body['action'] as String,{...body}..remove('action'));
+   }
+   final binaryDirectory=Directory('${tmp.path}/isolated-binary-cache');
+   final binaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest,jitter:()=>.5);
+   await binaries.refreshInventory();
+   expect(binaries.entries,isNotEmpty);
+   final binaryId=binaries.entries.first['fileId'] as String;
+   final binaryHash=binaries.entries.first['sha256'] as String;
+   final queueBeforeBinary=(await db.collection('_windows_firebase_outbox').get()).docs.length;
+   expect(await binaries.repairNext(),false);
+   expect(await binaries.verifiedPath(binaryId),isNull);
+   binaryFault=false;
+   await Future<void>.delayed(const Duration(seconds:6)); // Real capped retry deadline, no fake clock.
+   expect(await binaries.repairNext(),true);
+   final downloaded=File((await binaries.verifiedPath(binaryId))!);
+   expect(sha256.convert(await downloaded.readAsBytes()).toString(),binaryHash);
+   final reopenedBinaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest);
+   await reopenedBinaries.load();
+   expect(await reopenedBinaries.verifiedPath(binaryId),downloaded.path);
+   expect((await db.collection('_windows_firebase_outbox').get()).docs.length,queueBeforeBinary);
+   report['actualBinary503RecoveryVerified']=true;
+   report['actualBinaryBytesHashVerified']=true;
+   report['actualBinaryCacheRestartVerified']=true;
+   report['binaryInventoryCoverage']=binaries.summary['inventory'];
+   report['binaryAcceptanceScope']='One actual TEST Drive file; remaining files and native Google documents not certified';
+
    await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
    final existingDocuments=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'read','syncProtocol':2});
    final fixturePerson='isolated-v2-$unique-student';

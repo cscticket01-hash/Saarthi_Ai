@@ -39,11 +39,11 @@ class WindowsSchoolImageCache {
         if(image.decodeImage(bytes)!=null)return bytes;
       } catch (_) {/* A damaged original cache must not prevent verified repair. */}
     }
-    final downloads=WindowsBinaryDownloads(schoolId:school,
-      storageDirectory:Directory('${(await WindowsLocalStorage.localFilesDirectory()).path}/Verified_Cloud_Cache'),
-      currentSchool:()=>db.activeProfileId==origin?db.activeProfileIdentity['schoolSyncId']?.toString()??'':'',
-      request:(_)async=>throw StateError('Offline cache read does not start a cloud request.'));
     try {
+      final downloads=WindowsBinaryDownloads(schoolId:school,
+        storageDirectory:Directory('${(await WindowsLocalStorage.localFilesDirectory()).path}/Verified_Cloud_Cache'),
+        currentSchool:()=>db.activeProfileId==origin?db.activeProfileIdentity['schoolSyncId']?.toString()??'':'',
+        request:(_)async=>throw StateError('Offline cache read does not start a cloud request.'));
       final path=await downloads.verifiedPath(fileId);
       if(path==null)return null;
       final bytes=await File(path).readAsBytes();

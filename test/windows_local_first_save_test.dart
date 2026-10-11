@@ -123,13 +123,28 @@ void main() {
 
   test('uploaded Drive images remain available offline and never enter another school cache',() async {
     final origin=db.activeProfileId;
-    await WindowsSchoolImageCache.store(school,'own-logo','data:image/png;base64,YWJj');
-    expect(await schoolImageBytes('https://drive.google.com/file/d/own-logo/view'),[97,98,99]);
+    final original=img.encodePng(img.Image(width:2,height:2)..setPixelRgba(0,0,1,2,3,255));
+    final dataUrl='data:image/png;base64,${base64Encode(original)}';
+    expect(img.decodeImage(original),isNotNull);
+    await WindowsSchoolImageCache.store(school,'own-logo',dataUrl);
+    expect(await schoolImageBytes('https://drive.google.com/file/d/own-logo/view'),original);
     expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    await db.resetVolatileSession();
+    await db.switchProfile('temporary-logo-reopen',identity:{});
+    await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+    expect(await schoolImageBytes('https://drive.google.com/file/d/own-logo/view'),original);
     await db.switchProfile('image-school-B',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
     expect(await WindowsSchoolImageCache.read(school,'own-logo'),isNull);
-    await expectLater(WindowsSchoolImageCache.store(school,'own-logo','data:image/png;base64,YWJj',profileId:origin),throwsStateError);
+    await expectLater(WindowsSchoolImageCache.store(school,'own-logo',dataUrl,profileId:origin),throwsStateError);
     expect((await db.collection('_windows_school_image_cache').get()).docs,isEmpty);
+  });
+
+  test('corrupt image data is retained as evidence but never returned as usable photo bytes',() async {
+    await WindowsSchoolImageCache.store(school,'corrupt-logo','data:image/png;base64,YWJj');
+    expect(await WindowsSchoolImageCache.read(school,'corrupt-logo'),isNull);
+    final retained=(await db.collection('_windows_school_image_cache').get()).docs.single.data();
+    expect(retained['dataUrl'],'data:image/png;base64,YWJj');
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
   });
 
   test('managed directory mutations work without Drive configuration and retain photos for deferred sync',() async {

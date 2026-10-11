@@ -10,9 +10,10 @@ typedef RecycleCall = Future<Map<String, dynamic>> Function(String school, Map<S
 
 /// Server restore controls and read-only school-scoped retained local evidence.
 class WindowsRecycleBin extends StatefulWidget {
-  const WindowsRecycleBin({super.key, this.call, this.readLocal});
+  const WindowsRecycleBin({super.key, this.call, this.readLocal, this.readRestoreRequests});
   final RecycleCall? call;
   final Future<List<Map<String,dynamic>>> Function()? readLocal;
+  final Future<List<Map<String,dynamic>>> Function()? readRestoreRequests;
   @override
   State<WindowsRecycleBin> createState() => _WindowsRecycleBinState();
 }
@@ -64,11 +65,13 @@ class _WindowsRecycleBinState extends State<WindowsRecycleBin> {
       if(rows.any((row)=>row['version']!=1 || row['operationId'] is! String ||
           row['documentId'] is! String || row['snapshot'] is! Map || row['deletedAt'] is! int))
         throw StateError('Local deletion evidence requires review');
-      final requests = await db.collection('_windows_recycle_requests').get();
+      final requests = await (widget.readRestoreRequests != null ? widget.readRestoreRequests!() :
+          db.collection('_windows_recycle_requests').get().then((result)=>result.docs.map((row)=>row.data()).toList()))
+          .timeout(const Duration(seconds:30));
       checkOrigin();
       for(final row in rows) {
-        final matches=requests.docs.where((r)=>r.data()['schoolId']==school && r.data()['deletionOperationId']==row['operationId']);
-        if(matches.isNotEmpty)row['restoreState']=matches.first.data()['state'];
+        final matches=requests.where((r)=>r['schoolId']==school && r['deletionOperationId']==row['operationId']);
+        if(matches.isNotEmpty)row['restoreState']=matches.first['state'];
       }
       if(mounted)setState(() {localEntries=rows;localVerified=true;});
     } catch (_) {

@@ -568,7 +568,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   OutlinedButton(onPressed:active?null:()=>_run(()=>_binaryAction('inspect')),child:const Text('Verify local file bytes')),
                   OutlinedButton(onPressed:active?null:()=>_run(()=>_binaryAction('repair')),child:const Text('Recover next missing file')),
                   OutlinedButton(onPressed:active?null:()=>_run(engine.reportCurrentSyncMonitor),child:const Text('Report current measured sync status')),
-                  OutlinedButton(onPressed:active?null:()=>openCleanInstallRestore(context),child:const Text('Restore Existing School — fresh install only')),
+                  OutlinedButton(onPressed:active?null:()=>_run(()=>openCleanInstallRestore(context)),child:const Text('Restore Existing School — fresh install only')),
                   OutlinedButton(
                     onPressed: active ? null : () => _run(_checkCloudHealth),
                     child: const Text('Check Cloud Health'),

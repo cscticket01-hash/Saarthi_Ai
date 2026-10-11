@@ -335,7 +335,7 @@ void main(){
    await tester.pumpAndSettle();
    await tester.tap(find.text('Check Cloud Health'));
    await tester.pumpAndSettle();
-   await tester.scrollUntilVisible(find.text('Action timed out. Completion is unverified; local data is retained.'),300,scrollable:find.byType(Scrollable).first);
+   await tester.scrollUntilVisible(find.text('Action timed out. Completion is unverified; local data is retained.'),-300,scrollable:find.byType(Scrollable).first);
    expect(find.text('Action timed out. Completion is unverified; local data is retained.'),findsOneWidget);
    expect(find.textContaining('Private upstream detail'),findsNothing);
    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Check Cloud Health')).onPressed,isNotNull);
@@ -355,7 +355,7 @@ void main(){
    });
    final pending=(await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get()))!.docs.single.data();
    final snapshots=(await tester.runAsync(()=>db.collection('_windows_local_deletions').get()))!.docs.map((row)=>row.data()).toList();
-   await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(readLocal:()async=>snapshots,call:(_,__)async=>throw TimeoutException('private upstream'))));
+   await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(readRestoreRequests:()async=>[],readLocal:()async=>snapshots,call:(_,__)async=>throw TimeoutException('private upstream'))));
    await tester.pumpAndSettle();
    await tester.scrollUntilVisible(find.text('Local snapshot: Retained offline pupil'),200,scrollable:find.byType(Scrollable).first);
    expect(find.text('Local snapshot: Retained offline pupil'),findsOneWidget);
@@ -367,7 +367,7 @@ void main(){
  });
  testWidgets('recycle inventory rejects foreign school and expires restore from server time', (tester) async {
    for(final foreign in [false,true]) {
-     await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(key:ValueKey(foreign),readLocal:()async=>[],call:(requested,body)async{
+     await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(key:ValueKey(foreign),readRestoreRequests:()async=>[],readLocal:()async=>[],call:(requested,body)async{
        expect(requested,school);expect(body['operation'],'list');
        return {'success':true,'schoolId':foreign?'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb':school,'recycleVersion':1,'serverNow':2000,'partial':false,'nextAfter':null,
          'entries':[{'id':'synthetic-deleted','collection':'students_directory','fileId':'snapshot-safe','deletedRevision':'deleted-revision','name':'Synthetic deleted record','deletedAt':1000,'recoverUntil':2000,'status':'expired'}]};
@@ -384,7 +384,7 @@ void main(){
    }
  });
  testWidgets('recycle unavailable response never invents a deletion ACK or exposes private errors', (tester) async {
-   await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(readLocal:()async=>[],call:(_,__)async{throw TimeoutException('secret detail');})));
+   await tester.pumpWidget(MaterialApp(home:WindowsRecycleBin(readRestoreRequests:()async=>[],readLocal:()async=>[],call:(_,__)async{throw TimeoutException('secret detail');})));
    await tester.pumpAndSettle();
    expect(find.text('Cloud deletion inventory unverified.'),findsOneWidget);
    expect(find.textContaining('secret detail'),findsNothing);
