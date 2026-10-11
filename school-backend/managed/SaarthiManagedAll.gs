@@ -7145,7 +7145,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.2',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.3',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
@@ -7224,6 +7224,12 @@ function VS_managedHandle(e) {
     // Anonymous web-app executions may not expose logs in the default Cloud
     // project. Keep only the same non-sensitive trace in a short-lived cache.
     try{CacheService.getScriptCache().put('VS_SYNC_DIAGNOSTIC_V1',JSON.stringify(trace),1800);}catch(_){}
+    // Anonymous web-app cache and owner-editor cache can be different.
+    // Save ONLY a sanitized owner-only category + line for at most 24 hours.
+    // Never persist payloads, URLs, school identifiers or raw exceptions.
+    if(verified){
+      try{PropertiesService.getScriptProperties().setProperty('VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2',JSON.stringify(trace));}catch(_){}
+    }
     const code=verified?diagnostic:'SCRIPT_OPERATION_FAILED';
     return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected',code:code});
   }
@@ -7231,7 +7237,25 @@ function VS_managedHandle(e) {
 
 // Run manually in the owner editor only; not routed through doPost/doGet.
 function VS_readLastSyncDiagnostic() {
-  const trace=CacheService.getScriptCache().get('VS_SYNC_DIAGNOSTIC_V1');
+  // Owner-editor function ONLY. This is NOT a doGet/doPost action.
+  const key='VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2';
+  let trace=null;
+  try{
+    const raw=PropertiesService.getScriptProperties().getProperty(key);
+    if(raw){
+      const candidate=JSON.parse(raw);
+      if(candidate&&candidate.event==='managed_storage_failure'&&
+          Number.isSafeInteger(candidate.at)&&candidate.at<=Date.now()&&
+          Date.now()-candidate.at<=86400000&&
+          /^[A-Z0-9_]{4,80}$/.test(candidate.code||'')&&
+          Number.isSafeInteger(candidate.line)&&candidate.line>=0){
+        trace={at:candidate.at,phase:candidate.phase==='authorized_operation'?'authorized_operation':'request_verification',code:candidate.code,line:candidate.line};
+      }
+    }
+  }catch(_){}
+  if(!trace){
+    try{trace=CacheService.getScriptCache().get('VS_SYNC_DIAGNOSTIC_V1');}catch(_){}
+  }
   Logger.log(trace||'No recent sync diagnostic captured');
 }
 
