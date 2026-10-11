@@ -105,8 +105,13 @@ void main() {
    final downloaded=File((await binaries.verifiedPath(binaryId))!);
    expect(sha256.convert(await downloaded.readAsBytes()).toString(),binaryHash);
    for(var attempt=1;attempt<targets.length;attempt++){
-    final remaining=await Future.wait(targets.map((item)=>binaries.verifiedPath(item['fileId'] as String)));
-    if(remaining.every((path)=>path!=null))break;
+    var missing=false;
+    // The production cache serializes verification; never call its guarded
+    // methods concurrently while assessing shared content-addressed files.
+    for(final item in targets){
+     if((await binaries.verifiedPath(item['fileId'] as String))==null){missing=true;break;}
+    }
+    if(!missing)break;
     expect(await binaries.repairNext(),true);
    }
    final reopenedBinaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest);
