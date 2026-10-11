@@ -483,8 +483,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
     if (!mounted) return;
     setState(() {
       _data = Map<String, dynamic>.from(_s.dashboard);
-      _error = _s.connectionState == SchoolConnectionState.connected ? null : _s.connectionMessage;
-      _loading = false;
+      _error = _s.connectionState == SchoolConnectionState.connectionError
+          ? _s.connectionMessage : null;
+      _loading = _s.connectionState == SchoolConnectionState.syncing && _data.isEmpty;
     });
   }
 
@@ -520,10 +521,12 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
         setState(() {
           _blocked = !_s.cachedAccessAllowed;
           _error = _blocked ? 'School access needs online verification.'
-              : _s.connectionMessage;
+              : _s.connectionState == SchoolConnectionState.connectionError
+                  ? _s.connectionMessage : null;
         });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _loading =
+          _data.isEmpty && _s.connectionState == SchoolConnectionState.syncing);
     }
   }
 

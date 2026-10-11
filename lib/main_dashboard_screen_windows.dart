@@ -10552,6 +10552,10 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                ListTile(title: const Text('Device Management'),
+                  onTap: () => Navigator.of(context).pushNamed('/admin/device-management')),
+                ListTile(title: const Text('Student Import Sheet'),
+                  onTap: () => Navigator.of(context).pushNamed('/admin/student-import')),
                 // =====================================================
                 // ADMIN PROFILE
                 // =====================================================

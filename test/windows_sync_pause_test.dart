@@ -15,7 +15,8 @@ void main() {
     now = now.add(const Duration(hours: 4));
     final restarted = WindowsSyncPause(now: () => now)..restore(saved);
     expect(restarted.isPaused, true);
-    expect(restarted.pausedUntil, DateTime.utc(2026, 10, 11, 12));
+    expect(restarted.pausedUntil!.millisecondsSinceEpoch,
+        DateTime.utc(2026, 10, 11, 12).millisecondsSinceEpoch);
     now = now.add(const Duration(hours: 8));
     expect(restarted.isPaused, false);
     expect(restarted.pausedUntil, isNull);

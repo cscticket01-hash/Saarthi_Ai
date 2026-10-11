@@ -286,6 +286,7 @@ function VS_managedRecycle(b) {
       if(Date.now()>=snap.recoverUntil||data._syncFileCleanupComplete===true)throw new Error('Recycle restore window expired');
       if(snap.collection==='documents'&&snap.data.fileId&&VS_managedFile(snap.data.fileId).isTrashed())throw new Error('Original document unavailable; retained snapshot requires review');
       const restored=Object.assign({},snap.data);Object.keys(restored).filter(k=>k.indexOf('_sync')===0).forEach(k=>delete restored[k]);
+      if(snap.collection==='students_directory')VS_studentUnique(store,snap.id,restored,current);
       restored._syncRevision=Utilities.getUuid();restored._syncUpdatedAt=Date.now();restored._syncRecycleRestoreId=b.operationId;restored._syncRecycleSource=b.fileId;restored._syncRecycleRestoreRevision=b.expectedRecordRevision;
       PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+snap.collection,Utilities.getUuid());
       VS_sheetPut(store,{id:snap.id,schoolId:snap.schoolId,data:restored});
@@ -338,6 +339,53 @@ function VS_testRecycleExpiryTick() {
   p.setProperty('VS_RECYCLE_LAST_SWEEP',JSON.stringify(summary));
   if(typeof console!=='undefined')console.log(JSON.stringify(Object.assign({stage:'recycle_expiry_audit'},summary)));
   return summary;
+}
+/** One separately bound Import workbook; never reads internal managed tabs. */
+function VS_importSheet(b) {
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID'),root=VS_managedRoot();
+    const marker='VIDYA_STUDENT_IMPORT:v1:'+school,headers=['schoolId','studentId','name','class','section','rollNo','expectedRevision'];
+    let id=p.getProperty('VS_STUDENT_IMPORT_SHEET_ID')||p.getProperty('VS_STUDENT_IMPORT_SHEET_PENDING');
+    if(!id){
+      if(b.action!=='managed_import_sheet_setup'||b.confirmCreate!==true)throw new Error('Explicit import Sheet creation confirmation required');
+      const book=SpreadsheetApp.create('Vidya Saarthi Student Import '+school);id=book.getId();
+      p.setProperty('VS_STUDENT_IMPORT_SHEET_PENDING',id);
+      const file=DriveApp.getFileById(id);file.setDescription(marker);file.moveTo(root);
+      const tab=book.insertSheet('Student Import v1');tab.getRange(1,1,1,7).setValues([headers]);tab.setFrozenRows(1);SpreadsheetApp.flush();
+    }
+    const file=DriveApp.getFileById(id),parents=file.getParents();
+    if(file.getDescription()!==marker||!parents.hasNext()||parents.next().getId()!==root.getId()||parents.hasNext()||file.isTrashed())throw new Error('Import Sheet school binding requires review');
+    const book=SpreadsheetApp.openById(id),tab=book.getSheetByName('Student Import v1');
+    if(!tab||JSON.stringify(tab.getRange(1,1,1,7).getValues()[0])!==JSON.stringify(headers))throw new Error('Import Sheet header/version requires review');
+    p.setProperty('VS_STUDENT_IMPORT_SHEET_ID',id);p.deleteProperty('VS_STUDENT_IMPORT_SHEET_PENDING');
+    const last=tab.getLastRow();if(last>101)throw new Error('Import Sheet exceeds 100 row admission bound');
+    const values=last>1?tab.getRange(2,1,last-1,7).getValues():[];
+    const raw=values.map(row=>row.map(v=>typeof v==='string'?v:(typeof v==='number'&&Number.isFinite(v)?String(v):v===null?'':String(v))));
+    const rows=raw.filter(row=>row.some(v=>v!=='')).map(row=>{const r={};headers.forEach((h,i)=>r[h]=row[i]);r.expectedRevision=r.expectedRevision===''?null:r.expectedRevision;return r;});
+    return {sheetId:id,sheetUrl:'https://docs.google.com/spreadsheets/d/'+id+'/edit',headerVersion:1,maxRows:100,source:'designated-sheet',rows:rows,fingerprint:VS_layoutHash({schoolId:school,sheetId:id,headerVersion:1,headers:headers,raw:raw})};
+  }finally{lock.releaseLock();}
+}
+function VS_studentSlot(data) {
+  if(!data||data._syncDeleted)return null;
+  const cls=data.studentClass===undefined?data.class:data.studentClass,section=data.section===undefined?'':data.section,roll=data.rollNo;
+  if(typeof cls!=='string'||!cls.trim()||typeof section!=='string'||!(typeof roll==='string'||typeof roll==='number')||typeof roll==='number'&&(!Number.isSafeInteger(roll)||roll<0)||!String(roll).trim())return null;
+  return JSON.stringify([cls.trim(),section.trim(),String(roll).trim()]);
+}
+/** Called while existing school ScriptLock is held, including normal app writes.
+ * Legacy unmeasured slots are reported; never rewrite them merely for import.
+ */
+function VS_studentUnique(store,id,data,existing) {
+  const slot=VS_studentSlot(data),oldSlot=existing?VS_studentSlot(existing.data):null,all=VS_sheetRecords(store);let partial=slot===null;
+  Object.keys(all).forEach(other=>{
+    if(all[other]._syncDeleted)return;
+    const otherSlot=VS_studentSlot(all[other]);if(otherSlot===null)partial=true;
+    if(other!==id&&slot!==null&&otherSlot===slot){
+      if(slot!==oldSlot)throw new Error('Student class/section/roll conflict');
+      partial=true; // Preserve unrelated updates to already duplicated legacy slots.
+    }
+  });
+  return partial?'partial-legacy':'measured-active-slots';
 }
 function VS_syncRequestShape(b) {
   const data=Object.create(null);
@@ -399,6 +447,7 @@ function VS_managedRecordUnlocked(b) {
 
   }
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
+  const studentUniquenessScope=b.collection==='students_directory'?VS_studentUnique(store,b.id,b.data,existing):undefined;
   const revision=Utilities.getUuid(),data=Object.assign({},b.data);
   Object.keys(data).filter(k=>k.indexOf('_syncRecycle')===0).forEach(k=>delete data[k]);
   delete data._syncDeleted;delete data._syncOperationId;delete data._syncRevision;
@@ -406,7 +455,7 @@ function VS_managedRecordUnlocked(b) {
   if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=VS_layoutHash(VS_syncRequestShape(b));}
   delete data._syncDeletedFileId;delete data._syncFileCleanupComplete;
   const text=JSON.stringify({id:b.id,schoolId:school,data:data});if(text.length>512*1024)throw new Error('Record too large; upload files separately');
-  PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());VS_sheetPut(store,{id:b.id,schoolId:school,data:data});return {recordRevision:revision,syncProtocol:2};
+  PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());VS_sheetPut(store,{id:b.id,schoolId:school,data:data});return {recordRevision:revision,syncProtocol:2,studentUniquenessScope:studentUniquenessScope};
 }
 /** Opt-in recovery proof for isolated TEST. Financial/document rows require review. */
 function VS_enableTestBackupRecovery() {
@@ -622,7 +671,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        scriptBundleVersion:'2026-10-10.3',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.1',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
@@ -636,6 +685,7 @@ function VS_managedHandle(e) {
       })};
     }
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
+    else if(['managed_import_sheet_setup','managed_import_sheet_read'].indexOf(b.action)>=0){result=VS_importSheet(b);}
     else if(b.action==='managed_records'){result=VS_managedRecord(b);}
     else if(b.action==='managed_upload'){
       if(!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)throw new Error('Invalid file');const bytes=Utilities.base64Decode(b.base64);if(!bytes.length||bytes.length>20*1024*1024)throw new Error('File limit exceeded');
@@ -679,6 +729,11 @@ function VS_managedHandle(e) {
     const safe={
       'This QR does not belong to the active school':'This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.',
       'Record revision conflict':'Record revision conflict',
+      'Student class/section/roll conflict':'Student class/section/roll conflict',
+      'Import Sheet school binding requires review':'Import Sheet school binding requires review',
+      'Import Sheet header/version requires review':'Import Sheet header/version requires review',
+      'Import Sheet exceeds 100 row admission bound':'Import Sheet exceeds 100 row admission bound',
+      'Explicit import Sheet creation confirmation required':'Explicit import Sheet creation confirmation required',
       'Sync operation ID conflict':'Sync operation ID conflict',
       'School data organization in progress; retry Sync. Pending data retained':'School data organization in progress; retry Sync. Pending data retained',
       'This ID card needs a new secure school QR':'Ask your school to regenerate this ID card.',

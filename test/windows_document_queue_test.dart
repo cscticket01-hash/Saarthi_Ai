@@ -65,6 +65,26 @@ void main() {
     expect(retained['body'], 'invalid');
     expect(retained['syncState'], 'needsAttention');
   });
+  test('legacy duplicate and missing-record responses never guess an ACK', () async {
+    const url='https://script.google.com/macros/s/ReviewedTestDeployment/exec';
+    for(final result in [
+      {'success':false,'code':'STUDENT_ALREADY_EXISTS','message':'already exists'},
+      {'success':false,'message':'record not found'},
+      {'success':false,'message':'already deleted'},
+    ]) {
+      final ref=db.collection('_windows_google_outbox').doc('legacy-retained');
+      final body={'operationId':'original-operation','schoolId':school,'name':'Original'};
+      await ref.set({'action':result.containsKey('code')?'add_student':'delete_student',
+        'url':url,'body':body,'queuedAt':42});
+      final events=<Map<String,dynamic>>[];
+      expect(await WindowsBackendBridge.flushPending(readActiveUrl:()async=>url,
+        send:(a,b,c)async=>http.Response(jsonEncode(result),200),onActivity:events.add),0);
+      final retained=(await ref.get()).data()!;
+      expect(retained['body'],body);expect(retained['queuedAt'],42);
+      expect(retained['syncState'],'needsAttention');
+      expect(events.any((event)=>event['stage']=='verified'),false);
+    }
+  });
   test('pause prevents pending admission without changing queued evidence', () async {
     final ref = db.collection('_windows_google_outbox').doc('paused-original');
     await ref.set({'operationId': 'original-operation', 'body': 'invalid', 'queuedAt': 42});

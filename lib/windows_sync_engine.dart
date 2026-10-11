@@ -145,13 +145,27 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     'reconciliationMicros': 0,
   };
   final details = ValueNotifier<Map<String, dynamic>>({});
+  final _activity = <Map<String, dynamic>>[];
+  void _recordActivity(Map<String, dynamic> event) {
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    if (event['schoolId'] != school) return;
+    if (event['stage'] == 'retry' && event['retryAt'] is int) {
+      _nextRetry = DateTime.fromMillisecondsSinceEpoch(event['retryAt'] as int);
+      if (event['failureCategory']=='quota') _quotaRetryAt = _nextRetry;
+    }
+    if (_activity.length >= 100) _activity.removeAt(0);
+    _activity.add(Map<String,dynamic>.from(event));
+    details.value = {...details.value,
+      'activity': [for(final row in _activity) Map<String,dynamic>.from(row)]};
+  }
+
   static Duration retryDelayForFailure(int failures, {bool quotaLimited = false}) {
     final exponent = (failures - 1).clamp(0, 6).toInt();
     return Duration(seconds: ((quotaLimited ? 60 : 5) * (1 << exponent)).clamp(5, quotaLimited ? 900 : 300).toInt());
   }
 
   int _failures = 0;
-  DateTime? _nextRetry, _lastPull;
+  DateTime? _nextRetry, _lastPull, _quotaRetryAt;
   final _samples = <String, List<int>>{};
   void _sample(String name, int value) {
     final values = _samples.putIfAbsent(name, () => <int>[]);
@@ -169,6 +183,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   void recordLocalSave(String entity, int micros) {
     metrics['${entity}SaveMicros'] = micros;
     _sample('${entity}SaveMicros', micros);
+    _recordActivity({'stage':'localSave','at':DateTime.now().millisecondsSinceEpoch,
+      'schoolId':FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
+      'entity':entity,'elapsedMicros':micros,'isRetryable':false});
   }
 
   Future<void> refreshDetails() async {
@@ -185,7 +202,26 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final restores=restoreInventory.docs.where((d)=>d.data()['localRestore']==true && d.data()['schoolId']==db.activeProfileIdentity['schoolSyncId'] && d.data()['state']!='verified').toList();
     if (db.activeProfileId != origin) return;
     final items = [...general.docs, ...documents.docs, ...legacy.docs, ...restores];
+    final outbound = [...general.docs,...documents.docs,...legacy.docs]
+        .map((row)=>row.data()).where((row)=>
+          row['syncState']!='conflict' && row['syncState']!='needsAttention').toList();
+    final nowMillis = DateTime.now().millisecondsSinceEpoch;
+    final quotaDeadlines = outbound.where((row)=>row['syncState']=='retry' &&
+        row['failureCategory']=='quota' && row['retryAtMillis'] is int &&
+        (row['retryAtMillis'] as int)>nowMillis)
+        .map((row)=>row['retryAtMillis'] as int).toList()..sort();
+    _quotaRetryAt = quotaDeadlines.isEmpty ? null
+        : DateTime.fromMillisecondsSinceEpoch(quotaDeadlines.last);
+    if (outbound.isNotEmpty && outbound.every((row)=>
+        !pendingRecordBackoffDue(row,DateTime.now()))) {
+      final deadlines = outbound.map((row)=>row['retryAtMillis'] as int).toList()..sort();
+      _nextRetry = DateTime.fromMillisecondsSinceEpoch(deadlines.first);
+    }
     details.value = {
+      'activity': [for(final row in _activity) Map<String,dynamic>.from(row)],
+      'remotePollIntervalMillis':reconciliationInterval.inMilliseconds,
+      'idleReconciliationIntervalMillis':const Duration(hours:1).inMilliseconds,
+      'nextIdleReconciliationMillis':lastVerifiedCheckpoint?.add(const Duration(hours:1)).millisecondsSinceEpoch,
       'isPaused': isPaused,
       'pauseBoundaryPending': isPaused && _syncing,
       'pausedUntilMillis': pausedUntil?.millisecondsSinceEpoch,
@@ -313,6 +349,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     WindowsLocalFirestoreSyncControl.onTrackedMutation = () async {
+      _recordActivity({'stage':'localSave','at':DateTime.now().millisecondsSinceEpoch,
+        'schoolId':FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
+        'scope':'durable_record_mutation','isRetryable':false});
       scheduleSoon(localMutation: true);
       unawaited(refreshDetails());
     };
@@ -322,6 +361,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     };
 
     WindowsBackendBridge.onLocalDocumentCommitted = () {
+      _recordActivity({'stage':'localSave','at':DateTime.now().millisecondsSinceEpoch,
+        'schoolId':FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
+        'scope':'durable_document_commit','isRetryable':false});
       scheduleSoon(localMutation: true);
       unawaited(refreshDetails());
     };
@@ -334,6 +376,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (_resetPaused) return;
 
     _schedule.start(reconciliationInterval);
+    _schedule.armCheckpoint(lastVerifiedCheckpoint);
 
     scheduleSoon(delay: const Duration(milliseconds: 800));
   }
@@ -387,6 +430,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       recoveryDecision = null;
       _failures = 0;
     }
+    // A fresh durable change may dispatch while an older transient row waits;
+    // the row-level deadline still prevents retrying that older operation early.
+    if (localMutation && recoveryDecision?.kind != SyncFailureKind.quota &&
+        (_quotaRetryAt == null || !_quotaRetryAt!.isAfter(DateTime.now()))) _nextRetry = null;
     if (_syncing) {
       _rerunRequested = true;
       return;
@@ -732,12 +779,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _lastPull = null;
       _failures = 0;
       _nextRetry = null;
+      _quotaRetryAt = null;
       recoveryDecision = null;
       recoveryHistory.clear();
       lastSuccessfulSync = null;
       lastVerifiedCheckpoint = null;
       metrics.clear();
       _samples.clear();
+      _activity.clear();
       metrics.addAll({
         'recordReadRequests': 0,
         'recordWriteRequests': 0,
@@ -795,6 +844,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         (savedStatus!['successfulAt'] as num).toInt(),
       );
     if (savedStatus?['checkpointAt'] is num) lastVerifiedCheckpoint = DateTime.fromMillisecondsSinceEpoch((savedStatus!['checkpointAt'] as num).toInt());
+    if (_initialized && !_resetPaused) _schedule.armCheckpoint(lastVerifiedCheckpoint);
     await refreshDetails();
 
     if (seedGoogleConfig && profile.googleUrl.isNotEmpty) {
@@ -1091,7 +1141,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         catch (e) { if (!isRecordSyncConflict(e)) rethrow; }
         try {
           _admitBatch();
-          await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused);
+          await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
         } catch (e) {
           if (!e.toString().toLowerCase().contains('conflict')) rethrow;
         }
@@ -1100,9 +1150,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                 reconciliationInterval ||
             _manualSync || _checkpointDue) {
           _admitBatch();
-          await _pullManagedChanges();
+          final inventoryAudit = _manualSync || _checkpointDue;
+          await _pullManagedChanges(verifyInventory: inventoryAudit);
           _lastPull = DateTime.now();
-          completedReconciliation = true;
+          // A lightweight 4-minute delta poll must not postpone the durable
+          // elapsed-hour inventory audit.
+          completedReconciliation = inventoryAudit;
         }
         _admitBatch();
         await refreshDetails();
@@ -1127,7 +1180,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                 if (!completedReconciliation && lastVerifiedCheckpoint != null) 'checkpointAt': lastVerifiedCheckpoint!.millisecondsSinceEpoch}),
         );
         lastSuccessfulSync = DateTime.now();
-        if (completedReconciliation) lastVerifiedCheckpoint = lastSuccessfulSync;
+        if (completedReconciliation) {
+          lastVerifiedCheckpoint = lastSuccessfulSync;
+          _schedule.armCheckpoint(lastVerifiedCheckpoint);
+        }
         _failures = 0;
         _nextRetry = null;
         state.value = SchoolCloudState.synced;
@@ -1170,12 +1226,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
       if (scriptUrl.isNotEmpty && central.isEmpty) {
         _admitBatch();
-        await WindowsBackendBridge.flushPending(canAdmit: () => !isPaused);
+        await WindowsBackendBridge.flushPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
       }
 
       if (central['managed'] == true) {
         _admitBatch();
-        await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused);
+        await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
       }
 
       _admitBatch();
@@ -1188,7 +1244,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       lastError = e.toString();
       recoveryDecision = windowsSyncRecovery(e);
       _failures++;
-      _nextRetry = recoveryDecision!.retry ? DateTime.now().add(recoveryDecision!.delay(_failures)) : null;
+      _nextRetry = recoveryDecision!.retry
+          ? (_nextRetry != null && _nextRetry!.isAfter(DateTime.now())
+              ? _nextRetry : DateTime.now().add(recoveryDecision!.delay(_failures)))
+          : null;
       if (recoveryHistory.length >= 100) recoveryHistory.removeAt(0);
       recoveryHistory.add({'atUtc': DateTime.now().toUtc().toIso8601String(),
         'category': recoveryDecision!.kind.name, 'attempt': _failures,
@@ -1248,9 +1307,76 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _pushManagedOutbox() => WindowsPendingSchoolSync.flush(
+  /// One reviewed transient record/document retry through the same serial admission lane.
+  /// It never clears a queue, replaces operation IDs, or resumes a user pause.
+  Future<void> retryRecoverableOperation({required String queueCollection,
+      required String queueId, required String expectedOperationId,
+      required String expectedSchoolId}) async {
+    final documentRetry = queueCollection == '_windows_document_outbox';
+    final operationField = documentRetry ? 'documentRevision' : 'operationId';
+    if (!documentRetry && queueCollection != '_windows_firebase_outbox') {
+      throw StateError('This queue requires its own verified recovery action.');
+    }
+    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused) {
+      throw StateError('Sync is busy, paused, or unavailable. Pending data retained.');
+    }
+    _syncing = true;
+    final db = FirebaseFirestore.instance, origin = _activeProfileId;
+    bool valid(Map<String,dynamic>? row) => row != null &&
+        row[operationField] == expectedOperationId && expectedOperationId.isNotEmpty &&
+        row['schoolId'] == expectedSchoolId && expectedSchoolId == _activeSchoolSyncId &&
+        db.activeProfileId == origin && _activeProfileId == origin &&
+        row['syncState'] == 'retry' &&
+        {'networkPath','timeout','server'}.contains(row['failureCategory']);
+    try {
+      final ref = db.collection(queueCollection).doc(queueId);
+      final row = (await ref.get()).data();
+      if (!valid(row)) throw StateError('Retry is stale or requires administrator review.');
+      final central = await CentralSchoolCloud.saved();
+      if (central['managed'] != true || central['schoolId'] != expectedSchoolId ||
+          central['storageReady'] != true) throw StateError('Verified managed school storage required.');
+      ManagedSchoolSession.verifyBuildEndpoint(central['endpoint']?.toString() ?? '');
+      await SchoolCloudEngine.instance.verify();
+      if (SchoolCloudEngine.instance.identity != null && !SchoolCloudEngine.instance.canOpen) {
+        throw StateError('School authorization needs verification.');
+      }
+      _admitBatch();
+      final health = await ManagedSchoolSession.callForSchool(expectedSchoolId,'managed/storage/check',{});
+      if (health['recordSyncVersion'] != 2 || health['brokerRecordSyncVersion'] != 2) {
+        throw StateError('School sync protocol verification required.');
+      }
+      if (!valid((await ref.get()).data())) throw StateError('Operation changed during retry preparation.');
+      _admitBatch();
+      bool admit() => db.activeProfileId == origin && _activeProfileId == origin && !isPaused;
+      if (documentRetry) {
+        await WindowsBackendBridge.flushDocumentPending(canAdmit: admit,
+          admitRow: (id,record) => id == queueId && valid(record),
+          onActivity: _recordActivity);
+      } else {
+        await _pushManagedOutbox(onlyQueueId:queueId, onlyOperationId:expectedOperationId,
+          canAdmit: admit);
+      }
+      final remaining = (await ref.get()).data();
+      if (remaining?[operationField] == expectedOperationId) {
+        throw StateError('Operation remains pending; completion is unverified.');
+      }
+    } finally {
+      _syncing = false;
+      await refreshDetails();
+      if (_rerunRequested) {
+        _rerunRequested = false;
+        scheduleSoon();
+      }
+    }
+  }
+
+  Future<void> _pushManagedOutbox({String? onlyQueueId, String? onlyOperationId, bool Function()? canAdmit}) => WindowsPendingSchoolSync.flush(
     profileId: _activeProfileId,
-    canAdmit: () => !isPaused,
+    onlyQueueId: onlyQueueId,
+    onlyOperationId: onlyOperationId,
+    respectBackoff: onlyOperationId == null,
+    onActivity: _recordActivity,
+    canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
     send: (c, id, op, data) async {},
     sendVersioned: (item) async {
       metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
@@ -1578,6 +1704,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     required String idToken,
   }) => WindowsPendingSchoolSync.flush(
     profileId: FirebaseFirestore.instance.activeProfileId,
+    respectBackoff: true,
+    onActivity: _recordActivity,
     canAdmit: () => !isPaused,
     send: (collection, id, operation, data) async {
       if (operation == 'delete') {

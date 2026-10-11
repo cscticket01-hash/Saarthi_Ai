@@ -1,16 +1,19 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../windows_secure_storage.dart';
 import '../platform/platform_config.dart';
 import 'central_school_cloud.dart';
+import 'managed_device_credentials.dart';
+export 'managed_device_credentials.dart';
 class ManagedSchoolSession {
   static http.Client? _transport;
   static String? _transportScope;
   static http.Client _transportFor(Map<String,dynamic> saved) {
     final scope=jsonEncode([saved['endpoint'],saved['schoolId'],saved['uid']]);
     if(_transport==null||_transportScope!=scope) {
-      _transport?.close();_transport=http.Client();_transportScope=scope;
+      _transport?.close();_transport=ManagedDeviceClient(http.Client(), saved['endpoint'].toString(),accountUid:saved['uid'].toString());_transportScope=scope;
     }
     return _transport!;
   }
@@ -76,7 +79,19 @@ class ManagedSchoolSession {
     try {
       final auth=await cloud.send('POST',Uri.https('identitytoolkit.googleapis.com','/v1/accounts:signInWithPassword',{'key':platformApiKey}),body:{'email':email.trim(),'password':password,'returnSecureToken':true});
       if(auth['idToken'] is! String||auth['refreshToken'] is! String||auth['localId'] is! String)throw StateError('School login failed');
-      final session=await cloud.api({'action':'managed/session'},token:auth['idToken']);
+      await ManagedDeviceCredentials.proof(accountUid:auth['localId'],endpoint:endpoint);
+      final authenticated=CentralSchoolCloud(client:ManagedDeviceClient(cloud.client,endpoint,accountUid:auth['localId']),endpoint:endpoint,closeClient:false);
+      try {
+        verifyDeviceRegistration(await authenticated.api({'action':'managed/device/register','deviceName':Platform.localHostname.length<=100?Platform.localHostname:'Windows PC','deviceOs':'Windows','type':'pc'},token:auth['idToken']), await ManagedDeviceCredentials.identity(accountUid:auth['localId'],endpoint:endpoint));
+      } on CentralCloudException catch(e) {
+        // Compatibility only when this feature is explicitly inactive server-side.
+        if(e.status==401 && e.diagnosticCode=='REAUTHORIZATION_REQUIRES_NEW_CREDENTIAL') {
+          // This path is reached only after a fresh Firebase password login.
+          await ManagedDeviceCredentials.rotateRevokedCredential(accountUid:auth['localId'],endpoint:endpoint);
+          verifyDeviceRegistration(await authenticated.api({'action':'managed/device/register','deviceName':'Windows PC','deviceOs':'Windows','type':'pc'},token:auth['idToken']), await ManagedDeviceCredentials.identity(accountUid:auth['localId'],endpoint:endpoint));
+        } else if(e.status!=503 || e.diagnosticCode!='DEVICE_ROLLOUT_DISABLED') rethrow;
+      }
+      final session=await authenticated.api({'action':'managed/session'},token:auth['idToken']);
       if(session['uid']!=auth['localId']||!validSchoolId(session['schoolId']?.toString()??''))throw StateError('School account mapping is invalid');
       final configuration = managedSessionConfiguration(session, session['schoolId'], auth['localId']);
       Map<String,dynamic> googleProfile={};
@@ -94,10 +109,19 @@ class ManagedSchoolSession {
       changed.value++;return session;
     }finally{cloud.close();}
   }
+  static void verifyDeviceRegistration(Map<String,dynamic> result, String deviceIdentity) {
+    final device=result['device'];
+    if(result['success']!=true || result['deviceEnforced']!=true || !validSchoolId(result['schoolId']?.toString()??'') ||
+        device is! Map || device['deviceIdentity']!=deviceIdentity || device['status']!='active' ||
+        device['generationHash'] is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(device['generationHash']) ||
+        device['authorizedAt'] is! int || result['offlineLease'] is! String) {
+      throw StateError('PC registration proof could not be verified. Existing data remains preserved.');
+    }
+  }
   static Future<void> reauthenticate(String email,String password,{http.Client? client}) async {
     final saved=await CentralSchoolCloud.saved();
     if(saved['managed']!=true||saved['email']?.toString().toLowerCase()!=email.trim().toLowerCase())throw StateError('Use the currently logged-in school account.');
-    final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId'],client:client);
+    final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId'],client:ManagedDeviceClient(client ?? http.Client(), saved['endpoint'].toString(),accountUid:saved['uid'].toString()));
     try{
       final auth=await cloud.send('POST',Uri.https('identitytoolkit.googleapis.com','/v1/accounts:signInWithPassword',{'key':platformApiKey}),body:{'email':email.trim(),'password':password,'returnSecureToken':true});
       if(auth['localId']!=saved['uid']||auth['idToken'] is! String)throw StateError('School identity changed.');
@@ -108,7 +132,7 @@ class ManagedSchoolSession {
   static Future<void> changePassword(String current,String next) async {
     if(next.length<12||next.length>128)throw const FormatException('Use 12–128 characters for the new password.');
     final saved=await CentralSchoolCloud.saved();
-    final cloud=CentralSchoolCloud(endpoint:saved['endpoint']);
+    final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],client:ManagedDeviceClient(http.Client(),saved['endpoint'].toString(),accountUid:saved['uid'].toString()));
     try {
       final auth=await cloud.send('POST',Uri.https('identitytoolkit.googleapis.com','/v1/accounts:signInWithPassword',{'key':platformApiKey}),body:{'email':saved['email'],'password':current,'returnSecureToken':true});
       if(auth['localId']!=saved['uid'])throw StateError('School identity changed.');

@@ -12,6 +12,7 @@ import 'windows_connect/managed_school_session.dart';
 import 'windows_sync_conflict_review.dart';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'windows_local_storage.dart';
+import 'windows_disk_storage.dart';
 import 'windows_backup_integrity.dart';
 import 'windows_disaster_rehearsal.dart';
 import 'windows_binary_downloads.dart';
@@ -66,6 +67,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   Map<String, dynamic>? cloudEvidence;
   Map<String, int>? categoryCounts;
   Map<String, dynamic>? storageEvidence;
+  final diskStorage = WindowsDiskStorage();
+  Map<String, dynamic>? diskEvidence;
   int? localBytes;
   bool localBytesPartial = false;
   int? lastBackupAt;
@@ -123,6 +126,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   }
 
   Future<void> _storageDetails() async {
+    await _measureDisk();
     final counts = <String, int>{};
     for (final category in WindowsSyncControlCenter.categories) {
       final rows = await db.collection(category).get();
@@ -155,6 +159,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   Future<void> _cloudStorageDetails() async {
     final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
     if (school.isEmpty) throw StateError('School identity required');
+    final previous = storageEvidence;
+    if (previous != null && previous['schoolId'] == school &&
+        DateTime.now().millisecondsSinceEpoch - (previous['measuredAt'] as int) >= 0 &&
+        DateTime.now().millisecondsSinceEpoch - (previous['measuredAt'] as int) < 300000) return;
     if (mounted) setState(() => storageEvidence = null);
     final result = await (widget.storageProbe != null
             ? widget.storageProbe!(school)
@@ -241,15 +249,41 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       );
   }
 
-  String bytesLabel(int bytes) => bytes >= 1048576
+  Future<void> _measureDisk() async {
+    Map<String, dynamic> result;
+    try {
+      final directory = await WindowsLocalStorage.dataDirectory();
+      result = await diskStorage.measure(directory.path);
+    } catch (_) {
+      result = {'status': 'Unknown'};
+    }
+    if (mounted && db.activeProfileId == origin) setState(() => diskEvidence = result);
+  }
+
+  String get diskLabel => diskEvidence?['status'] == 'Measured'
+      ? 'Used: ${bytesLabel(diskEvidence!['usedBytes'] as int)} / Total: ${bytesLabel(diskEvidence!['totalBytes'] as int)}\nFree: ${bytesLabel(diskEvidence!['freeBytes'] as int)} • volume ${diskEvidence!['volume']}\nWhole volume; measured ${stamp(diskEvidence!['measuredAt'])}'
+      : 'Unknown — local volume capacity not measured';
+
+  String get driveLabel => storageEvidence == null
+      ? 'School application files: Unknown\nGoogle account quota: Unknown / Not authorized'
+      : '${storageEvidence!['partial'] == true ? 'Partial — at least ' : ''}${bytesLabel(storageEvidence!['driveBytes'] as int)} in school application files\nVerified measurement: ${stamp(storageEvidence!['measuredAt'])}\nGoogle account quota: Unknown / Not authorized';
+
+  String bytesLabel(int bytes) => bytes >= 1099511627776
+      ? '${(bytes / 1099511627776).toStringAsFixed(2)} TB'
+      : bytes >= 1073741824
+      ? '${(bytes / 1073741824).toStringAsFixed(2)} GB'
+      : bytes >= 1048576
       ? '${(bytes / 1048576).toStringAsFixed(2)} MB'
       : '${(bytes / 1024).toStringAsFixed(2)} KB';
 
   @override
   void initState() {
     super.initState();
+    unawaited(_measureDisk());
     pauseDisplayTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted && engine.isPaused) setState(() {});
+      if (mounted && (engine.isPaused ||
+          (engine.details.value['activity'] as List? ?? const []).any(
+            (row) => row is Map && row['retryAt'] is int))) setState(() {});
     });
     _run(
       () => (widget.refreshOnOpen ?? engine.refreshDetails)().timeout(
@@ -508,6 +542,47 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ),
       );
 
+  Widget _activityRow(Map<String, dynamic> event, bool active) {
+    const labels = {
+      'localSave': 'Durable local save', 'cloudRequest': 'Cloud request',
+      'waitingForAck': 'Waiting for authoritative ACK', 'verified': 'Verified sync',
+      'retry': 'Retry scheduled', 'conflict': 'Conflict — administrator review',
+      'unauthorized': 'Unauthorized — authentication required',
+      'needsAttention': 'Administrator attention required',
+      'waitingForResponse': 'Waiting for provider response',
+      'requestCompleted': 'Request completed — authoritative ACK unverified',
+    };
+    final stage = event['stage']?.toString() ?? '';
+    final retryAt = event['retryAt'];
+    final remaining = retryAt is int
+        ? retryAt - DateTime.now().millisecondsSinceEpoch : null;
+    final eligible = stage == 'retry' && event['isRetryable'] == true &&
+        event['schoolId'] == db.activeProfileIdentity['schoolSyncId'] &&
+        event['operationId'] is String && (event['operationId'] as String).isNotEmpty &&
+        event['queueId'] is String && (event['queueId'] as String).isNotEmpty &&
+        event['queueCollection'] == '_windows_firebase_outbox';
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(stage == 'verified' ? Icons.check_circle_outline : Icons.sync,
+          color: stage == 'verified' ? Colors.greenAccent : _cyan),
+      title: Text(labels[stage] ?? 'Unknown activity stage'),
+      subtitle: Text('Observed: ${stamp(event['at'])}'
+          '${remaining != null ? '\nRetry: ${remaining > 0 ? '${(remaining / 1000).ceil()} seconds remaining' : 'due when permitted'}' : ''}'),
+      trailing: eligible ? TextButton(
+        onPressed: active || engine.isPaused ? null : () => _run(() async {
+          if (db.activeProfileId != origin) throw StateError('School changed');
+          await engine.retryRecoverableOperation(
+            queueCollection: event['queueCollection'] as String,
+            queueId: event['queueId'] as String,
+            expectedOperationId: event['operationId'] as String,
+            expectedSchoolId: event['schoolId'] as String,
+          );
+        }),
+        child: const Text('Smart Repair — Safe Retry'),
+      ) : null,
+    );
+  }
+
   Widget _hero(Map<String, dynamic> details, List<dynamic> items, bool active) {
     final syncing = engine.isSyncing;
     final ack = details['lastCloudAckMillis'];
@@ -602,7 +677,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             _connection(
                               Icons.computer,
                               'Local PC',
-                              'School storage active',
+                              diskLabel,
                               const Color(0xFF24DD9B),
                             ),
                             _connection(
@@ -618,9 +693,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             _connection(
                               Icons.folder_outlined,
                               'Google Drive',
-                              cloudEvidence?['driveRootVerified'] == true
-                                  ? 'Verified in this session'
-                                  : 'Not independently checked',
+                              driveLabel,
                               const Color(0xFFFFC153),
                             ),
                           ],
@@ -655,6 +728,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     ],
                   ),
                   const SizedBox(height: 18),
+                  for (final event in (details['activity'] as List? ?? const [])
+                      .where((row) => row is Map && row['schoolId'] == db.activeProfileIdentity['schoolSyncId'])
+                      .take(8))
+                    _activityRow(Map<String, dynamic>.from(event as Map), active),
                   if (items.isEmpty)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 24),
@@ -718,14 +795,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 spacing: 12,
                                 runSpacing: 12,
                                 children: [
-                                  OutlinedButton.icon(
-                                    onPressed: active
-                                        ? null
-                                        : () => _tool(engine.requestSync),
-                                    icon: const Icon(Icons.build_outlined),
-                                    label:
-                                        const Text('Smart Repair — safe retry'),
-                                  ),
                                   OutlinedButton(
                                     onPressed: active
                                         ? null
@@ -1213,6 +1282,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         ? 'Not measured'
                                         : '${items.where((item) => item['_queueCollection'] == '_windows_document_outbox' || item['collection'] == 'documents').length}',
                                   ),
+                                  metric('Local PC volume usage', diskLabel),
                                   metric(
                                     'Local application storage',
                                     localBytes == null

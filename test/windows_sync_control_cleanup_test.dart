@@ -87,4 +87,30 @@ void main() {
     expect(find.text('Export Sanitized Report'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('activity shows only own-school measured stages and offers repair only for recoverable retained operations', (tester) async {
+    engine.details.value = {
+      'pending': 1, 'needsAttention': 1, 'items': const [],
+      'activity': [
+        {'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'stage': 'retry',
+         'operationId': 'original-op', 'queueId': 'original-row',
+         'queueCollection': '_windows_firebase_outbox', 'isRetryable': true,
+         'at': 123456},
+        {'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'stage': 'conflict',
+         'operationId': 'conflict-op', 'queueId': 'conflict-row',
+         'queueCollection': '_windows_firebase_outbox', 'isRetryable': true,
+         'at': 123456},
+        {'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'stage': 'unauthorized',
+         'operationId': 'foreign-op', 'isRetryable': true, 'at': 123456},
+      ],
+    };
+    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(refreshOnOpen: () async {})));
+    await tester.pump(); await tester.pump(const Duration(milliseconds: 100));
+    await tester.scrollUntilVisible(find.text('Smart Repair — Safe Retry'), 200,
+        scrollable: find.byType(Scrollable).first);
+    expect(find.text('Smart Repair — Safe Retry'), findsOneWidget);
+    expect(find.text('Conflict — administrator review'), findsOneWidget);
+    expect(find.text('Unauthorized — authentication required'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
 }

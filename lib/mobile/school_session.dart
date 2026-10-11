@@ -24,11 +24,20 @@ class SchoolAccessDenied extends StateError {
   SchoolAccessDenied(super.message);
 }
 
+/// A verified server response arrived, but its local cache commit failed.
+/// This must not be described as an upstream request timeout.
+class SchoolCacheFailure extends StateError {
+  SchoolCacheFailure() : super('School response arrived, but local cache verification failed. Previously verified cached data is retained.');
+}
+
 enum SchoolConnectionState { connected, syncing, cachedOffline, connectionError }
 
 class SchoolSession {
-  SchoolSession({http.Client? client, this.cacheDirectory, AttendanceStore? attendanceStore})
-    : _client = client ?? http.Client(), _attendanceStore = attendanceStore ?? AttendanceStore();
+  SchoolSession({http.Client? client, this.cacheDirectory, AttendanceStore? attendanceStore,
+      Future<void> Function(String value)? persistSession})
+    : _client = client ?? http.Client(), _attendanceStore = attendanceStore ?? AttendanceStore(),
+      _persistSession = persistSession;
+  final Future<void> Function(String value)? _persistSession;
   final http.Client _client;
   final AttendanceStore _attendanceStore;
   Future<void>? _attendanceFlush;
@@ -180,6 +189,7 @@ class SchoolSession {
   Timer? _recoveryTimer;
   final connectionChanges = ValueNotifier<int>(0);
   DateTime? lastDashboardVerifiedAt;
+  bool dashboardCleanupDeferred = false;
   DateTime? _pushRegisteredAt;
   String? _registeredPushToken;
   Duration? lastDashboardRefreshDuration;
@@ -468,8 +478,10 @@ class SchoolSession {
       'pdfCache': _pdfCache,
     });
     final write = _storageTail.then((_) async {
-      if (generation == _generation)
-        await _secure.write(key: 'vs_mobile_session', value: value);
+      if (generation == _generation) {
+        if (_persistSession != null) await _persistSession!(value);
+        else await _secure.write(key: 'vs_mobile_session', value: value);
+      }
     });
     _storageTail = write.then<void>(
       (_) {},
@@ -503,6 +515,8 @@ class SchoolSession {
     final watch = Stopwatch()..start();
     final pending = _refreshDashboard();
     _refresh = pending;
+    connectionMessage = 'Checking the latest school dashboard; previously verified data remains available.';
+    connectionChanges.value++;
     pending.then(
       (_) {
         watch.stop();
@@ -510,7 +524,9 @@ class SchoolSession {
         lastDashboardRefreshDuration = watch.elapsed;
         _refreshFailures = 0;
         _recoveryTimer?.cancel();
-        connectionMessage = 'School cloud verified.';
+        connectionMessage = dashboardCleanupDeferred
+            ? 'School cloud verified. Optional local file cleanup is deferred.'
+            : 'School cloud verified.';
         connectionState = SchoolConnectionState.connected;
         connectionChanges.value++;
         if (identical(_refresh, pending)) _refresh = null;
@@ -521,8 +537,9 @@ class SchoolSession {
         lastDashboardRefreshDuration = watch.elapsed;
         // A failed API request does not prove the phone has no internet.
         connectionState = SchoolConnectionState.connectionError;
-        connectionMessage = error is SchoolApiFailure ? error.userMessage
-            : error is TimeoutException ? 'School server took too long to respond. Cached data is retained.'
+        connectionMessage = error is SchoolCacheFailure ? error.message
+            : error is SchoolApiFailure ? error.userMessage
+            : error is TimeoutException ? 'Latest school dashboard refresh took too long; its response is unverified. Previously verified cached data is retained.'
             : error is SocketException || error is http.ClientException
                 ? 'Network connection to the school server failed. Check connectivity; cached data is retained.'
                 : 'School connection needs review. Cached data is retained.';
@@ -561,8 +578,12 @@ class SchoolSession {
     });
     if (generation != _generation)
       throw SchoolAccessDenied('School session changed.');
+    final old = dashboard, oldPerson = person;
+    final previousVerified = lastDashboardVerifiedAt;
+    final oldPdfs = Map<String, dynamic>.from(_pdfCache);
+    final merged = {...dashboard, ...result};
+    final removedPdfs = <String, dynamic>{};
     if (result['unchanged'] != true) {
-      final merged = {...dashboard, ...result};
       if (result['noticesDelta'] == true && result['noticeIds'] is List) {
         final ids = (result['noticeIds'] as List).whereType<String>().toList();
         final rows = <String, Map>{};
@@ -574,50 +595,55 @@ class SchoolSession {
         }
         merged['notices'] = [for (final id in ids) if (rows[id] != null) rows[id]];
       }
-      if (jsonEncode(merged).length > 2 * 1024 * 1024)
-        throw StateError('School response exceeds cache safety limit.');
-      final old = dashboard, oldPerson = person;
-      final removedPdfs = <String, dynamic>{};
       if (result.containsKey('idCardPackage') && result['idCardPackage'] == null && _pdfCache.containsKey('idCard')) {
-        removedPdfs['idCard'] = _pdfCache.remove('idCard');
+        removedPdfs['idCard'] = _pdfCache['idCard'];
       }
       if (result['reportCards'] is List) {
         final current = (result['reportCards'] as List).whereType<Map>().map((r) =>
             'report:${r['id'] ?? r['reportCardId'] ?? r['examName'] ?? 'current'}').toSet();
-        for (final key in _pdfCache.keys.where((key) => key.startsWith('report:') && !current.contains(key)).toList()) {
-          removedPdfs[key] = _pdfCache.remove(key);
+        for (final key in _pdfCache.keys.where((key) => key.startsWith('report:') && !current.contains(key))) {
+          removedPdfs[key] = _pdfCache[key];
         }
       }
-      dashboard = merged;
-      person = Map<String, dynamic>.from(dashboard['person'] as Map? ?? person);
-      try {
-        await _persist();
-      } catch (_) {
-        dashboard = old;
-        person = oldPerson;
-        _pdfCache.addAll(removedPdfs);
-        rethrow;
-      }
-      for (final key in removedPdfs.keys) _pdfMemory.remove(key);
-      // Only acknowledged removal invalidates private files. Temporary outages
-      // never enter this path; unlink only files no longer referenced in this tenant.
-      for (final metadata in removedPdfs.values.whereType<Map>()) {
-        if (generation != _generation) break;
-        final hash = metadata['hash'];
-        if (hash is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(hash) &&
-            !_pdfCache.values.whereType<Map>().any((m) => m['hash'] == hash)) {
-          try { final file = File('${(await _files()).path}/$hash.pdf');
-            if (await file.exists()) await file.delete();
-          } on FileSystemException { /* Inaccessible orphan is not an active cache entry. */ }
-        }
-      }
-    } else {
-      dashboard = {...dashboard, ...result};
-      await _persist();
     }
-    final previousVerified = lastDashboardVerifiedAt;
+    if (jsonEncode(merged).length > 2 * 1024 * 1024)
+      throw StateError('School response exceeds cache safety limit.');
+    dashboard = merged;
+    person = Map<String, dynamic>.from(dashboard['person'] as Map? ?? person);
+    for (final key in removedPdfs.keys) _pdfCache.remove(key);
     lastDashboardVerifiedAt = DateTime.now();
-    try { await _persist(); } catch (_) { lastDashboardVerifiedAt = previousVerified; rethrow; }
+    try {
+      // One cache commit binds content and its verified timestamp. No second
+      // write can fail after the new dashboard has already been accepted.
+      await _persist();
+    } catch (_) {
+      if (generation != _generation) throw SchoolAccessDenied('School session changed.');
+      dashboard = old;
+      person = oldPerson;
+      lastDashboardVerifiedAt = previousVerified;
+      _pdfCache = oldPdfs;
+      throw SchoolCacheFailure();
+    }
+    if (generation != _generation) throw SchoolAccessDenied('School session changed.');
+    dashboardCleanupDeferred = false;
+    for (final key in removedPdfs.keys) _pdfMemory.remove(key);
+    // Only acknowledged removal invalidates private files. Temporary outages
+    // never enter this path; unlink only files no longer referenced in this tenant.
+    for (final metadata in removedPdfs.values.whereType<Map>()) {
+      if (generation != _generation) break;
+      final hash = metadata['hash'];
+      if (hash is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(hash) &&
+          !_pdfCache.values.whereType<Map>().any((m) => m['hash'] == hash)) {
+        try { final file = File('${(await _files()).path}/$hash.pdf');
+          if (await file.exists()) await file.delete();
+        } catch (_) {
+          // An orphan-cleanup failure cannot undo the committed dashboard ACK.
+          // Its file remains retained and no longer referenced by active cache.
+          dashboardCleanupDeferred = true;
+        }
+      }
+    }
+    if (generation != _generation) throw SchoolAccessDenied('School session changed.');
     return dashboard;
   }
 
@@ -758,6 +784,7 @@ class SchoolSession {
     dashboard = {};
     connectionState = SchoolConnectionState.cachedOffline;
     lastDashboardVerifiedAt = null;
+    dashboardCleanupDeferred = false;
     _pdfCache = {};
     _pdfMemory = {};
     _refresh = null;

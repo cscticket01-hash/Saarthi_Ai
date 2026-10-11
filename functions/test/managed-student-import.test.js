@@ -50,3 +50,36 @@ test('mismatched plan/rows, expiry, foreign snapshot and readback mismatch canno
 });
 
 test('client-written preview metadata or forged ciphertext cannot grant commit',async()=>{const f=setup(),rows=[row()],p=await f.preview(rows);const saved=[...f.docs].find(([k])=>k.startsWith('school_import_preview_private/'))[1];saved.actor='A';saved.operations=[{data:{name:'Injected'}}];assert.equal((await f.commit(rows,p.planId)).verified,true);assert.equal(f.records.S1.name,'New Name');saved.sealed.body='forged';await assert.rejects(f.commit(rows,p.planId),e=>e.status===409);});
+test('registered universal Sheet previews then commits with real Script ACK/readback; Sheet edits reject plan',async()=>{
+ const {storage}=require('./helpers/managed-storage'),{time}=require('./helpers/managed-school-broker');
+ const s=storage();s.context.Date=class extends Date{static now(){return time;}};
+ const f=fixture(async(url,opt)=>({ok:true,status:200,text:async()=>JSON.stringify(s.context.VS_managedHandle({postData:{contents:opt.body}}))}),{studentImportEnabled:true});
+ const sheet=await f.call({action:'managed/student-import/sheet/setup',confirmCreate:true});assert.equal(sheet.headerVersion,1);
+ const tab=s.books.get(sheet.sheetId).getSheetByName('Student Import v1');tab.getRange(2,1,1,7).setValues([[A,'S1','Synthetic Test','VI','',1,'']]);
+ const preview=await f.call({action:'managed/student-import/preview',source:'designated-sheet'});assert.equal(preview.valid,true);assert.equal(preview.sourceSheetId,sheet.sheetId);
+ const commit=await f.call({action:'managed/student-import/commit',source:'designated-sheet',planId:preview.planId});assert.equal(commit.verified,true);assert.equal((await f.call({action:'managed/student-import/commit',source:'designated-sheet',planId:preview.planId})).verified,true);
+ tab.getRange(2,3,1,1).setValues([['Edited after preview']]);await assert.rejects(f.call({action:'managed/student-import/commit',source:'designated-sheet',planId:preview.planId}),e=>e.status===409);
+});
+test('numeric rolls and unrelated tombstones/legacy slots retain conservative affected-record protections',async()=>{
+ const f=setup();f.records.deleted={schoolId:A,_syncRevision:'deleted-r',_syncDeleted:true};f.records.legacy={schoolId:A,name:'Old',_syncRevision:'legacy-r'};
+ const p=await f.preview([row('S1',{rollNo:12})]);assert.equal(p.valid,true);assert.equal(p.uniquenessScope,'partial-legacy');assert.equal((await f.commit([row('S1',{rollNo:12})],p.planId)).verified,true);
+ const deleted=await f.preview([row('deleted',{expectedRevision:'deleted-r'})]);assert.equal(deleted.valid,false);assert.equal(deleted.errors[0].code,'TOMBSTONE_REQUIRES_RESTORE');
+});
+test('encrypted admission bounds active previews to20 without school record deletion',async()=>{
+ const f=setup();for(let i=0;i<20;i++)assert.equal((await f.preview([row('S'+i)])).valid,true);await assert.rejects(f.preview([row('overflow')]),e=>e.status===429);assert.equal(f.writes.length,0);
+ const ledger=f.docs.get('school_import_admission_private/'+A);assert.equal(ledger.plans,undefined);assert.equal(JSON.parse(unprotect(ledger.sealed,key)).plans.length,20);
+});
+test('shared device hook enforces future PC import route and derives fresh registration auth from verified token',async()=>{
+ const {generateKeyPairSync}=require('node:crypto');const states=new Map();const deviceStore={transaction:async(school,work)=>{const change=await work(states.get(school));states.set(school,change.state);return change.result;}};
+ const f=setup({deviceAccessEnforced:true,deviceOfflinePrivateKey:generateKeyPairSync('ed25519').privateKey,deviceStore});
+ await assert.rejects(f.preview([row()]),e=>e.code==='DEVICE_PROOF_REQUIRED');assert.equal(f.sent.length,0);
+ const headers={authorization:'Bearer A','x-vidya-device-id':'D'.repeat(32),'x-vidya-device-credential':'C'.repeat(43)};
+ const registered=await f.handle({method:'POST',headers,body:{action:'managed/device/register',deviceName:'TEST PC',deviceOs:'Windows'}});assert.equal(registered.success,true);assert.ok(registered.offlineLease);assert.equal(registered.deviceEnforced,true);
+ const session=await f.handle({method:'POST',headers,body:{action:'managed/session'}});assert.equal(session.deviceEnforced,true);assert.ok(session.offlineLease);assert.ok(session.offlineExpiresAt);
+ const p=await f.handle({method:'POST',headers,body:{action:'managed/student-import/preview',rows:[row()]}});assert.equal(p.valid,true);
+});
+test('expired preview metadata reuses fixed slots without growing retained documents or accepting old plan',async()=>{
+ const {time}=require('./helpers/managed-school-broker');let clock=time;const f=setup({now:()=>clock});const previews=[];
+ for(let i=0;i<20;i++)previews.push(await f.preview([row('OLD'+i)]));clock+=1800001;assert.equal((await f.preview([row('NEW')])).valid,true);
+ assert.equal([...f.docs.keys()].filter(p=>p.startsWith('school_import_preview_private/')).length,20);await assert.rejects(f.commit([row('OLD0')],previews[0].planId),e=>e.status===409);assert.equal(f.writes.length,0);
+});
