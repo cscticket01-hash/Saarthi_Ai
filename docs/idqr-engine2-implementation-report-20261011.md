@@ -1,0 +1,33 @@
+# ID Card / QR2 draft implementation — 11 October 2026
+
+Overall PARTIAL. This is implementation on an isolated draft branch, not live engine activation. Existing TEST runtime remains335a21c and deployed AppsScript remains2026-10-10.3; Google sign-in502 prevents upgrade. Main unchanged.
+
+## Implemented draft changes
+
+- School-scoped front/back designer screen: move/resize, photo focus, snap, validation, undo/redo, immutable draft snapshots and async save callback with visible failure. No persistent repository/route activation yet; no automatic face detection claim.
+- Existing PDF renderer reused for bounded A4 class selection up to500: front/back imposition, explicit mirror mode, identity-checked existingQR, immutable data/assets/template, selection fingerprint, progress/cancellation without partial export. Resume checks fingerprint then rerenders the whole selection; no durable checkpoint skip claim.
+- QR2 issue lifecycle planner: explicitadmin transition requirement, immutable issue/revoke/reissue history and exact operation replay/conflict checks; expiry and unknown offline revocation fail closed for admission. This planner is not authoritative server authorization or a signed durable registry.
+- Universal Apps Script2026-10-11.2: identical unbound source, ownerScriptProperties for school/explicitnewstorageconsent; verifiedexistingroot/secret preserved; trustedcentralendpointallowlist, isolatedTESTschoolguard, no secret-bearingredirects. Generic distributioncopiescanonicalbytes unchanged with provenance.
+- Independent every-declared-QR finalPDF verifier at150/300/600DPI and geometry inventory. ExplicitnonQrPages only declare absence; they are geometrychecked, not provenfreeofQR. Inventoryprovenance remains outside decoderproof.
+
+## Evidence
+
+Local92focusedbackend/25verifier/4package/4upgrade tests PASS; standaloneDart designer/lifecycle safety PASS and analysis PASS. Fullbackendlocal331/332: singlemissingfirebase-admindependency, not a verifiedsourcefailure. Hosted workflow installs dependencies.
+
+Initial exactsourcec78dc8152fbe50945cd70a6af9c44f0736469e8c run38132266107: sourceanalysis PASS;34Fluttertests PASS,1immutabilityfixture FAIL(missingrequiredschoolName). Actualrenderer50/100/500exports PASS; samefixture corrected in4e9bed8ee06fad44436f3b71923e74610d661369. Initialfailure remains recorded; fresh exact-source4e9bed8ee06fad44436f3b71923e74610d661369 run38132396365 PASS: source analysis,35 Flutter tests,336 dependency-installed backend tests,25 verifier tests,4 package/4 upgrade tests, both standalone safety suites. Independent actual-renderer QR checks PASS for50/100/500:150/300/1500 exact-payload original-raster checks. Artifacts11700005470 (renderer/decoder) and11699158354 (universal package).
+
+| Latest real renderer synthetic selection | PDF pages | PDF bytes | Render ms |
+|---|---|---|---|
+|50|12|47,855|237|
+|100|24|88,603|263|
+|500|112|444,940|1,124|
+
+These are actual draft Dart renderer outputs with synthetic records, not a completed schoolUIbatch or physicalprint. Final PDF geometry and every declared QR decoded at150/300/600 DPI PASS on fresh outputs. Timing is renderer wall time only, not full UI/storage/print latency. Explicit non-QR pages are declared, not independently proven free of QR; full inventory provenance and physical scans remain UNVERIFIED.
+
+## Outstanding completion gates
+
+Persisted designer/versionhistory and realUIrouting, durableclassjobresume/storage/cancel, missing-data reporting, professionalprint calibration/cropmarks, face positioning, rights-cleared Indicfont/shaping and native-readerreview, authoritativecardissue/revocation/signature/dashboard and offlinepermit/device integration remain unfinished. Existingofflineattendanceworker/legacyQRmust be reused and preserved. No localplannerboolean may replace serveradminproof.
+
+Live universalupgrade and signedhealth, real SchoolA/B import/isolation and fivePC registration/revoke/offlineexpiry tests remain blocked by actualaccess/configuration; do not enable flags on oldbundle. PhysicalPC/mobile/printer unverified. Retaineddayfixture unchanged:12October06:35:19.426IST deadline; sameautomation06:36:20IST guardedrejectionprobe, no purge/recreation. Supporteddispatchmust be checked at execution.
+
+DraftPR26 is reviewableimplementation; no mainmerge, TEST/productiondeploy, release/downloadlinks/billing or originalpendingoperation changes.
