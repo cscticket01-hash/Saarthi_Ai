@@ -2,7 +2,7 @@ name: Isolated TEST disaster recovery acceptance
 on:
   workflow_dispatch:
   push:
-    branches: [feature/smart-sync-3]
+    branches: [feature/smart-sync-3, feature/universal-self-healing-2]
     paths:
       - .github/workflows/disaster-test.yml
       - .github/scripts/test_disaster_live.cjs
@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   disaster-live:
-    if: github.ref == 'refs/heads/feature/smart-sync-3'
+    if: github.ref == 'refs/heads/feature/smart-sync-3' || github.ref == 'refs/heads/feature/universal-self-healing-2'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
