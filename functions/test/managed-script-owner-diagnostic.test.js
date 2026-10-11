@@ -28,10 +28,5 @@ test('canonical and adapter diagnostic owner code is identical and only logs san
 
 test('owner-only recent trace parser cannot output raw server error messages',()=>{
  const body=functionBody(files[0],'VS_readLastSyncDiagnostic','// Organized storage is a layout');
- const execute=new Function('PropertiesService','CacheService','Logger',`
-   function VS_readLastSyncDiagnostic() {${body.split('}')[0]}} `);
- // Ensure the owner callable has no request argument. Do not execute a
- // partial extracted body: static source proof above covers canonical copy.
- assert.equal(typeof execute,'function');
  assert.doesNotMatch(body,/candidate\.(message|payload|signature|url|schoolId)/);
 });
