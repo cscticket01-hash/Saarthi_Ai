@@ -340,8 +340,6 @@ class WindowsDocumentTemplates {
       data: {
         ...profile,
         'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
-        'schoolAddress': profile['address'] ?? '',
-        'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
         ...data,
         if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty)
           'schoolName': profile['schoolName'],
