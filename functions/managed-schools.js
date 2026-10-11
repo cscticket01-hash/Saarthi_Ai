@@ -444,6 +444,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   const row=await db.doc('platform_schools/'+m.schoolId).get(),data=row.data()||{};
   return {success:true,schoolId:m.schoolId,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
  }
+ if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
  if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');

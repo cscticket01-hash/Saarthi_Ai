@@ -9,6 +9,7 @@ import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_school_backup_export.dart';
+import 'windows_school_id_backup.dart';
 
 /// Export only the current school. The unencrypted multi-profile backup API is
 /// deliberately not used for portable school exports.
@@ -192,9 +193,7 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
   missing.add(
     'Full cloud file inventory was not fetched; cloud-only files are unverified.',
   );
-  missing.add(
-    'External designer/bulk job stores require a separate portable export.',
-  );
+  final idWorkspace = await collectWindowsSchoolIdBackup(school, own, missing);
   final refreshed = await db.exportActiveSchoolSnapshot();
   if (!own() ||
       sha256.convert(utf8.encode(jsonEncode(snapshot))) !=
@@ -204,7 +203,11 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
   final result = await WindowsSchoolBackupExport.export(
     schoolId: school,
     password: accepted,
-    snapshot: {'schoolId': school, 'data': snapshot},
+    snapshot: {
+      'schoolId': school,
+      'data': snapshot,
+      'idWorkspace': idWorkspace,
+    },
     files: files,
     destination: File(location.path),
     stillSameSchool: own,

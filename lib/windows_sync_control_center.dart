@@ -13,6 +13,7 @@ import 'windows_sync_conflict_review.dart';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'windows_local_storage.dart';
 import 'windows_disk_storage.dart';
+import 'windows_drive_quota.dart';
 import 'windows_backup_integrity.dart';
 import 'windows_disaster_rehearsal.dart';
 import 'windows_binary_downloads.dart';
@@ -26,6 +27,7 @@ class WindowsSyncControlCenter extends StatefulWidget {
     this.healthProbe,
     this.storageProbe,
     this.diskProbe,
+    this.quotaProbe,
     this.syncRequest,
     this.pauseRequest,
     this.backupRequest,
@@ -37,6 +39,7 @@ class WindowsSyncControlCenter extends StatefulWidget {
   final Future<Map<String, dynamic>> Function(String school)? healthProbe;
   final Future<Map<String, dynamic>> Function(String school)? storageProbe;
   final Future<Map<String, dynamic>> Function(String path)? diskProbe;
+  final Future<Map<String, dynamic>> Function(String school)? quotaProbe;
   static const categories = [
     'students_directory',
     'teachers_directory',
@@ -74,6 +77,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   Map<String, dynamic>? storageEvidence;
   final diskStorage = WindowsDiskStorage();
   Map<String, dynamic>? diskEvidence;
+  Map<String, dynamic>? quotaEvidence;
   int? localBytes;
   bool localBytesPartial = false;
   int? lastBackupAt;
@@ -195,7 +199,19 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         result['measuredAt'] is! int ||
         (result['measuredAt'] as int) <= 0)
       throw StateError('Storage usage unverified');
-    if (mounted) setState(() => storageEvidence = result);
+    final quota = await WindowsDriveQuota.measure(authorizedRead: () async {
+      final response = widget.quotaProbe != null
+          ? await widget.quotaProbe!(school)
+          : await ManagedSchoolSession.callForSchool(school, 'managed/storage/quota', {});
+      if (response['success'] != true || response['schoolId'] != school || response['driveQuotaVersion'] != 1) {
+        throw StateError('School quota response unverified');
+      }
+      return response;
+    });
+    if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed during quota read');
+    }
+    if (mounted) setState(() { storageEvidence = result; quotaEvidence = quota; });
   }
 
   Future<void> _exportDiagnostics() async {
@@ -280,9 +296,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       ? 'Used: ${bytesLabel(diskEvidence!['usedBytes'] as int)} / Total: ${bytesLabel(diskEvidence!['totalBytes'] as int)}\nFree: ${bytesLabel(diskEvidence!['freeBytes'] as int)} • volume ${diskEvidence!['volume']}\nWhole volume; measured ${stamp(diskEvidence!['measuredAt'])}'
       : 'Unknown — local volume capacity not measured';
 
+  String get quotaLabel => quotaEvidence?['status'] == 'Measured'
+      ? 'Google account quota: ${bytesLabel(quotaEvidence!['usageBytes'] as int)} used / ${quotaEvidence!['limitBytes'] == null ? 'no reported limit' : bytesLabel(quotaEvidence!['limitBytes'] as int)}'
+      : 'Google account quota: Unknown — ${quotaEvidence?['reason'] ?? 'Owner quota reporting has not been authorized or measured'}';
   String get driveLabel => storageEvidence == null
-      ? 'School application files: Unknown\nGoogle account quota: Unknown / Not authorized'
-      : '${storageEvidence!['partial'] == true ? 'Partial — at least ' : ''}${bytesLabel(storageEvidence!['driveBytes'] as int)} in school application files\nVerified measurement: ${stamp(storageEvidence!['measuredAt'])}\nGoogle account quota: Unknown / Not authorized';
+      ? 'School application files: Unknown\n$quotaLabel'
+      : '${storageEvidence!['partial'] == true ? 'Partial — at least ' : ''}${bytesLabel(storageEvidence!['driveBytes'] as int)} in school application files\nVerified measurement: ${stamp(storageEvidence!['measuredAt'])}\n$quotaLabel';
 
   String bytesLabel(int bytes) => bytes >= 1099511627776
       ? '${(bytes / 1099511627776).toStringAsFixed(2)} TB'

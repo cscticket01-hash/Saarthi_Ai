@@ -7127,6 +7127,19 @@ function VS_managedDiagnostic(error) {
   return 'SCRIPT_OPERATION_FAILED';
 }
 
+/** Account-wide quota requires explicit owner consent; not school file usage. */
+function VS_managedStorageQuota(b) {
+ const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
+ if(!b||b.schoolId!==school)throw new Error('Foreign school record');
+ VS_managedRoot();
+ if(p.getProperty('VS_ALLOW_DRIVE_QUOTA_REPORTING')!=='true')return {success:true,schoolId:school,driveQuotaVersion:1,status:'Unknown',reason:'School owner has not enabled Google account quota reporting'};
+ try {
+  const usage=DriveApp.getStorageUsed(),limit=DriveApp.getStorageLimit();
+  if(!Number.isSafeInteger(usage)||usage<0||!Number.isSafeInteger(limit))throw new Error('Invalid quota');
+  return {success:true,schoolId:school,driveQuotaVersion:1,status:'Measured',usage:usage,limit:limit<0?null:limit,scope:'Google account storage; separate from school application files',measuredAt:Date.now(),reason:limit<0?'Google reports no storage limit for this account':null};
+ }catch(_){return {success:true,schoolId:school,driveQuotaVersion:1,status:'Unknown',reason:'Authorized Google storage quota read unavailable; no additional permission requested'};}
+}
+
 function VS_managedHandle(e) {
   VS_BACKUP_READ_CACHE=null;
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
@@ -7135,7 +7148,9 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);verified=true;let result;
-    if(b.action==='managed_health'){
+    if(b.action==='managed_storage_quota'){
+      result=VS_managedStorageQuota(b);
+    }else if(b.action==='managed_health'){
       VS_managedRoot();const p=PropertiesService.getScriptProperties();let sheetsVerified=null;
       if(VS_testBackupRecoveryEnabled()){
         const properties=p.getProperties(),collection=VS_LAYOUT_COLLECTIONS.find(col=>properties['VS_SHEET_MIGRATED_'+col]==='1');

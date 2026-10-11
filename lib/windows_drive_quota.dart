@@ -8,10 +8,18 @@ class WindowsDriveQuota {
     if (authorizedRead == null)
       return {
         'status': 'Unknown',
-        'reason': 'Google account quota permission unavailable; school files are a separate measurement',
+        'reason':
+            'Google account quota permission unavailable; school files are a separate measurement',
       };
     try {
       final value = await authorizedRead().timeout(const Duration(seconds: 5));
+      if (value['status'] == 'Unknown')
+        return {
+          'status': 'Unknown',
+          'reason': value['reason'] is String
+              ? value['reason']
+              : 'School owner quota reporting unavailable'
+        };
       final usage = int.tryParse('${value['usage']}');
       final limit = int.tryParse('${value['limit']}');
       if (usage == null || usage < 0)

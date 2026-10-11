@@ -689,14 +689,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
   Future<void> _backup() async {
     setState(() => _busy = true);
     try {
-      final path = await WindowsLocalStorage.createBackup();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFF00A884),
-          content: Text('Backup ready: $path'),
-        ),
-      );
+      await exportWindowsSchoolBackup(context);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
