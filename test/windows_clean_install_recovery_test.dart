@@ -124,6 +124,9 @@ void main(){
     final bytes=await File('${backup.path}/${WindowsSqliteStore.databaseName}').readAsBytes();
     await recovery.prepare(backup,staging);
     expect(await File('${backup.path}/${WindowsSqliteStore.databaseName}').readAsBytes(),bytes);
+    expect(await File('${backup.path}/${WindowsSqliteStore.databaseName}-wal').exists(),false);
+    expect(await File('${backup.path}/${WindowsSqliteStore.databaseName}-shm').exists(),false);
+    await WindowsBackupIntegrity.verify(backup);
     final restored=await WindowsSqliteStore.open('${staging.path}/${WindowsSqliteStore.databaseName}');
     try {
       expect((await restored.readDocument('school','_windows_firebase_outbox','fee'))!['operationId'],'never-uploaded-original');
@@ -136,6 +139,7 @@ void main(){
     await File('${backup.path}/local_database_v1.json').writeAsString(jsonEncode(root));
     await WindowsBackupIntegrity.seal(backup);
     await expectLater(recovery.prepare(backup,staging),throwsStateError);
+    root['profiles']=Map<String,dynamic>.from(root['profiles'] as Map);
     root['profiles']['foreign']={'identity':{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},'collections':{}};
     await File('${backup.path}/local_database_v1.json').writeAsString(jsonEncode(root));
     await WindowsBackupIntegrity.seal(backup);
@@ -175,6 +179,16 @@ void main(){
     await WindowsBackupIntegrity.seal(backup);
     await expectLater(recovery.prepare(backup,staging),throwsStateError);
     expect(await staging.exists(),false);
+  });
+
+  test('fresh detection includes never-checkpointed current SQLite WAL records',()async{
+    final active=await WindowsSqliteStore.open('${current.path}/${WindowsSqliteStore.databaseName}');
+    try {
+      await active.writeRoot(fixture('LocalFiles/photo.jpg'));
+      expect(await File('${current.path}/${WindowsSqliteStore.databaseName}-wal').length(),greaterThan(0));
+      expect(await recovery.isFreshInstallation(),false);
+      expect((await active.readDocument('school','_windows_firebase_outbox','fee'))!['operationId'],'never-uploaded-original');
+    } finally {await active.close();}
   });
 
 }

@@ -38,7 +38,7 @@ void main() {
     await WindowsRuntimeFlags.setLocalStorageEnabled(true);
     temp=await Directory.systemTemp.createTemp('vs-restore-coordination-');
     await db.changeLocalStorageLocation(temp.path);
-    await db.switchProfile('synthetic-restore',identity:{'schoolId':school,'schoolSyncId':school});
+    await db.switchProfile('synthetic-restore-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolId':school,'schoolSyncId':school});
     final ref=db.collection('school_notices').doc('notice');
     await ref.set({'schoolId':school,'title':'Retained','capturedAt':1791500000123});
     await ref.delete();

@@ -241,24 +241,7 @@ class WindowsCleanInstallRecovery {
       final file=File('${folder.path}/$name');
       if(!file.existsSync()) continue;
       if(name.endsWith('.sqlite')) {
-        final db=sqlite3.open(file.path,mode:OpenMode.readOnly);
-        try {
-          if(db.select('PRAGMA quick_check').any((r)=>r.values.first!='ok') || db.select('PRAGMA foreign_key_check').isNotEmpty || db.select('PRAGMA user_version').single.values.first != 1) throw StateError('Backup SQLite integrity requires review.');
-          final root=Map<String,dynamic>.from(jsonDecode(db.select("SELECT value FROM metadata WHERE key='root'").single['value'] as String) as Map);
-          final profiles=<String,dynamic>{};
-          for(final row in db.select('SELECT id,content FROM profiles')) {
-            final id=row['id'] as String;
-            final profile=Map<String,dynamic>.from(jsonDecode(row['content'] as String) as Map);
-            final collections=<String,dynamic>{};
-            for(final collection in db.select('SELECT name FROM collections WHERE profile=?',[id])) {
-              final name=collection['name'] as String;
-              collections[name]={for(final record in db.select('SELECT id,content FROM records WHERE profile=? AND collection=?',[id,name])) record['id'] as String:jsonDecode(record['content'] as String)};
-            }
-            profiles[id]={...profile,'collections':collections};
-          }
-          root['profiles']=profiles;
-          roots[name]=root;
-        } finally {db.close();}
+        roots[name]=_readSqliteCopy(file);
       } else {
         final value=jsonDecode(file.readAsStringSync());
         if(value is! Map) throw StateError('Backup JSON requires review.');
@@ -267,6 +250,69 @@ class WindowsCleanInstallRecovery {
     }
     if(roots.isEmpty) throw StateError('No supported local school database in backup.');
     return roots;
+  }
+
+  /// A read-only SQLite connection can still create WAL/SHM neighbours. Never
+  /// open the sealed generation: inspect a hash-verified private temporary copy.
+  /// Current-install WAL bytes are copied too, so freshness cannot ignore edits
+  /// which have not yet checkpointed into the main database.
+  static Map<String,dynamic> _readSqliteCopy(File file) {
+    final temporary=Directory.systemTemp.createTempSync('vs-backup-readonly-');
+    final originals=<String,String>{};
+    Database? connection;
+    try {
+      for(final suffix in ['', '-wal', '-shm']) {
+        final source=File('${file.path}$suffix');
+        if(!source.existsSync()) continue;
+        if(FileSystemEntity.typeSync(source.path,followLinks:false)!=FileSystemEntityType.file) throw StateError('SQLite backup link requires review.');
+        final before=_hashFileSync(source);
+        final copy=source.copySync('${temporary.path}/${WindowsSqliteStore.databaseName}$suffix');
+        if(_hashFileSync(copy)!=before || _hashFileSync(source)!=before) throw StateError('SQLite generation changed during read-only verification.');
+        originals[suffix]=before;
+      }
+      final db=sqlite3.open('${temporary.path}/${WindowsSqliteStore.databaseName}',mode:OpenMode.readOnly);
+      connection=db;
+      if(db.select('PRAGMA quick_check').any((r)=>r.values.first!='ok') || db.select('PRAGMA foreign_key_check').isNotEmpty || db.select('PRAGMA user_version').single.values.first != 1) throw StateError('Backup SQLite integrity requires review.');
+      final root=Map<String,dynamic>.from(jsonDecode(db.select("SELECT value FROM metadata WHERE key='root'").single['value'] as String) as Map);
+      final profiles=<String,dynamic>{};
+      for(final row in db.select('SELECT id,content FROM profiles')) {
+        final id=row['id'] as String;
+        final profile=Map<String,dynamic>.from(jsonDecode(row['content'] as String) as Map);
+        final collections=<String,dynamic>{};
+        for(final collection in db.select('SELECT name FROM collections WHERE profile=?',[id])) {
+          final name=collection['name'] as String;
+          collections[name]={for(final record in db.select('SELECT id,content FROM records WHERE profile=? AND collection=?',[id,name])) record['id'] as String:jsonDecode(record['content'] as String)};
+        }
+        profiles[id]={...profile,'collections':collections};
+      }
+      root['profiles']=profiles;
+      return root;
+    } finally {
+      connection?.close();
+      try {
+        for(final suffix in ['', '-wal', '-shm']) {
+          final source=File('${file.path}$suffix');
+          if(source.existsSync()!=originals.containsKey(suffix) || source.existsSync() && _hashFileSync(source)!=originals[suffix]) throw StateError('Original SQLite generation changed during verification.');
+        }
+      } finally {
+        temporary.deleteSync(recursive:true);
+      }
+    }
+  }
+
+  static String _hashFileSync(File file) {
+    final output=_RecoveryDigestSink();
+    final sink=sha256.startChunkedConversion(output);
+    final input=file.openSync(mode:FileMode.read);
+    try {
+      while(true) {
+        final bytes=input.readSync(64*1024);
+        if(bytes.isEmpty) break;
+        sink.add(bytes);
+      }
+      sink.close();
+      return output.value!.toString();
+    } finally {input.closeSync();}
   }
 
   static Map<String,dynamic> _inspect(Map<String,Map<String,dynamic>> roots,String school,Directory folder) {
@@ -367,4 +413,12 @@ class WindowsCleanInstallRecovery {
     if(parts.any((p)=>p.isEmpty || p=='.' || p=='..' || p.contains(':'))) throw StateError('Unsafe local media reference.');
     return relative;
   }
+}
+
+class _RecoveryDigestSink implements Sink<Digest> {
+  Digest? value;
+  @override
+  void add(Digest digest) {value=digest;}
+  @override
+  void close() {}
 }
