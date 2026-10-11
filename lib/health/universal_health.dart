@@ -68,7 +68,7 @@ class HealthEvent {
   final HealthFailure failure;
   final DateTime at;
   Map<String, dynamic> toJson() => {'component': component, 'failure': failure.name, 'stage': stage, 'at': at.millisecondsSinceEpoch, 'fingerprint': fingerprint};
-  static const stages = {'observed', 'started', 'verified', 'unverified', 'blocked', 'timeout', 'circuitOpen', 'checkFailed', 'persistenceFailed'};
+  static const stages = {'observed', 'started', 'verified', 'unverified', 'blocked', 'timeout', 'checkTimeout', 'circuitOpen', 'checkFailed', 'persistenceFailed'};
   static HealthEvent? parse(dynamic raw) {
     if (raw is! Map || !UniversalHealth.validId(raw['component']) || !stages.contains(raw['stage']) || raw['at'] is! int || raw['at'] <= 0 || raw['fingerprint'] is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['fingerprint'])) return null;
     final failure = HealthFailure.values.where((v) => v.name == raw['failure']);
@@ -101,6 +101,7 @@ class UniversalHealth {
   final Map<String, HealthProvider> _providers = {};
   final Map<String, HealthObservation> _observations = {};
   final Map<String, Future<void>> _checks = {}, _repairs = {};
+  final Set<String> _quarantinedChecks={},_quarantinedRepairs={};
   final Map<String, int> _attempts = {};
   final Map<String, DateTime> _nextAttempt = {}, _dedup = {};
   final Map<String, List<double>> _latencies = {};
@@ -110,7 +111,12 @@ class UniversalHealth {
   HealthContext? _context;
   int _generation = 0;
   bool _paused = false, _disposed = false;
+  bool _historyReady=false;
   Timer? _timer;
+  Timer? _watchdog;
+  Timer? _loadTimer;
+  Completer<List<HealthEvent>>? _loadGate;
+  DateTime? lastHeartbeat;
   Future<void> _write = Future.value();
   int _cursor = 0;
   DateTime? lastCheckAt;
@@ -119,7 +125,9 @@ class UniversalHealth {
   Map<String, HealthObservation> get observations => Map.unmodifiable({for(final e in _observations.entries)e.key:e.value.state==HealthState.healthy && (e.value.verifiedAt==null || now().difference(e.value.verifiedAt!)>const Duration(minutes:5)) ? const HealthObservation(HealthState.unknown) : e.value});
   List<HealthEvent> get history => List.unmodifiable(_history);
   int get registeredCount => _providers.length;
-  int get activeRepairs => _repairs.length;
+  int get activeRepairs => _repairs.keys.where((id)=>!_quarantinedRepairs.contains(id)).length;
+  int get unsettledRepairs => _quarantinedRepairs.length;
+  int get _activeChecks => _checks.keys.where((id)=>!_quarantinedChecks.contains(id)).length;
   bool get paused => _paused;
   HealthContext? get context => _context;
   static bool validId(dynamic id) => id is String && RegExp(r'^[a-z][a-z0-9_.-]{0,47}$').hasMatch(id);
@@ -136,13 +144,23 @@ class UniversalHealth {
     if (_disposed || _context?.same(context) == true) return;
     final generation = ++_generation;
     _context = context;
+    _historyReady=false;
     _history.clear(); _attempts.clear(); _nextAttempt.clear(); _dedup.clear(); _latencies.clear();
     _observations.updateAll((_, __) => const HealthObservation(HealthState.unknown));
     lastCheckAt = null;
     _notify();
     try {
-      final events = await store?.load(context).timeout(const Duration(seconds: 2)) ?? <HealthEvent>[];
+      _loadTimer?.cancel();
+      if(_loadGate?.isCompleted==false)_loadGate!.complete([]);
+      final gate=Completer<List<HealthEvent>>();_loadGate=gate;
+      _loadTimer=Timer(const Duration(seconds:2),(){if(!gate.isCompleted)gate.complete([]);});
+      final source=store?.load(context)??Future.value(<HealthEvent>[]);
+      var loaded=false;
+      unawaited(source.then<void>((events){if(!gate.isCompleted){loaded=true;gate.complete(events);}},onError:(Object _,StackTrace __){if(!gate.isCompleted)gate.complete([]);}));
+      final events=await gate.future;
+      if(identical(_loadGate,gate)){_loadTimer?.cancel();_loadTimer=null;_loadGate=null;}
       if (generation != _generation || _disposed) return;
+      _historyReady=loaded&&store!=null;
       for (final e in events.where((e) => !e.at.isAfter(now()) && now().difference(e.at) <= const Duration(days: 7)).toList().reversed.take(maxHistory).toList().reversed) {
         _history.add(e);
         // Persisted attempts keep a crash/restart from resetting repair budgets.
@@ -153,11 +171,17 @@ class UniversalHealth {
   }
   void start() {
     if (_disposed || _timer != null) return;
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) { if (!_paused) unawaited(checkAll()); });
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) { if (!_paused) { lastHeartbeat=now();unawaited(checkAll()); } });
+    Timer.run(() {if(!_disposed&&!_paused&&_timer!=null)lastHeartbeat=now();});
+    _watchdog??=Timer.periodic(const Duration(seconds:90),(_){if(!_paused&&!_disposed&&lastHeartbeat!=null&&now().difference(lastHeartbeat!)>=const Duration(seconds:90))unawaited(check('monitor-worker').then((_)=>recover('monitor-worker')));});
+  }
+  Future<void> restartMonitor(RecoveryLease lease) async {
+    lease.check();_timer?.cancel();_timer=null;start();
+    final proof=Completer<void>();Timer.run(()=>proof.complete());await proof.future;lease.check();
   }
   void pause() { _paused = true; ++_generation; _notify(); }
   void resume() { if (_disposed) return; _paused = false; _notify(); unawaited(checkAll()); }
-  Future<void> stop() async { _timer?.cancel(); _timer = null; pause(); await flushHistory(); }
+  Future<void> stop() async { _timer?.cancel(); _timer = null; _watchdog?.cancel();_watchdog=null;_loadTimer?.cancel();_loadTimer=null;if(_loadGate?.isCompleted==false)_loadGate!.complete([]);pause(); await flushHistory(); }
   Future<void> flushHistory() => _write.catchError((_) {});
   void _notify() { if (!_disposed) _changes.add(null); }
   void _event(String component, HealthFailure failure, String stage) {
@@ -212,11 +236,11 @@ class UniversalHealth {
     if (value.failure != HealthFailure.none) _event(component, value.failure, 'observed'); else _notify();
   }
   Future<void> checkAll() async {
-    if (_paused || _disposed || _context == null || _checks.length >= maxConcurrentChecks) return;
+    if (_paused || _disposed || _context == null || _activeChecks >= maxConcurrentChecks) return;
     final ids = _providers.keys.toList();
     if (ids.isEmpty) return;
     final work = <Future<void>>[];
-    final capacity = maxConcurrentChecks - _checks.length;
+    final capacity = maxConcurrentChecks - _activeChecks;
     for (var i = 0; i < ids.length && work.length < capacity; i++) {
       final id = ids[_cursor++ % ids.length];
       if (!_checks.containsKey(id) && !_repairs.containsKey(id)) work.add(check(id));
@@ -225,7 +249,7 @@ class UniversalHealth {
     for (final id in ids) { if (!_checks.containsKey(id)) unawaited(recover(id)); }
   }
   Future<void> check(String id) async {
-    if (_paused || _disposed || _context == null || !_providers.containsKey(id) || _checks.containsKey(id) || _repairs.containsKey(id) || _checks.length >= maxConcurrentChecks) return;
+    if (_paused || _disposed || _context == null || !_providers.containsKey(id) || _checks.containsKey(id) || _repairs.containsKey(id) || _activeChecks >= maxConcurrentChecks) return;
     final generation = _generation, bound = _context!;
     final task = Future<void>(() async {
       try {
@@ -236,14 +260,14 @@ class UniversalHealth {
       }
     });
     _checks[id] = task;
-    unawaited(task.whenComplete(() { if (identical(_checks[id], task)) _checks.remove(id); }));
+    unawaited(task.whenComplete(() { if (identical(_checks[id], task)) {_checks.remove(id);_quarantinedChecks.remove(id);} }));
     try { await task.timeout(const Duration(seconds: 2)); }
-    on TimeoutException { if (generation == _generation) { observe(id, const HealthObservation(HealthState.needsAttention, failure: HealthFailure.timeout)); _event(id, HealthFailure.timeout, 'timeout'); } }
+    on TimeoutException { _quarantinedChecks.add(id);if (generation == _generation) { observe(id, const HealthObservation(HealthState.needsAttention, failure: HealthFailure.timeout)); _event(id, HealthFailure.timeout, 'checkTimeout'); } }
   }
   static const _forbidden = {HealthFailure.authorization, HealthFailure.identity, HealthFailure.configuration, HealthFailure.conflict, HealthFailure.corrupt, HealthFailure.storage, HealthFailure.unknown, HealthFailure.offline, HealthFailure.none};
   Future<bool> recover(String id, {bool automatic = true}) async {
     final provider = _providers[id], observation = _observations[id], bound = _context;
-    if (_disposed || _paused || store == null || provider == null || observation == null || bound == null || _repairs.containsKey(id) || _checks.containsKey(id) || _forbidden.contains(observation.failure)) return false;
+    if (_disposed || _paused || !_historyReady || store == null || activeRepairs>=1 || provider == null || observation == null || bound == null || _repairs.containsKey(id) || _checks.containsKey(id) || _forbidden.contains(observation.failure)) return false;
     // Policy never grants extra authority for a manual call.
     final plays = provider.playbooks.where((p) => p.failures.contains(observation.failure)).toList();
     if (plays.isEmpty || provider.dependencies.any((d) => !_observations.containsKey(d) || {HealthState.needsAttention, HealthState.degraded, HealthState.unknown}.contains(_observations[d]!.state))) return false;
@@ -275,13 +299,13 @@ class UniversalHealth {
         // faults still trip the circuit. A reviewed restart history may rearm.
         _observations[id] = HealthObservation(HealthState.healthy, verifiedAt: now(), operation: observation.operation);
       } catch (_) {
-        if (generation == _generation && !_disposed) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure, operation: observation.operation); _event(id, observation.failure, admitted ? 'unverified' : 'blocked'); }
+        if (generation == _generation && !_disposed) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure, operation: observation.operation); if(!_quarantinedRepairs.contains(id)) _event(id, observation.failure, admitted ? 'unverified' : 'blocked'); }
       } finally { if (generation == _generation) _notify(); }
     });
     _repairs[id] = task;
-    unawaited(task.whenComplete(() { if (identical(_repairs[id], task)) _repairs.remove(id); }));
+    unawaited(task.whenComplete(() { if (identical(_repairs[id], task)) {_repairs.remove(id);_quarantinedRepairs.remove(id);} }));
     try { await task.timeout(p.timeout); }
-    on TimeoutException { if (generation == _generation) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure); _event(id, observation.failure, 'timeout'); } return false; }
+    on TimeoutException { _quarantinedRepairs.add(id);if (generation == _generation) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure); _event(id, observation.failure, 'timeout'); } return false; }
     return generation == _generation && _observations[id]?.state == HealthState.healthy;
   }
   List<HealthPrediction> get predictions {

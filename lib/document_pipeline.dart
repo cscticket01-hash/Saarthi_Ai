@@ -1,5 +1,4 @@
 import 'health/health_runtime.dart';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 

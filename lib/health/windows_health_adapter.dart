@@ -30,6 +30,7 @@ class WindowsHealthAdapter {
       return data.isEmpty ? const HealthObservation(HealthState.degraded,failure:HealthFailure.worker) : HealthObservation(HealthState.monitoring,metrics:{'pending':(data['pending'] as num?)??0});
     },playbooks:[RecoveryPlaybook(id:'refresh-sync-view',kind:RecoveryKind.derivedView,failures:{HealthFailure.worker},precondition:(lease)async=>lease.valid&&current().same(lease.context)&&!WindowsSyncEngine.instance.isSyncing,execute:(lease)async {lease.check();if(!current().same(lease.context))throw StateError('School changed');await WindowsSyncEngine.instance.refreshDetails();lease.check();},verify:(lease)async=>lease.valid&&current().same(lease.context)&&WindowsSyncEngine.instance.details.value.isNotEmpty)]));
     for(final id in HealthRuntime.components.where((id)=>id!='sync-view')) {
+      if(id=='monitor-worker'){guardian.register(HealthRuntime.monitorProvider(guardian));continue;}
       guardian.register(HealthProvider(id:id,version:'2.0',check:(_)async=>guardian.observations[id]??const HealthObservation(HealthState.unknown)));
     }
     await guardian.bind(current());

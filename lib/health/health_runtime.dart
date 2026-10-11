@@ -5,9 +5,14 @@ import 'universal_health.dart';
 class HealthRuntime {
   static UniversalHealth get engine => UniversalHealth.instance;
   static const components = ['startup','database','smart-sync','sync-view','id-card','qr','inventory','documents','attendance','notices','monitor-worker'];
+  static HealthProvider monitorProvider(UniversalHealth guardian)=>HealthProvider(id:'monitor-worker',version:'2.0',check:(_)async {
+    final heartbeat=guardian.lastHeartbeat;
+    return heartbeat!=null&&guardian.now().difference(heartbeat)<const Duration(seconds:90)?HealthObservation(HealthState.healthy,verifiedAt:heartbeat):const HealthObservation(HealthState.degraded,failure:HealthFailure.worker);
+  },playbooks:[RecoveryPlaybook(id:'restart-monitor-timer',kind:RecoveryKind.statelessWorker,failures:{HealthFailure.worker},precondition:(lease)async=>lease.valid&&!guardian.paused,execute:guardian.restartMonitor,verify:(lease)async=>lease.valid&&guardian.lastHeartbeat!=null&&guardian.now().difference(guardian.lastHeartbeat!)<const Duration(seconds:5))]);
   static void registerPassive() {
     if (engine.registeredCount != 0) return;
     for (final id in components) {
+      if(id=='monitor-worker'){engine.register(monitorProvider(engine));continue;}
       engine.register(HealthProvider(id:id, version:'2.0', check:(_) async => engine.observations[id] ?? const HealthObservation(HealthState.unknown)));
     }
   }

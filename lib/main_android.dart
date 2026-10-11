@@ -52,7 +52,7 @@ Future<void> _registerManagedNotifications() async {
 }
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(MobileStartupGate(
+  runApp(MobileHealthLifetime(child:MobileStartupGate(
     restore: SchoolSession.instance.restore,
     readyBuilder: (_) => const SaarthiMobileApp(),
     onReady: () {
@@ -60,7 +60,7 @@ Future<void> main() async {
       unawaited(initializeAttendanceBackground());
       unawaited(_initializeMobileNotifications().catchError((_) {}));
     },
-  ));
+  )));
 }
 
 Future<void> _initializeMobileNotifications() async {
