@@ -73,14 +73,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       request:(body)=>ManagedSchoolSession.callForSchool(school,body['action'] as String,{...body}..remove('action')));
     final downloads=binaryDownloads!;
     try {
-      if(action=='inventory')await downloads.refreshInventory();
-      else if(action=='repair')await downloads.repairNext();
+      if(action=='inventory' || action=='restart')await downloads.refreshInventory(restart:action=='restart');
+      else if(action=='repair' || action=='retry') {
+        final repaired=await downloads.repairNext(administratorRetry:action=='retry');
+        if(!repaired && mounted)setState(()=>notice='No verified download completed. Check the retained item state and retry deadline.');
+      }
       else await downloads.inspectLocal();
     } finally {
-      if(mounted && db.activeProfileId==origin) {
+      if(mounted && db.activeProfileId==origin && db.activeProfileIdentity['schoolSyncId']==school) {
         final summary=downloads.summary;
         await db.collection('_windows_binary_status').doc('current').set({...summary,'measuredAt':DateTime.now().millisecondsSinceEpoch});
-        setState(()=>binaryEvidence=summary);
+        if(mounted && db.activeProfileId==origin && db.activeProfileIdentity['schoolSyncId']==school)setState(()=>binaryEvidence=summary);
       }
     }
   }
@@ -162,6 +165,26 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         diagnostics = report;
         notice = 'Sanitized diagnostic report exported.';
       });
+  }
+
+  Future<void> _administratorBinaryRetry() async {
+    final approved=await showDialog<bool>(context:context,builder:(context)=>AlertDialog(
+      title:const Text('Review file recovery retry'),content:const Text('Retry one retained file with a new bounded attempt budget? Original usable files and record operations remain unchanged.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(context,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(context,true),child:const Text('Administrator: retry'))]));
+    if(approved==true && mounted)await _run(()=>_binaryAction('retry'));
+  }
+
+  Future<void> _exportVerifiedBinary(Map<String,dynamic> row) async {
+    final downloads=binaryDownloads;
+    if(downloads==null || db.activeProfileId!=origin)throw StateError('Verified own-school cache required');
+    final source=await downloads.verifiedPath(row['fileId'] as String);
+    if(source==null)throw StateError('Verified file bytes unavailable. Recover the file first.');
+    final raw=row['name'] as String? ?? 'verified-school-file';
+    final name=raw.replaceAll(RegExp(r'[^A-Za-z0-9._-]'),'_');
+    final target=await files.getSaveLocation(suggestedName:name);
+    if(target==null || db.activeProfileId!=origin)return;
+    await files.XFile(source).saveTo(target.path);
+    if(mounted && db.activeProfileId==origin)setState(()=>notice='Verified copy saved. The retained original and cloud file are unchanged.');
   }
 
   String bytesLabel(int bytes) => bytes >= 1048576
@@ -428,6 +451,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   metric('Missing / damaged files',binaryEvidence==null?'Unknown':'${binaryEvidence!['missing']} / ${binaryEvidence!['damaged']}'),
                   metric('Verified local cloud-copy bytes',binaryEvidence==null?'Unknown':bytesLabel(binaryEvidence!['verifiedBytes'] as int)),
                   metric('Last verified binary download',stamp(binaryEvidence?['lastVerifiedDownloadAt'])),
+                  metric('Next file retry / capped files',binaryEvidence==null?'Unknown':'${stamp(binaryEvidence!['retryAt'])} / ${binaryEvidence!['retryBlocked']}'),
                   metric('Media inventory scope','Application media folders; archives/native documents excluded'),
                   metric('Pending protected restores','${details['pendingRestores']??'Unknown'}'),
                   metric(
@@ -539,6 +563,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     label: const Text('Smart Repair — safe retry'),
                   ),
                   OutlinedButton(onPressed:active?null:()=>_run(()=>_binaryAction('inventory')),child:const Text('Check / continue file inventory')),
+                  OutlinedButton(onPressed:active?null:()=>_run(()=>_binaryAction('restart')),child:const Text('Restart file inventory check')),
+                  OutlinedButton(onPressed:active?null:_administratorBinaryRetry,child:const Text('Review capped file retry')),
                   OutlinedButton(onPressed:active?null:()=>_run(()=>_binaryAction('inspect')),child:const Text('Verify local file bytes')),
                   OutlinedButton(onPressed:active?null:()=>_run(()=>_binaryAction('repair')),child:const Text('Recover next missing file')),
                   OutlinedButton(onPressed:active?null:()=>_run(engine.reportCurrentSyncMonitor),child:const Text('Report current measured sync status')),
@@ -655,6 +681,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   'These counts describe local active records. Cloud completeness requires verified reconciliation.',
                 ),
                 const Divider(height: 32),
+              ],
+              if(ownSchool && binaryDownloads!=null) ...[
+                const Text('Verified cloud file copies — current school',style:TextStyle(fontSize:20)),
+                const Text('Showing up to 50 known application files. Export requires actual hash-verified bytes; metadata alone is never an available file.'),
+                for(final row in binaryDownloads!.entries.take(50))ListTile(title:Text('${row['name']}'),
+                  subtitle:Text('${row['state']} • ${row['sizeBytes']} bytes'),
+                  trailing:OutlinedButton(onPressed:active?null:()=>_run(()=>_exportVerifiedBinary(row)),child:const Text('Save verified copy'))),
               ],
               const Text('Observed downloads — current school',style:TextStyle(fontSize:20)),
               const Text('Local readback verifies stored record content, not a server upload ACK. File bytes and cloud-wide completeness remain Unknown. In-progress observations retained after a stopped sync require retry.'),

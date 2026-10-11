@@ -36,7 +36,7 @@ void main(){
     expect(collections['_windows_firebase_outbox']['fee']['syncState'],'pending');
     expect(collections['fee_payments']['fee']['capturedAt'],1791500000123);
     expect(collections['fee_payments']['fee']['_syncRevision'],'original-revision');
-    expect(collections['fee_payments']['fee']['originalPath'],'${staging.absolute.path}/LocalFiles/photo.jpg');
+    expect((collections['fee_payments']['fee']['originalPath'] as String).replaceAll(r'\','/'),'${staging.absolute.path}/LocalFiles/photo.jpg'.replaceAll(r'\','/'));
     expect(await File('${backup.path}/local_database_v1.json').readAsBytes(),source);
     await recovery.activate(administratorConfirmed:true);
     expect(await recovery.recoverInterruptedActivation(),'active');

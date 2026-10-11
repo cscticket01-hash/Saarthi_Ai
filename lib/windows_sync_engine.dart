@@ -135,7 +135,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'pending': items.length,
       'conflictCount': items.where((d)=>d.data()['syncState']=='conflict' || d.data()['state']=='conflict').length,
       'pendingRestores':restores.length,
-      'mediaInventoryState':binary?['schoolId']==db.activeProfileIdentity['schoolSyncId']?binary?['inventory']:'UNKNOWN',
+      'mediaInventoryState':(binary != null && binary['schoolId']==db.activeProfileIdentity['schoolSyncId']) ? binary['inventory'] : 'UNKNOWN',
       if(binary?['schoolId']==db.activeProfileIdentity['schoolSyncId'] && binary?['inventory']!='UNKNOWN')
         'mediaPending':(binary?['pending'] as int? ?? 0)+(binary?['failed'] as int? ?? 0)+(binary?['interrupted'] as int? ?? 0)+(binary?['missing'] as int? ?? 0)+(binary?['damaged'] as int? ?? 0)+(binary?['unavailable'] as int? ?? 0),
       'documentPending': documents.docs.length + general.docs.where((d)=>d.data()['collection']=='documents').length,
@@ -148,7 +148,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'needsAttention': items
           .where(
             (d) =>
-                {'conflict', 'needsAttention'}.contains(d.data()['syncState']) || d.data()['state']=='conflict',
+                {'conflict', 'needsAttention'}.contains(d.data()['syncState']) || {'conflict','needsReview','rejected'}.contains(d.data()['state']),
           )
           .length,
       'items': [for(final d in general.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_firebase_outbox'},

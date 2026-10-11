@@ -34,6 +34,7 @@ class WindowsBinaryDownloads {
   final Map<String, Map<String, dynamic>> _items = {};
   final Set<String> _seenInventory = {};
   bool _loaded = false;
+  bool _inventoryInspected = false;
   bool _busy = false;
   bool _available = false;
   bool _partial = true;
@@ -55,12 +56,12 @@ class WindowsBinaryDownloads {
     }
   }
 
-  Future<T> _exclusive<T>(Future<T> Function() action) async {
+  Future<T> _exclusive<T>(Future<T> Function() action, {bool inspectOnLoad = true}) async {
     if (_busy) throw StateError('A binary verification is already running.');
     _guard();
     _busy = true;
     try {
-      await _load();
+      await _load(verifyFiles: inspectOnLoad);
       return await action();
     } finally {
       _busy = false;
@@ -104,8 +105,11 @@ class WindowsBinaryDownloads {
         await file.lastModified() == modified;
   }
 
-  Future<void> _load() async {
-    if (_loaded) return;
+  Future<void> _load({bool verifyFiles = true}) async {
+    if (_loaded) {
+      if (verifyFiles && !_inventoryInspected) { await _inspect(); _inventoryInspected = true; }
+      return;
+    }
     await _safeDirectory();
     final allEntities = await schoolDirectory.list().toList();
     for (final entity in allEntities) {
@@ -140,6 +144,7 @@ class WindowsBinaryDownloads {
         final item = Map<String, dynamic>.from(entry.value as Map);
         _validateItem(item);
         if (item['state'] == 'downloading') item['state'] = 'interrupted';
+        if (item['state'] == 'verified') item['state'] = 'unverified';
         _items[entry.key] = item;
       }
       final recordedGeneration = decoded['generation'] as int;
@@ -158,7 +163,7 @@ class WindowsBinaryDownloads {
       _partial = true;
     }
     _loaded = true;
-    await _inspect();
+    if (verifyFiles) { await _inspect(); _inventoryInspected = true; }
   }
 
   bool _validId(dynamic id) => id is String &&
@@ -258,15 +263,15 @@ class WindowsBinaryDownloads {
       for (final item in page) {
         final id = item['fileId'] as String;
         final old = _items[id];
-        final same = old?['sha256'] == item['sha256'] &&
-                     old?['version'] == item['version'];
-        final previous = old?['state'] == 'verified' ? old?['sha256'] :
-                         old?['previousSha256'];
-        final previousSize = old?['state'] == 'verified' ? old?['sizeBytes'] :
-                             old?['previousSizeBytes'];
+        final same = (old == null ? null : old['sha256']) == item['sha256'] &&
+                     (old == null ? null : old['version']) == item['version'];
+        final previous = (old == null ? null : old['state']) == 'verified' ? (old == null ? null : old['sha256']) :
+                         (old == null ? null : old['previousSha256']);
+        final previousSize = (old == null ? null : old['state']) == 'verified' ? (old == null ? null : old['sizeBytes']) :
+                             (old == null ? null : old['previousSizeBytes']);
         _items[id] = {
           ...item, 'expected': true,
-          'state': same ? old?['state'] ?? 'pending' : 'pending',
+          'state': same ? (old == null ? null : old['state']) ?? 'pending' : 'pending',
           if (same && old != null) 'retryAttempts': old['retryAttempts'] ?? 0,
           if (same && old != null) 'retryAt': old['retryAt'] ?? 0,
           if (previous != null) 'previousSha256': previous,
@@ -304,7 +309,7 @@ class WindowsBinaryDownloads {
       if (item['verification'] != 'bytes_hashed') continue;
       if (await _verified(item['sha256'] as String, item['sizeBytes'] as int)) {
         item['state'] = 'verified';
-      } else if (item['state'] == 'verified') {
+      } else if (item['state'] == 'verified' || item['state'] == 'unverified') {
         final file = _binary(item['sha256'] as String);
         item['state'] = await file.exists() ? 'damaged' : 'missing';
       }
@@ -411,6 +416,7 @@ class WindowsBinaryDownloads {
     if (item == null) return null;
     if (item['verification'] == 'bytes_hashed' &&
         await _verified(item['sha256'] as String, item['sizeBytes'] as int)) {
+      item['state'] = 'verified';
       return _binary(item['sha256'] as String).path;
     }
     if (item['previousSha256'] != null &&
@@ -418,7 +424,12 @@ class WindowsBinaryDownloads {
       return _binary(item['previousSha256'] as String).path;
     }
     return null;
-  });
+  }, inspectOnLoad: false);
+
+  List<Map<String,dynamic>> get entries {
+    _guard();
+    return _items.values.where((item)=>item['expected']!=false).map((item)=>Map<String,dynamic>.unmodifiable(item)).toList(growable:false);
+  }
 
   Map<String, dynamic> get summary {
     _guard();
@@ -433,7 +444,8 @@ class WindowsBinaryDownloads {
       'schoolId': schoolId, 'scope': 'application_media_folders',
       'inventory': !_available ? 'UNKNOWN' : _partial ? 'PARTIAL' : 'VERIFIED',
       'knownFiles': expected.length, 'retainedHistoricalFiles': _items.length - expected.length, 'verifiedFiles': count('verified'),
-      'pending': count('pending') + count('downloading'),
+      'pending': count('pending') + count('downloading') + count('unverified'),
+      'unverifiedLocal': count('unverified'),
       'failed': count('failed'), 'interrupted': count('interrupted'),
       'missing': count('missing'), 'damaged': count('damaged'),
       'unavailable': count('unavailable'),

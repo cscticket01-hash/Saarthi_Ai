@@ -1317,7 +1317,7 @@ class _LocalSchoolDatabase {
           if (docs[id] != null && _jsonStableMap(Map<String,dynamic>.from(docs[id] as Map)) != _jsonStableMap(snapshot)) {
             throw StateError('Newer local version retained.');
           }
-          docs[id] = {...snapshot,'_syncRevision':restoredRevision};
+          docs[id] = {...snapshot,'_syncRevision':restoredRevision}..remove('_syncUpdatedAt');
           previous['state']='verified';previous['localVerified']=true;
           previous['recordRevision']=restoredRevision;previous['verifiedAt']=DateTime.now().millisecondsSinceEpoch;
           final baselines=collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;

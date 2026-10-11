@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'windows_local_firestore.dart';
+import 'windows_sync_recovery.dart';
+import 'sync_recovery_policy.dart';
 
 typedef LocalRestoreCall = Future<Map<String,dynamic>> Function(Map<String,dynamic> body);
 
@@ -36,7 +38,7 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
       for (var page=0;selected==null && page<4;page++) {
         final inventory = await call({'operation':'list','collection':intent['collection'],'after':cursor??''}).timeout(const Duration(seconds:95));
         check();
-        if (inventory['schoolId'] != school || inventory['recycleVersion'] != 1 || inventory['entries'] is! List || inventory['partial'] is! bool) {
+        if (inventory['success'] != true || inventory['schoolId'] != school || inventory['recycleVersion'] != 1 || inventory['entries'] is! List || inventory['partial'] is! bool) {
           throw StateError('Authoritative same-school recycle inventory required.');
         }
         for(final candidate in inventory['entries'] as List) {
@@ -50,7 +52,7 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
         if(cursor==null || cursor.isEmpty)throw StateError('Incomplete recycle cursor.');
       }
       if(selected==null) {
-        await row.reference.set({'state':'awaitingCloudRestore','reason':'snapshot_not_in_bounded_inventory'},const SetOptions(merge:true));
+        await row.reference.set({'state':'needsReview','reason':'snapshot_not_in_bounded_inventory'},const SetOptions(merge:true));
         continue;
       }
       if(selected['fileId'] is! String || selected['status']=='expired' || selected['status']=='needsReview') {
@@ -62,15 +64,18 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
       check();
       final ack=await call(body).timeout(const Duration(seconds:95));
       check();
-      if(ack['schoolId']!=school || ack['restored']!=true || ack['syncProtocol']!=2 ||
+      if(ack['success']!=true || ack['schoolId']!=school || ack['restored']!=true || ack['syncProtocol']!=2 ||
           ack['recordRevision'] is! String || ack['recordRevision']==revision || (ack['recordRevision'] as String).isEmpty) {
         throw StateError('Durable same-school restore ACK required.');
       }
       await db.finishLocalRestore(deletionId,expectedDeletedRevision:revision,restoredRevision:ack['recordRevision'] as String);
-    } catch (_) {
+    } catch (error) {
       check();
-      await row.reference.set({'state':'retry','reason':'restore_not_verified'},const SetOptions(merge:true));
-      rethrow; // Existing capped engine backoff owns retries; no inner replay.
+      final decision=windowsSyncRecovery(error);
+      final state=decision.retry?'retry':decision.kind==SyncFailureKind.conflict?'conflict':decision.kind==SyncFailureKind.authorization?'rejected':'needsReview';
+      await row.reference.set({'state':state,'reason':decision.kind.name},const SetOptions(merge:true));
+      if(decision.retry)rethrow; // Existing capped engine backoff owns temporary retries.
+      // Permanent record failures require review and do not block unrelated pulls.
     }
   }
 }

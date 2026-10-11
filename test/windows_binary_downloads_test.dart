@@ -182,6 +182,27 @@ void main() {
     expect(await orphan.readAsString(), 'interrupted journal');
   });
 
+  test('normal image lookup verifies only its file, leaving other bytes unverified until inventory inspection', () async {
+    final first = manager();
+    final second = {...expected, 'fileId':'school_file_2', 'sha256':sha256.convert(utf8.encode('second original')).toString(),
+      'sizeBytes':utf8.encode('second original').length, 'version':'second-1'};
+    remote = (body) async {
+      if(body['action']=='managed/file/inventory')return inventory([expected,second]);
+      return body['fileId']=='school_file_1'?download(expected,original):download(second,utf8.encode('second original'));
+    };
+    await first.refreshInventory();await first.repairNext();await first.repairNext();
+    final otherPath=(await first.verifiedPath('school_file_2'))!;
+    await File(otherPath).writeAsString('damaged unrelated image');
+    final restarted=manager();
+    expect(await restarted.verifiedPath('school_file_1'),isNotNull);
+    expect(restarted.summary['verifiedFiles'],1);
+    expect(restarted.summary['unverifiedLocal'],1);
+    expect(restarted.summary['damaged'],0);
+    await restarted.load();
+    expect(restarted.summary['unverifiedLocal'],0);
+    expect(restarted.summary['damaged'],1);
+  });
+
   test('bounded persisted retry budget stops repeated outages and needs admin restart', () async {
     final cache = manager();await cache.refreshInventory();
     remote = (_) async => throw StateError('HTTP 503');

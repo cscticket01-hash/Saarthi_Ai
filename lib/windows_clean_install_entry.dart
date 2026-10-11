@@ -46,7 +46,11 @@ Future<void> openCleanInstallRestore(BuildContext context) async {
     },afterActivation:()async {
       // Reopen the exact running application; first startup verifies the journal
       // before opening either the previous or staged school database.
-      await Process.start(Platform.resolvedExecutable,Platform.executableArguments,
+      if(!Platform.isWindows)throw StateError('Windows restart required.');
+      String quote(String value)=>"'${value.replaceAll("'","''")}'";
+      final arguments=Platform.executableArguments.map(quote).join(',');
+      final command='Wait-Process -Id $pid -ErrorAction SilentlyContinue; Start-Process -FilePath ${quote(Platform.resolvedExecutable)}${arguments.isEmpty?"":" -ArgumentList @($arguments)"}';
+      await Process.start('powershell.exe',['-NoProfile','-NonInteractive','-Command',command],
         mode:ProcessStartMode.detached);
       exit(0);
     })));

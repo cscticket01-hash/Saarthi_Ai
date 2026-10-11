@@ -286,7 +286,7 @@ function VS_managedRecycle(b) {
       if(Date.now()>=snap.recoverUntil||data._syncFileCleanupComplete===true)throw new Error('Recycle restore window expired');
       if(snap.collection==='documents'&&snap.data.fileId&&VS_managedFile(snap.data.fileId).isTrashed())throw new Error('Original document unavailable; retained snapshot requires review');
       const restored=Object.assign({},snap.data);Object.keys(restored).filter(k=>k.indexOf('_sync')===0).forEach(k=>delete restored[k]);
-      restored._syncRevision=Utilities.getUuid();restored._syncRecycleRestoreId=b.operationId;restored._syncRecycleSource=b.fileId;restored._syncRecycleRestoreRevision=b.expectedRecordRevision;
+      restored._syncRevision=Utilities.getUuid();restored._syncUpdatedAt=Date.now();restored._syncRecycleRestoreId=b.operationId;restored._syncRecycleSource=b.fileId;restored._syncRecycleRestoreRevision=b.expectedRecordRevision;
       PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+snap.collection,Utilities.getUuid());
       VS_sheetPut(store,{id:snap.id,schoolId:snap.schoolId,data:restored});
       return {recordRevision:restored._syncRevision,syncProtocol:2,restored:true};

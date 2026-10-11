@@ -87,7 +87,7 @@ test('authorized restore preserves original timestamp, changes revision and surv
  assert.equal(t.f.call(b).recordRevision,first.recordRevision);
  assert.equal(t.f.call({...b,expectedRecordRevision:'changed'}).success,false);
  const row=t.f.call({action:'managed_records',operation:'read',collection:t.collection,syncProtocol:2}).records.row;
- assert.equal(row.name,'Original');assert.equal(row.capturedAt,123);assert.equal(row._syncDeleted,undefined);
+ assert.equal(row.name,'Original');assert.equal(row.capturedAt,123);assert.equal(Number.isSafeInteger(row._syncUpdatedAt),true);assert.ok(row._syncUpdatedAt>0);assert.equal(row._syncDeleted,undefined);
  assert.equal(t.f.all.get(t.tomb._syncRecycleFileId).trash,undefined);
 });
 test('stale deletion/restore cannot overwrite restored newer edits',()=>{

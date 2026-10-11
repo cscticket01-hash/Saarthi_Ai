@@ -33,7 +33,7 @@ void main() {
   tearDown(()async {await db.resetVolatileSession();});
   Future<void> deleteAck() => WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
     send:(a,b,c,d)async{},sendVersioned:(row)async=>'actual-delete-revision');
-  Map<String,dynamic> inventory()=>{'schoolId':school,'recycleVersion':1,'partial':false,
+  Map<String,dynamic> inventory()=>{'success':true,'schoolId':school,'recycleVersion':1,'partial':false,
     'entries':[{'id':'notice','collection':'school_notices','deletedRevision':'actual-delete-revision',
       'fileId':'synthetic-private-snapshot','status':'recoverable'}]};
   test('unacknowledged deletion is never cancelled or sent as a restore',()async {
@@ -55,7 +55,7 @@ void main() {
     await db.resetVolatileSession();await db.switchProfile(profile,identity:{'schoolId':school,'schoolSyncId':school});
     await syncLocalRestoreRequests(db,school,(body)async {
       expect(body,firstBody); // The cloud row is already restored; no second list.
-      return {'schoolId':school,'restored':true,'syncProtocol':2,'recordRevision':'actual-restore-revision'};
+      return {'success':true,'schoolId':school,'restored':true,'syncProtocol':2,'recordRevision':'actual-restore-revision'};
     });
     expect((await db.collection('_windows_recycle_requests').get()).docs.single.data()['state'],'verified');
     expect((await db.collection('school_notices').doc('notice').get()).data()?['capturedAt'],1791500000123);
@@ -63,9 +63,9 @@ void main() {
   });
   test('foreign or malformed restore responses never become verified local receipts',()async {
     await deleteAck();
-    await expectLater(syncLocalRestoreRequests(db,school,(body)async =>body['operation']=='list'?inventory():
-      {'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','restored':true,'syncProtocol':2,'recordRevision':'foreign'}),throwsStateError);
-    expect((await db.collection('_windows_recycle_requests').get()).docs.single.data()['state'],'retry');
+    await syncLocalRestoreRequests(db,school,(body)async =>body['operation']=='list'?inventory():
+      {'success':true,'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','restored':true,'syncProtocol':2,'recordRevision':'foreign'});
+    expect((await db.collection('_windows_recycle_requests').get()).docs.single.data()['state'],'needsReview');
     expect((await db.collection('school_notices').doc('notice').get()).data()?['_syncRevision'],isNot('foreign'));
   });
 }
