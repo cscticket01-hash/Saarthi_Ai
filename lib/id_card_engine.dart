@@ -14,6 +14,7 @@ import 'package:pdf/widgets.dart' as pw;
 
 import 'id_card_manifest.dart';
 import 'id_card_layout.dart';
+import 'id_card_indic_text.dart';
 
 /// Template metadata is the only source of placement/fit instructions.
 class IdCardEngine {
@@ -80,12 +81,31 @@ class IdCardEngine {
               : (data[r.key]?.toString().trim().isEmpty ?? true)))
         throw FormatException('Required ID field missing: ${r.key}');
     }
+    // Flutter shapes Indic combining marks using HarfBuzz before PDF placement.
+    // Only Indic fields become images; other text stays in searchable PDF text.
+    final shapedText = <String, Uint8List>{};
+    for (final region in template.regions.where((r) => r.kind == 'text')) {
+      final value = '${region.label}${data[region.key] ?? ''}';
+      final rendered = await IdCardIndicText.rasterize(
+        value,
+        width: region.width - 2 * region.padding,
+        height: region.height - 2 * region.padding,
+        fontSize: region.fontSize,
+        minFontSize: region.minFontSize,
+        maxLines: region.maxLines,
+        align: region.align,
+      );
+      if (rendered != null) {
+        shapedText['${region.side}:${region.key}'] = rendered;
+      }
+    }
     return PreparedIdCard._(
       template,
       Map.unmodifiable(data),
       Map.unmodifiable(images),
       qr,
       Map.unmodifiable(backgrounds),
+      Map.unmodifiable(shapedText),
       font ?? await loadFont(),
     );
   }
@@ -144,11 +164,12 @@ class PreparedIdCard {
     this.images,
     this.qr,
     this.backgrounds,
+    this.shapedText,
     this.font,
   );
   final IdCardManifest template;
   final Map<String, dynamic> data;
-  final Map<String, Uint8List> images, backgrounds;
+  final Map<String, Uint8List> images, backgrounds, shapedText;
   final String qr;
   final pw.Font font;
   pw.Widget buildSide(String name) => pw.SizedBox(
@@ -191,6 +212,11 @@ class PreparedIdCard {
                                 millimetresPerUnit:
                                     template.printWidth / template.width,
                               )
+                      : shapedText['${r.side}:${r.key}'] != null
+                      ? pw.Image(
+                          pw.MemoryImage(shapedText['${r.side}:${r.key}']!),
+                          fit: pw.BoxFit.fill,
+                        )
                       : IdCardLayout.text(
                           '${r.label}${data[r.key] ?? ''}',
                           font: font,
