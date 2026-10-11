@@ -37,15 +37,32 @@ class IdCardSchoolSource {
     final docs = await db.collection('students_directory').get();guard();
     final connection = await CentralSchoolCloud.saved();guard();
     if (connection['schoolId'] != school) throw StateError('School QR connection is unavailable or belongs to another school');
-    final records = <Map<String, dynamic>>[];
-    for (final doc in docs.docs) {
-      final data = doc.data();
-      if (data['schoolId'] != null && data['schoolId'] != school) throw StateError('Foreign student record requires school review');
-      if (data['_syncDeleted'] == true) continue;
-      records.add({...data, '_recordId': doc.id});
-    }
+    final records = scopedRecords(
+      docs.docs.map((doc) => <String, dynamic>{...doc.data(), '_recordId': doc.id}),
+      school,
+    );
     records.sort((a,b) => a['_recordId'].toString().compareTo(b['_recordId'].toString()));
     return IdCardSchoolSource(schoolId: school, profile: profile, records: records, connection: connection, ensureActive: guard);
+  }
+
+  /// Reject cross-school records instead of silently including them in a
+  /// class bulk export. Retained local records without an explicit school
+  /// binding still belong to the already-selected local profile.
+  static List<Map<String, dynamic>> scopedRecords(
+      Iterable<Map<String, dynamic>> rows, String schoolId) {
+    if (schoolId.trim().isEmpty) throw StateError('School identity required');
+    final result = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      for (final field in ['schoolId', 'schoolSyncId']) {
+        final bound = row[field]?.toString().trim() ?? '';
+        if (bound.isNotEmpty && bound != schoolId) {
+          throw StateError('Foreign student record requires school review');
+        }
+      }
+      if (row['_syncDeleted'] == true || row['deleted'] == true) continue;
+      result.add(row);
+    }
+    return result;
   }
 
   /// Never preview a deleted or explicitly foreign school record. Unscoped
