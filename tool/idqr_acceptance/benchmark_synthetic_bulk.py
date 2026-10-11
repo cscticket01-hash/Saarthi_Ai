@@ -8,6 +8,8 @@ import shutil
 import tempfile
 import time
 
+from PIL import Image
+
 from reportlab.graphics import renderPDF
 from reportlab.graphics.barcode import qr
 from reportlab.graphics.shapes import Drawing
@@ -63,6 +65,36 @@ def profile_seconds(profile, names):
     return sum(stat[3] for key, stat in pstats.Stats(profile).stats.items() if key[2] in names)
 
 
+def diagnose_failed_raster(path, expected_payload, destination, *, decode=decode_png):
+    """Diagnostic only: transformations never change verifier failure verdict."""
+    results = []
+    with Image.open(path) as image:
+        source = image.convert('RGB')
+        for width in (256, 384, 512):
+            height = max(1, round(source.height * width / source.width))
+            variant = Path(destination) / f'diagnostic-width-{width}.png'
+            source.resize((width, height), Image.Resampling.LANCZOS).save(variant)
+            try:
+                values = decode(variant, 'zbarimg')
+                results.append({'width': width, 'height': height, 'status': 'DECODED',
+                                'symbolCount': len(values), 'exactExpectedIdentity': values == [expected_payload]})
+            except AcceptanceError as error:
+                results.append({'width': width, 'height': height, 'status': 'FAIL', 'reason': str(error)})
+        independent = {'decoder': 'zxing-cpp', 'symbology': 'QR only'}
+        try:
+            import zxingcpp
+            symbols = zxingcpp.read_barcodes(source, formats=zxingcpp.BarcodeFormat.QRCode)
+            independent.update(status='DECODED' if symbols else 'FAIL', symbolCount=len(symbols),
+                               exactExpectedIdentity=[symbol.text for symbol in symbols] == [expected_payload])
+        except ImportError:
+            independent.update(status='UNVERIFIED', reason='Independent diagnostic decoder unavailable')
+        except Exception as error:
+            independent.update(status='FAIL', reason=type(error).__name__)
+        return {'scope': 'Diagnostic only; original export verdict stays FAIL',
+                'sourcePixels': [source.width, source.height], 'resizedZbarChecks': results,
+                'originalRasterIndependentQrDecoder': independent}
+
+
 def benchmark(directory, count, *, decode=decode_png, clock=time.perf_counter, budget_seconds=360, diagnostic_directory=None):
     start = clock()
     pdf = Path(directory) / f'synthetic-{count}.pdf'
@@ -83,11 +115,13 @@ def benchmark(directory, count, *, decode=decode_png, clock=time.perf_counter, b
                 destination = Path(diagnostic_directory)
                 destination.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(path, destination / ('failed-' + path.name))
+                diagnostic = diagnose_failed_raster(path, manifest['cards'][int(path.name.split('-')[0])]['qrPayload'], destination)
                 (destination / 'failure-context.json').write_text(json.dumps({
                     'scope': 'Synthetic fixture only', 'studentCount': count,
                     'inventoryIndex': int(path.name.split('-')[0]),
                     'dpi': int(path.stem.split('-')[1]),
                     'pdfBytes': pdf.stat().st_size,
+                    'decoderDiagnostic': diagnostic,
                 }) + '\n')
             raise
         decode_seconds += clock() - before

@@ -29,7 +29,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends zbar-tools
-          python -m pip install PyMuPDF==1.26.5 reportlab==4.4.4
+          python -m pip install PyMuPDF==1.26.5 reportlab==4.4.4 zxing-cpp==2.3.0
       - name: Test fail-closed verifier contract
         env:
           PYTHONDONTWRITEBYTECODE: '1'
@@ -55,7 +55,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends zbar-tools
-          python -m pip install PyMuPDF==1.26.5 reportlab==4.4.4
+          python -m pip install PyMuPDF==1.26.5 reportlab==4.4.4 zxing-cpp==2.3.0
       - name: Measure synthetic bulk PDF and all-card decoding
         env:
           PYTHONDONTWRITEBYTECODE: '1'

@@ -131,6 +131,17 @@ class FinalPdfAcceptanceTests(unittest.TestCase):
         self.assertEqual(context['dpi'], 150)
         self.assertNotIn('qrPayload', context)
 
+    def test_failed_raster_resizing_is_diagnostic_only_and_exact_identity_checked(self):
+        from benchmark_synthetic_bulk import diagnose_failed_raster
+        from PIL import Image
+        raster = Path(self.temporary.name) / 'failure.png'
+        Image.new('RGB', (662, 663), 'white').save(raster)
+        report = diagnose_failed_raster(raster, 'EXPECTED', self.temporary.name, decode=lambda *_: ['FOREIGN'])
+        self.assertEqual([r['width'] for r in report['resizedZbarChecks']], [256, 384, 512])
+        self.assertTrue(all(not r['exactExpectedIdentity'] for r in report['resizedZbarChecks']))
+        self.assertIn('stays FAIL', report['scope'])
+        self.assertEqual(report['sourcePixels'], [662, 663])
+
     def test_bulk_benchmark_rejects_expired_wall_budget(self):
         from benchmark_synthetic_bulk import benchmark
         with self.assertRaisesRegex(AcceptanceError, 'budget'):
