@@ -77,18 +77,25 @@ void main() {
    expect(await WindowsSchoolImageCache.read(school,preparedPortrait['photoFileId']),originalPortrait);
    report['portraitCloudBytes']=portraitBytes.length;report['portraitOriginalBytes']=originalPortrait.length;
    report['portraitCloudRetryIdempotent']=true;report['portraitOriginalRetainedAfterRestart']=true;
-   // Bounded real Drive download acceptance: one first-page file, no provider load.
-   var binaryFault=true;
+   // Bounded real Drive acceptance: at most five first-page files. No provider load.
+   var binaryFault=true,corruptBinary=false;
    Future<Map<String,dynamic>> binaryRequest(Map<String,dynamic> body) async {
     if(binaryFault&&body['action']=='managed/file/download')throw SchoolApiFailure(503,code:'TEST_CONTROLLED_UNAVAILABLE');
-    return ManagedSchoolSession.callForSchool(school,body['action'] as String,{...body}..remove('action'));
+    final response=await ManagedSchoolSession.callForSchool(school,body['action'] as String,{...body}..remove('action'));
+    if(corruptBinary&&body['action']=='managed/file/download'){
+     final bytes=base64Decode(response['base64'] as String);bytes[0]^=1;
+     return {...response,'base64':base64Encode(bytes)};
+    }
+    return response;
    }
    final binaryDirectory=Directory('${tmp.path}/isolated-binary-cache');
    final binaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest,jitter:()=>.5);
    await binaries.refreshInventory();
    expect(binaries.entries,isNotEmpty);
-   final binaryId=binaries.entries.first['fileId'] as String;
-   final binaryHash=binaries.entries.first['sha256'] as String;
+   final targets=binaries.entries.where((item)=>item['verification']=='bytes_hashed').toList();
+   expect(targets.length,inInclusiveRange(2,5));
+   final binaryId=targets.first['fileId'] as String;
+   final binaryHash=targets.first['sha256'] as String;
    final queueBeforeBinary=(await db.collection('_windows_firebase_outbox').get()).docs.length;
    await expectLater(binaries.repairNext(),throwsA(isA<SchoolApiFailure>().having((failure)=>failure.status,'HTTP status',503)));
    expect(await binaries.verifiedPath(binaryId),isNull);
@@ -97,15 +104,40 @@ void main() {
    expect(await binaries.repairNext(),true);
    final downloaded=File((await binaries.verifiedPath(binaryId))!);
    expect(sha256.convert(await downloaded.readAsBytes()).toString(),binaryHash);
+   for(var attempt=1;attempt<targets.length;attempt++){
+    final remaining=await Future.wait(targets.map((item)=>binaries.verifiedPath(item['fileId'] as String)));
+    if(remaining.every((path)=>path!=null))break;
+    expect(await binaries.repairNext(),true);
+   }
    final reopenedBinaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest);
    await reopenedBinaries.load();
-   expect(await reopenedBinaries.verifiedPath(binaryId),downloaded.path);
+   for(final item in targets){
+    final path=await reopenedBinaries.verifiedPath(item['fileId'] as String);expect(path,isNotNull);
+    final bytes=await File(path!).readAsBytes();expect(bytes.length,item['sizeBytes']);
+    expect(sha256.convert(bytes).toString(),item['sha256']);
+   }
+   // Delete only this run's disposable cache, never a school original/Drive file.
+   await downloaded.delete();
+   corruptBinary=true;
+   await expectLater(reopenedBinaries.repairNext(),throwsA(isA<StateError>()));
+   expect(await reopenedBinaries.verifiedPath(binaryId),isNull);
+   corruptBinary=false;
+   await Future<void>.delayed(const Duration(seconds:6));
+   // Shared hashes may have multiple inventory IDs; repairing one restores the
+   // verified content-addressed copy for all of them, without replacing originals.
+   expect(await reopenedBinaries.repairNext(),true);
+   expect(await reopenedBinaries.verifiedPath(binaryId),isNotNull);
+   expect(sha256.convert(await File((await reopenedBinaries.verifiedPath(binaryId))!).readAsBytes()).toString(),binaryHash);
+   expect(await WindowsSchoolImageCache.read(school,preparedPortrait['photoFileId']),originalPortrait);
    expect((await db.collection('_windows_firebase_outbox').get()).docs.length,queueBeforeBinary);
    report['actualBinary503RecoveryVerified']=true;
    report['actualBinaryBytesHashVerified']=true;
    report['actualBinaryCacheRestartVerified']=true;
+   report['actualBinaryMissingCacheRecoveryVerified']=true;
+   report['actualBinaryCorruptDownloadRejected']=true;
+   report['actualBinaryVerifiedFileCount']=targets.length;
    report['binaryInventoryCoverage']=binaries.summary['inventory'];
-   report['binaryAcceptanceScope']='One actual TEST Drive file; remaining files and native Google documents not certified';
+   report['binaryAcceptanceScope']='At most five first-page TEST Drive binaries; hashes/cache restart/missing cache/corrupt response checked. Remaining files and native Google documents not certified.';
 
    await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
    final existingDocuments=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'read','syncProtocol':2});
@@ -191,5 +223,5 @@ void main() {
    report['mobileRequests']=transport.samples;report['status']='PASS';
   }catch(_){report['status']='FAIL';rethrow;}
   finally{transport.close();await store.close();await Directory('build/cloud-prerequisites').create(recursive:true);await File('build/cloud-prerequisites/actual-engines.json').writeAsString(jsonEncode(report));print(jsonEncode(report));}
- },timeout:const Timeout(Duration(minutes:8)));
+ },timeout:const Timeout(Duration(minutes:12)));
 }

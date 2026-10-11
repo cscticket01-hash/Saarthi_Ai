@@ -1,3 +1,5 @@
+> 2026-10-11 continuation: all five platform jobs on 97c2a31193c82982d8434ef4d812fa4ecc1620bd are PASS (run38105746897). Corrected hourly run38105556254 remains running. Fresh bounded binary acceptance is being expanded to 2-5 first-page hashed files, shared-hash-safe repair, disposable missing cache and corrupt-response rejection. Existing synthetic scan originals/high-quality/optimized copies will be retained for visual review; not human readability PASS until inspected. Application/runtime source unchanged.
+
 # Smart Sync 3.0 current acceptance — 2026-10-11 UTC
 
 This checkpoint supersedes the historical pre-integration audit below. Source inspected: `eb6addc9e9c77b1925e98a73487427986ba72c8d`, PR #23 OPEN/DRAFT, 56 commits, 91 changed files. Application/runtime code remains unchanged by the scheduler acceptance correction.

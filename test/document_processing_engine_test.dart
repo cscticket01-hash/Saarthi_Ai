@@ -40,6 +40,12 @@ void main() {
       final result=DocumentProcessingEngine.process({'bytes':source});final optimized=result['optimized'] as Uint8List;
       expect(result['actualBytes'],optimized.length);expect(img.decodeImage(optimized),isNotNull);
       expect((result['quality'] as int),greaterThanOrEqualTo(78));
+      final previews=Directory('build/media-readability');await previews.create(recursive:true);
+      final sourceExtension=n.isEven?'png':'jpg';
+      final optimizedExtension=result['mimeType']=='image/png'?'png':'jpg';
+      await File('${previews.path}/scan-${n+1}-original.$sourceExtension').writeAsBytes(source,flush:true);
+      await File('${previews.path}/scan-${n+1}-optimized.$optimizedExtension').writeAsBytes(optimized,flush:true);
+      await File('${previews.path}/scan-${n+1}-high-quality.jpg').writeAsBytes(result['highQuality'] as Uint8List,flush:true);
       measurements.add({'sourceBytes':source.length,'optimizedBytes':optimized.length,'savingsPercent':100*(1-optimized.length/source.length),'targetMet':result['targetMet']});
     }
     final total=measurements.fold<int>(0,(sum,row)=>sum+(row['optimizedBytes'] as int));

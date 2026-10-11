@@ -102,6 +102,9 @@ jobs:
     - name: Verify documents and mobile school boundaries
       run: flutter test test/document_renderer_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/document_upload_flow_test.dart test/document_processing_engine_test.dart test/developer_login_shell_test.dart test/mobile_boundary_test.dart test/school_text_data_test.dart test/monitor_summary_test.dart test/firebase_metric_samples_test.dart test/account_ui_test.dart test/spark_license_test.dart test/github_update_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Verify durable document queue and retained originals
+      # Existing synthetic originals/processed copies are retained for actual
+      # visual inspection; test PASS alone is not readability approval.
+      # Artifact upload below never includes school/user media.
       timeout-minutes: 3
       env:
         APPDATA: ${{ runner.temp }}/document-queue-tests
@@ -118,6 +121,12 @@ jobs:
       with:
         name: staff-salary-layout-preview
         path: build/payroll-preview
+    - uses: actions/upload-artifact@v4
+      with:
+        name: synthetic-document-readability
+        path: |
+          build/media-readability
+          build/document-measurements.json
     - name: Verify Windows startup and skip regression
       env:
         APPDATA: ${{ runner.temp }}/windows-startup-tests
