@@ -154,7 +154,7 @@ void _writeDraft(String rootPath, String schoolId, String encoded) {
           }
           sequence++;
         }
-        target.renameSync(previous!.path);
+        target.renameSync(previous.path);
         movedOld = true;
       }
       try {
