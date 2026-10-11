@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 
@@ -25,17 +26,27 @@ class _BulkState extends State<IdCardBulkScreen> {
   List<Map<String,String>> findings=[];
   bool busy=false,cancel=false,allowMissingPhotos=false;
   int completed=0,total=0;
+  Timer? originTimer;
+  bool originChanged=false;
+  bool active() {
+    try {widget.source.ensureActive();return !originChanged;} catch (_) {
+      if(mounted&&!originChanged)setState((){originChanged=true;cancel=true;jobs=[];findings=[];selected={};});
+      return false;
+    }
+  }
   IdCardBackPlacement backPlacement=IdCardBackPlacement.mirrorColumns;
-  @override void initState(){super.initState();reloadJobs();}
-  Future<void> reloadJobs() async {try{widget.source.ensureActive();final list=await widget.store.listJobs();if(mounted)setState(()=>jobs=list);}catch(e){if(mounted)setState(()=>error='Saved jobs require review: $e');}}
+  @override void initState(){super.initState();reloadJobs();originTimer=Timer.periodic(const Duration(seconds:1),(_)=>active());}
+  @override void dispose(){originTimer?.cancel();cancel=true;super.dispose();}
+  Future<void> reloadJobs() async {try{widget.source.ensureActive();final list=await widget.store.listJobs();widget.source.ensureActive();if(mounted&&!originChanged)setState(()=>jobs=list);}catch(e){if(mounted)setState(()=>error='Saved jobs require review: $e');}}
   Future<bool> confirm(String title,String message) async => await showDialog<bool>(context:context,builder:(context)=>AlertDialog(title:Text(title),content:Text(message),actions:[TextButton(onPressed:()=>Navigator.pop(context,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(context,true),child:const Text('Confirm'))]))??false;
   void progress(int value,int max){if(mounted)setState((){completed=value;total=max;});}
   Future<void> preview(Uint8List bytes) async {
-    if(!mounted)return;await Navigator.of(context).push<void>(MaterialPageRoute(builder:(_)=>Scaffold(appBar:AppBar(title:const Text('Exact bulk front/back PDF')),body:PdfPreview(build:(_)=>bytes,canChangePageFormat:false,canChangeOrientation:false,allowPrinting:true,allowSharing:true))));
+    if(!mounted||!active())return;await Navigator.of(context).push<void>(MaterialPageRoute(builder:(_)=>_OriginGuardedPdf(source:widget.source,bytes:bytes)));
   }
   Future<void> generate() async {
-    if(busy||classId==null||selected.isEmpty)return;
+    if(busy||classId==null||selected.isEmpty||!active())return;
     if(!await confirm('Review bulk export','Prepare ${selected.length} selected students from $classId. Existing QR credentials are reused. Legacy references do not prove active/revocation status. No new card is issued.'))return;
+    if(!mounted||!active())return;
     setState((){busy=true;cancel=false;error=null;findings=[];phase='Checking saved school data and photos';completed=0;total=selected.length;});
     try{
       final check=await widget.source.preflight(classId!,Set.from(selected),widget.template,backgrounds:widget.backgrounds,onProgress:progress,isCancelled:()=>cancel);
@@ -45,6 +56,7 @@ class _BulkState extends State<IdCardBulkScreen> {
       final plan=IdCardBulkPlan(template:widget.template,students:check.students,backPlacement:backPlacement);
       final job='batch-${plan.selectionFingerprint.substring(0,58)}';
       await widget.store.savePending(job,plan);
+      widget.source.ensureActive();
       if(mounted)setState(()=>phase='Rendering exact saved selection');
       final result=await widget.store.resumeAndRender(job,isCancelled:()=>cancel,onProgress:progress);
       widget.source.ensureActive();await reloadJobs();await preview(result.pdf);
@@ -52,19 +64,23 @@ class _BulkState extends State<IdCardBulkScreen> {
     finally{if(mounted)setState(()=>busy=false);}
   }
   Future<void> resume(Map<String,dynamic> job) async {
-    if(busy)return;
+    if(busy||!active())return;
     try {
     if(job['protection']=='legacy-needs-review'){
       if(!await confirm('Protect legacy saved job','Validate and encrypt this existing local selection and retained PDFs. Original student data and QR identities stay unchanged.'))return;
+      if(!mounted||!active())return;
       await widget.store.migrateLegacy(job['jobId'].toString(),confirmed:true);await reloadJobs();
     }
     } catch(e) {if(mounted)setState(()=>error='$e');return;}
+    if(!mounted||!active())return;
     setState((){busy=true;cancel=false;error=null;phase='Full rerender of exact saved selection, or verified completed output';});
     try{widget.source.ensureActive();final result=await widget.store.resumeAndRender(job['jobId'].toString(),isCancelled:()=>cancel,onProgress:progress);widget.source.ensureActive();await reloadJobs();await preview(result.pdf);}
     catch(e){if(mounted)setState(()=>error='$e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
   @override Widget build(BuildContext context){
+    if(originChanged)return Scaffold(appBar:AppBar(title:const Text('Class bulk ID cards')),body:const Center(child:Text('School changed; reopen ID tools. Saved jobs are retained.')));
+    try {widget.source.ensureActive();} catch (_) {return Scaffold(appBar:AppBar(title:const Text('Class bulk ID cards')),body:const Center(child:Text('School changed; reopen ID tools. Saved jobs are retained.')));}
     final rows=classId==null?<Map<String,dynamic>>[]:widget.source.forClass(classId!);
     return PopScope(canPop:!busy,child:Scaffold(appBar:AppBar(title:const Text('Class bulk ID cards')),body:ListView(padding:const EdgeInsets.all(16),children:[
       const Text('Local reviewed export • existing QR only • saved selection recovery rerenders from the beginning. Physical duplex alignment must be calibrated.'),
@@ -81,5 +97,21 @@ class _BulkState extends State<IdCardBulkScreen> {
       const Divider(),const Text('Saved jobs and verified outputs'),
       for(final job in jobs)ListTile(title:Text('${job['count']} students • ${job['status']}'),subtitle:Text('${job['jobId']} • ${job['protection']}'),trailing:TextButton(onPressed:busy?null:()=>resume(job),child:const Text('Resume / preview'))),
     ])));
+  }
+}
+
+class _OriginGuardedPdf extends StatefulWidget {
+  const _OriginGuardedPdf({required this.source,required this.bytes});
+  final IdCardSchoolSource source;
+  final Uint8List bytes;
+  @override State<_OriginGuardedPdf> createState()=>_OriginGuardedPdfState();
+}
+class _OriginGuardedPdfState extends State<_OriginGuardedPdf> {
+  Timer? timer;bool changed=false;
+  @override void initState(){super.initState();timer=Timer.periodic(const Duration(seconds:1),(_){try{widget.source.ensureActive();}catch(_){if(mounted&&!changed)setState(()=>changed=true);}});}
+  @override void dispose(){timer?.cancel();super.dispose();}
+  @override Widget build(BuildContext context){
+    try{widget.source.ensureActive();}catch(_){changed=true;}
+    return Scaffold(appBar:AppBar(title:const Text('Exact bulk front/back PDF')),body:changed?const Center(child:Text('School changed; reopen ID tools.')):PdfPreview(build:(_){widget.source.ensureActive();return widget.bytes;},canChangePageFormat:false,canChangeOrientation:false,allowPrinting:true,allowSharing:true));
   }
 }
