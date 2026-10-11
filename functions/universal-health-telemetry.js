@@ -7,7 +7,7 @@ function reject(status,message){const e=Error(message);e.status=status;e.publicM
 function sanitize(report){
  if(!report||Object.getPrototypeOf(report)!==Object.prototype||Buffer.byteLength(JSON.stringify(report))>8192)reject(400,'Invalid health report');
  const keys=new Set(['schema','measuredAt','platform','version','installation','state','registered','healthy','issues','verifiedRepairs','failedRepairs','components']);
- if(Object.keys(report).some(k=>!keys.has(k))||report.schema!==2||!['windows','android'].includes(report.platform)||!/^\d{1,3}\.\d{1,3}(\.\d{1,6})?$/.test(report.version)||!/^[a-f0-9]{64}$/.test(report.installation)||!STATES.has(report.state))reject(400,'Unsupported health report');
+ if(Object.keys(report).some(k=>!keys.has(k))||report.schema!==2||!['windows','android'].includes(report.platform)||!/^\d{1,3}\.\d{1,3}(\.\d{1,6})?(-(alpha|beta|rc|sync-test|test)(\.\d{1,6})?)?$/.test(report.version)||!/^[a-f0-9]{64}$/.test(report.installation)||!STATES.has(report.state))reject(400,'Unsupported health report');
  for(const k of ['registered','healthy','issues','verifiedRepairs','failedRepairs'])if(!Number.isSafeInteger(report[k])||report[k]<0||report[k]>(['registered','healthy','issues'].includes(k)?64:256))reject(400,'Invalid health counters');
  if(!Array.isArray(report.components)||report.components.length>32||report.registered!==report.components.length||report.healthy>report.registered||report.issues>report.registered)reject(400,'Invalid health components');
  const ids=new Set();

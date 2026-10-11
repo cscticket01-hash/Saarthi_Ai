@@ -14,7 +14,7 @@ class MobileHealthAdapter with WidgetsBindingObserver {
   int _generation=0;
   Timer? _contextTimer;
   final engine=UniversalHealth.instance;
-  late final reporter=HealthReporter(engine,platform:'android',version:const String.fromEnvironment('APP_VERSION',defaultValue:'2.0'),send:(bound,report)async {try{final code=await SchoolSession.instance.sendHealthReport(report);return code==204?HealthSendResult.unavailable:code==200?HealthSendResult.accepted:{429,502,503,504}.contains(code)?HealthSendResult.retryable:HealthSendResult.attention;}on TimeoutException{return HealthSendResult.retryable;}catch(_){return HealthSendResult.attention;}});
+  late final reporter=HealthReporter(engine,platform:'android',version:const String.fromEnvironment('APP_VERSION',defaultValue:'1.0.0'),send:(bound,report)async {try{final code=await SchoolSession.instance.sendHealthReport(report);return code==204?HealthSendResult.unavailable:code==200?HealthSendResult.accepted:{429,502,503,504}.contains(code)?HealthSendResult.retryable:HealthSendResult.attention;}on TimeoutException{return HealthSendResult.retryable;}catch(_){return HealthSendResult.attention;}});
   HealthContext current(){final link=SchoolSession.instance.link;return HealthContext(link?.schoolId??'',link?.personId??'signed-out');}
   Future<void> initialize() async {
     if(_started)return;_started=true;

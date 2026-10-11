@@ -16,7 +16,7 @@ class WindowsHealthAdapter {
   static final instance=WindowsHealthAdapter();
   bool _started=false;
   final guardian=UniversalHealth.instance;
-  late final reporter=HealthReporter(guardian,platform:'windows',version:const String.fromEnvironment('APP_VERSION',defaultValue:'2.0'),send:(bound,report)async {try {final r=await ManagedSchoolSession.callForSchool(bound.school,'managed/health/report',{'report':report},observationOnly:true);return r['accepted']==true?HealthSendResult.accepted:HealthSendResult.retryable;}on CentralCloudException catch(e){return {429,502,503,504}.contains(e.status)?HealthSendResult.retryable:HealthSendResult.attention;}on TimeoutException{return HealthSendResult.retryable;}catch(_){return HealthSendResult.attention;}});
+  late final reporter=HealthReporter(guardian,platform:'windows',version:const String.fromEnvironment('APP_VERSION',defaultValue:'1.0.0'),send:(bound,report)async {try {final r=await ManagedSchoolSession.callForSchool(bound.school,'managed/health/report',{'report':report},observationOnly:true);return r['accepted']==true?HealthSendResult.accepted:HealthSendResult.retryable;}on CentralCloudException catch(e){return {429,502,503,504}.contains(e.status)?HealthSendResult.retryable:HealthSendResult.attention;}on TimeoutException{return HealthSendResult.retryable;}catch(_){return HealthSendResult.attention;}});
   HealthContext current()=>HealthContext(FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'',FirebaseFirestore.instance.activeProfileId);
   Future<void> initialize() async {
     if(_started)return;
