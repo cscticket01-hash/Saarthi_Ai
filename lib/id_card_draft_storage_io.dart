@@ -24,6 +24,23 @@ class IdCardDraftStorageIo {
   final String schoolId;
   static const int maxBytes = 512 * 1024;
 
+  // Unix file locks can be process-scoped; parallel Isolate.run calls in one
+  // app process must ALSO be serialized before crossing isolate boundaries.
+  // Share the queue across store instances bound to the same school and path.
+  static final Map<String, Future<void>> _pending = {};
+  Future<T> _serial<T>(Future<T> Function() operation) async {
+    final key = '${Directory(rootPath).absolute.path}/$schoolId';
+    final previous = _pending[key] ?? Future<void>.value();
+    final task = previous.then((_) => operation());
+    final tail = task.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _pending[key] = tail;
+    try {
+      return await task;
+    } finally {
+      if (identical(_pending[key], tail)) _pending.remove(key);
+    }
+  }
+
   /// Can be passed directly as the ID designer screen onSave callback.
   /// Saving is performed in an isolate to avoid blocking the Flutter UI.
   Future<void> saveDraft(Map<String, dynamic> draft) async {
@@ -31,18 +48,18 @@ class IdCardDraftStorageIo {
     if (utf8.encode(encoded).length > maxBytes) {
       throw const FormatException('ID designer draft exceeds 512 KiB');
     }
-    await Isolate.run(() => _writeDraft(rootPath, schoolId, encoded));
+    await _serial(() => Isolate.run(() => _writeDraft(rootPath, schoolId, encoded)));
   }
 
   /// A corrupt latest file fails visibly; never silently fall back to stale
   /// design content. Null means no draft was saved for this school.
   Future<Map<String, dynamic>?> loadDraft() =>
-      Isolate.run(() => _readDraft(rootPath, schoolId, previous: false));
+      _serial(() => Isolate.run(() => _readDraft(rootPath, schoolId, previous: false)));
 
   /// Opt-in recovery of the most recent retained previous revision. This
   /// operation does NOT mutate or replace the current draft.
   Future<Map<String, dynamic>?> readPreviousRevision() =>
-      Isolate.run(() => _readDraft(rootPath, schoolId, previous: true));
+      _serial(() => Isolate.run(() => _readDraft(rootPath, schoolId, previous: true)));
 }
 
 String _draftStem(String schoolId) =>
