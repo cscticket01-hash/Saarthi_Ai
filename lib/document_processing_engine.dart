@@ -171,7 +171,7 @@ class DocumentProcessingEngine {
               interpolation: img.Interpolation.average,
             )
           : image;
-      for (final q in [74, 70, 66, 62]) {
+      for (final q in [78]) {
         final candidate = Uint8List.fromList(
           img.encodeJpg(candidateImage, quality: q),
         );
