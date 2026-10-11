@@ -27,6 +27,22 @@ class IdCardBulkJobStore {
   final String rootPath, schoolId;
   static const maxSnapshotBytes = 190 * 1024 * 1024;
 
+  // File locks on Unix may be shared at process level. Serialize all local
+  // journal operations in the originating UI isolate as well.
+  static final Map<String, Future<void>> _pending = {};
+  Future<T> _serial<T>(String jobId, Future<T> Function() operation) async {
+    final key = '${Directory(rootPath).absolute.path}/$schoolId/$jobId';
+    final prior = _pending[key] ?? Future<void>.value();
+    final work = prior.then((_) => operation());
+    final tail = work.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _pending[key] = tail;
+    try {
+      return await work;
+    } finally {
+      if (identical(_pending[key], tail)) _pending.remove(key);
+    }
+  }
+
   Future<void> savePending(String jobId, IdCardBulkPlan plan) async {
     _requireJobId(jobId);
     if (plan.students.first.schoolId != schoolId) {
@@ -36,7 +52,7 @@ class IdCardBulkJobStore {
     if (utf8.encode(raw).length > maxSnapshotBytes) {
       throw const FormatException('Bulk job exceeds local storage budget');
     }
-    await Isolate.run(() => _withJobLock(rootPath, schoolId, jobId, (meta, pdf) {
+    await _serial(jobId, () => Isolate.run(() => _withJobLock(rootPath, schoolId, jobId, (meta, pdf) {
       if (meta.existsSync()) {
         final old = _decode(meta.readAsStringSync(), schoolId, jobId);
         if (old['fingerprint'] != plan.selectionFingerprint) {
@@ -54,19 +70,19 @@ class IdCardBulkJobStore {
         'selection': jsonDecode(raw),
       };
       _writeAtomically(meta, jsonEncode(state));
-    }));
+    })));
   }
 
   /// Returns a verified plan for a pending or finished job. A changed school,
   /// missing file, corrupt JSON or selection drift fails closed.
   Future<IdCardBulkPlan> resumePlan(String jobId) async {
     _requireJobId(jobId);
-    final snapshot = await Isolate.run(
+    final snapshot = await _serial(jobId, () => Isolate.run(
       () => _withJobLock(rootPath, schoolId, jobId, (meta, pdf) {
         if (!meta.existsSync()) throw StateError('Bulk job not found');
         return _decode(meta.readAsStringSync(), schoolId, jobId)['selection'];
       }),
-    );
+    ));
     final plan = IdCardBulkPlan.fromDurableSnapshot(
       Map<String, dynamic>.from(snapshot as Map),
     );
@@ -124,14 +140,16 @@ class IdCardBulkJobStore {
         'pdfSha256': hash,
         'pdfBytes': bytes.length,
         'completedAt': DateTime.now().toUtc().toIso8601String(),
-      }));
-    }));
-    return rendered;
+      })));
+    })));
+    final committed = await readCompletedPdf(jobId);
+    if (committed == null) throw StateError('Bulk export not committed');
+    return IdCardBulkResult(committed, plan.selectionFingerprint, plan.manifest);
   }
 
   Future<Uint8List?> readCompletedPdf(String jobId) async {
     _requireJobId(jobId);
-    return Isolate.run(
+    return _serial(jobId, () => Isolate.run(
       () => _withJobLock(rootPath, schoolId, jobId, (meta, pdf) {
         if (!meta.existsSync()) return null;
         final state = _decode(meta.readAsStringSync(), schoolId, jobId);
