@@ -350,5 +350,5 @@ class UniversalHealth {
     'failedRepairs': _history.where((e) => {'unverified','timeout'}.contains(e.stage)).length,
     'components': [for (final e in observations.entries) {'id': e.key, 'state': e.value.state.name, 'failure': e.value.failure.name}],
   };
-  Future<void> dispose() async { await stop(); _disposed = true; ++_generation; await _changes.close(); }
+  Future<void> dispose() async { if(_disposed)return;await stop(); _disposed = true; ++_generation; await _changes.close(); }
 }
