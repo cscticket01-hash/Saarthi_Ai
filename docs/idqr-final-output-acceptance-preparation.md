@@ -63,3 +63,9 @@ A future implementation should derive centering from the occupied block, never a
 Render specimens through the actual application exporter, retain original Unicode strings, inspect final PDF text and embedded font resources, then review raster output with a reader of each language. An embedded font alone does not establish shaping. Mixed names and school names need long-name stress cases. Use only rights-cleared fonts. No font or external child-photo asset is introduced here.
 
 Current preparation evidence: synthetic verifier tests only; real all-card decoding, bulk exports, language readability and printer acceptance remain UNVERIFIED. Application integration remains gated on independent shared Sync acceptance.
+
+## Isolated hosted real-decoder smoke
+
+The preparation-only workflow `.github/workflows/idqr-preparation-review.yml` triggers exclusively on pushes to `feature/idqr-acceptance-preparation` affecting this tool, this document or the workflow. It has read-only repository permissions and no credentials, application builds, activation or publication. It installs zbar-tools and pinned Python PDF dependencies, runs the verifier contract tests, then runs `smoke_real_decoder.py`.
+
+The smoke constructs two synthetic vector QR symbols in an actual PDF, decodes both at150/300/600DPI, rejects a wrong final-card identity, and rejects a Code128 barcode carrying the same expected payload. An unrestricted decoder control must first decode that Code128 fixture, so an unreadable negative fixture cannot falsely satisfy the regression. Temporary fixture files are discarded. Missing real decoder exits2 with UNVERIFIED; decode/identity failures exit1 with FAIL. Hosted execution remains UNVERIFIED until the exact preparation commit has an observed passing run. Even a passing run establishes only synthetic PDF decoding, not actual application bulk export or physical printing acceptance.

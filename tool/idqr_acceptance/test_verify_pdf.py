@@ -78,6 +78,18 @@ class FinalPdfAcceptanceTests(unittest.TestCase):
         with self.assertRaises(AcceptanceError):
             verify(self.path, [])
 
+    def test_synthetic_smoke_fixtures_have_expected_inventory_and_geometry(self):
+        from smoke_real_decoder import create_fixtures
+        from verify_pdf import validate_manifest
+        positive, manifest, negative, negative_manifest = create_fixtures(self.temporary.name)
+        self.assertEqual(len(manifest['cards']), 2)
+        self.assertEqual(len(negative_manifest['cards']), 1)
+        self.assertEqual(manifest['cards'][0]['qrPayload'], negative_manifest['cards'][0]['qrPayload'])
+        for path, expected in [(positive, manifest), (negative, negative_manifest)]:
+            with fitz.open(path) as document:
+                validate_manifest(expected, document)
+                self.assertEqual(len(document), 1)
+
     def test_all_pdf_pages_must_be_in_inventory(self):
         with fitz.open(self.path) as pdf:
             pdf.new_page(width=595.276, height=841.89)
