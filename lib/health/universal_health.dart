@@ -130,6 +130,7 @@ class UniversalHealth {
   int get unsettledRepairs => _quarantinedRepairs.length;
   int get _activeChecks => _checks.keys.where((id)=>!_quarantinedChecks.contains(id)).length;
   bool get paused => _paused;
+  bool get admissionHistoryVerified => _historyReady && store != null;
   HealthContext? get context => _context;
   static bool validId(dynamic id) => id is String && RegExp(r'^[a-z][a-z0-9_.-]{0,47}$').hasMatch(id);
   void register(HealthProvider provider) {
@@ -161,7 +162,7 @@ class UniversalHealth {
       final events=await gate.future;
       if(identical(_loadGate,gate)){_loadTimer?.cancel();_loadTimer=null;_loadGate=null;}
       if (generation != _generation || _disposed) return;
-      _historyReady=loaded&&store!=null;
+      _historyReady=loaded&&store!=null&&events.length<=maxHistory;
       if(events.any((e)=>e.at.isAfter(now())))_historyReady=false;
       for (final e in events.where((e) => !e.at.isAfter(now()) && now().difference(e.at) <= const Duration(days: 7)).toList().reversed.take(maxHistory).toList().reversed) {
         _history.add(e);
@@ -201,7 +202,7 @@ class UniversalHealth {
     }
     _history.add(HealthEvent(component, failure, stage, at, fp));
     final bound = _context, events = history;
-    if (bound != null && store != null) {
+    if (bound != null && store != null && _historyReady) {
       // Coalesce persistence instead of retaining one full snapshot per event.
       _scheduleWrite(bound, events);
     }
