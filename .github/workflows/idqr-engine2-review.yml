@@ -17,9 +17,9 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Analyze new draft components
-        run: flutter analyze lib/id_card_designer.dart lib/id_card_designer_screen.dart lib/id_card_draft_storage_io.dart lib/id_card_engine.dart lib/id_card_bulk_engine.dart lib/card_issue_lifecycle.dart
+        run: flutter analyze lib/id_card_designer.dart lib/id_card_designer_screen.dart lib/id_card_draft_storage_io.dart lib/id_card_engine.dart lib/id_card_bulk_engine.dart lib/id_card_bulk_job_store.dart lib/windows_id_card_designer_entry.dart lib/windows_document_templates.dart lib/card_issue_lifecycle.dart
       - name: Existing ID and new bulk regressions
-        run: flutter test test/id_card_engine_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_designer_screen_test.dart test/id_card_draft_storage_io_test.dart
+        run: flutter test test/id_card_engine_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_bulk_job_store_test.dart test/id_card_designer_screen_test.dart test/id_card_draft_storage_io_test.dart
       - name: Independent actual-renderer final PDF verification
         run: |
           sudo apt-get update -qq
