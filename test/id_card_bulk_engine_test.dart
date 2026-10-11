@@ -145,6 +145,7 @@ void main() {
       final image = Uint8List.fromList([1, 2, 3]);
       final data = <String, dynamic>{
         'name': 'Original',
+        'schoolName': 'Synthetic School',
         'nested': {'value': 'Original'},
       };
       final record = student(0, data: data, images: {'photo': image});
