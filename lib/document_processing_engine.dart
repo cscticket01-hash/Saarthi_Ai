@@ -158,6 +158,33 @@ class DocumentProcessingEngine {
       optimizedWidth = image.width;
       optimizedHeight = image.height;
     }
+    // Try additional safe JPEG encodings before giving up on the size goal.
+    // Preserve the existing minimum resolution and never silently replace
+    // readable documents with thumbnails or binary/thresholded text.
+    if (optimized.length > target) {
+      final candidateImage =
+          math.max(image.width, image.height) > minimumEdge
+          ? img.copyResize(
+              image,
+              width: image.width >= image.height ? minimumEdge : null,
+              height: image.height > image.width ? minimumEdge : null,
+              interpolation: img.Interpolation.average,
+            )
+          : image;
+      for (final q in [78]) {
+        final candidate = Uint8List.fromList(
+          img.encodeJpg(candidateImage, quality: q),
+        );
+        if (candidate.length < optimized.length) {
+          optimized = candidate;
+          optimizedMime = 'image/jpeg';
+          optimizedWidth = candidateImage.width;
+          optimizedHeight = candidateImage.height;
+          quality = q;
+        }
+        if (optimized.length <= target) break;
+      }
+    }
     // A recompression must not consume more than the safe existing source.
     // Retain the original container when processing expands it: this is an
     // explicitly reported fallback, not a claim that cleanup was applied.
