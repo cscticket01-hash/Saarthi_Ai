@@ -12,11 +12,14 @@ class IdCardDesignerScreen extends StatefulWidget {
     super.key,
     required this.designer,
     required this.onSave,
+    this.templateVersion = 'schema-v1',
     this.data = const {},
     this.images = const {},
     this.qr = '',
   });
   final IdCardDesigner designer;
+  /// Stable schema/template version supplied by the hosting school UI.
+  final String templateVersion;
   final Future<void> Function(Map<String, dynamic>) onSave;
   final Map<String, dynamic> data;
   final Map<String, Uint8List> images;
@@ -46,7 +49,7 @@ class _DesignerState extends State<IdCardDesignerScreen> {
     try {
       await widget.onSave(
         editor.exportDraft(
-          templateVersion: DateTime.now().toUtc().toIso8601String(),
+          templateVersion: widget.templateVersion,
         ),
       );
       if (mounted) setState(() => error = null);
