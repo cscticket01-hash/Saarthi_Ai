@@ -5,7 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'universal_health.dart';
 
-enum HealthSendResult { accepted, retryable, attention }
+enum HealthSendResult { accepted, retryable, attention, unavailable }
 
 /// One coalesced, persistent diagnostic report; no credential is queued.
 class HealthReporter {
@@ -30,6 +30,7 @@ class HealthReporter {
     if(_scope!=scope){_scope=scope;_attempts=0;_next=null;_blocked=null;}
     if(_blocked==scope||_attempts>=3||_next?.isAfter(DateTime.now())==true)return;
     _sending=true;
+    var requestPending=false, releaseWhenSettled=false;
     try {
       final preferences=await SharedPreferences.getInstance();
       var id=preferences.getString('universal_health_installation_v2');
@@ -40,12 +41,16 @@ class HealthReporter {
       final report=engine.telemetry(platform,version,id);
       await preferences.setString('universal_health_pending_v2',jsonEncode({'scope':scope,'report':report}));
       if(_stopped||engine.context?.same(bound)!=true)return;
-      final result=await send(bound,report).timeout(const Duration(seconds:8),onTimeout:()=>HealthSendResult.retryable);
+      final source=send(bound,report);
+      requestPending=true;
+      unawaited(source.then<void>((_){requestPending=false;if(releaseWhenSettled)_sending=false;},onError:(Object _,StackTrace __){requestPending=false;if(releaseWhenSettled)_sending=false;}));
+      final result=await source.timeout(const Duration(seconds:8),onTimeout:()=>HealthSendResult.retryable);
       if(_stopped||engine.context?.same(bound)!=true)return;
       if(result==HealthSendResult.accepted){_attempts=0;_next=DateTime.now().add(const Duration(minutes:5));await preferences.setString('universal_health_pending_v2','');}
+      else if(result==HealthSendResult.unavailable){_next=DateTime.now().add(const Duration(minutes:5));}
       else if(result==HealthSendResult.attention){_blocked=scope;}
       else {_attempts++;_next=DateTime.now().add(Duration(minutes:5*(1<<_attempts)));}
     }catch(_){_attempts++;_next=DateTime.now().add(const Duration(minutes:15));}
-    finally{_sending=false;}
+    finally{if(requestPending){releaseWhenSettled=true;}else{_sending=false;}}
   }
 }
