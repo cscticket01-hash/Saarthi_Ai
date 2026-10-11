@@ -1,3 +1,4 @@
+import 'health/health_panel.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
@@ -1171,6 +1172,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           style: TextStyle(color: Colors.orange),
                         ),
                       if (ownSchool) ...[
+                        const UniversalHealthPanel(),
                         const SizedBox(height: 20),
                         _navigation(active),
                         const SizedBox(height: 12),

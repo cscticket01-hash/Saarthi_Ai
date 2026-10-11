@@ -1,3 +1,4 @@
+import 'health/health_runtime.dart';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -20,7 +21,7 @@ class DocumentPipeline {
     final key = '$scope:$mime:${sha256.convert(bytes)}';
     if (_key == key && _prepared != null) return _prepared!;
     _key = key;
-    final future = _process(bytes, mime).catchError((
+    final future = HealthRuntime.measure('documents', () => _process(bytes, mime)).catchError((
       Object error,
       StackTrace stack,
     ) {

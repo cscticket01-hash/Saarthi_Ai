@@ -1,3 +1,4 @@
+import 'health/mobile_health_adapter.dart';
 import 'qr_authentication_engine.dart';
 
 import 'dart:async';
@@ -55,6 +56,7 @@ Future<void> main() async {
     restore: SchoolSession.instance.restore,
     readyBuilder: (_) => const SaarthiMobileApp(),
     onReady: () {
+      unawaited(MobileHealthAdapter.instance.initialize().catchError((Object _) {}));
       unawaited(initializeAttendanceBackground());
       unawaited(_initializeMobileNotifications().catchError((_) {}));
     },

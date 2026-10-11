@@ -311,6 +311,16 @@ class SchoolSession {
     );
   }
 
+  // Diagnostics cannot clear or renew the session, including on HTTP403.
+  Future<int> sendHealthReport(Map<String,dynamic> report) async {
+    final current=link,permit=_currentAttendancePermit,generation=_generation;
+    if(current==null || !current.managed || permit==null)return 403;
+    final response=await _client.post(Uri.parse(current.endpoint),headers:{'Content-Type':'application/json'},body:jsonEncode({'action':'managed/mobile','schoolId':current.schoolId,'request':{'action':'mobile_health_report','report':report,'attendancePermit':permit,'sessionToken':schoolToken,'deviceId':deviceId,'role':current.role,'personId':current.personId,'linkToken':current.linkToken,if(_cardAuthorizationToken!=null)'cardAuthorizationToken':_cardAuthorizationToken,if(current.cardIssueId.isNotEmpty)'cardIssueId':current.cardIssueId}})).timeout(const Duration(seconds:8));
+    if(generation!=_generation || !identical(current,link))return 409;
+    if(response.statusCode==200){final result=_decodeSchoolResponse(response.body);if(result['success']==true&&result['schoolId']==current.schoolId)return result['accepted']==true?200:429;}
+    return response.statusCode;
+  }
+
   Future<Map<String, dynamic>> schoolCall(
     String action,
     Map<String, dynamic> body,
