@@ -52,3 +52,47 @@ jobs:
           name: universal-apps-script-reviewed-source
           path: build/universal-script
           retention-days: 14
+
+  windows-draft:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=windows --project-name saarthi_ai .
+      - name: Preserve Windows single instance registration
+        run: python .github/scripts/configure_windows_single_instance.py
+      - name: Keep Windows local dependencies (same exclusions as platform review)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re
+          p='pubspec.yaml'
+          s=open(p).read()
+          for name in ['firebase_core','firebase_auth','firebase_messaging','flutter_local_notifications','cloud_firestore','agora_rtc_engine','mobile_scanner','geolocator']:
+            s=re.sub(r'^  '+name+r':[^\n]*\n','',s,flags=re.M)
+          open(p,'w').write(s)
+          PY
+      - run: flutter pub get
+      - name: Windows ID Card designer, storage and durable bulk regressions
+        run: |
+          flutter test --concurrency=1 test/id_card_engine_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_bulk_job_store_test.dart test/id_card_designer_screen_test.dart test/id_card_draft_storage_io_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Windows ID Card regressions failed' }
+      - name: Exact-commit Windows application build review (not a release)
+        run: |
+          flutter build windows --release -t lib/main_windows.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
+          if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+      - name: Mark hosted preview as TEST only
+        run: |
+          New-Item -ItemType Directory -Force build/idqr-windows-review | Out-Null
+          Set-Content build/idqr-windows-review/TEST-COMMIT.txt $env:GITHUB_SHA
+          Set-Content build/idqr-windows-review/NOT-PRODUCTION.txt 'Hosted Windows build only. Do not replace production app or school data. Physical printer/camera/restart acceptance pending.'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: idqr-windows-exact-commit-evidence
+          path: build/idqr-windows-review
+          retention-days: 7
