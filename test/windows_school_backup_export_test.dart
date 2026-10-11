@@ -181,4 +181,42 @@ void main() {
         ? 'Windows symlink privilege is environment dependent; canonical restore covered above'
         : false,
   );
+
+  test('backup rejects duplicate logical paths before writing destination', () async {
+    final source = File('${root.path}/source');
+    await source.writeAsBytes([9, 8, 7]);
+    await expectLater(
+      WindowsSchoolBackupExport.export(
+        schoolId: school,
+        password: password,
+        snapshot: {'schoolId': school},
+        files: {
+          'photos/one.bin': source,
+          'photos//one.bin': source,
+        },
+        destination: File('${root.path}/invalid-duplicate.vsb'),
+        stillSameSchool: () => true,
+      ),
+      throwsStateError,
+    );
+    expect(await File('${root.path}/invalid-duplicate.vsb').exists(), false);
+  });
+  test('export rejects a changed school before committing', () async {
+    final photo = File('${root.path}/photo');
+    await photo.writeAsBytes([1, 2, 3]);
+    var calls = 0;
+    await expectLater(
+      WindowsSchoolBackupExport.export(
+        schoolId: school,
+        password: password,
+        snapshot: {'schoolId': school},
+        files: {'photos/student.bin': photo},
+        destination: File('${root.path}/changed-school.vsb'),
+        stillSameSchool: () => ++calls == 1,
+      ),
+      throwsStateError,
+    );
+    expect(await File('${root.path}/changed-school.vsb').exists(), false);
+  });
+
 }
