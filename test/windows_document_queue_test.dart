@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -84,6 +85,19 @@ void main() {
       expect(retained['syncState'],'needsAttention');
       expect(events.any((event)=>event['stage']=='verified'),false);
     }
+  });
+  test('unclassified document failure is retained for review rather than blind retry', () async {
+    final ref=db.collection('_windows_document_outbox').doc('unknown-original');
+    await ref.set({'schoolId':school,'documentRevision':'original-revision',
+      'deleted':true,'localPath':''});
+    await expectLater(WindowsBackendBridge.flushDocumentPending(
+      send:(_)async=>throw StateError('Synthetic unclassified failure')),throwsStateError);
+    final retained=(await ref.get()).data()!;
+    expect(retained['documentRevision'],'original-revision');
+    expect(retained['syncState'],'needsAttention');
+    expect(retained['failureCategory'],'unknown');
+    await WindowsBackendBridge.flushDocumentPending(send:(_)async=>fail('Review row must not retry'));
+    expect((await ref.get()).exists,true);
   });
   test('pause prevents pending admission without changing queued evidence', () async {
     final ref = db.collection('_windows_google_outbox').doc('paused-original');
@@ -215,14 +229,14 @@ void main() {
       'Pending',
     );
     for (final outage in [
-      'offline',
-      'Firebase unavailable',
-      'Google Drive unavailable'
+      const SocketException('Synthetic offline path'),
+      TimeoutException('Synthetic provider response timeout'),
+      CentralCloudException(503,'school_cloud','Synthetic provider unavailable')
     ]) {
       await expectLater(
           WindowsBackendBridge.flushDocumentPending(
-              send: (_) async => throw StateError(outage)),
-          throwsStateError);
+              send: (_) async => throw outage),
+          throwsA(same(outage)));
       expect((await db.collection('_windows_document_outbox').get()).docs,
           hasLength(1));
       final retry = (await db.collection('_windows_document_outbox').get())
