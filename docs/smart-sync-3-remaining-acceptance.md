@@ -1,4 +1,6 @@
-> 2026-10-11 continuation: all five platform jobs on 97c2a31193c82982d8434ef4d812fa4ecc1620bd are PASS (run38105746897). Corrected hourly run38105556254 remains running. Fresh bounded binary acceptance is being expanded to 2-5 first-page hashed files, shared-hash-safe repair, disposable missing cache and corrupt-response rejection. Existing synthetic scan originals/high-quality/optimized copies will be retained for visual review; not human readability PASS until inspected. Application/runtime source unchanged.
+> 2026-10-11 08:41 IST approval continuation: user approved broader real recovery and 1,000/5,000/15,000 attendance load; approval is no longer a blocker. Actual quota headroom, workload fixtures and unimplemented acceptance checks remain execution blockers. All five platform jobs on cd59bd199de983d20e7da962ba2968adc614c689 passed (push38106550312 / PR38106552573). Its cloud38106550317 failed before authentication because the TEST runtime still reported eb6addc; all downstream jobs skipped. User explicitly selected Render My Workspace; auto-deploy was disabled. Coordinator deployed the reviewed TEST source and then ede88c1d44de5345ac43c3d5e8f8707adeb9e2ea, fixing deterministic reopened-cache retry jitter. Health confirmed ready/project/exact ede88c runtime. Broader cloud38107737043 and exact platform38107737006/38107739438 are running; no future PASS inferred. Corrected real-hour38105556254 remains pending final result.
+
+> Visual review inspected all 24 images in exact cd59 artifact11690337047 (eight originals, eight optimized PNGs, eight high-quality JPGs). All eight clean Arial24 Latin/digit scans retain thirty readable rows and full final digits without visible clipping, blur or missing lines. Optimized copies crop blank margins. This is a narrow synthetic-text visual PASS, not photos/seals/signatures/handwriting/small-print/Bengali/Hindi/noisy/multipage approval. Aggregate optimized bytes995994 versus2297981 original (56.66% savings); the tighter409600-byte target was not met, preserving readability. Physical tests remain UNVERIFIED. No main/production/original-school/billing/publication changes.
 
 # Smart Sync 3.0 current acceptance — 2026-10-11 UTC
 
@@ -13,7 +15,7 @@ This checkpoint supersedes the historical pre-integration audit below. Source in
 | Windows/Android/Web sync | Implemented | Windows groups 25/143/181 PASS, overlapping; not summed | [38102879867](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38102879867): all five stages PASS, exact source | UNVERIFIED | Physical restart, OS wake/minimized hour, network interruption, printer and QR |
 | Central monitoring | Implemented; missing/stale and tenant checks present | Isolation/staleness tests PASS | Actual authenticated hosted Windows report path observed, pending 0 | UNVERIFIED | Report freshness allows ten minutes while backend throttle is five: cannot conclusively exclude recent prior identical report; fleet unknown |
 | Binary recovery/quality | Implemented | Corrupt/hash/retry/cache checks PASS | One file verified after injected 503 and restart; inventory PARTIAL | UNVERIFIED | Representative human readability and broader file coverage |
-| Attendance capacity | Planning and mocked component benchmarks available | Component evidence only | 1,000/5,000/15,000 real-provider scenarios NOT RUN | UNVERIFIED | Explicit TEST school/workload/quota/concurrency/cost/isolation approval |
+| Attendance capacity | Live workload approved; guarded harness being completed | Component evidence only; not provider throughput | 1,000/5,000/15,000 real-provider scenarios NOT RUN | UNVERIFIED | Actual quota headroom, signed fixture identities and full live acceptance; see capacity admission document |
 | Original-school 502 | Unknown provider exception; pending operations preserved | TEST boundary failure/recovery evidence only | Original cause UNCONFIRMED | Original PC untouched | Owner-only Apps Script diagnostic needs separate authorization |
 
 ## Measurements tied to exact historical run
@@ -32,7 +34,7 @@ The old check-expiry mode verified inventory expiry but never attempted expired 
 
 Continuation checks are scheduled: corrected hourly/platform result after 75 minutes; same-fixture real-day check on 2026-10-12 at 06:36:20 IST. They must inspect actual latest source before acting.
 
-Original-school fresh Render log access is blocked because the connector has no selected workspace and requires user-confirmed workspace ID. No workspace was selected automatically. Historical correlated logs remain evidence only.
+User confirmed Render My Workspace during the approval continuation; fresh TEST deployment/log/metrics access is now available using that explicitly confirmed workspace. The original-school owner-only Apps Script exception remains unknown; TEST deployment work does not diagnose it.
 
 ## Scheduler failure and correction
 
@@ -42,7 +44,7 @@ Local Flutter regressions were blocked by automatic approval review because the 
 
 ## Release gate
 
-BLOCKED pending corrected-source CI/hour result, real-day expiry, physical Windows/Android, representative media quality, scoped provider-load approval and original owner diagnostics. No merge, production deploy, EXE/APK publication, download-link update, billing or original-school mutation authorized.
+BLOCKED pending corrected-source CI/hour result, real-day expiry, physical Windows/Android, representative media quality, measured provider capacity admission/acceptance and original owner diagnostics. Isolated provider-load approval is recorded above. No merge, production deploy, EXE/APK publication, download-link update, billing or original-school mutation authorized.
 
 ---
 
