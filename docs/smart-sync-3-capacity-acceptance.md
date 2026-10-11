@@ -1,6 +1,12 @@
 # Isolated attendance capacity acceptance
 
-Status: **plan only; live high-volume testing is not authorized**. Existing fsync journal measurements use mocked remote delivery and establish no Google provider capacity. No billing or quota increase is part of this plan.
+Status: **user approved isolated real recovery and 1,000/5,000/15,000 attendance load on 2026-10-11, 08:41 IST; live capacity admission is pending measured quota headroom and a complete harness**. This approval supersedes the previous approval-pending status. Existing fsync journal measurements use mocked remote delivery and establish no Google provider capacity. No billing or quota increase is part of this approval.
+
+Confirmed TEST scope: school `vs-db8afb01a3be46a983c8284714d06e5d`, endpoint `saarthi-sync-v2-test.onrender.com`, project `saarthi-ai-df12b`, Render workspace `tea-db06ai2d0e5s73a9d1qg` explicitly selected by the user. The coordinator deployed reviewed commit `cd59bd199de983d20e7da962ba2968adc614c689` to this TEST service after finding auto-deploy disabled; Render deployment `dep-db5ft6id0e5s73fapd80` reached LIVE. Production and billing were unchanged.
+
+The implemented Firestore store performs at least three writes per fresh successful event (create, claim, finish) and two transaction reads. Therefore separate 1,000/5,000/15,000 stages require at least 63,000 writes and 42,000 transaction reads, excluding fixture setup, status polling, pending queries, retries and monitoring. Standard Firestore's published free allowance is 20,000 document writes/day ([official quotas](https://firebase.google.com/docs/firestore/quotas)); do not confuse its 50,000 daily read allowance with writes. Actual database edition/tier, daily usage and shared-project headroom remain unverified. The 15,000 stage alone needs at least 45,000 writes, so it cannot be admitted as a same-day Standard free-tier run even with zero earlier usage. No workload has been submitted on the strength of approval alone.
+
+Current operator harness `staging_attendance_acceptance.mjs` supports exactly 1,000 preauthenticated identities and four HTTP workers. It does not yet support 5,000/15,000 fixtures, quota admission, P99/resource measurements, full authoritative attendance-row readback or durable interrupted-run reports. These are implementation gaps, not passing capacity evidence. Existing monitoring reads quota descriptors and sampled metrics, but does not certify complete daily consumption/headroom or Apps Script/Drive/Sheets account usage. Preserve the admission gate below; unavailable measurements are an execution blocker rather than a reason to request the user's load approval again.
 
 ## Approval and admission gate
 

@@ -114,7 +114,9 @@ void main() {
     if(!missing)break;
     expect(await binaries.repairNext(),true);
    }
-   final reopenedBinaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest);
+   // Keep retry jitter deterministic in this elapsed-delay acceptance. The
+   // production maximum (6.25s) can otherwise exceed the observed 6s wait.
+   final reopenedBinaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest,jitter:()=>.5);
    await reopenedBinaries.load();
    for(final item in targets){
     final path=await reopenedBinaries.verifiedPath(item['fileId'] as String);expect(path,isNotNull);
