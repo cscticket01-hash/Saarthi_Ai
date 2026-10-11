@@ -24,6 +24,19 @@ void main(){
       {...row('unscoped')},
     ], school)?['_recordId'], 'unscoped');
   });
+  test('bulk scoped source rejects schoolSyncId spoofing and excludes deletions', () {
+    final valid = {...row('valid'), 'schoolId': school, 'schoolSyncId': school};
+    final deleted = {...row('deleted'), 'schoolId': school, 'deleted': true};
+    final tombstone = {...row('tombstone'), '_syncDeleted': true};
+    expect(IdCardSchoolSource.scopedRecords([valid, deleted, tombstone], school).map((r) => r['_recordId']), ['valid']);
+    expect(() => IdCardSchoolSource.scopedRecords([
+      {...row('foreign'), 'schoolSyncId': 'vs-${'b' * 32}'},
+    ], school), throwsStateError);
+    expect(() => IdCardSchoolSource.scopedRecords([
+      {...row('foreign2'), 'schoolId': 'vs-${'b' * 32}'},
+    ], school), throwsStateError);
+    expect(() => IdCardSchoolSource.scopedRecords([row('valid')], ''), throwsStateError);
+  });
   test('source only reuses exact legitimate existing credentials',(){
     final s=source([row('first')]);
     expect(s.existingQr(s.records.first),isNotEmpty);
