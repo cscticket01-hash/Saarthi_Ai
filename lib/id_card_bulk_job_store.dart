@@ -140,7 +140,7 @@ class IdCardBulkJobStore {
         'pdfSha256': hash,
         'pdfBytes': bytes.length,
         'completedAt': DateTime.now().toUtc().toIso8601String(),
-      })));
+      }));
     })));
     final committed = await readCompletedPdf(jobId);
     if (committed == null) throw StateError('Bulk export not committed');
