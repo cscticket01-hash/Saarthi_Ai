@@ -1009,8 +1009,7 @@ class WindowsSyncStatusCard extends StatelessWidget {
             TextButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsSyncControlCenter())),
               icon: const Icon(Icons.dashboard_outlined), label: const Text('Open Sync & Backup Control Center')),
             if(engine.lastError!=null)Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent)),
-            Row(children:[OutlinedButton(onPressed:state==SchoolCloudState.syncing?null:()=>unawaited(engine.requestSync()),child:const Text('Sync Now')),
-              const SizedBox(width:12),TextButton(onPressed:()=>showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+            Row(children:[TextButton(onPressed:()=>showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
                 title:const Text('Sync details'),content:SizedBox(width:600,child:SingleChildScrollView(child:Column(
                   crossAxisAlignment:CrossAxisAlignment.start,children:[
                     for(final item in details['items'] as List? ?? [])Row(children:[Expanded(child:Text('${item['collection']??'documents'} / ${item['documentId']??item['id']}: ${item['syncState']??'pending'} • ${item['lastError']??''}')), if(item['syncState']=='conflict')TextButton(onPressed:()=>showWindowsConflictReview(ctx,Map<String,dynamic>.from(item as Map)),child:const Text('Review'))]),
