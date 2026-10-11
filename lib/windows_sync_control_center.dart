@@ -423,7 +423,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       );
 
   Widget metric(String name, String value) => SizedBox(
-        width: 258,
+      width: 258,
+      child: Card(
+        margin: EdgeInsets.zero,
+        color: Colors.transparent,
         child: _panelBox(
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -441,7 +444,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             ],
           ),
         ),
-      );
+      ));
 
   void _jump(GlobalKey key) {
     final target = key.currentContext;
@@ -600,13 +603,14 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     children: [
                       Icon(Icons.insights, color: _cyan),
                       SizedBox(width: 10),
-                      Text(
+                      Expanded(
+                          child: Text(
                         'Live Queue Activity',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
-                      ),
+                      )),
                     ],
                   ),
                   const SizedBox(height: 18),

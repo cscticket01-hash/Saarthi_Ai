@@ -619,7 +619,8 @@ void main(){
   await tester.tap(find.text('Details'));await tester.pumpAndSettle();expect(find.textContaining('status-teacher: conflict'),findsOneWidget);
   await tester.tap(find.text('Close'));await tester.pumpAndSettle();
   engine.state.value=SchoolCloudState.syncing;await tester.pump();
-  expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Sync Now')).onPressed,isNull);
+  expect(find.widgetWithText(OutlinedButton,'Sync Now'),findsNothing);
+  expect(find.text('Open Sync & Backup Control Center'),findsOneWidget);
   await tester.runAsync(()async{await item.reference.set({'syncState':'pending'},const SetOptions(merge:true));
   await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},sendVersioned:(item)async=>'acknowledged-revision');
   await engine.refreshDetails();});engine.lastSuccessfulSync=DateTime(2026,10,6,10);engine.state.value=SchoolCloudState.synced;
