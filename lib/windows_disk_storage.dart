@@ -23,7 +23,7 @@ class WindowsDiskStorage {
     if (!_supported || match == null) return Future.value({
       'status': 'Unknown', 'reason': 'Local Windows volume measurement unavailable',
     });
-    final root = '${match[1]!.toUpperCase()}:\';
+    final root = '${match[1]!.toUpperCase()}:\\';
     final cached = _cache[root];
     if (cached != null && _clock().millisecondsSinceEpoch -
         (cached['measuredAt'] as int) >= 0 && _clock().millisecondsSinceEpoch -

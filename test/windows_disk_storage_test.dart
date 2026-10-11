@@ -8,7 +8,7 @@ void main() {
     var now = DateTime(2026, 10, 11);
     final disk = WindowsDiskStorage(supported: true, clock: () => now,
       probe: (root) async {
-        calls++; expect(root, 'C:\');
+        calls++; expect(root, 'C:\\');
         return {'totalBytes': 1000, 'freeBytes': 400, 'availableBytes': 300};
       });
     final first = await disk.measure('C:\\School\\LocalFiles')
