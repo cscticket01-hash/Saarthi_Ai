@@ -22,8 +22,14 @@ Future<Map<String, dynamic>> collectWindowsSchoolIdBackup(
   final designs = Directory(
     '${support.path}${Platform.pathSeparator}id_card_drafts',
   );
-  if (await designs.exists()) {
+  if (await designs.exists() && _backupHasLinkedAncestor(designs.path)) {
+    missing.add('Designer root links require review');
+  } else if (await designs.exists()) {
     await for (final entity in designs.list(followLinks: false)) {
+      if (entity is Link) {
+        missing.add('Linked designer folder excluded');
+        continue;
+      }
       if (entity is! Directory) continue;
       final id = entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
       if (!RegExp(r'^[a-z][a-z0-9-]{1,80}$').hasMatch(id) ||
