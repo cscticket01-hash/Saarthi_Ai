@@ -417,7 +417,7 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   const row=await db.doc('platform_schools/'+m.schoolId).get(),data=row.data()||{};
   return {success:true,schoolId:m.schoolId,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
  }
- if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerDisasterRehearsalVersion:5};
+ if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
   const rows=await Promise.all(b.operationIds.map(id=>db.doc(attendanceCollection+'/'+id).get()));
@@ -475,6 +475,23 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
      !/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100)fail(400,'Invalid recycle operation');
   const result=await signed(m,{action:'managed_recycle',operation:b.operation,fileId:b.fileId,operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision});
   invalidate(m.schoolId);return result;
+ }
+ if(action==='managed/disaster/readback'){
+  if(m.schoolId!=='vs-db8afb01a3be46a983c8284714d06e5d')fail(403,'Disaster readback is isolated TEST only');
+  if(!/^[a-f0-9]{64}$/.test(b.operationId||'')||!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid disaster readback');
+  const result=await signed(m,{action:'managed_disaster_readback',operationId:b.operationId,fileId:b.fileId});
+  const bounded=(key,max)=>Number.isSafeInteger(result[key])&&result[key]>=0&&result[key]<=max;
+  if(result.readbackVersion!==1||result.operationId!==b.operationId||result.readOnly!==true||result.activeStorageChanged!==false||
+     result.scope!=='completed_rehearsal_rows_and_bytes'||!['records','binaries','verified'].includes(result.phase)||
+     typeof result.complete!=='boolean'||typeof result.verified!=='boolean'||
+     !['recordCount','rowCount','checkedRows'].every(key=>bounded(key,1000000))||
+     !['binaryCount','checkedBinaries'].every(key=>bounded(key,1000))||result.recordCount>result.rowCount||
+     result.checkedRows>result.rowCount||result.checkedBinaries>result.binaryCount||
+     !['startedAt','observedAt','verifiedAt'].every(key=>bounded(key,now()+300000))||result.startedAt<=0||result.observedAt<result.startedAt||
+     result.verified!==result.complete||result.complete!==(result.phase==='verified')||result.complete&&(result.checkedRows!==result.rowCount||
+       result.checkedBinaries!==result.binaryCount||result.verifiedAt<result.startedAt||result.verifiedAt>result.observedAt)||
+     !result.complete&&result.verifiedAt!==0)fail(502,'Unverified disaster readback','SCRIPT_RESPONSE_INVALID');
+  return result;
  }
  if(action==='managed/disaster'){
   if(m.schoolId!=='vs-db8afb01a3be46a983c8284714d06e5d')fail(403,'Disaster rehearsal is isolated TEST only');

@@ -6889,7 +6889,7 @@ function VS_verifiedRecordBackup(fileId) {
   if(file.getDescription()!=='VIDYA_RECORD_BACKUP:'+school+':'+digest)throw new Error('Backup integrity requires review');
   const backup=JSON.parse(text);
   if(backup.schemaVersion!==4||backup.schoolId!==school||!backup.records||!backup.collectionRevisions)throw new Error('Foreign or unsupported backup');
-  Object.keys(backup.records).forEach(col=>{VS_managedCollection(col);Object.keys(backup.records[col]).forEach(id=>{
+  Object.keys(backup.records).forEach(col=>{VS_validateManagedCollection(col);Object.keys(backup.records[col]).forEach(id=>{
     const data=backup.records[col][id];if(!/^[^/]{1,200}$/.test(id)||id==='.'||id==='..'||!data||data.schoolId!==school||typeof data._syncRevision!=='string')throw new Error('Backup record requires review');
   });});VS_BACKUP_READ_CACHE={school:school,id:fileId,backup:backup};return backup;
 }
@@ -7082,7 +7082,7 @@ function VS_managedHandle(e) {
         });sheetsVerified=true;}
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
-        binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
+        binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
         scriptBundleVersion:'2026-10-10.3',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -7125,6 +7125,8 @@ function VS_managedHandle(e) {
       const text=JSON.stringify({schemaVersion:3,schoolId:school,createdAt:new Date().toISOString(),records:records});if(text.length>20*1024*1024)throw new Error('Backup exceeds safe file limit');const file=VS_managedFolder(root,'Backups').createFile('School_Backup_'+Date.now()+'.json',text,'application/json');result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
     }else if(b.action==='managed_disaster'){
       result=VS_managedDisaster(b);
+    }else if(b.action==='managed_disaster_readback'){
+      result=VS_managedDisasterReadback(b);
     }else if(b.action==='managed_recycle'){
       result=VS_managedRecycle(b);
     }else if(b.action==='managed_restore'){
@@ -7717,6 +7719,101 @@ function VS_disasterRows(backup) {
   const rows=[];Object.keys(backup.records).sort().forEach(col=>Object.keys(backup.records[col]).sort().forEach(id=>{const text=JSON.stringify(backup.records[col][id]);
     for(let n=0;n<text.length;n+=40000)rows.push([col,JSON.stringify(id),n/40000,'json:'+text.slice(n,n+40000)]);
   }));return rows;
+}
+
+/** Fresh bounded read-only audit of an already completed TEST rehearsal.
+ * New audit IDs re-read actual Sheets rows and binary bytes. Repeating the same
+ * completed audit ID returns its retained verification timestamp, not a new one.
+ * Only diagnostic cursors/leases are written; source/archive data never changes.
+ */
+function VS_managedDisasterReadback(b) {
+  VS_BACKUP_READ_CACHE=null;
+  const school=VS_disasterGuard(),p=PropertiesService.getScriptProperties();
+  if(!/^[a-f0-9]{64}$/.test(b.operationId||'')||typeof b.fileId!=='string'||!b.fileId)throw new Error('Invalid disaster readback audit');
+  const key='VS_DISASTER_READBACK_'+b.operationId,leaseKey=key+'_LEASE',token=Utilities.getUuid(),claim=LockService.getScriptLock();
+  claim.waitLock(5000);
+  try {
+    if(Number(p.getProperty(leaseKey)||0)>Date.now())throw new Error('Disaster readback busy; retry shortly');
+    // Bound diagnostic state without deleting old audits or school evidence.
+    const properties=p.getProperties(),reserved={};
+    Object.keys(properties).forEach(k=>{
+      const match=/^(VS_DISASTER_READBACK_[a-f0-9]{64})(_LEASE)?$/.exec(k);
+      if(match&&(!match[2]||Number(properties[k])>Date.now()))reserved[match[1]]=true;
+    });
+    // Reserve unfinished owners as well as committed cursors while holding the
+    // short claim lock. Expired leases are ignored but never purged here.
+    if(!reserved[key]&&Object.keys(reserved).length>=25)throw new Error('Disaster readback audit inventory requires review');
+    p.setProperty(leaseKey,String(Date.now()+120000));p.setProperty(leaseKey+'_TOKEN',token);
+  }finally{claim.releaseLock();}
+  try {
+    const checkpoint=VS_disasterRead(b.fileId),checkpointFile=VS_managedFile(b.fileId),checkpointHash=checkpointFile.getDescription();
+    if(checkpoint.operation!=='rehearse'||checkpoint.complete!==true||checkpoint.phase!=='verified'||
+      !/^[a-f0-9]{64}$/.test(checkpoint.operationId||'')||!Array.isArray(checkpoint.inventory)||!Array.isArray(checkpoint.copies)||
+      checkpoint.copies.length!==checkpoint.inventory.length||checkpoint.copies.length>1000||typeof checkpoint.workbookId!=='string')throw new Error('Verified complete disaster rehearsal required');
+    const workbookFile=VS_managedFile(checkpoint.workbookId);
+    if(workbookFile.getDescription()!=='VIDYA_DISASTER_SHEET:'+school+':'+checkpoint.operationId||workbookFile.getMimeType()!=='application/vnd.google-apps.spreadsheet')throw new Error('Disaster readback workbook identity requires review');
+    const workbookUpdatedAt=VS_disasterWorkbookObservation(workbookFile);
+    const backup=VS_verifiedRecordBackup(checkpoint.recordBackupId),backupFile=VS_managedFile(checkpoint.recordBackupId),backupHash=backupFile.getDescription(),rows=VS_disasterRows(backup);
+    if(backup.scope!=='records_and_tombstones'||backup.documentBinariesIncluded!==false)throw new Error('Disaster readback backup scope requires review');
+    const recordCount=Object.keys(backup.records).reduce((sum,col)=>sum+Object.keys(backup.records[col]).length,0);
+    if(rows.length>1000000||recordCount!==checkpoint.recordCount)throw new Error('Disaster readback record scope requires review');
+    const saved=p.getProperty(key);
+    let audit=saved?JSON.parse(saved):null;
+    if(audit&&(audit.version!==1||audit.schoolId!==school||audit.fileId!==b.fileId||audit.checkpointHash!==checkpointHash||audit.backupHash!==backupHash||
+      audit.operationId!==b.operationId||audit.recordCount!==recordCount||audit.rowCount!==rows.length||audit.binaryCount!==checkpoint.copies.length))throw new Error('Disaster readback operation ID conflict');
+    if(audit&&audit.workbookUpdatedAt!==workbookUpdatedAt)throw new Error('Disaster readback workbook changed; start a new audit');
+    if(!audit)audit={version:1,schoolId:school,fileId:b.fileId,checkpointHash:checkpointHash,backupHash:backupHash,workbookUpdatedAt:workbookUpdatedAt,operationId:b.operationId,
+      startedAt:Date.now(),phase:'records',recordCount:recordCount,rowCount:rows.length,binaryCount:checkpoint.copies.length,
+      checkedRows:0,checkedBinaries:0,complete:false,verifiedAt:0};
+    if(!Number.isInteger(audit.checkedRows)||audit.checkedRows<0||audit.checkedRows>rows.length||
+      !Number.isInteger(audit.checkedBinaries)||audit.checkedBinaries<0||audit.checkedBinaries>checkpoint.copies.length||
+      !['records','binaries','verified'].includes(audit.phase)||audit.complete!== (audit.phase==='verified'))throw new Error('Disaster readback cursor requires review');
+    if(!audit.complete){
+      if(audit.phase==='records'){
+        const file=VS_managedFile(checkpoint.workbookId);
+        if(file.getDescription()!=='VIDYA_DISASTER_SHEET:'+school+':'+checkpoint.operationId)throw new Error('Disaster readback workbook identity requires review');
+        const sheet=SpreadsheetApp.openById(file.getId()).getSheetByName('ArchiveRecords');
+        const header=[['Collection','Record ID JSON','JSON part','Verified original JSON prefixed json:']];
+        const batch=rows.slice(audit.checkedRows,audit.checkedRows+25);
+        if(!sheet||sheet.getLastRow()!==rows.length+1||JSON.stringify(sheet.getRange(1,1,1,4).getValues())!==JSON.stringify(header)||
+          batch.length&&JSON.stringify(sheet.getRange(audit.checkedRows+2,1,batch.length,4).getValues())!==JSON.stringify(batch))throw new Error('Disaster fresh Sheets readback failed');
+        audit.checkedRows+=batch.length;
+        if(audit.checkedRows===rows.length)audit.phase='binaries';
+      }else if(audit.phase==='binaries'){
+        if(audit.checkedBinaries<checkpoint.copies.length){
+          const entry=checkpoint.copies[audit.checkedBinaries],copy=VS_managedFile(entry.copyId);
+          if(!/^[a-f0-9]{64}$/.test(entry.hash||'')||copy.getSize()!==entry.size||copy.getMimeType()!==entry.mime||
+            copy.getDescription()!=='VIDYA_DISASTER_BINARY:'+school+':'+entry.hash||
+            VS_layoutBytesHash(copy.getBlob().getBytes())!==entry.hash)throw new Error('Disaster fresh binary readback failed');
+          audit.checkedBinaries++;
+        }
+        if(audit.checkedBinaries===checkpoint.copies.length){audit.phase='verified';audit.complete=true;audit.verifiedAt=Date.now();}
+      }
+      // The checkpoint file is immutable for this audit, even while IO ran.
+      if(VS_managedFile(b.fileId).getDescription()!==checkpointHash||JSON.stringify(VS_disasterRead(b.fileId))!==JSON.stringify(checkpoint))throw new Error('Disaster readback source checkpoint changed');
+      if(backupFile.getDescription()!==backupHash||'VIDYA_RECORD_BACKUP:'+school+':'+VS_layoutHash(backupFile.getBlob().getDataAsString())!==backupHash)throw new Error('Disaster readback record backup changed');
+      if(VS_disasterWorkbookObservation(workbookFile)!==audit.workbookUpdatedAt)throw new Error('Disaster readback workbook changed; start a new audit');
+      const commit=LockService.getScriptLock();commit.waitLock(5000);
+      try{if(p.getProperty(leaseKey+'_TOKEN')!==token)throw new Error('Disaster readback lease expired; cursor retained');p.setProperty(key,JSON.stringify(audit));}finally{commit.releaseLock();}
+    }
+    if(VS_disasterWorkbookObservation(workbookFile)!==audit.workbookUpdatedAt)throw new Error('Disaster readback workbook changed; start a new audit');
+    if(audit.complete&&(audit.checkedRows!==rows.length||audit.checkedBinaries!==checkpoint.copies.length||!(audit.verifiedAt>0)))throw new Error('Disaster readback verification evidence requires review');
+    return {readbackVersion:1,operationId:b.operationId,complete:audit.complete,verified:audit.complete,
+      verifiedAt:audit.verifiedAt,observedAt:Date.now(),startedAt:audit.startedAt,phase:audit.phase,
+      recordCount:audit.recordCount,rowCount:audit.rowCount,checkedRows:audit.checkedRows,
+      binaryCount:audit.binaryCount,checkedBinaries:audit.checkedBinaries,readOnly:true,activeStorageChanged:false,
+      scope:'completed_rehearsal_rows_and_bytes'};
+  }finally{
+    const release=LockService.getScriptLock();release.waitLock(5000);
+    try{if(p.getProperty(leaseKey+'_TOKEN')===token){p.deleteProperty(leaseKey);p.deleteProperty(leaseKey+'_TOKEN');}}finally{release.releaseLock();}
+  }
+}
+
+function VS_disasterWorkbookObservation(file) {
+  if(typeof file.getLastUpdated!=='function')throw new Error('Disaster readback workbook generation unavailable');
+  const updated=file.getLastUpdated(),millis=updated&&typeof updated.getTime==='function'?updated.getTime():NaN;
+  if(!Number.isFinite(millis)||millis<=0)throw new Error('Disaster readback workbook generation unavailable');
+  return millis;
 }
 
 function doPost(e) { return VS_managedHandle(e); }

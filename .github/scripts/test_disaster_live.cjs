@@ -1,7 +1,11 @@
 'use strict';
 const fs=require('node:fs'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const schoolId='vs-db8afb01a3be46a983c8284714d06e5d',endpoint='https://saarthi-sync-v2-test.onrender.com/school-cloud';
-const apiKey='AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A';
+// Reuse the existing public application configuration; never duplicate a key
+// in acceptance source or print configuration/authentication values.
+const platformConfig=fs.readFileSync('lib/platform/platform_config.dart','utf8');
+const apiKey=/const platformApiKey = '([^']+)';/.exec(platformConfig)?.[1];
+assert.ok(apiKey,'Existing public platform configuration required');
 const {fixture,verifyEvidence}=require('./disaster_resume.cjs');
 let stage='runner_scope';
 const report={schoolId,checks:[],status:'RUNNING',originalSchoolTouched:false,activeStorageChanged:false};
@@ -35,7 +39,7 @@ async function run(){
  // Wait only for this authorized TEST release to become available. No production
  // access, no fallback to old backup schemas and no deployment from CI.
  stage='capability_readiness';
- let ready=false;for(let n=0;n<40;n++){try{const r=await call({action:'managed/storage/check'});if(r.disasterRehearsalVersion===5&&r.brokerDisasterRehearsalVersion===5){ready=true;break;}}catch(_){}await delay(15000);}assert.ok(ready);pass('Authenticated TEST broker and reviewed disaster capability');
+ let ready=false;for(let n=0;n<40;n++){try{const r=await call({action:'managed/storage/check'});if(r.disasterRehearsalVersion===5&&r.brokerDisasterRehearsalVersion===5&&r.disasterReadbackVersion===1&&r.brokerDisasterReadbackVersion===1){ready=true;break;}}catch(_){}await delay(15000);}assert.ok(ready);pass('Authenticated TEST broker and reviewed disaster capability');
  stage='fixture_ack';
  const id=identity.id,op=id+'-create';
  const pdf=Buffer.from('%PDF-1.4\nSynthetic TEST disaster binary\n%%EOF\n'),uploadKey=crypto.createHash('sha256').update(id).digest('hex');
@@ -65,6 +69,22 @@ async function run(){
  }throw Error('TEST disaster job exceeds bounded verification window');};
  const backup=await execute({operation:'backup',operationId:crypto.createHash('sha256').update(id+'/backup').digest('hex')});pass('Complete managed-record and uploaded-byte archive hash readback');report.backupBinaryCount=backup.binaryCount;
  const restored=await execute({operation:'rehearse',operationId:crypto.createHash('sha256').update(id+'/restore').digest('hex'),fileId:backup.fileId});pass('Separate private Sheets/Drive restore readback, stable retry identity');report.restoredRecordCount=restored.recordCount;report.restoredBinaryCount=restored.binaryCount;
+ // Completed rehearsal metadata is historical. A new audit operation must
+ // actually read the retained Sheets rows and hash every restored binary again.
+ stage='fresh_restore_readback';
+ const readbackOperation=crypto.createHash('sha256').update(id+'/fresh-readback/'+process.env.GITHUB_RUN_ID+'/'+process.env.GITHUB_RUN_ATTEMPT).digest('hex');
+ const readbackStarted=Date.now();let fresh=null;
+ for(let n=0;n<400;n++){
+  const result=await call({action:'managed/disaster/readback',operationId:readbackOperation,fileId:restored.fileId});
+  assert.equal(result.readbackVersion,1);assert.equal(result.operationId,readbackOperation);assert.equal(result.readOnly,true);assert.equal(result.activeStorageChanged,false);
+  report.freshReadbackProgress={step:n,phase:result.phase,checkedRows:result.checkedRows,rowCount:result.rowCount,checkedBinaries:result.checkedBinaries,binaryCount:result.binaryCount};
+  if(result.complete){assert.equal(result.verified,true);assert.ok(result.startedAt>=readbackStarted-300000);assert.ok(result.verifiedAt>=result.startedAt);fresh=result;break;}
+  if(n%10===0)console.log(JSON.stringify({stage,...report.freshReadbackProgress}));await delay(2000);
+ }
+ assert.ok(fresh);assert.equal(fresh.recordCount,restored.recordCount);assert.equal(fresh.binaryCount,restored.binaryCount);assert.equal(fresh.checkedRows,fresh.rowCount);assert.equal(fresh.checkedBinaries,fresh.binaryCount);
+ const sameReadback=await call({action:'managed/disaster/readback',operationId:readbackOperation,fileId:restored.fileId});assert.equal(sameReadback.verifiedAt,fresh.verifiedAt);
+ report.freshReadback={recordCount:fresh.recordCount,checkedRows:fresh.checkedRows,binaryCount:fresh.binaryCount,checkedBinaries:fresh.checkedBinaries,startedAt:fresh.startedAt,verifiedAt:fresh.verifiedAt,readOnly:true,newAuditOperation:true};
+ pass('Fresh actual restored Sheets rows and every retained Drive binary readback');
  stage='active_storage_readback';
  const records=(await call({action:'managed/records',collection:'school_notices',operation:'read',syncProtocol:2})).records,row=records[id];assert.equal(row._syncRevision,original.recordRevision);assert.equal(row._syncOperationId,op);assert.equal(row.capturedAt,12345);assert.equal(row.fileId,upload.fileId);pass('Active Sheets records, revision, operation, timestamp and original file link unchanged');
  const originalFile=await call({action:'managed/file/read',fileId:upload.fileId});assert.deepEqual(Buffer.from(originalFile.base64,'base64'),pdf);pass('Original Drive bytes retained without QR regeneration');

@@ -428,7 +428,7 @@ function VS_verifiedRecordBackup(fileId) {
   if(file.getDescription()!=='VIDYA_RECORD_BACKUP:'+school+':'+digest)throw new Error('Backup integrity requires review');
   const backup=JSON.parse(text);
   if(backup.schemaVersion!==4||backup.schoolId!==school||!backup.records||!backup.collectionRevisions)throw new Error('Foreign or unsupported backup');
-  Object.keys(backup.records).forEach(col=>{VS_managedCollection(col);Object.keys(backup.records[col]).forEach(id=>{
+  Object.keys(backup.records).forEach(col=>{VS_validateManagedCollection(col);Object.keys(backup.records[col]).forEach(id=>{
     const data=backup.records[col][id];if(!/^[^/]{1,200}$/.test(id)||id==='.'||id==='..'||!data||data.schoolId!==school||typeof data._syncRevision!=='string')throw new Error('Backup record requires review');
   });});VS_BACKUP_READ_CACHE={school:school,id:fileId,backup:backup};return backup;
 }
@@ -621,7 +621,7 @@ function VS_managedHandle(e) {
         });sheetsVerified=true;}
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
-        binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
+        binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
         scriptBundleVersion:'2026-10-10.3',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -664,6 +664,8 @@ function VS_managedHandle(e) {
       const text=JSON.stringify({schemaVersion:3,schoolId:school,createdAt:new Date().toISOString(),records:records});if(text.length>20*1024*1024)throw new Error('Backup exceeds safe file limit');const file=VS_managedFolder(root,'Backups').createFile('School_Backup_'+Date.now()+'.json',text,'application/json');result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
     }else if(b.action==='managed_disaster'){
       result=VS_managedDisaster(b);
+    }else if(b.action==='managed_disaster_readback'){
+      result=VS_managedDisasterReadback(b);
     }else if(b.action==='managed_recycle'){
       result=VS_managedRecycle(b);
     }else if(b.action==='managed_restore'){
