@@ -5,131 +5,290 @@ import 'sync_recovery_policy.dart';
 
 bool isRecordSyncConflict(Object error) => error is CentralCloudException
     ? error.recordConflict
-    : error is StateError && RegExp(r'record revision conflict|sync operation id conflict', caseSensitive:false).hasMatch(error.toString());
+    : error is StateError &&
+          RegExp(
+            r'record revision conflict|sync operation id conflict',
+            caseSensitive: false,
+          ).hasMatch(error.toString());
 
 /// The stored retry deadline is an admission boundary, never a claimed send time.
-bool pendingRecordBackoffDue(Map<String,dynamic> item, DateTime now,
-    {bool explicitRetry = false}) {
+bool pendingRecordBackoffDue(
+  Map<String, dynamic> item,
+  DateTime now, {
+  bool explicitRetry = false,
+}) {
   final deadline = item['retryAtMillis'];
-  return explicitRetry || item['syncState'] != 'retry' || deadline is! int ||
+  return explicitRetry ||
+      item['syncState'] != 'retry' ||
+      deadline is! int ||
       deadline <= now.millisecondsSinceEpoch;
 }
 
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
-  static Future<void> flush({required String profileId,
-    required Future<void> Function(String collection, String id, String operation, Map<String,dynamic>? data) send,
-    Future<String> Function(Map<String,dynamic> item)? sendVersioned,
-    bool Function()? canAdmit, String? onlyQueueId, String? onlyOperationId,
+  static Future<void> flush({
+    required String profileId,
+    required Future<void> Function(
+      String collection,
+      String id,
+      String operation,
+      Map<String, dynamic>? data,
+    )
+    send,
+    Future<String> Function(Map<String, dynamic> item)? sendVersioned,
+    bool Function()? canAdmit,
+    String? onlyQueueId,
+    String? onlyOperationId,
     bool respectBackoff = false,
-    void Function(Map<String, dynamic>)? onActivity}) async {
-    final db=FirebaseFirestore.instance;
-    void report(String stage, String queueId, Map<String,dynamic> item,
-        {String? category, DateTime? retryAt, int? elapsedMicros}) {
+    void Function(Map<String, dynamic>)? onActivity,
+  }) async {
+    final db = FirebaseFirestore.instance;
+    void report(
+      String stage,
+      String queueId,
+      Map<String, dynamic> item, {
+      String? category,
+      DateTime? retryAt,
+      int? elapsedMicros,
+    }) {
       try {
-        onActivity?.call({'queueCollection':'_windows_firebase_outbox',
-          'queueId':queueId,'operationId':item['operationId'],
-          'schoolId':item['schoolId'] ?? db.activeProfileIdentity['schoolSyncId'],
-          'stage':stage,'at':DateTime.now().millisecondsSinceEpoch,
-          'isRetryable':stage=='retry' && {'networkPath','timeout','server'}.contains(category),
-          if(category!=null)'failureCategory':category,
-          if(retryAt!=null)'retryAt':retryAt.millisecondsSinceEpoch,
-          if(elapsedMicros!=null)'elapsedMicros':elapsedMicros});
-      } catch (_) { /* Observers never affect queue integrity or ACKs. */ }
+        onActivity?.call({
+          'queueCollection': '_windows_firebase_outbox',
+          'queueId': queueId,
+          'operationId': item['operationId'],
+          'schoolId':
+              item['schoolId'] ?? db.activeProfileIdentity['schoolSyncId'],
+          'stage': stage,
+          'at': DateTime.now().millisecondsSinceEpoch,
+          'isRetryable':
+              stage == 'retry' &&
+              recoverablePendingCategories.contains(category),
+          if (category != null) 'failureCategory': category,
+          if (retryAt != null) 'retryAt': retryAt.millisecondsSinceEpoch,
+          if (elapsedMicros != null) 'elapsedMicros': elapsedMicros,
+        });
+      } catch (_) {
+        /* Observers never affect queue integrity or ACKs. */
+      }
     }
-    void unchanged() { if(db.activeProfileId != profileId) throw StateError('School changed during sync.'); }
+
+    void unchanged() {
+      if (db.activeProfileId != profileId)
+        throw StateError('School changed during sync.');
+    }
+
     unchanged();
-    final snapshot=await db.collection('_windows_firebase_outbox').get();
+    final snapshot = await db.collection('_windows_firebase_outbox').get();
     unchanged();
-    int time(Map<String,dynamic> d) {
-      final value=d['queuedAt'];
-      return value is Timestamp ? value.millisecondsSinceEpoch : value is num ? value.toInt() : 0;
+    int time(Map<String, dynamic> d) {
+      final value = d['queuedAt'];
+      return value is Timestamp
+          ? value.millisecondsSinceEpoch
+          : value is num
+          ? value.toInt()
+          : 0;
     }
-    int priority(Map<String,dynamic> d) {
-      final collection=d['collection'];
-      if ({'attendance_records','attendance_logs','teacher_attendance'}.contains(collection)) return 0;
-      if ({'fee_ledger','fee_payments','school_expenses','teacher_salary'}.contains(collection)) return 1;
-      return collection=='documents' ? 3 : 2;
+
+    int priority(Map<String, dynamic> d) {
+      final collection = d['collection'];
+      if ({
+        'attendance_records',
+        'attendance_logs',
+        'teacher_attendance',
+      }.contains(collection))
+        return 0;
+      if ({
+        'fee_ledger',
+        'fee_payments',
+        'school_expenses',
+        'teacher_salary',
+      }.contains(collection))
+        return 1;
+      return collection == 'documents' ? 3 : 2;
     }
-    final docs=snapshot.docs.toList()..sort((a,b) {
-      final order=priority(a.data()).compareTo(priority(b.data()));
-      return order!=0 ? order : time(a.data()).compareTo(time(b.data()));
-    });
+
+    final docs = snapshot.docs.toList()
+      ..sort((a, b) {
+        final order = priority(a.data()).compareTo(priority(b.data()));
+        return order != 0 ? order : time(a.data()).compareTo(time(b.data()));
+      });
     Object? firstConflict;
-    for(final queued in docs) {
-      unchanged();queued.reference.requireOriginProfile();
+    for (final queued in docs) {
+      unchanged();
+      queued.reference.requireOriginProfile();
       if (onlyQueueId != null && queued.id != onlyQueueId) continue;
       if (canAdmit?.call() == false) break;
-      var item=queued.data();
-      if (sendVersioned != null && item['schoolId'] != null &&
+      var item = queued.data();
+      if (sendVersioned != null &&
+          item['schoolId'] != null &&
           item['schoolId'] != db.activeProfileIdentity['schoolSyncId']) {
-        report('needsAttention',queued.id,item,category:'configuration');
-        throw StateError('Pending operation belongs to another school; original binding retained.');
+        report('needsAttention', queued.id, item, category: 'configuration');
+        throw StateError(
+          'Pending operation belongs to another school; original binding retained.',
+        );
       }
-      if (onlyOperationId != null && item['operationId'] != onlyOperationId) continue;
-      if (respectBackoff && !pendingRecordBackoffDue(item,DateTime.now(),explicitRetry:onlyOperationId!=null)) continue;
-      final collection=item['collection']?.toString()??'';
-      final id=item['documentId']?.toString()??'';
-      final operation=item['operation']?.toString()??'';
-      final raw=item['data'];
-      if(collection.isEmpty || id.isEmpty || !{'set','update','delete'}.contains(operation) || operation != 'delete' && raw is! Map) {
-        await db.recordOutboxFailure(queued.reference,item,state:'needsAttention',
-          error:'Invalid pending sync record retained for recovery.');
-        report('needsAttention',queued.id,item,category:'configuration');
+      if (onlyOperationId != null && item['operationId'] != onlyOperationId)
+        continue;
+      if (respectBackoff &&
+          !pendingRecordBackoffDue(
+            item,
+            DateTime.now(),
+            explicitRetry: onlyOperationId != null,
+          ))
+        continue;
+      final collection = item['collection']?.toString() ?? '';
+      final id = item['documentId']?.toString() ?? '';
+      final operation = item['operation']?.toString() ?? '';
+      final raw = item['data'];
+      if (collection.isEmpty ||
+          id.isEmpty ||
+          !{'set', 'update', 'delete'}.contains(operation) ||
+          operation != 'delete' && raw is! Map) {
+        await db.recordOutboxFailure(
+          queued.reference,
+          item,
+          state: 'needsAttention',
+          error: 'Invalid pending sync record retained for recovery.',
+        );
+        report('needsAttention', queued.id, item, category: 'configuration');
         continue;
       }
-      if(sendVersioned!=null && (item['operationId']==null || item['schoolId']==null)) {
-        final ownSchool=db.activeProfileIdentity['schoolSyncId'];
-        if(ownSchool is! String || ownSchool.isEmpty)throw StateError('School identity required for queue migration.');
+      if (sendVersioned != null &&
+          (item['operationId'] == null || item['schoolId'] == null)) {
+        final ownSchool = db.activeProfileIdentity['schoolSyncId'];
+        if (ownSchool is! String || ownSchool.isEmpty)
+          throw StateError('School identity required for queue migration.');
         // Migration is serialized with local writes and refuses foreign bindings.
-        final migrated = await db.migrateOutboxIdentity(queued.reference,item,schoolId:ownSchool);
+        final migrated = await db.migrateOutboxIdentity(
+          queued.reference,
+          item,
+          schoolId: ownSchool,
+        );
         unchanged();
-        if (migrated == null) continue; // A newer durable edit owns this row now.
+        if (migrated == null)
+          continue; // A newer durable edit owns this row now.
         item = migrated;
       }
-      if (item['syncState'] == 'conflict' || item['syncState'] == 'needsAttention') continue;
+      if (recoverablePendingAttention(
+        item,
+        explicitRetry: onlyOperationId != null,
+      )) {
+        // Serialized CAS: a concurrent local edit or administrator review wins.
+        final repaired = await db.recordOutboxFailure(
+          queued.reference,
+          item,
+          state: 'retry',
+          failureCategory: item['failureCategory'] as String,
+          retryCount: (item['retryCount'] as num? ?? 0).toInt(),
+          retryAtMillis: DateTime.now().millisecondsSinceEpoch,
+          error: 'Known transport failure safely reopened; original operation retained.',
+        );
+        unchanged();
+        if (!repaired) continue;
+        final current = (await queued.reference.get()).data();
+        unchanged();
+        if (current == null || current['operationId'] != item['operationId'])
+          continue;
+        item = current;
+        report(
+          'automaticRepair',
+          queued.id,
+          item,
+          category: item['failureCategory'] as String,
+        );
+      }
+      if (item['syncState'] == 'conflict' ||
+          item['syncState'] == 'needsAttention')
+        continue;
       if (canAdmit?.call() == false) break;
       String? revision;
       final watch = Stopwatch()..start();
-      report('cloudRequest',queued.id,item);
+      report('cloudRequest', queued.id, item);
       try {
         if (sendVersioned != null) {
           final response = sendVersioned(item);
-          report('waitingForAck',queued.id,item);
+          report('waitingForAck', queued.id, item);
           revision = await response;
+          if (revision.trim().isEmpty) throw const MissingSyncAcknowledgement();
         } else {
-          final response = send(collection,id,operation,raw is Map?Map<String,dynamic>.from(raw):null);
-          report('waitingForResponse',queued.id,item);
+          final response = send(
+            collection,
+            id,
+            operation,
+            raw is Map ? Map<String, dynamic>.from(raw) : null,
+          );
+          report('waitingForResponse', queued.id, item);
           await response;
         }
       } catch (e) {
         unchanged();
         final decision = windowsSyncRecovery(e);
-        final recordConflict = isRecordSyncConflict(e) || decision.kind == SyncFailureKind.conflict;
+        final recordConflict =
+            isRecordSyncConflict(e) ||
+            decision.kind == SyncFailureKind.conflict;
         final code = e is CentralCloudException ? e.diagnosticCode : '';
-        final attempts = (item['retryCount'] as num? ?? 0).toInt()+1;
-        final retryAt = decision.retry ? DateTime.now().add(decision.delay(attempts)) : null;
+        final attempts = (item['retryCount'] as num? ?? 0).toInt() + 1;
+        final automaticRetry =
+            decision.retry && attempts < automaticRecordRetryLimit;
+        final retryAt = automaticRetry
+            ? DateTime.now().add(decision.delay(attempts))
+            : null;
         if (decision.kind == SyncFailureKind.timeout) {
-          report('timeout',queued.id,item,category:decision.kind.name,elapsedMicros:watch.elapsedMicroseconds);
+          report(
+            'timeout',
+            queued.id,
+            item,
+            category: decision.kind.name,
+            elapsedMicros: watch.elapsedMicroseconds,
+          );
         }
-        report(recordConflict ? 'conflict' : decision.kind == SyncFailureKind.authorization
-          ? 'unauthorized' : decision.retry ? 'retry' : 'needsAttention',
-          queued.id,item,category:decision.kind.name,retryAt:retryAt,elapsedMicros:watch.elapsedMicroseconds);
-        await db.recordOutboxFailure(queued.reference,item,
-          state:recordConflict ? 'conflict' : decision.retry ? 'retry' : 'needsAttention',
-          failureCategory:decision.kind.name,retryCount:attempts,
-          retryAtMillis:retryAt?.millisecondsSinceEpoch,error:e.toString());
-        if (recordConflict || {'SCRIPT_RECORD_VERIFY_FAILED', 'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED'}.contains(code)) {
+        report(
+          recordConflict
+              ? 'conflict'
+              : decision.kind == SyncFailureKind.authorization
+              ? 'unauthorized'
+              : automaticRetry
+              ? 'retry'
+              : 'needsAttention',
+          queued.id,
+          item,
+          category: decision.kind.name,
+          retryAt: retryAt,
+          elapsedMicros: watch.elapsedMicroseconds,
+        );
+        await db.recordOutboxFailure(
+          queued.reference,
+          item,
+          state: recordConflict
+              ? 'conflict'
+              : automaticRetry
+              ? 'retry'
+              : 'needsAttention',
+          failureCategory: decision.kind.name,
+          retryCount: attempts,
+          retryAtMillis: retryAt?.millisecondsSinceEpoch,
+          error: e.toString(),
+        );
+        if (recordConflict ||
+            {
+              'SCRIPT_RECORD_VERIFY_FAILED',
+              'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
+            }.contains(code)) {
           firstConflict ??= e;
           continue; // Independent rows must not be starved by a conflict.
         }
         rethrow;
       }
       unchanged();
-      await db.acknowledgeOutbox(queued.reference,item,revision:revision);
+      await db.acknowledgeOutbox(queued.reference, item, revision: revision);
       watch.stop();
-      report(sendVersioned != null ? 'verified' : 'requestCompleted',queued.id,item,elapsedMicros:watch.elapsedMicroseconds);
+      report(
+        sendVersioned != null ? 'verified' : 'requestCompleted',
+        queued.id,
+        item,
+        elapsedMicros: watch.elapsedMicroseconds,
+      );
     }
     if (firstConflict != null) throw firstConflict;
   }

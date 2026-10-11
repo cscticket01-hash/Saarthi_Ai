@@ -5,7 +5,38 @@ import 'school_backend_transport.dart';
 import 'sync_recovery_policy.dart';
 import 'windows_connect/central_school_cloud.dart';
 
+/// A successful transport response without a verified revision is not an ACK.
+/// Retry retains the same operation ID so the server can return its prior receipt.
+class MissingSyncAcknowledgement implements Exception {
+  const MissingSyncAcknowledgement();
+  @override
+  String toString() =>
+      'Verified cloud acknowledgement missing. Pending retained.';
+}
+
+const automaticRecordRetryLimit = 5;
+const recoverablePendingCategories = {
+  'networkPath',
+  'timeout',
+  'server',
+  'quota',
+};
+
+/// Only diagnosed transport failures can be reopened automatically. Unknown,
+/// authorization, configuration and real version conflicts require review.
+bool recoverablePendingAttention(
+  Map<String, dynamic> item, {
+  bool explicitRetry = false,
+}) =>
+    item['syncState'] == 'needsAttention' &&
+    recoverablePendingCategories.contains(item['failureCategory']) &&
+    (explicitRetry ||
+        (item['retryCount'] as num? ?? 0) < automaticRecordRetryLimit);
+
 SyncRecoveryDecision windowsSyncRecovery(Object error) {
+  if (error is MissingSyncAcknowledgement) {
+    return const SyncRecoveryDecision(SyncFailureKind.server, retry: true);
+  }
   if (error is CentralCloudException)
     return SyncRecoveryDecision.classify(
       status: error.status,

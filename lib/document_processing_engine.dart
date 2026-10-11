@@ -9,7 +9,7 @@ import 'package:image/image.dart' as img;
 /// caller retains original bytes separately and displays the actual output size.
 class DocumentProcessingEngine {
   static const sourceLimit = 50 * 1024 * 1024;
-  static const photoTarget = 50 * 1024;
+  static const photoTarget = 80 * 1024;
   static const portraitTarget = 30 * 1024;
   // Retain the existing eight-document aggregate measurement contract.
   static const setTarget = 8 * photoTarget;
@@ -43,9 +43,10 @@ class DocumentProcessingEngine {
     final decoded = decoder!.decodeFrame(0);
     if (decoded == null)
       throw const FormatException('Image cannot be decoded.');
-    var image = img.bakeOrientation(
-      decoded.convert(format: img.Format.uint8, numChannels: 4),
-    );
+    final sourceOrientation = decoded.exif.imageIfd.orientation ?? 1;
+    final orientedSource = img.bakeOrientation(decoded);
+    var image =
+        orientedSource.convert(format: img.Format.uint8, numChannels: 4);
     // PNG/PDF raster transparency must become white paper, not black JPEG ink.
     for (final pixel in image) {
       final alpha = pixel.a / 255;
@@ -91,15 +92,19 @@ class DocumentProcessingEngine {
       filter: [0, -1, 0, -1, 5, -1, 0, -1, 0],
       amount: 0.12,
     );
+    // Retain normalized source pixels as a fallback if sharpening expands a
+    // previously compressed upload. Orientation and transparency were baked.
     // Re-encoding strips EXIF/GPS and unrelated source metadata.
     image.exif = img.ExifData();
     image.textData = null;
     image.iccProfile = null;
     final highQuality = Uint8List.fromList(img.encodeJpg(image, quality: 94));
-    final target =
-        (input['targetBytes'] as num? ??
-                (portrait ? portraitTarget : photoTarget))
-            .toInt();
+    final target = (input['targetBytes'] as num? ??
+            (portrait ? portraitTarget : photoTarget))
+        .toInt();
+    if (target <= 0 || target > sourceLimit) {
+      throw const FormatException('Invalid optimization target.');
+    }
     var optimized = highQuality;
     var optimizedWidth = image.width, optimizedHeight = image.height;
     var quality = 94;
@@ -146,12 +151,35 @@ class DocumentProcessingEngine {
       optimizedWidth = image.width;
       optimizedHeight = image.height;
     }
+    // A recompression must not consume more than the safe existing source.
+    // Retain the original container when processing expands it: this is an
+    // explicitly reported fallback, not a claim that cleanup was applied.
+    final sourceContainer = _sanitizedSource(bytes, sourceOrientation);
+    final retainedSource =
+        sourceContainer != null && optimized.length > sourceContainer.length;
+    if (retainedSource) {
+      optimized = sourceContainer!;
+      optimizedMime = bytes[0] == 137 ? 'image/png' : 'image/jpeg';
+      optimizedWidth = orientedSource.width;
+      optimizedHeight = orientedSource.height;
+    }
+    final targetMet = optimized.length <= target;
     return {
       'optimized': optimized,
+      'sourceRetained': retainedSource,
+      'optimizationReason': targetMet
+          ? 'Target met; actual encoded size measured'
+          : 'Requested target not met without crossing the quality/resolution floor',
       'mimeType': optimizedMime,
       'highQuality': highQuality,
-      'quality': quality,
-      'targetMet': optimized.length <= target,
+      'quality': retainedSource ? null : quality,
+      'attemptedJpegQuality': quality,
+      'outputQualityReason': retainedSource
+          ? 'Existing compressed samples retained; original encoder quality unknown'
+          : optimizedMime == 'image/png'
+              ? 'Lossless processed pixels'
+              : 'JPEG quality floor preserved',
+      'targetMet': targetMet,
       'actualBytes': optimized.length,
       'originalBytes': bytes.length,
       'targetBytes': target,
@@ -160,10 +188,99 @@ class DocumentProcessingEngine {
       'deskewDegrees': deskew,
       'width': optimizedWidth,
       'height': optimizedHeight,
-      'cleanupStatus': corrected
-          ? 'Detected paper boundary corrected'
-          : 'No confident boundary; full image preserved',
+      'cleanupStatus': retainedSource
+          ? 'Original container retained: cleanup encoding would enlarge upload'
+          : corrected
+              ? 'Detected paper boundary corrected'
+              : 'No confident boundary; full image preserved',
     };
+  }
+
+  /// Keep compressed image samples without copying location/comment metadata.
+  /// JPEG orientation is the only EXIF entry retained so the fallback remains
+  /// correctly displayed; the separate processed preview has baked orientation.
+  static Uint8List? _sanitizedSource(Uint8List source, int orientation) {
+    final result = BytesBuilder(copy: false);
+    if (source[0] == 137 && source[1] == 80) {
+      if (orientation != 1) return null;
+      result.add(source.sublist(0, 8));
+      final data = ByteData.sublistView(source);
+      var offset = 8;
+      while (offset + 12 <= source.length) {
+        final length = data.getUint32(offset);
+        final end = offset + length + 12;
+        if (end > source.length) return null;
+        final kind =
+            String.fromCharCodes(source.sublist(offset + 4, offset + 8));
+        if (!{'eXIf', 'tEXt', 'zTXt', 'iTXt'}.contains(kind)) {
+          result.add(source.sublist(offset, end));
+        }
+        offset = end;
+      }
+      return result.takeBytes();
+    }
+    if (source[0] != 255 || source[1] != 216) return null;
+    result.add([255, 216]);
+    var offset = 2;
+    while (offset + 4 <= source.length) {
+      if (source[offset] != 255) return null;
+      final marker = source[offset + 1];
+      if (marker == 218) {
+        // Image samples, restart markers and end marker are copied unchanged.
+        result.add(source.sublist(offset));
+        return result.takeBytes();
+      }
+      final length = (source[offset + 2] << 8) | source[offset + 3];
+      final end = offset + 2 + length;
+      if (length < 2 || end > source.length) return null;
+      if (marker != 225 && marker != 237 && marker != 254) {
+        result.add(source.sublist(offset, end));
+      }
+      offset = end;
+      // Insert one minimal orientation-only EXIF entry before the next segment.
+      if (orientation >= 2 && orientation <= 8) {
+        result.add([
+          255,
+          225,
+          0,
+          34,
+          69,
+          120,
+          105,
+          102,
+          0,
+          0,
+          73,
+          73,
+          42,
+          0,
+          8,
+          0,
+          0,
+          0,
+          1,
+          0,
+          18,
+          1,
+          3,
+          0,
+          1,
+          0,
+          0,
+          0,
+          orientation,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]);
+        orientation = 1;
+      }
+    }
+    return null;
   }
 
   static double _textAngle(img.Image source) {
@@ -180,14 +297,12 @@ class DocumentProcessingEngine {
         if (light < 100) dark.add(img.Point(x, y));
         if (math.max(p.r, math.max(p.g, p.b)) -
                 math.min(p.r, math.min(p.g, p.b)) >
-            40)
-          colored++;
+            40) colored++;
       }
     // Text-like scans only; portraits and rich colour photos are not rotated.
     if (dark.length < 100 ||
         dark.length > sample.width * sample.height * 0.12 ||
-        colored > sample.width * sample.height * 0.02)
-      return 0;
+        colored > sample.width * sample.height * 0.02) return 0;
     double score(double angle) {
       final r = angle * math.pi / 180,
           rows = List<int>.filled(sample.height + sample.width, 0);
@@ -243,8 +358,7 @@ class DocumentProcessingEngine {
     for (var y = 1; y < gh - 1; y++) {
       for (var x = 1; x < gw - 1; x++) {
         final pixel = sample.getPixel(x * 2, y * 2);
-        final spread =
-            math.max(pixel.r, math.max(pixel.g, pixel.b)) -
+        final spread = math.max(pixel.r, math.max(pixel.g, pixel.b)) -
             math.min(pixel.r, math.min(pixel.g, pixel.b));
         if (light(x * 2, y * 2) > math.max(205, background + 45) &&
             spread < 32) {
@@ -295,8 +409,7 @@ class DocumentProcessingEngine {
     }
     final quadArea = area.abs() / 2;
     if (quadArea < sample.width * sample.height * 0.30 ||
-        points.length * 4 / quadArea < 0.70)
-      return null;
+        points.length * 4 / quadArea < 0.70) return null;
     // Preserve a small margin so border text/seals are not shaved off.
     final cx = p.fold<double>(0, (v, p) => v + p.x.toDouble()) / 4,
         cy = p.fold<double>(0, (v, p) => v + p.y.toDouble()) / 4;
@@ -342,12 +455,10 @@ class DocumentProcessingEngine {
     for (var y = 0; y < h; y++)
       for (var x = 0; x < w; x++) {
         final u = x / (w - 1), v = y / (h - 1), den = g * u + hp * v + 1;
-        final sx = ((a * u + b * v + x0) / den)
-            .clamp(0, source.width - 1)
-            .toDouble();
-        final sy = ((d * u + e * v + y0) / den)
-            .clamp(0, source.height - 1)
-            .toDouble();
+        final sx =
+            ((a * u + b * v + x0) / den).clamp(0, source.width - 1).toDouble();
+        final sy =
+            ((d * u + e * v + y0) / den).clamp(0, source.height - 1).toDouble();
         result.setPixel(
           x,
           y,

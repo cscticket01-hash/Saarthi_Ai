@@ -74,19 +74,45 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('narrow window drawer retains recovery and diagnostic controls outside Overview', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
-    await tester.pumpAndSettle();
-    expect(find.text('Export Sanitized Report'), findsNothing);
-    await tester.tap(find.byTooltip('Open navigation menu'));
-    await tester.pumpAndSettle();
-    expect(find.text('Sync tools'), findsOneWidget);
-    expect(find.text('Version Conflicts'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Export Sanitized Report'), 250,
-        scrollable: find.descendant(of: find.byType(Drawer), matching: find.byType(Scrollable)).first);
-    expect(find.text('Export Sanitized Report'), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
-  });
+  testWidgets(
+    'four inline destinations retain advanced tools without a nested drawer',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WindowsSyncControlCenter(
+            diskProbe: (_) async => {'status': 'Unknown'},
+            refreshOnOpen: () async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(Drawer), findsNothing);
+      expect(find.byTooltip('Back'), findsOneWidget);
+      for (final label in [
+        'Overview',
+        'Smart Repair History',
+        'Recycle Bin',
+        'Backup School Data',
+      ]) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.text('Export Sanitized Report'), findsNothing);
+      await tester.scrollUntilVisible(
+        find.text('Diagnostics and recovery tools'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Diagnostics and recovery tools'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Export Sanitized Report'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Export Sanitized Report'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
   testWidgets('activity shows only own-school measured stages and offers repair only for recoverable retained operations', (tester) async {
     engine.details.value = {
       'pending': 1, 'needsAttention': 1, 'items': const [],
@@ -105,6 +131,8 @@ void main() {
     };
     await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
     await tester.pump(); await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Smart Repair History'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('Smart Repair — Safe Retry'), 200,
         scrollable: find.byType(Scrollable).first);
     expect(find.text('Smart Repair — Safe Retry'), findsOneWidget);

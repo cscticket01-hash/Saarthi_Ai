@@ -82,6 +82,10 @@ class FirebaseFirestore {
   Map<String, dynamic> get activeProfileIdentity =>
       _database.activeProfileIdentity;
 
+  /// Serialized active-profile snapshot. Other school profiles never leave storage.
+  Future<Map<String, dynamic>> exportActiveSchoolSnapshot() =>
+      _database.exportActiveSchoolSnapshot();
+
   Future<Map<String, dynamic>?> readSchoolRegistrationCache(String schoolId) async {
     final profile = activeProfileId;
     if (activeProfileIdentity['schoolSyncId'] != schoolId) throw StateError('School cache identity changed.');
@@ -867,6 +871,40 @@ class _LocalSchoolDatabase {
 
   Map<String, dynamic> get activeProfileIdentity =>
       Map<String, dynamic>.from(_activeIdentity);
+
+  Future<Map<String, dynamic>> exportActiveSchoolSnapshot() {
+    final origin = _activeProfileId;
+    final school = _activeIdentity['schoolSyncId']?.toString() ?? '';
+    if (!validSchoolId(school))
+      throw StateError('Verified school scope required for backup.');
+    final next = _writeTail.then((_) async {
+      if (_activeProfileId != origin ||
+          _activeIdentity['schoolSyncId'] != school) {
+        throw StateError('School changed before backup snapshot.');
+      }
+      final root = await _readRoot();
+      final collections = _collections(root);
+      final snapshot = <String, dynamic>{
+        'version': 2,
+        'profiles': {
+          origin: {
+            'identity': {'schoolSyncId': school},
+            'collections': collections,
+          },
+        },
+      };
+      final frozen = Map<String, dynamic>.from(
+        jsonDecode(jsonEncode(snapshot)) as Map,
+      );
+      if (_activeProfileId != origin ||
+          _activeIdentity['schoolSyncId'] != school) {
+        throw StateError('School changed during backup snapshot.');
+      }
+      return frozen;
+    });
+    _writeTail = next.then<void>((_) {}).catchError((_) {});
+    return next;
+  }
 
   Future<void> switchProfile(String profileId,{Map<String,dynamic>? identity}) {
     final next=_writeTail.then((_)=>_switchProfileNow(profileId,identity:identity));

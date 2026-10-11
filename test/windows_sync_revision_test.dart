@@ -32,14 +32,37 @@ import '../lib/sync_recovery_policy.dart';
 import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/platform/platform_config.dart';
-// Exercise the actual narrow-window navigation; tools are intentionally absent
-// from Overview. Drawer scrolling avoids selecting the main content scroller.
+// Four inline primary destinations; deeper checks remain in Overview's
+// diagnostics expander. Re-enter Overview before revealing a tool after a check.
 Future<void> openSyncTool(WidgetTester tester, String label) async {
-  await tester.tap(find.byTooltip('Open navigation menu'));
-  await tester.pumpAndSettle();
-  await tester.scrollUntilVisible(find.text(label), 250,
-      scrollable: find.descendant(of: find.byType(Drawer),
-          matching: find.byType(Scrollable)).first);
+  const primary = {
+    'Overview',
+    'Smart Repair History',
+    'Recycle Bin',
+    'Backup School Data',
+  };
+  final overview = find.widgetWithText(OutlinedButton, 'Overview');
+  await tester.ensureVisible(overview);
+  if (!primary.contains(label)) {
+    await tester.tap(overview);
+    await tester.pumpAndSettle();
+    final expander = find.text('Diagnostics and recovery tools');
+    await tester.scrollUntilVisible(
+      expander,
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    // Controls only exist while the expander is open.
+    if (find.text(label).evaluate().isEmpty) {
+      await tester.tap(expander);
+      await tester.pumpAndSettle();
+    }
+  }
+  await tester.scrollUntilVisible(
+    find.text(label),
+    250,
+    scrollable: find.byType(Scrollable).first,
+  );
   await tester.ensureVisible(find.text(label));
   await tester.pumpAndSettle();
 }
@@ -332,7 +355,6 @@ void main(){
               .onPressed,
           isNotNull,
         );
-        tester.state<ScaffoldState>(find.byType(Scaffold).first).closeDrawer();
         await tester.pumpAndSettle();
         await tester.scrollUntilVisible(find.text('School Drive storage'),300,scrollable:find.byType(Scrollable).first);
         await tester.pumpAndSettle();
@@ -356,7 +378,6 @@ void main(){
    expect(find.textContaining('Private upstream detail'),findsNothing);
    await openSyncTool(tester, 'Check Cloud Health');
    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Check Cloud Health')).onPressed,isNotNull);
-   tester.state<ScaffoldState>(find.byType(Scaffold).first).closeDrawer();
    await tester.pumpAndSettle();
    await tester.scrollUntilVisible(find.text('School cloud health'),-300,scrollable:find.byType(Scrollable).first);
    await tester.pumpAndSettle();
