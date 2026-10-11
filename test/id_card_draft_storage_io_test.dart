@@ -23,6 +23,15 @@ Map<String, dynamic> _manifest() => {
       'width': 50,
       'height': 20,
     },
+    {
+      'key': 'backName',
+      'side': 'back',
+      'kind': 'text',
+      'x': 5,
+      'y': 5,
+      'width': 50,
+      'height': 20,
+    },
   ],
 };
 
