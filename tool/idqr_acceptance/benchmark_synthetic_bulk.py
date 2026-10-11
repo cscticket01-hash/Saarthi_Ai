@@ -63,7 +63,7 @@ def profile_seconds(profile, names):
     return sum(stat[3] for key, stat in pstats.Stats(profile).stats.items() if key[2] in names)
 
 
-def benchmark(directory, count, *, decode=decode_png, clock=time.perf_counter, budget_seconds=360):
+def benchmark(directory, count, *, decode=decode_png, clock=time.perf_counter, budget_seconds=360, diagnostic_directory=None):
     start = clock()
     pdf = Path(directory) / f'synthetic-{count}.pdf'
     manifest = create_bulk_fixture(pdf, count)
@@ -76,7 +76,20 @@ def benchmark(directory, count, *, decode=decode_png, clock=time.perf_counter, b
         if clock() - start >= budget_seconds:
             raise AcceptanceError('Synthetic benchmark wall-time budget exceeded')
         before = clock()
-        decoded = decode(path, decoder)
+        try:
+            decoded = decode(path, decoder)
+        except AcceptanceError:
+            if diagnostic_directory is not None:
+                destination = Path(diagnostic_directory)
+                destination.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, destination / ('failed-' + path.name))
+                (destination / 'failure-context.json').write_text(json.dumps({
+                    'scope': 'Synthetic fixture only', 'studentCount': count,
+                    'inventoryIndex': int(path.name.split('-')[0]),
+                    'dpi': int(path.stem.split('-')[1]),
+                    'pdfBytes': pdf.stat().st_size,
+                }) + '\n')
+            raise
         decode_seconds += clock() - before
         decode_calls += 1
         return decoded
@@ -107,13 +120,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--count', type=int, choices=(50, 100, 500), required=True)
     parser.add_argument('--report', type=Path)
+    parser.add_argument('--diagnostic-dir', type=Path)
     args = parser.parse_args()
     if shutil.which('zbarimg') is None:
         report, code = {'verdict': 'UNVERIFIED', 'reason': 'Real zbarimg decoder is unavailable'}, 2
     else:
         try:
             with tempfile.TemporaryDirectory(prefix='idqr-synthetic-bulk-') as directory:
-                report = benchmark(directory, args.count)
+                report = benchmark(directory, args.count, diagnostic_directory=args.diagnostic_dir)
             code = 0
         except (AcceptanceError, AssertionError, OSError, RuntimeError, ValueError) as error:
             report, code = {'verdict': 'FAIL', 'scope': 'Synthetic PDF/verifier only', 'reason': str(error)}, 1

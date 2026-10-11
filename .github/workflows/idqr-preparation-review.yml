@@ -59,12 +59,14 @@ jobs:
       - name: Measure synthetic bulk PDF and all-card decoding
         env:
           PYTHONDONTWRITEBYTECODE: '1'
-        run: python tool/idqr_acceptance/benchmark_synthetic_bulk.py --count ${{ matrix.students }} --report synthetic-benchmark-${{ matrix.students }}.json
+        run: python tool/idqr_acceptance/benchmark_synthetic_bulk.py --count ${{ matrix.students }} --report synthetic-benchmark-${{ matrix.students }}.json --diagnostic-dir synthetic-diagnostic-${{ matrix.students }}
       - name: Preserve synthetic measurement report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: synthetic-idqr-benchmark-${{ matrix.students }}
-          path: synthetic-benchmark-${{ matrix.students }}.json
+          path: |
+            synthetic-benchmark-${{ matrix.students }}.json
+            synthetic-diagnostic-${{ matrix.students }}/
           if-no-files-found: warn
           retention-days: 7

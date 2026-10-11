@@ -116,6 +116,21 @@ class FinalPdfAcceptanceTests(unittest.TestCase):
         self.assertGreater(report['profilePngSaveSeconds'], 0)
         self.assertEqual(report['applicationExportAcceptance'], 'UNVERIFIED')
 
+    def test_decoder_failure_reports_index_dpi_and_preserves_synthetic_crop(self):
+        from benchmark_synthetic_bulk import benchmark
+        diagnostic = Path(self.temporary.name) / 'diagnostic'
+        def decode(path, decoder):
+            if path.name == '1-150.png':
+                raise AcceptanceError('injected decoder failure')
+            return [f'TEST-A-C1-S{int(path.name.split("-")[0]):04d}']
+        with self.assertRaisesRegex(AcceptanceError, 'index 1, 150 DPI'):
+            benchmark(self.temporary.name, 2, decode=decode, diagnostic_directory=diagnostic)
+        self.assertTrue((diagnostic / 'failed-1-150.png').exists())
+        context = json.loads((diagnostic / 'failure-context.json').read_text())
+        self.assertEqual(context['inventoryIndex'], 1)
+        self.assertEqual(context['dpi'], 150)
+        self.assertNotIn('qrPayload', context)
+
     def test_bulk_benchmark_rejects_expired_wall_budget(self):
         from benchmark_synthetic_bulk import benchmark
         with self.assertRaisesRegex(AcceptanceError, 'budget'):

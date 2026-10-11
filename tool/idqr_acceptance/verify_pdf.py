@@ -88,7 +88,7 @@ def decode_png(path, decoder):
     except (OSError, subprocess.TimeoutExpired) as error:
         raise AcceptanceError('QR decoder unavailable or timed out') from error
     if result.returncode != 0:
-        raise AcceptanceError('QR decoder failed')
+        raise AcceptanceError(f'QR decoder failed with exit code {result.returncode}')
     try:
         return result.stdout.decode('utf-8').splitlines()
     except UnicodeDecodeError as error:
@@ -106,7 +106,10 @@ def verify(pdf_path, manifest, *, dpis=(150, 300, 600), decoder='zbarimg', decod
                 for dpi in dpis:
                     output = Path(directory) / f'{index}-{dpi}.png'
                     document[card['page']].get_pixmap(clip=fitz.Rect(card['qrBoxPt']), dpi=dpi, alpha=False).save(output)
-                    decoded = decode(output, decoder)
+                    try:
+                        decoded = decode(output, decoder)
+                    except AcceptanceError as error:
+                        raise AcceptanceError(f'Card inventory index {index}, {dpi} DPI: {error}') from error
                     if decoded != [card['qrPayload']]:
                         raise AcceptanceError(f'QR identity mismatch or unreadable card at inventory index {index}, {dpi} DPI')
                     checks.append({'cardIndex': index, 'dpi': dpi, 'status': 'PASS'})
