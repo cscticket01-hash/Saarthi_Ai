@@ -28,3 +28,19 @@ test('operator guard preserves a sanitized durable blocked report with zero requ
   assert.ok(!text.includes('PRIVATE_TOKEN_CANARY'));assert.ok(!child.stdout.includes('PRIVATE_TOKEN_CANARY'));
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('journal retries after transient persistence failure and stays serialized',async()=>{
+ const {serializeCheckpoint}=await import('./staging_attendance_acceptance.mjs');let count=0;const outcomes=[];
+ const checkpoint=serializeCheckpoint(async()=>{count++;outcomes.push(count);if(count===1)throw Error('Transient disk failure');return count;});
+ await assert.rejects(checkpoint(),/disk failure/);assert.deepEqual(await Promise.all([checkpoint(),checkpoint()]),[2,3]);assert.deepEqual(outcomes,[1,2,3]);
+});
+test('authenticated directory preflight rejects stable aliases and non-synthetic fixtures',async()=>{
+ const {verifyFixtureDirectory}=await import('./staging_attendance_acceptance.mjs');
+ const requests=[{role:'student',personId:'one',linkToken:'qr-one'},{role:'student',personId:'two',linkToken:'qr-two'}];
+ const row=(id,token)=>({schoolId:TEST_SCHOOL,syntheticTest:true,mobileStableId:id,mobileLinkToken:token});
+ const directories={student:{one:row('one','qr-one'),two:row('two','qr-two')}};
+ assert.equal(verifyFixtureDirectory(requests,directories).get('student/two'),'two');
+ directories.student.two.mobileStableId='one';assert.throws(()=>verifyFixtureDirectory(requests,directories),/Distinct/);
+ directories.student.two.mobileStableId='two';directories.student.two.syntheticTest=false;assert.throws(()=>verifyFixtureDirectory(requests,directories),/synthetic/);
+});
