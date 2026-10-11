@@ -106,6 +106,11 @@ class WindowsSchoolBackupExport {
           'Backup exceeds 128 MB safe export limit; originals retained',
         );
       final data = await entry.value.readAsBytes();
+      // Never silently export a truncated or concurrently growing source file.
+      // An incomplete archive must not be presented as a complete backup.
+      if (data.length != length) {
+        throw StateError('Backup source changed during read; retry export');
+      }
       size += data.length;
       if (size > maxBytes)
         throw StateError('Backup source changed beyond size limit');
