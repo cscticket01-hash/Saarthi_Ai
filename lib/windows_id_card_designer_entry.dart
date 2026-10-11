@@ -114,7 +114,10 @@ class WindowsIdCardDesignerEntry {
     }
     final profile=(await db.collection('school_config').doc('school_profile_cache').get()).data()??{};
     final people=await db.collection('students_directory').get();checkSchool();
-    final first=people.docs.isEmpty?<String,dynamic>{}:people.docs.first.data();
+    final first=IdCardSchoolSource.previewSample(
+      people.docs.map((doc)=><String,dynamic>{...doc.data(),'_recordId':doc.id}),
+      school,
+    )??<String,dynamic>{};
     final data=<String,dynamic>{...profile,...first,'schoolName':profile['schoolName']??profile['name']??'','schoolAddress':profile['address']??'','class':first['studentClass']??first['class']??'','parentName':first['parentName']??first['fatherName']??''};
     final backgrounds=await entry.backgrounds();checkSchool();
     final images=<String,Uint8List>{};
@@ -126,7 +129,7 @@ class WindowsIdCardDesignerEntry {
     }
     String qr='';
     if(first.isNotEmpty && school!=null && school.isNotEmpty){
-      try{final source=await IdCardSchoolSource.capture();checkSchool();final record=source.records.where((r)=>r['_recordId']==people.docs.first.id).toList();if(record.isNotEmpty)qr=source.existingQr(record.first);}catch(_){checkSchool();/* Missing existing QR remains visibly absent; never mint credentials. */}
+      try{final source=await IdCardSchoolSource.capture();checkSchool();final record=source.records.where((r)=>r['_recordId']==first['_recordId']).toList();if(record.isNotEmpty)qr=source.existingQr(record.first);}catch(_){checkSchool();/* Missing existing QR remains visibly absent; never mint credentials. */}
     }
     Future<void> preview(Map<String,dynamic> draft) async {
       checkSchool();final bytes=await IdCardEngine.render(IdCardManifest.fromJson(Map<String,dynamic>.from(draft['manifest'] as Map)),data,backgrounds:backgrounds,images:images,qr:qr);checkSchool();await pdfPreview(context,bytes);
