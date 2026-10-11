@@ -90,7 +90,7 @@ void main() {
    final binaryId=binaries.entries.first['fileId'] as String;
    final binaryHash=binaries.entries.first['sha256'] as String;
    final queueBeforeBinary=(await db.collection('_windows_firebase_outbox').get()).docs.length;
-   expect(await binaries.repairNext(),false);
+   await expectLater(binaries.repairNext(),throwsA(isA<SchoolApiFailure>().having((failure)=>failure.status,'HTTP status',503)));
    expect(await binaries.verifiedPath(binaryId),isNull);
    binaryFault=false;
    await Future<void>.delayed(const Duration(seconds:6)); // Real capped retry deadline, no fake clock.
