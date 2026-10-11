@@ -71,4 +71,27 @@ void main() {
     expect(find.textContaining('Draft could not be saved'), findsOneWidget);
     expect(find.text('Save draft'), findsOneWidget);
   });
+
+  testWidgets('stable template version is retained across repeated saves', (
+    tester,
+  ) async {
+    final versions = <String>[];
+    final editor = IdCardDesigner(schoolId: 'school', manifest: manifest());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IdCardDesignerScreen(
+          designer: editor,
+          templateVersion: 'school-template-v3',
+          onSave: (value) async {
+            versions.add(value['templateVersion'] as String);
+          },
+        ),
+      ),
+    );
+    await tester.tap(find.text('Save draft'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save draft'));
+    await tester.pumpAndSettle();
+    expect(versions, ['school-template-v3', 'school-template-v3']);
+  });
 }
