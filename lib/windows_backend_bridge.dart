@@ -785,7 +785,7 @@ class WindowsBackendBridge {
     return snapshot.docs.length;
   }
 
-  static Future<int> flushPending({bool Function()? canAdmit,
+  static Future<int> flushPending({bool Function()? canAdmit, bool respectBackoff = false,
     void Function(Map<String, dynamic>)? onActivity,
     Future<String> Function()? readActiveUrl,
     Future<http.Response> Function(Uri, Map<String,String>, String)? send}) async {
@@ -828,6 +828,7 @@ class WindowsBackendBridge {
         continue;
       }
       if (data['syncState'] == 'needsAttention' || data['syncState'] == 'conflict') continue;
+      if(respectBackoff && (data['retryAtMillis'] as num? ?? 0)>DateTime.now().millisecondsSinceEpoch) continue;
 
       if (activeUrl.isEmpty ||
           _normalizedUrl(urlText) != _normalizedUrl(activeUrl)) {

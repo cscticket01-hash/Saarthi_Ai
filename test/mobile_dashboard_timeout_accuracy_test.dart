@@ -67,11 +67,12 @@ void main() {
   test('latest dashboard timeout retains earlier notices and announces syncing before the response settles', () async {
     var fail = false;
     final reply = Completer<http.Response>();
+    final requestStarted=Completer<void>();
     final states = <SchoolConnectionState>[];
     final session = SchoolSession(client: MockClient((request) async {
       final action = (jsonDecode(request.body)['request'] as Map)['action'];
       if (action == 'mobile_login') return http.Response(jsonEncode(login()), 200);
-      if (fail) return reply.future;
+      if (fail) { requestStarted.complete(); return reply.future; }
       return http.Response(jsonEncode(response({'revision': 'verified',
         'notices': [{'id': 'existing', 'title': 'Already verified notice'}]})), 200);
     }));
@@ -83,8 +84,10 @@ void main() {
     final pending = session.refreshDashboard();
     expect(states.last, SchoolConnectionState.syncing);
     expect(session.dashboard['revision'], 'verified');
+    final failure=expectLater(pending, throwsA(isA<TimeoutException>()));
+    await requestStarted.future;
     reply.completeError(TimeoutException('Synthetic transport timeout'));
-    await expectLater(pending, throwsA(isA<TimeoutException>()));
+    await failure;
     expect(session.connectionMessage, contains('Latest school dashboard refresh'));
     expect(session.connectionMessage, contains('response is unverified'));
     expect(session.lastDashboardVerifiedAt, verified);
