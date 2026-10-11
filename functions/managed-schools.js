@@ -1,4 +1,5 @@
 'use strict';
+const {planStudentImport,canonicalHash}=require('./student-import-plan');
 const {createAttendanceQueue,firestoreAttendanceStore}=require('./attendance-queue');
 const {randomUUID,randomBytes,createHash,createHmac,timingSafeEqual,createCipheriv,createDecipheriv}=require('node:crypto');
 const SCHOOL=/^vs-[a-f0-9]{32}$/;
@@ -9,7 +10,7 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+function createManagedSchools({studentImportEnabled=false,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
  if(!['attendance_outbox','attendance_test_outbox'].includes(attendanceCollection))throw Error('Invalid attendance collection');
  const mobileStates=new Map(),storageStates=new Map(),developerViews=new Map(),readViews=new Map();
  let readBytes=0,viewHits=0,viewMisses=0;
@@ -432,6 +433,56 @@ function createManagedSchools({auth,db,projectId,encryptionKey,fetchImpl=fetch,n
   if(result.syncProtocol!==2||!result.changes||typeof result.changes!=='object'||Object.keys(result.changes).length!==collections.length)fail(502,'Invalid delta response');
   for(const col of collections){const group=result.changes[col];if(!group||group.syncProtocol!==2||typeof group.collectionRevision!=='string'||!group.records||typeof group.records!=='object'||Array.isArray(group.records)||Object.values(group.records).some(row=>!row||row.schoolId!==m.schoolId))fail(502,'Foreign or invalid school delta');}
   return result;
+ }
+ // Inactive controlled-import foundation. No arbitrary managed Sheet edits.
+ if(['managed/student-import/preview','managed/student-import/commit'].includes(action)){
+  if(studentImportEnabled!==true)fail(503,'Controlled student import is not enabled','IMPORT_DISABLED');
+  if(!Array.isArray(b.rows)||b.rows.length<1||b.rows.length>100||JSON.stringify(b.rows).length>100000)fail(400,'Import requires 1–100 bounded rows');
+  const rowsHash=canonicalHash(b.rows);
+  const read=async()=>{
+   const result=await signed(m,{action:'managed_records',collection:'students_directory',operation:'read',syncProtocol:2});
+   if(result.syncProtocol!==2||typeof result.collectionRevision!=='string'||!result.records||typeof result.records!=='object'||Array.isArray(result.records)||Object.keys(result.records).length>100000)fail(502,'Unverified student snapshot');
+   for(const [id,r]of Object.entries(result.records))if(['__proto__','prototype','constructor','.','..'].includes(id)||!r||r.schoolId!==m.schoolId||typeof r._syncRevision!=='string'||!r._syncRevision||r._syncRevision.length>100||r._syncDeleted===true)fail(409,'Student snapshot needs administrator review');
+   return result.records;
+  };
+  const records=await read();
+  const refFor=id=>db.doc('school_import_preview_private/'+hash(m.schoolId+'/'+id));
+  const relevant=r=>Object.fromEntries(Object.entries(r).filter(([k])=>!k.startsWith('_sync')));
+  if(action.endsWith('/preview')){
+   let plan;try{plan=planStudentImport({schoolId:m.schoolId,rows:b.rows,currentRecords:Object.entries(records).map(([studentId,r])=>({schoolId:m.schoolId,studentId,name:r.name,class:r.studentClass??r.class,section:r.section??'',rollNo:r.rollNo,revision:r._syncRevision}))});}catch{fail(409,'Student snapshot or import requires review');}
+   if(!plan.valid)return {success:true,...plan};
+   const operations=plan.operations.map(op=>{
+    const prior=records[op.studentId]||{};
+    const data={...prior,schoolId:m.schoolId,name:op.record.name,studentClass:op.record.class,section:op.record.section,rollNo:op.record.rollNo};
+    if(!records[op.studentId]||Object.hasOwn(prior,'class'))data.class=op.record.class;
+    for(const key of Object.keys(data))if(key.startsWith('_sync'))delete data[key];
+    return {...op,data,operationId:canonicalHash([op.operationId,data])};
+   });
+   const planId=canonicalHash([plan.planId,operations]);
+   if(Buffer.byteLength(JSON.stringify(operations))>500000)fail(400,'Import preview exceeds safe storage bound');
+   await refFor(planId).set({sealed:protect(JSON.stringify({planId,schoolId:m.schoolId,actor:m.uid,rowsHash,expiresAt:now()+1800000,operations}),encryptionKey)});
+   return {success:true,...plan,planId,operations:operations.map(({data,...op})=>op),requiresAdminCommit:true};
+  }
+  if(!/^[a-f0-9]{64}$/.test(b.planId||''))fail(400,'Exact preview plan required');
+  const saved=await refFor(b.planId).get();let plan;
+  try{if(saved.exists)plan=JSON.parse(unprotect(saved.data().sealed,encryptionKey));}catch{fail(409,'Import preview verification failed');}
+  if(!saved.exists||plan.planId!==b.planId||plan.schoolId!==m.schoolId||plan.actor!==m.uid||plan.rowsHash!==rowsHash||plan.expiresAt<=now())fail(409,'Import preview changed or expired');
+  const outcomes=[];
+  for(const op of plan.operations){
+   const current=records[op.studentId];
+   if(current?._syncOperationId===op.operationId&&canonicalHash(relevant(current))===canonicalHash(op.data)){outcomes.push({studentId:op.studentId,operationId:op.operationId,state:'verified',recordRevision:current._syncRevision});continue;}
+   if((current?._syncRevision??null)!==op.expectedRevision){outcomes.push({studentId:op.studentId,operationId:op.operationId,state:'conflict'});break;}
+   try{
+    const fresh=await identity(req,m.schoolId);if(!lease(fresh).allowed||fresh.entitlement.status!=='trial'&&fresh.entitlement.activated!==true)fail(403,'School access changed');
+    const ack=await signed(fresh,{action:'managed_records',collection:'students_directory',operation:'write',syncProtocol:2,id:op.studentId,data:op.data,operationId:op.operationId,expectedRecordRevision:op.expectedRevision??''});
+    invalidate(m.schoolId);
+    if(ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision)throw Error('Unverified import ACK');
+    const final=(await read())[op.studentId];
+    if(!final||final._syncRevision!==ack.recordRevision||final._syncOperationId!==op.operationId||canonicalHash(relevant(final))!==canonicalHash(op.data))throw Error('Import readback pending');
+    outcomes.push({studentId:op.studentId,operationId:op.operationId,state:'verified',recordRevision:ack.recordRevision});
+   }catch(error){outcomes.push({studentId:op.studentId,operationId:op.operationId,state:error.status===409?'conflict':'pending'});break;}
+  }
+  return {success:true,schoolId:m.schoolId,planId:b.planId,atomicBatch:false,outcomes,remaining:plan.operations.length-outcomes.length,verified:outcomes.length===plan.operations.length&&outcomes.every(o=>o.state==='verified')};
  }
  if(action==='managed/records'){
   if(!COLLECTIONS.has(b.collection)||!['read','write','delete'].includes(b.operation))fail(400,'Invalid school collection operation');if(b.operation!=='read'&&(!/^[^/]{1,200}$/.test(b.id||'')||['.','..'].includes(b.id)))fail(400,'Invalid record ID');const data=b.operation==='write'?{...clean(b.data),schoolId:m.schoolId}:undefined;

@@ -1111,7 +1111,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             'Items need conflict review; both versions retained.',
           );
         if ((details.value['pending'] as num? ?? 0) > 0) {
-          _rerunRequested = true;
+          // Legacy Drive requests are visible for review but are not serviced
+          // by the managed protocol. Their presence must not spin this engine.
+          _rerunRequested = (details.value['items'] as List? ?? []).any(
+            (row) => row is Map && row['_queueCollection'] != '_windows_google_outbox');
           state.value = SchoolCloudState.syncPending;
           return;
         }

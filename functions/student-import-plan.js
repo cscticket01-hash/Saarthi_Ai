@@ -7,7 +7,8 @@ function plain(value){return value!==null&&typeof value==='object'&&!Array.isArr
 function canonical(value){if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';if(plain(value))return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';return JSON.stringify(value);}
 function digest(value){return createHash('sha256').update(canonical(value)).digest('hex');}
 function text(v,max){return typeof v==='string'&&v.trim().length>0&&v.length<=max&&!/[\u0000-\u001f\u007f]/.test(v);}
-function id(v){return text(v,200)&&v===v.trim()&&!/[\/\\]/.test(v)&&!dangerous.has(v);}
+function section(v){return typeof v==='string'&&v.length<=100&&!/[\u0000-\u001f\u007f]/.test(v);}
+function id(v){return text(v,200)&&v===v.trim()&&!/[\/\\]/.test(v)&&!dangerous.has(v)&&!['.','..'].includes(v);}
 /** Preview foundation only. No API, authorization grant, provider read or write.
  * Current records must be an authoritative school-scoped snapshot supplied by
  * the caller. A future authorized commit must recheck every baseline revision.
@@ -18,7 +19,7 @@ function planStudentImport({schoolId,rows,currentRecords}={}){
  if(!Array.isArray(currentRecords)||currentRecords.length>100000)throw new TypeError('Bounded authoritative snapshot required');
  const existing=new Map(),slots=new Map();
  for(const r of currentRecords){
-  if(!plain(r)||Object.keys(r).some(k=>dangerous.has(k))||r.schoolId!==schoolId||!id(r.studentId)||!text(r.revision,200)||!text(r.class,100)||!text(r.section,100)||!text(r.rollNo,40))throw new TypeError('Invalid or foreign authoritative snapshot');
+  if(!plain(r)||Object.keys(r).some(k=>dangerous.has(k))||r.schoolId!==schoolId||!id(r.studentId)||!text(r.revision,200)||!text(r.class,100)||!section(r.section)||!text(r.rollNo,40))throw new TypeError('Invalid or foreign authoritative snapshot');
   if(existing.has(r.studentId))throw new TypeError('Duplicate authoritative student ID');
   const slot=canonical([r.class.trim(),r.section.trim(),r.rollNo.trim()]);
   if(slots.has(slot))throw new TypeError('Ambiguous authoritative class/section/roll');
@@ -32,7 +33,7 @@ function planStudentImport({schoolId,rows,currentRecords}={}){
   if(keys.some(k=>dangerous.has(k))){issue('UNSAFE_KEY');return;}
   if(keys.some(k=>!FIELDS.has(k))){issue('UNSUPPORTED_FIELD');return;}
   if(r.schoolId!==schoolId){issue('FOREIGN_SCHOOL');return;}
-  if(!id(r.studentId)||!text(r.name,300)||!text(r.class,100)||!text(r.section,100)||!text(r.rollNo,40)){issue('INVALID_STUDENT_FIELDS');return;}
+  if(!id(r.studentId)||!text(r.name,300)||!text(r.class,100)||!section(r.section)||!text(r.rollNo,40)){issue('INVALID_STUDENT_FIELDS');return;}
   if(seen.has(r.studentId)){issue('DUPLICATE_STUDENT_ID');return;}seen.add(r.studentId);
   const record={schoolId,studentId:r.studentId,name:r.name.trim(),class:r.class.trim(),section:r.section.trim(),rollNo:r.rollNo.trim()};
   const slot=canonical([record.class,record.section,record.rollNo]);
@@ -49,4 +50,4 @@ function planStudentImport({schoolId,rows,currentRecords}={}){
  const proposed=errors.length?[]:operations;
  return {previewOnly:true,committable:false,valid:errors.length===0,schoolId,rowCount:rows.length,errors,operations:proposed,planId:digest({protocol:'student-import-preview-v1',schoolId,operations:proposed,errors})};
 }
-module.exports={planStudentImport,MAX_ROWS};
+module.exports={planStudentImport,MAX_ROWS,canonicalHash:digest};
