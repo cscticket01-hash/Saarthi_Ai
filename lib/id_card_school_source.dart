@@ -101,7 +101,10 @@ class IdCardSchoolSource {
       'googleScriptUrl': connection['scriptUrl'], 'type': 'student', 'personId': personId, 'linkToken': token,
     });
     final link = SchoolLink.parse(qr);
-    if ((link.managed ? link.schoolId : link.projectId) != schoolId || link.personId != personId || link.linkToken != token || link.role != 'student') {
+    if (link.managed != (connection['managed'] == true) ||
+        (link.managed && link.endpoint != connection['endpoint']) ||
+        (link.managed ? link.schoolId : link.projectId) != schoolId ||
+        link.personId != personId || link.linkToken != token || link.role != 'student') {
       throw StateError('Existing student QR identity mismatch');
     }
     return qr;
@@ -154,7 +157,7 @@ class IdCardSchoolSource {
           }
         }
         if (missing) {onProgress?.call(rows.indexOf(row)+1, rows.length);continue;}
-        final issued = qr.startsWith('VS4|');
+        final issued = link.cardIssueId.isNotEmpty;
         final issue = issued ? qr.split('|').last : 'legacy-qr:${sha256.convert(utf8.encode(IdCardEngine.compactQr(qr)))}';
         students.add(IdCardBulkStudent(schoolId:schoolId,classId:classId,studentId:link.personId,
           cardIssueId:issue,identityKind:issued?'issued-reference':'legacy-qr-reference',qr:qr,data:data,images:images,backgrounds:backgrounds));
