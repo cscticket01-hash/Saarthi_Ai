@@ -1,5 +1,6 @@
 'use strict';
 const {createManagedDeviceAccess}=require('./managed-device-access');
+const {createManagedCardIssueAuthority}=require('./managed-card-issue-authority');
 const {firestoreManagedDeviceStore}=require('./managed-device-registry');
 const {planStudentImport,canonicalHash}=require('./student-import-plan');
 const {createAttendanceQueue,firestoreAttendanceStore}=require('./attendance-queue');
@@ -12,8 +13,9 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKey,deviceStore,studentImportEnabled=false,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKey,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,offlinePrivateKey:deviceOfflinePrivateKey,now});
+ const cardAuthority=createManagedCardIssueAuthority({db,now});
  if(!['attendance_outbox','attendance_test_outbox'].includes(attendanceCollection))throw Error('Invalid attendance collection');
  const mobileStates=new Map(),storageStates=new Map(),developerViews=new Map(),readViews=new Map();
  let readBytes=0,viewHits=0,viewMisses=0;
@@ -518,6 +520,23 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
    }catch(error){outcomes.push({studentId:op.studentId,operationId:op.operationId,state:error.status===409?'conflict':'pending'});break;}
   }
   return {success:true,schoolId:m.schoolId,planId:b.planId,atomicBatch:false,outcomes,remaining:plan.operations.length-outcomes.length,verified:outcomes.length===plan.operations.length&&outcomes.every(o=>o.state==='verified')};
+ }
+ if(/^managed\\/card\\/(issue|reissue|revoke|status|verify)$/.test(action||'')){
+  if(cardIssueEnabled!==true)fail(503,'Card lifecycle is not enabled','CARD_ISSUE_DISABLED');
+  const operation=action.substring('managed/card/'.length);
+  if(!lease(m).allowed||(m.entitlement.status!=='trial'&&m.entitlement.activated!==true))fail(403,'School licence is inactive');
+  const readPerson=async(school,role,personId)=>{
+   if(school!==m.schoolId)fail(403,'Another school is not accessible');
+   const collection=role==='student'?'students_directory':'teachers_directory';
+   const result=await signed(m,{action:'managed_records',collection,operation:'read',syncProtocol:2});
+   if(!result||result.syncProtocol!==2||!result.records||typeof result.records!=='object'||Array.isArray(result.records)||Object.keys(result.records).length>100000)fail(502,'Verified school person inventory required','CARD_PERSON_UNVERIFIED');
+   const direct=result.records[personId];
+   if(direct&&direct.schoolId===school)return direct;
+   const matches=Object.values(result.records).filter(r=>r&&r.schoolId===school&&r.mobileStableId===personId);
+   if(matches.length!==1)fail(409,'Card person identity requires review');
+   return matches[0];
+  };
+  return cardAuthority({request:{...b,operation},identity:m,readPerson});
  }
  if(action==='managed/records'){
   if(!COLLECTIONS.has(b.collection)||!['read','write','delete'].includes(b.operation))fail(400,'Invalid school collection operation');if(b.operation!=='read'&&(!/^[^/]{1,200}$/.test(b.id||'')||['.','..'].includes(b.id)))fail(400,'Invalid record ID');const data=b.operation==='write'?{...clean(b.data),schoolId:m.schoolId}:undefined;
