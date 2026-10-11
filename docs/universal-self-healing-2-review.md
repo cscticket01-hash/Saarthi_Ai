@@ -80,3 +80,7 @@ Local full backend execution also passed 376/376 after installing existing funct
 | 31 | Measured synthetic 100,000-event flood and bounded history; physical heavy-school workload overhead remains unknown |
 
 The numbering maps to the requested 35 scenarios; it is not a 35/35 pass claim. The implementation contains two approved automatic repair classes, not an unrestricted recovery library. Unsupported business repairs require a reviewed owner interface, original-operation admission and outcome proof before expansion.
+
+## Network reporting recovery correction
+
+Owner diagnostic HTTP clients can throw SocketException or ClientException before receiving an HTTP response. Both platform adapters previously treated those exceptions as permanent attention, blocking reporting for the current school after a temporary outage. They now classify only timeout/socket/HTTP-client transport exceptions as retryable, using the existing bounded reporter cooldown and single pending snapshot. HTTP authorization/conflict handling and unknown exceptions remain attention; no login renewal, business retry or queue ACK is added. Added typed classification tests and a reporter outage-to-accepted regression preserving the pending snapshot until acceptance. Hosted final-source Flutter verification is required. Local unchanged backend suite: 377/377 PASS.

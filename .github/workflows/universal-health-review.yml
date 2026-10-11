@@ -26,7 +26,7 @@ jobs:
       - name: Actual guardian and existing owner regression tests
         env:
           APPDATA: ${{ runner.temp }}/universal-health-tests
-        run: flutter test --timeout 90s test/universal_health_test.dart test/document_processing_engine_test.dart test/document_upload_flow_test.dart test/id_card_engine_test.dart test/school_qr_login_test.dart test/sync_recovery_policy_test.dart test/mobile_attendance_outbox_test.dart test/windows_sync_pause_test.dart test/windows_sync_revision_test.dart
+        run: flutter test --timeout 90s test/universal_health_test.dart test/health_transport_test.dart test/document_processing_engine_test.dart test/document_upload_flow_test.dart test/id_card_engine_test.dart test/school_qr_login_test.dart test/sync_recovery_policy_test.dart test/mobile_attendance_outbox_test.dart test/windows_sync_pause_test.dart test/windows_sync_revision_test.dart
       - name: Bounded flood benchmark
         run: dart tool/health_benchmark.dart
       - name: Backend authorization and telemetry regressions
