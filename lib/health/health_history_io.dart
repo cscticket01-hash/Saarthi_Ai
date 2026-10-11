@@ -14,7 +14,10 @@ class FileHealthHistory implements HealthHistoryStore {
   }
   @override Future<List<HealthEvent>> load(HealthContext context) async {
     final file=await _file(context);
-    if(!await file.exists())return [];
+    if(!await file.exists()){
+      if(await File('${file.path}.next').exists() || await File('${file.path}.previous').exists())throw const FormatException('Interrupted health history requires review');
+      return [];
+    }
     if(await file.length()>128*1024)throw const FormatException('Health history size bound');
     final value=jsonDecode(await file.readAsString());
     if(value is! Map || value['schema']!=2 || value['context']!=context.fingerprint || value['events'] is! List || (value['events'] as List).length>256)throw const FormatException('Health history identity unverified');

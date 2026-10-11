@@ -259,7 +259,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
    await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,...(password===undefined?{passwordSetupLink:await auth.generatePasswordResetLink(email)}:{})};
   }
   if(action==='developer/managed/monitor'){const started=now();const metrics=await monitor();return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics};}
-  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view','developer/managed/sync/status'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
+  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view','developer/managed/sync/status','developer/managed/health/summary'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
   if(action==='developer/managed/health/summary')return healthTelemetry.summary(id);
   if(action==='developer/managed/sync/status')return {success:true,schoolId:id,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
   if(action==='developer/managed/view'){

@@ -1172,8 +1172,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           style: TextStyle(color: Colors.orange),
                         ),
                       if (ownSchool) ...[
-                        const UniversalHealthPanel(),
-                        const SizedBox(height: 20),
                         _navigation(active),
                         const SizedBox(height: 12),
                         if (showHistory) ...[
@@ -1634,6 +1632,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             ],
                           ],
                         ],
+                        const ExpansionTile(title: Text('Universal Self-Healing 2.0'), children: [UniversalHealthPanel()]),
                       ],
                     ],
                   );

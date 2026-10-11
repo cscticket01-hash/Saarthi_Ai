@@ -1,3 +1,4 @@
+import '../health/universal_health.dart';
 import '../qr_authentication_engine.dart';
 import '../qr_card_authorization.dart';
 import 'attendance_store.dart';
@@ -693,6 +694,7 @@ class SchoolSession {
       throw SchoolCacheFailure();
     }
     if (generation != _generation) throw SchoolAccessDenied('School session changed.');
+    try {final h=UniversalHealth.instance;final c=h.context;if(c!=null && c.school==link?.schoolId && c.profile==link?.personId)h.observe('notices',HealthObservation(HealthState.healthy,verifiedAt:lastDashboardVerifiedAt));}catch(_){}
     dashboardCleanupDeferred = false;
     for (final key in removedPdfs.keys) _pdfMemory.remove(key);
     // Only acknowledged removal invalidates private files. Temporary outages

@@ -37,8 +37,8 @@ class MobileHealthAdapter with WidgetsBindingObserver {
     engine.observe('attendance',HealthObservation(session.attendanceStatusReady?session.attendanceFailure.isEmpty?HealthState.monitoring:HealthState.degraded:HealthState.unknown,metrics:{'pending':session.attendancePending}));
   }catch(_){} }
   @override void didChangeAppLifecycleState(AppLifecycleState state) {
-    if(state==AppLifecycleState.resumed){engine.start();engine.resume();unawaited(reporter.start());_attendance();}
-    else {reporter.pause();engine.pause();}
+    if(state==AppLifecycleState.resumed){_contextTimer??=Timer.periodic(const Duration(seconds:30),(_)=>_attendance());engine.start();engine.resume();unawaited(reporter.start());_attendance();}
+    else {_contextTimer?.cancel();_contextTimer=null;reporter.pause();engine.pause();}
   }
   Future<void> dispose() async {_started=false;_generation++;_contextTimer?.cancel();reporter.pause();WidgetsBinding.instance.removeObserver(this);SchoolSession.instance.attendanceChanges.removeListener(_attendance);await engine.stop();}
 }

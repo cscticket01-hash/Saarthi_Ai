@@ -42,7 +42,7 @@ class RecoveryLease {
 /// A timeout does NOT cancel a Future: the component lock remains held until
 /// the actual action settles. An uncooperative worker is quarantined.
 class RecoveryPlaybook {
-  const RecoveryPlaybook({required this.id, required this.kind, required this.failures, required this.precondition, required this.execute, required this.verify, this.maxAttempts = 2, this.timeout = const Duration(seconds: 5), this.cooldown = const Duration(minutes: 1)});
+  const RecoveryPlaybook({required this.id, required this.kind, required this.failures, required this.precondition, required this.execute, required this.verify, this.maxAttempts = 2, this.timeout = const Duration(seconds: 5), this.cooldown = const Duration(minutes: 1),this.circuitWindow=const Duration(hours:1)});
   final String id;
   final RecoveryKind kind;
   final Set<HealthFailure> failures;
@@ -51,6 +51,7 @@ class RecoveryPlaybook {
   final Future<bool> Function(RecoveryLease lease) verify;
   final int maxAttempts;
   final Duration timeout, cooldown;
+  final Duration circuitWindow;
 }
 
 class HealthProvider {
@@ -92,7 +93,7 @@ class HealthPrediction {
 /// Independent, bounded guardian. It owns diagnostic metadata only.
 class UniversalHealth {
   UniversalHealth({DateTime Function()? now, this.store, this.maxProviders = 32, this.maxHistory = 128, this.maxConcurrentChecks = 2}) : now = now ?? DateTime.now {
-    if (maxProviders < 1 || maxProviders > 64 || maxHistory < 8 || maxHistory > 256 || maxConcurrentChecks < 1 || maxConcurrentChecks > 4) throw ArgumentError('Invalid health budgets');
+    if (maxProviders < 1 || maxProviders > 64 || maxHistory < maxProviders*3+1 || maxHistory > 256 || maxConcurrentChecks < 1 || maxConcurrentChecks > 4) throw ArgumentError('Invalid health budgets');
   }
   static final instance = UniversalHealth();
   final DateTime Function() now;
@@ -135,7 +136,7 @@ class UniversalHealth {
     if (!validId(provider.id) || !RegExp(r'^[0-9]{1,3}\.[0-9]{1,3}(\.[0-9]{1,3})?$').hasMatch(provider.version) || _providers.containsKey(provider.id) || _providers.length >= maxProviders) throw ArgumentError('Invalid or duplicate health provider');
     final ids = <String>{};
     for (final p in provider.playbooks) {
-      if (!validId(p.id) || !ids.add(p.id) || p.maxAttempts < 1 || p.maxAttempts > 3 || p.timeout <= Duration.zero || p.timeout > const Duration(seconds: 30) || p.cooldown < const Duration(milliseconds: 100)) throw ArgumentError('Invalid recovery contract');
+      if (!validId(p.id) || !ids.add(p.id) || p.maxAttempts < 1 || p.maxAttempts > 3 || p.timeout <= Duration.zero || p.timeout > const Duration(seconds: 30) || p.cooldown < const Duration(milliseconds: 100) || p.circuitWindow<p.cooldown || p.circuitWindow>const Duration(days:7)) throw ArgumentError('Invalid recovery contract');
     }
     _providers[provider.id] = provider;
     _observations[provider.id] = const HealthObservation(HealthState.unknown);
@@ -161,6 +162,7 @@ class UniversalHealth {
       if(identical(_loadGate,gate)){_loadTimer?.cancel();_loadTimer=null;_loadGate=null;}
       if (generation != _generation || _disposed) return;
       _historyReady=loaded&&store!=null;
+      if(events.any((e)=>e.at.isAfter(now())))_historyReady=false;
       for (final e in events.where((e) => !e.at.isAfter(now()) && now().difference(e.at) <= const Duration(days: 7)).toList().reversed.take(maxHistory).toList().reversed) {
         _history.add(e);
         // Persisted attempts keep a crash/restart from resetting repair budgets.
@@ -187,12 +189,16 @@ class UniversalHealth {
   void _event(String component, HealthFailure failure, String stage) {
     final at = now();
     final key = '$component/${failure.name}/$stage';
-    if (_dedup[key] != null && at.difference(_dedup[key]!) < const Duration(seconds: 2)) { droppedEvents++; return; }
+    if ({'observed','checkFailed'}.contains(stage) && _dedup[key] != null && at.difference(_dedup[key]!) < const Duration(seconds: 2)) { droppedEvents++; return; }
     final version = _providers[component]?.version ?? '2.0';
     final fp = sha256.convert(utf8.encode('$component/$version/${failure.name}/$stage')).toString();
     if (_dedup.length >= 512) _dedup.remove(_dedup.keys.first);
     _dedup[key] = at;
-    if (_history.length >= maxHistory) _history.removeFirst();
+    if (_history.length >= maxHistory) {
+      // Keep every admission inside its circuit window, even in a fault flood.
+      final removable=_history.where((e)=>e.stage!='started'||now().difference(e.at)>(_providers[e.component]?.playbooks.firstOrNull?.circuitWindow??const Duration(hours:1))).firstOrNull;
+      if(removable!=null)_history.remove(removable);else {droppedEvents++;return;}
+    }
     _history.add(HealthEvent(component, failure, stage, at, fp));
     final bound = _context, events = history;
     if (bound != null && store != null) {
@@ -270,12 +276,20 @@ class UniversalHealth {
     if (_disposed || _paused || !_historyReady || store == null || activeRepairs>=1 || provider == null || observation == null || bound == null || _repairs.containsKey(id) || _checks.containsKey(id) || _forbidden.contains(observation.failure)) return false;
     // Policy never grants extra authority for a manual call.
     final plays = provider.playbooks.where((p) => p.failures.contains(observation.failure)).toList();
-    if (plays.isEmpty || provider.dependencies.any((d) => !_observations.containsKey(d) || {HealthState.needsAttention, HealthState.degraded, HealthState.unknown}.contains(_observations[d]!.state))) return false;
+    if (plays.isEmpty || provider.dependencies.any((d) => observations[d]?.state != HealthState.healthy)) return false;
     final p = plays.first, at = now();
+    _attempts[id]=_history.where((e)=>e.component==id&&e.stage=='started'&&at.difference(e.at)<p.circuitWindow).length;
     if ((_attempts[id] ?? 0) >= p.maxAttempts) { _event(id, observation.failure, 'circuitOpen'); return false; }
+    final admissions = _history.where((e)=>e.component==id&&e.stage=='started'&&at.difference(e.at)<p.circuitWindow).toList();
+    if (admissions.isNotEmpty) {
+      final last = admissions.map((e)=>e.at).reduce((a,b)=>a.isAfter(b)?a:b);
+      final persistedCooldown = last.add(p.cooldown * admissions.length);
+      if (persistedCooldown.isAfter(at)) return false;
+    }
     if (_nextAttempt[id]?.isAfter(at) == true) return false;
     final generation = _generation;
     final lease = RecoveryLease(bound, observation.operation, () => !_disposed && !_paused && generation == _generation && _context!.same(bound), at.add(p.timeout), now);
+    var verifiedThisAttempt = false;
     final task = Future<void>(() async {
       var admitted = false;
       try {
@@ -294,6 +308,7 @@ class UniversalHealth {
         await p.execute(lease); lease.check();
         final verified = await p.verify(lease); lease.check();
         if (!verified) throw StateError('Recovery outcome unverified');
+        verifiedThisAttempt = true;
         _event(id, observation.failure, 'verified');
         // Do not reset the session budget: repeated successful-but-recurring
         // faults still trip the circuit. A reviewed restart history may rearm.
@@ -306,7 +321,7 @@ class UniversalHealth {
     unawaited(task.whenComplete(() { if (identical(_repairs[id], task)) {_repairs.remove(id);_quarantinedRepairs.remove(id);} }));
     try { await task.timeout(p.timeout); }
     on TimeoutException { _quarantinedRepairs.add(id);if (generation == _generation) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure); _event(id, observation.failure, 'timeout'); } return false; }
-    return generation == _generation && _observations[id]?.state == HealthState.healthy;
+    return verifiedThisAttempt && generation == _generation && _observations[id]?.state == HealthState.healthy;
   }
   List<HealthPrediction> get predictions {
     final result = <HealthPrediction>[];
