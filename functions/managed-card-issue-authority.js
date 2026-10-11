@@ -61,21 +61,25 @@ function createManagedCardIssueAuthority({db, now=Date.now}) {
         data.qrHash===request.qrHash && data.expiresAt>now();
       return {...publicEntry(data),valid,reason:valid?'active':'not_authorized'};
     }
-    if(typeof readPerson!=='function')deny(503,'Card identity verification unavailable');
-    // The real school-owned Script is authoritative for existing person IDs
-    // and QR credentials. Never issue a card based on arbitrary client data.
-    const person=await readPerson(schoolId,role,personId);
-    if(!person || person.schoolId!==schoolId ||
-        person._syncDeleted===true || person.deleted===true ||
-        typeof person.mobileLinkToken!=='string' ||
-        person.mobileLinkToken.length<20) {
-      deny(409,'Sync a verified school person and QR before issuing a card');
+    // Emergency revocation must work even when the original person record
+    // was deleted, moved or the school-owned Script is temporarily offline.
+    // Issuance/reissuance still require authoritative Script readback.
+    let qrHash=null;
+    if(request.operation!=='revoke'){
+      if(typeof readPerson!=='function')deny(503,'Card identity verification unavailable');
+      const person=await readPerson(schoolId,role,personId);
+      if(!person || person.schoolId!==schoolId ||
+          person._syncDeleted===true || person.deleted===true ||
+          typeof person.mobileLinkToken!=='string' ||
+          person.mobileLinkToken.length<20) {
+        deny(409,'Sync a verified school person and QR before issuing a card');
+      }
+      qrHash=digest(role+'/'+(person.mobileStableId||personId)+'/'+person.mobileLinkToken);
     }
-    const qrHash=digest(role+'/'+(person.mobileStableId||personId)+'/'+person.mobileLinkToken);
     const operationId=request.operationId;
     const commandHash=digest(JSON.stringify([
       request.operation,schoolId,role,personId,request.cardIssueId||null,
-      request.expiresAt||null,operationId,qrHash,
+      request.expiresAt||null,operationId,
     ]));
     const opKey=digest(JSON.stringify([schoolId,operationId]));
     const event=db.doc('school_card_issue_events/'+opKey);
