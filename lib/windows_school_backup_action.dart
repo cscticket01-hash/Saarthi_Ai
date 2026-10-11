@@ -10,6 +10,7 @@ import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_school_backup_export.dart';
 import 'windows_school_id_backup.dart';
+import 'windows_school_cloud_backup.dart';
 
 /// Export only the current school. The unencrypted multi-profile backup API is
 /// deliberately not used for portable school exports.
@@ -120,6 +121,14 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
   final files = <String, File>{};
   final missing = <String>[];
   final root = await WindowsLocalStorage.localFilesDirectory();
+  final cloudSnapshot = await collectWindowsSchoolCloudBackup(
+    schoolId: school,
+    own: own,
+    cacheRoot: Directory(
+      '${root.path}${Platform.pathSeparator}Verified_Cloud_Cache',
+    ),
+    missing: missing,
+  );
   final folderName = origin
       .trim()
       .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
@@ -190,9 +199,7 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
   inspect(snapshot, 'snapshot');
   // Preserve all known local records, including queues/cache. Cloud-only files
   // and external encrypted designer stores need separate authenticated reads.
-  missing.add(
-    'Full cloud file inventory was not fetched; cloud-only files are unverified.',
-  );
+
   final idWorkspace = await collectWindowsSchoolIdBackup(school, own, missing);
   final refreshed = await db.exportActiveSchoolSnapshot();
   if (!own() ||
@@ -207,6 +214,7 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
       'schoolId': school,
       'data': snapshot,
       'idWorkspace': idWorkspace,
+      if (cloudSnapshot != null) 'cloudSnapshot': cloudSnapshot,
     },
     files: files,
     destination: File(location.path),

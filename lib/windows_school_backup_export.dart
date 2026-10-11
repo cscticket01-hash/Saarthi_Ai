@@ -25,7 +25,9 @@ class WindowsSchoolBackupExport {
   }
 
   static void _path(String path) {
-    if (path.split('/').any(
+    if (path
+        .split('/')
+        .any(
           (p) =>
               p.isEmpty ||
               p == '.' ||
@@ -35,7 +37,8 @@ class WindowsSchoolBackupExport {
               p.endsWith('.') ||
               p.endsWith(' ') ||
               p.contains(':'),
-        )) throw StateError('Unsafe backup path');
+        ))
+      throw StateError('Unsafe backup path');
   }
 
   static dynamic _redact(
@@ -263,15 +266,36 @@ class WindowsSchoolBackupExport {
     if (snapshot is! Map || snapshot['schoolId'] != schoolId)
       throw StateError('Snapshot school mismatch');
     final parent = await destination.parent.resolveSymbolicLinks();
-    if (parent != destination.parent.absolute.path)
-      throw StateError('Restore parent links require review');
+    // Windows expands legitimate 8.3 aliases and may vary path casing. Inspect
+    // every ancestor without following links, then compare resolved paths.
+    var ancestor = destination.parent.absolute;
+    while (true) {
+      if (await FileSystemEntity.type(ancestor.path, followLinks: false) ==
+          FileSystemEntityType.link) {
+        throw StateError('Restore parent links require review');
+      }
+      final next = ancestor.parent;
+      if (next.path == ancestor.path) break;
+      ancestor = next;
+    }
+    String canonical(String path) {
+      var value = path.replaceAll(String.fromCharCode(92), '/');
+      if (Platform.isWindows) {
+        if (value.startsWith('//?/')) value = value.substring(4);
+        value = value.toLowerCase();
+      }
+      return value.replaceAll(RegExp(r'/+$'), '');
+    }
+
     final backupPath = await backup.resolveSymbolicLinks();
-    final target = destination.absolute.path;
-    if (backupPath == target ||
-        backupPath.startsWith('$target${Platform.pathSeparator}'))
+    final name = destination.uri.pathSegments.where((p) => p.isNotEmpty).last;
+    final target = canonical('$parent${Platform.pathSeparator}$name');
+    final source = canonical(backupPath);
+    if (source == target || source.startsWith('$target/'))
       throw StateError('Separate restore directory required');
     final partial = Directory(
-        '${destination.path}.partial-${base64UrlEncode(_randomBytes(12))}');
+      '${destination.path}.partial-${base64UrlEncode(_randomBytes(12))}',
+    );
     await partial.create();
     try {
       for (final e in verified.entries) {

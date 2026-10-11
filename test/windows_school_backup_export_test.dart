@@ -24,7 +24,8 @@ void main() {
     return WindowsSchoolBackupExport.export(
       schoolId: school,
       password: password,
-      snapshot: snapshot ??
+      snapshot:
+          snapshot ??
           {
             'schoolId': school,
             'students': [
@@ -38,9 +39,7 @@ void main() {
     );
   }
 
-  test(
-      'encrypted export restores organized content with hashes and no plaintext data',
-      () async {
+  test('encrypted export restores organized content with hashes and no plaintext data', () async {
     final result = await make();
     expect(result['complete'], true);
     final bytes = await File('${root.path}/backup.vsb').readAsString();
@@ -119,26 +118,67 @@ void main() {
       expect(result['missingData'], ['cloud-only document unavailable']);
     },
   );
-  test('single Windows separator and traversal file paths are rejected',
-      () async {
-    final file = File('${root.path}/photo');
-    await file.writeAsBytes([1]);
-    for (final path in [
-      '..' + String.fromCharCode(92) + 'escape.bin',
-      'photos/../escape',
-      '/absolute',
-      'trailing.'
-    ]) {
-      await expectLater(
+  test(
+    'single Windows separator and traversal file paths are rejected',
+    () async {
+      final file = File('${root.path}/photo');
+      await file.writeAsBytes([1]);
+      for (final path in [
+        '..' + String.fromCharCode(92) + 'escape.bin',
+        'photos/../escape',
+        '/absolute',
+        'trailing.',
+      ]) {
+        await expectLater(
           WindowsSchoolBackupExport.export(
-              schoolId: school,
-              password: password,
-              snapshot: {'schoolId': school},
-              files: {path: file},
-              destination: File('${root.path}/invalid.vsb'),
-              stillSameSchool: () => true),
-          throwsStateError);
-      expect(await File('${root.path}/invalid.vsb').exists(), false);
-    }
+            schoolId: school,
+            password: password,
+            snapshot: {'schoolId': school},
+            files: {path: file},
+            destination: File('${root.path}/invalid.vsb'),
+            stillSameSchool: () => true,
+          ),
+          throwsStateError,
+        );
+        expect(await File('${root.path}/invalid.vsb').exists(), false);
+      }
+    },
+  );
+  test('resolved parent aliases permit a fresh sibling restore', () async {
+    await make();
+    final parent = await root.resolveSymbolicLinks();
+    final destination = Directory(
+      '$parent${Platform.pathSeparator}alias-restore',
+    );
+    final result = await WindowsSchoolBackupExport.stageRestore(
+      backup: File('${root.path}/backup.vsb'),
+      password: password,
+      schoolId: school,
+      destination: destination,
+    );
+    expect(result['schoolId'], school);
+    expect(await File('${destination.path}/manifest.json').exists(), true);
   });
+  test(
+    'linked parent restore is rejected without touching linked contents',
+    () async {
+      await make();
+      final real = await Directory('${root.path}/real').create();
+      final link = Link('${root.path}/link');
+      await link.create(real.path);
+      await expectLater(
+        WindowsSchoolBackupExport.stageRestore(
+          backup: File('${root.path}/backup.vsb'),
+          password: password,
+          schoolId: school,
+          destination: Directory('${link.path}/restore'),
+        ),
+        throwsStateError,
+      );
+      expect(await Directory('${real.path}/restore').exists(), false);
+    },
+    skip: Platform.isWindows
+        ? 'Windows symlink privilege is environment dependent; canonical restore covered above'
+        : false,
+  );
 }

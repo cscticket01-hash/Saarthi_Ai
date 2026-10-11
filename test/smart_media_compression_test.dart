@@ -33,11 +33,28 @@ void main() {
       p.g = (p.x * 19 + p.y * 43) % 256;
       p.b = (p.x * 11 + p.y * 97) % 256;
     }
+    final bytes = Uint8List.fromList(img.encodePng(source));
+    final before = Uint8List.fromList(bytes);
     final result = DocumentProcessingEngine.process({
-      'bytes': Uint8List.fromList(img.encodePng(source)),
+      'bytes': bytes,
       'kind': 'portrait',
     });
-    expect(result['quality'], greaterThanOrEqualTo(78));
+    expect(bytes, before);
+    expect(result['attemptedJpegQuality'], greaterThanOrEqualTo(78));
+    if (result['sourceRetained'] == true) {
+      expect(result['quality'], isNull);
+      expect(result['actualBytes'], lessThanOrEqualTo(bytes.length));
+      final retained = img.decodeImage(result['optimized'] as Uint8List)!;
+      expect(retained.width, source.width);
+      expect(retained.height, source.height);
+      // Lossless PNG fallback retains actual source pixels, not a smaller
+      // thumbnail substituted to pass the byte target.
+      expect(retained.getPixel(123, 321).r, source.getPixel(123, 321).r);
+      expect(retained.getPixel(123, 321).g, source.getPixel(123, 321).g);
+      expect(retained.getPixel(123, 321).b, source.getPixel(123, 321).b);
+    } else {
+      expect(result['quality'], greaterThanOrEqualTo(78));
+    }
     expect(result['height'], greaterThanOrEqualTo(640));
     expect(
       (result['width'] as int) / (result['height'] as int),
@@ -52,8 +69,11 @@ void main() {
     final result = DocumentProcessingEngine.process({
       'bytes': Uint8List.fromList(img.encodePng(source)),
     });
-    expect(result['targetBytes'], 50 * 1024);
+    expect(result['targetBytes'], 80 * 1024);
     expect(result['highQuality'], isNotEmpty);
-    expect(result['quality'], greaterThanOrEqualTo(78));
+    expect(result['attemptedJpegQuality'], greaterThanOrEqualTo(78));
+    if (result['sourceRetained'] != true) {
+      expect(result['quality'], greaterThanOrEqualTo(78));
+    }
   });
 }

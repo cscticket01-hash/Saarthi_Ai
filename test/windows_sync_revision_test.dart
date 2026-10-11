@@ -42,6 +42,10 @@ Future<void> openSyncTool(WidgetTester tester, String label) async {
     'Backup School Data',
   };
   final overview = find.widgetWithText(OutlinedButton, 'Overview');
+  // ListView lazily discards the header after scrolling through diagnostics.
+  // Move back through the actual scroller before resolving its button element.
+  await tester.scrollUntilVisible(overview, -350,
+      scrollable: find.byType(Scrollable).first);
   await tester.ensureVisible(overview);
   if (!primary.contains(label)) {
     await tester.tap(overview);
@@ -656,8 +660,20 @@ void main(){
   await tester.pump();expect(find.text('Pending: 1'),findsOneWidget);expect(find.textContaining('1 items pending'),findsOneWidget);
   final item=(await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get()))!.docs.single;
   await tester.runAsync(()async{await item.reference.set({'syncState':'conflict','lastError':'Record revision conflict'},const SetOptions(merge:true));await engine.refreshDetails();});await tester.pump();expect(find.textContaining('1 items need attention'),findsOneWidget);
-  await tester.tap(find.text('Details'));await tester.pumpAndSettle();expect(find.textContaining('status-teacher: conflict'),findsOneWidget);
-  await tester.tap(find.text('Close'));await tester.pumpAndSettle();
+  expect(find.text('Details'), findsNothing);
+  await tester.tap(find.text('Open Sync & Backup Control Center'));
+  await tester.runAsync(() async { await Future<void>.delayed(const Duration(milliseconds: 50)); });
+  await tester.pumpAndSettle();
+  expect(find.byType(WindowsSyncControlCenter), findsOneWidget);
+  await tester.tap(find.text('Pending Uploads'));
+  await tester.pumpAndSettle();
+  await tester.scrollUntilVisible(find.text('teachers_directory • status-teacher'), 250,
+      scrollable: find.byType(Scrollable).first);
+  expect(find.text('teachers_directory • status-teacher'), findsOneWidget);
+  expect(find.textContaining('Status: conflict'), findsOneWidget);
+  await tester.tap(find.byType(BackButton));
+  await tester.pumpAndSettle();
+  expect(find.byType(WindowsSyncStatusCard), findsOneWidget);
   engine.state.value=SchoolCloudState.syncing;await tester.pump();
   expect(find.widgetWithText(OutlinedButton,'Sync Now'),findsNothing);
   expect(find.text('Open Sync & Backup Control Center'),findsOneWidget);

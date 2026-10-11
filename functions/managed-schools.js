@@ -620,6 +620,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
      b.operation==='rehearse'&&!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||b.operation==='backup'&&b.fileId!==undefined)fail(400,'Invalid disaster operation');
   return signed(m,{action:'managed_disaster',operation:b.operation,operationId:b.operationId,...(b.operation==='rehearse'?{fileId:b.fileId}:{})});
  }
+ if(action==='managed/backup/snapshot')return signed(m,{action:'managed_backup_snapshot',schoolId:m.schoolId});
  if(action==='managed/backup')return signed(m,{action:'managed_backup'});
  if(action==='managed/restore'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid backup file ID');return signed(m,{action:'managed_restore',fileId:b.fileId});}
  fail(400,'Unknown managed school operation');

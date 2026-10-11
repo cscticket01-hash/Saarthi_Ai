@@ -23,7 +23,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Analyze changed implementation
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_pending_school_sync.dart lib/windows_sync_recovery.dart lib/sync_recovery_policy.dart lib/windows_sync_engine.dart lib/windows_sync_schedule.dart lib/windows_sync_projection.dart lib/windows_sync_control_center.dart lib/windows_disk_storage.dart lib/windows_drive_quota.dart lib/windows_school_backup_export.dart lib/windows_school_backup_action.dart lib/windows_local_firestore.dart lib/windows_local_settings.dart lib/windows_settings_panel.dart lib/document_processing_engine.dart lib/document_pipeline.dart lib/windows_document_templates.dart lib/windows_backend_bridge.dart lib/main_dashboard_screen_windows.dart lib/student_inventory_policy.dart
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_pending_school_sync.dart lib/windows_sync_recovery.dart lib/sync_recovery_policy.dart lib/windows_sync_engine.dart lib/windows_sync_schedule.dart lib/windows_sync_projection.dart lib/windows_sync_control_center.dart lib/windows_disk_storage.dart lib/windows_drive_quota.dart lib/windows_school_backup_export.dart lib/windows_school_backup_action.dart lib/windows_school_cloud_backup.dart lib/windows_school_id_backup.dart lib/windows_local_firestore.dart lib/windows_local_settings.dart lib/windows_settings_panel.dart lib/document_processing_engine.dart lib/document_pipeline.dart lib/windows_document_templates.dart lib/windows_backend_bridge.dart lib/main_dashboard_screen_windows.dart lib/student_inventory_policy.dart
       - name: Direct recovery and dispatch policy checks
         run: |
           dart .github/tests/sync_recovery_server_policy_test.dart
@@ -32,7 +32,7 @@ jobs:
       - name: Queue, UI, encryption and inventory regressions
         env:
           APPDATA: ${{ runner.temp }}/ten-bug-tests
-        run: flutter test --concurrency=1 test/windows_pending_auto_repair_test.dart test/windows_sync_modern_ui_test.dart test/windows_sync_control_cleanup_test.dart test/windows_sync_revision_test.dart test/windows_sync_durable_admission_test.dart test/windows_school_backup_export_test.dart test/windows_school_backup_snapshot_test.dart test/windows_drive_quota_test.dart test/windows_disk_storage_test.dart test/student_inventory_policy_test.dart test/document_processing_engine_test.dart test/smart_media_compression_test.dart test/document_upload_flow_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/windows_local_first_save_test.dart test/windows_startup_test.dart
+        run: flutter test --concurrency=1 test/windows_pending_auto_repair_test.dart test/windows_sync_modern_ui_test.dart test/windows_sync_control_cleanup_test.dart test/windows_sync_revision_test.dart test/windows_sync_durable_admission_test.dart test/windows_school_backup_export_test.dart test/windows_school_backup_snapshot_test.dart test/windows_school_cloud_backup_test.dart test/windows_drive_quota_test.dart test/windows_disk_storage_test.dart test/student_inventory_policy_test.dart test/document_processing_engine_test.dart test/smart_media_compression_test.dart test/document_upload_flow_test.dart test/id_card_engine_test.dart test/id_card_layout_test.dart test/windows_local_first_save_test.dart test/windows_startup_test.dart
       - uses: actions/upload-artifact@v4
         if: always()
         with:

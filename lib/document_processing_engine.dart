@@ -43,10 +43,16 @@ class DocumentProcessingEngine {
     final decoded = decoder!.decodeFrame(0);
     if (decoded == null)
       throw const FormatException('Image cannot be decoded.');
-    final sourceOrientation = decoded.exif.imageIfd.orientation ?? 1;
+    // JPEG decoding already applies and removes its EXIF orientation. Read
+    // only the bounded source orientation before stripping its metadata, so
+    // retained compressed samples still carry the original display transform.
+    final sourceOrientation =
+        _jpegSourceOrientation(bytes) ?? decoded.exif.imageIfd.orientation ?? 1;
     final orientedSource = img.bakeOrientation(decoded);
-    var image =
-        orientedSource.convert(format: img.Format.uint8, numChannels: 4);
+    var image = orientedSource.convert(
+      format: img.Format.uint8,
+      numChannels: 4,
+    );
     // PNG/PDF raster transparency must become white paper, not black JPEG ink.
     for (final pixel in image) {
       final alpha = pixel.a / 255;
@@ -99,9 +105,10 @@ class DocumentProcessingEngine {
     image.textData = null;
     image.iccProfile = null;
     final highQuality = Uint8List.fromList(img.encodeJpg(image, quality: 94));
-    final target = (input['targetBytes'] as num? ??
-            (portrait ? portraitTarget : photoTarget))
-        .toInt();
+    final target =
+        (input['targetBytes'] as num? ??
+                (portrait ? portraitTarget : photoTarget))
+            .toInt();
     if (target <= 0 || target > sourceLimit) {
       throw const FormatException('Invalid optimization target.');
     }
@@ -177,8 +184,8 @@ class DocumentProcessingEngine {
       'outputQualityReason': retainedSource
           ? 'Existing compressed samples retained; original encoder quality unknown'
           : optimizedMime == 'image/png'
-              ? 'Lossless processed pixels'
-              : 'JPEG quality floor preserved',
+          ? 'Lossless processed pixels'
+          : 'JPEG quality floor preserved',
       'targetMet': targetMet,
       'actualBytes': optimized.length,
       'originalBytes': bytes.length,
@@ -191,9 +198,56 @@ class DocumentProcessingEngine {
       'cleanupStatus': retainedSource
           ? 'Original container retained: cleanup encoding would enlarge upload'
           : corrected
-              ? 'Detected paper boundary corrected'
-              : 'No confident boundary; full image preserved',
+          ? 'Detected paper boundary corrected'
+          : 'No confident boundary; full image preserved',
     };
+  }
+
+  static int? _jpegSourceOrientation(Uint8List source) {
+    if (source[0] != 255 || source[1] != 216) return null;
+    var offset = 2;
+    while (offset + 4 <= source.length) {
+      if (source[offset] != 255) return null;
+      final marker = source[offset + 1];
+      if (marker == 218 || marker == 217) return null;
+      final length = (source[offset + 2] << 8) | source[offset + 3];
+      final end = offset + 2 + length;
+      if (length < 2 || end > source.length) return null;
+      final payload = offset + 4;
+      if (marker == 225 &&
+          length >= 16 &&
+          source[payload] == 69 &&
+          source[payload + 1] == 120 &&
+          source[payload + 2] == 105 &&
+          source[payload + 3] == 102 &&
+          source[payload + 4] == 0 &&
+          source[payload + 5] == 0) {
+        final tiff = payload + 6;
+        final order = source[tiff] == 73 && source[tiff + 1] == 73
+            ? Endian.little
+            : source[tiff] == 77 && source[tiff + 1] == 77
+            ? Endian.big
+            : null;
+        if (order == null) return null;
+        final data = ByteData.sublistView(source);
+        if (data.getUint16(tiff + 2, order) != 42) return null;
+        final ifd = tiff + data.getUint32(tiff + 4, order);
+        if (ifd < tiff + 8 || ifd + 2 > end) return null;
+        final count = data.getUint16(ifd, order);
+        if (count > 512 || ifd + 2 + count * 12 > end) return null;
+        for (var i = 0; i < count; i++) {
+          final entry = ifd + 2 + i * 12;
+          if (data.getUint16(entry, order) == 0x112 &&
+              data.getUint16(entry + 2, order) == 3 &&
+              data.getUint32(entry + 4, order) == 1) {
+            final value = data.getUint16(entry + 8, order);
+            return value >= 1 && value <= 8 ? value : null;
+          }
+        }
+      }
+      offset = end;
+    }
+    return null;
   }
 
   /// Keep compressed image samples without copying location/comment metadata.
@@ -210,8 +264,9 @@ class DocumentProcessingEngine {
         final length = data.getUint32(offset);
         final end = offset + length + 12;
         if (end > source.length) return null;
-        final kind =
-            String.fromCharCodes(source.sublist(offset + 4, offset + 8));
+        final kind = String.fromCharCodes(
+          source.sublist(offset + 4, offset + 8),
+        );
         if (!{'eXIf', 'tEXt', 'zTXt', 'iTXt'}.contains(kind)) {
           result.add(source.sublist(offset, end));
         }
@@ -275,7 +330,7 @@ class DocumentProcessingEngine {
           0,
           0,
           0,
-          0
+          0,
         ]);
         orientation = 1;
       }
@@ -297,12 +352,14 @@ class DocumentProcessingEngine {
         if (light < 100) dark.add(img.Point(x, y));
         if (math.max(p.r, math.max(p.g, p.b)) -
                 math.min(p.r, math.min(p.g, p.b)) >
-            40) colored++;
+            40)
+          colored++;
       }
     // Text-like scans only; portraits and rich colour photos are not rotated.
     if (dark.length < 100 ||
         dark.length > sample.width * sample.height * 0.12 ||
-        colored > sample.width * sample.height * 0.02) return 0;
+        colored > sample.width * sample.height * 0.02)
+      return 0;
     double score(double angle) {
       final r = angle * math.pi / 180,
           rows = List<int>.filled(sample.height + sample.width, 0);
@@ -358,7 +415,8 @@ class DocumentProcessingEngine {
     for (var y = 1; y < gh - 1; y++) {
       for (var x = 1; x < gw - 1; x++) {
         final pixel = sample.getPixel(x * 2, y * 2);
-        final spread = math.max(pixel.r, math.max(pixel.g, pixel.b)) -
+        final spread =
+            math.max(pixel.r, math.max(pixel.g, pixel.b)) -
             math.min(pixel.r, math.min(pixel.g, pixel.b));
         if (light(x * 2, y * 2) > math.max(205, background + 45) &&
             spread < 32) {
@@ -409,7 +467,8 @@ class DocumentProcessingEngine {
     }
     final quadArea = area.abs() / 2;
     if (quadArea < sample.width * sample.height * 0.30 ||
-        points.length * 4 / quadArea < 0.70) return null;
+        points.length * 4 / quadArea < 0.70)
+      return null;
     // Preserve a small margin so border text/seals are not shaved off.
     final cx = p.fold<double>(0, (v, p) => v + p.x.toDouble()) / 4,
         cy = p.fold<double>(0, (v, p) => v + p.y.toDouble()) / 4;
@@ -455,10 +514,12 @@ class DocumentProcessingEngine {
     for (var y = 0; y < h; y++)
       for (var x = 0; x < w; x++) {
         final u = x / (w - 1), v = y / (h - 1), den = g * u + hp * v + 1;
-        final sx =
-            ((a * u + b * v + x0) / den).clamp(0, source.width - 1).toDouble();
-        final sy =
-            ((d * u + e * v + y0) / den).clamp(0, source.height - 1).toDouble();
+        final sx = ((a * u + b * v + x0) / den)
+            .clamp(0, source.width - 1)
+            .toDouble();
+        final sy = ((d * u + e * v + y0) / den)
+            .clamp(0, source.height - 1)
+            .toDouble();
         result.setPixel(
           x,
           y,
