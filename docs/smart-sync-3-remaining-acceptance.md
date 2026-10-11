@@ -24,6 +24,14 @@ Fresh disaster verification rereads the retained recovery generation (fixture ru
 
 `recycle-expiry-v1-20261011-resume-acceptance`, deletion `1791680719426`, deadline `1791767119426`, baseline artifact `11688200206`. Do not recreate it, change timestamps, shorten retention or infer real expiry from mocked clocks. At/after the real deadline verify authenticated expiry, rejected restore, retained audit and no unexpected destructive cleanup.
 
+## Expiry acceptance correction
+
+The old check-expiry mode verified inventory expiry but never attempted expired restore. It now issues exactly one authenticated revision-checked rejection probe against only the retained synthetic TEST notice, only after the real server deadline. It requires HTTP 502 / SCRIPT_OPERATION_FAILED, rejects accepted or unrelated errors, then rereads the unchanged full tombstone and retained snapshot audit/deadline. The sanitized provider error does not prove the exact underlying exception; that limitation remains explicit. Before the deadline and in start-expiry resume mode no restore/write/delete/purge is called. Local focused harness/recycle/monitor regressions: 33/33 PASS (5 harness, 17 recycle, 11 monitoring), after correcting the invocation working directory. Real-day PASS remains PENDING.
+
+Continuation checks are scheduled: corrected hourly/platform result after 75 minutes; same-fixture real-day check on 2026-10-12 at 06:36:20 IST. They must inspect actual latest source before acting.
+
+Original-school fresh Render log access is blocked because the connector has no selected workspace and requires user-confirmed workspace ID. No workspace was selected automatically. Historical correlated logs remain evidence only.
+
 ## Scheduler failure and correction
 
 The failed assertion was the wall-clock difference at test line 40, not the event's monotonic elapsed bound. UTC event timestamps also place the event before the earlier UTC start despite positive monotonic elapsed, demonstrating inconsistent wall-time measurement. The exact OS clock adjustment/precision mechanism is unconfirmed. Elapsed acceptance now uses monotonic Stopwatch for both the event and post-event strict full-hour bound. UTC timestamps and wall-clock difference are retained as diagnostic evidence. One hourly request, wake/reconnect signals and timer cancellation assertions remain unchanged; no tolerance, clock manipulation, shortened interval or skipped test.

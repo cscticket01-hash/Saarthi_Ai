@@ -58,6 +58,30 @@ async function run(){
   if(mode==='check-expiry'){assert.equal(entry.deletedRevision,process.env.VS_TEST_RECYCLE_DELETED_REVISION);assert.equal(entry.deletedAt,Number(process.env.VS_TEST_RECYCLE_DELETED_AT));assert.equal(entry.recoverUntil,Number(process.env.VS_TEST_RECYCLE_RECOVER_UNTIL));}
   report.expiry={fixtureId:expiryId,deletedRevision:entry.deletedRevision,deletedAt:entry.deletedAt,recoverUntil:entry.recoverUntil,serverNow,elapsedMillis:serverNow-entry.deletedAt,status:entry.status,elapsedDayVerified:mode==='check-expiry'&&serverNow>=entry.recoverUntil,captureMarkerVerified:true};
   pass('Same TEST Sheets tombstone and retained Drive snapshot with unchanged server deadline');
+  if(report.expiry.elapsedDayVerified){
+   // Only the retained synthetic TEST fixture, and only after the real server
+   // deadline. Never restore during its valid window or permanently purge it.
+   const rejected=await post(endpoint,{action:'managed/recycle',operation:'restore',schoolId,
+    fileId:row._syncRecycleFileId,operationId:expiryId+'-expired-restore-probe',expectedRecordRevision:entry.deletedRevision},token);
+   report.expiry.restoreProbe={http:rejected.http,code:rejected.data.code||null};
+   assert.equal(rejected.http,502);assert.equal(rejected.data.code,'SCRIPT_OPERATION_FAILED');
+   assert.notEqual(rejected.data.success,true);
+   // This observes rejection; the sanitized provider error does not expose the
+   // owner-only exception, so do not claim an exact provider exception reason.
+   const retained=(await read()).records[expiryId];
+   assert.deepEqual(retained,row);
+   let retainedEntry=null;after='';
+   for(let page=0;page<20;page++){
+    const inventory=await call({action:'managed/recycle',operation:'list',collection:'school_notices',after});
+    assert.ok(inventory.serverNow>=entry.recoverUntil);
+    retainedEntry=inventory.entries.find(item=>item.id===expiryId);
+    if(retainedEntry||!inventory.partial)break;after=inventory.nextAfter;
+   }
+   assert.ok(retainedEntry);assert.equal(retainedEntry.status,'expired');assert.equal(retainedEntry.auditRetained,true);
+   for(const field of ['deletedRevision','deletedAt','recoverUntil'])assert.equal(retainedEntry[field],entry[field]);
+   report.expiry.expiredRestoreRejected=true;report.expiry.auditRetainedAfterProbe=true;
+   pass('Expired TEST restore rejected; unchanged tombstone, snapshot deadline and retained audit read back');
+  }
   report.status=report.expiry.elapsedDayVerified?'PASS':'WAITING_REAL_ELAPSED_DAY';report.fixtureRetained=true;return;
  }
  const id='recycle-rehearsal-'+process.env.GITHUB_RUN_ID+'-'+process.env.GITHUB_RUN_ATTEMPT;

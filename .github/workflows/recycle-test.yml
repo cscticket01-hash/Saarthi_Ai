@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify expiry harness scope and read-only check modes
+      - name: Verify expiry harness scope and deadline-gated rejection probe
         run: node --test .github/scripts/test_recycle_live_modes.test.cjs
       - name: TEST-only create, verified snapshot, restore and duplicate prevention
         env:
@@ -66,7 +66,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify expiry harness scope and read-only check modes
+      - name: Verify expiry harness scope and deadline-gated rejection probe
         run: node --test .github/scripts/test_recycle_live_modes.test.cjs
       - name: Start or resume one retained TEST real-day expiry fixture
         env:
