@@ -14,8 +14,8 @@ TEST_URL = "https://saarthi-sync-v2-test.onrender.com/school-cloud"
 def prepare(source):
     replacements = {
         "const VS_SETUP_SCHOOL_ID = '';": f"const VS_SETUP_SCHOOL_ID = '{SCHOOL}';",
-        "UrlFetchApp.fetch('https://saarthi-oauth-staging.onrender.com/school-cloud'":
-            f"UrlFetchApp.fetch('{TEST_URL}'",
+        "const VS_MANAGED_CENTRAL_DEFAULT = 'https://saarthi-oauth-staging.onrender.com/school-cloud'":
+            f"const VS_MANAGED_CENTRAL_DEFAULT = '{TEST_URL}'",
     }
     if source.count("const VS_SETUP_CREATE_NEW_STORAGE = false;") != 1:
         raise ValueError("Storage creation must remain disabled.")
@@ -49,7 +49,7 @@ def main():
         "Preserve script properties, deployment identity and existing Sheets/Drive storage.\n"
         "Update source and existing deployment version only after owner authorization.\n"
         "Do not run VS_prepareSchoolStorage, create storage, rebind, migrate or purge.\n"
-        "Read signed health after deployment and require reviewed bundle2026-10-11.1.\n"
+        "Read signed health after deployment and require reviewed bundle2026-10-11.2.\n"
         "Keep import/device rollout disabled until their separate acceptance gates pass.\n",
         encoding="utf-8")
     print("Existing TEST upgrade prepared; storage creation disabled; no deployment performed.")

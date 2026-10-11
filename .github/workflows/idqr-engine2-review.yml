@@ -1,0 +1,54 @@
+name: ID QR Engine2 draft review
+'on':
+  push:
+    branches: [feature/smart-id-qr-engine-2]
+    paths: ['lib/**','test/**','school-backend/**','functions/**','.github/scripts/**','.github/tests/**','.github/workflows/idqr-engine2-review.yml','tool/idqr_acceptance/**']
+permissions:
+  contents: read
+jobs:
+  draft-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Analyze new draft components
+        run: flutter analyze lib/id_card_designer.dart lib/id_card_designer_screen.dart lib/id_card_engine.dart lib/id_card_bulk_engine.dart lib/card_issue_lifecycle.dart
+      - name: Existing ID and new bulk regressions
+        run: flutter test test/id_card_engine_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_designer_screen_test.dart
+      - name: Independent actual-renderer final PDF verification
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libzbar0 zbar-tools
+          python -m pip install PyMuPDF==1.26.7 Pillow==12.1.0 zxing-cpp==2.3.0 reportlab==4.4.9
+          python -m unittest discover -s tool/idqr_acceptance -p test_verify_pdf.py
+          python tool/idqr_acceptance/verify_application_bulk.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: actual-draft-renderer-bulk-evidence
+          path: build/idcard-bulk-core
+          retention-days: 14
+      - name: Designer and lifecycle safety
+        run: |
+          dart .github/tests/id_card_designer_foundation.dart
+          dart .github/tests/card_issue_lifecycle_foundation.dart
+      - name: Universal configuration and source regressions
+        working-directory: functions
+        run: |
+          npm install --ignore-scripts
+          node --test test/*.test.js
+      - name: Universal package and upgrade safety
+        run: |
+          python -m unittest discover -s .github/scripts -p 'test_package_universal_script.py'
+          python -m unittest discover -s .github/scripts -p 'test_prepare_existing_test_upgrade.py'
+          python .github/scripts/package_universal_script.py --source-commit "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: universal-apps-script-reviewed-source
+          path: build/universal-script
+          retention-days: 14

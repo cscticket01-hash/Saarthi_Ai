@@ -16,7 +16,7 @@ class ExistingUpgradeTest(unittest.TestCase):
         self.assertIn("const VS_SETUP_CREATE_NEW_STORAGE = false;", result)
         self.assertNotIn("const VS_SETUP_CREATE_NEW_STORAGE = true;", result)
         restored = result.replace(f"const VS_SETUP_SCHOOL_ID = '{upgrade.SCHOOL}';", "const VS_SETUP_SCHOOL_ID = '';", 1)
-        restored = restored.replace(f"UrlFetchApp.fetch('{upgrade.TEST_URL}'", "UrlFetchApp.fetch('https://saarthi-oauth-staging.onrender.com/school-cloud'", 1)
+        restored = restored.replace(f"const VS_MANAGED_CENTRAL_DEFAULT = '{upgrade.TEST_URL}'", "const VS_MANAGED_CENTRAL_DEFAULT = 'https://saarthi-oauth-staging.onrender.com/school-cloud'", 1)
         self.assertEqual(restored, self.source)
 
     def test_creation_enabled_source_rejected(self):

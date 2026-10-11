@@ -1,8 +1,11 @@
 import 'dart:convert';
+
 import 'package:image/image.dart' as img;
 import 'package:zxing2/qrcode.dart' as zx;
 import 'package:printing/printing.dart';
+
 import 'school_qr_link.dart';
+
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
@@ -15,27 +18,80 @@ import 'id_card_layout.dart';
 /// Template metadata is the only source of placement/fit instructions.
 class IdCardEngine {
   static String compactQr(String value) {
-    if(value.startsWith('{')) {
-      try {final decoded=jsonDecode(value);if(decoded is Map && decoded['managed']==true)
-        return SchoolLink.encodeCompact(Map<String,dynamic>.from(decoded));} on FormatException {rethrow;}
+    if (value.startsWith('{')) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is Map && decoded['managed'] == true)
+          return SchoolLink.encodeCompact(Map<String, dynamic>.from(decoded));
+      } on FormatException {
+        rethrow;
+      }
     }
     return value;
   }
+
   static String decodeFinalRaster(Uint8List bytes) {
-    final image=img.decodeImage(bytes);
-    if(image==null)throw const FormatException('Invalid final ID raster.');
-    final pixels=Int32List(image.width*image.height);
-    for(final p in image)pixels[p.y*image.width+p.x]=(p.r.toInt()<<16)|(p.g.toInt()<<8)|p.b.toInt();
-    return zx.QRCodeReader().decode(zx.BinaryBitmap(zx.HybridBinarizer(zx.RGBLuminanceSource(image.width,image.height,pixels)))).text;
+    final image = img.decodeImage(bytes);
+    if (image == null) throw const FormatException('Invalid final ID raster.');
+    final pixels = Int32List(image.width * image.height);
+    for (final p in image)
+      pixels[p.y * image.width + p.x] =
+          (p.r.toInt() << 16) | (p.g.toInt() << 8) | p.b.toInt();
+    return zx.QRCodeReader()
+        .decode(
+          zx.BinaryBitmap(
+            zx.HybridBinarizer(
+              zx.RGBLuminanceSource(image.width, image.height, pixels),
+            ),
+          ),
+        )
+        .text;
   }
-  static Future<void> verifyExport(Uint8List pdf,String expected) async {
-    var pages=0;
-    await for(final page in Printing.raster(pdf,dpi:300)) {
+
+  static Future<void> verifyExport(Uint8List pdf, String expected) async {
+    var pages = 0;
+    await for (final page in Printing.raster(pdf, dpi: 300)) {
       pages++;
-      try {if(decodeFinalRaster(await page.toPng())==compactQr(expected))return;} catch (_) {}
+      try {
+        if (decodeFinalRaster(await page.toPng()) == compactQr(expected))
+          return;
+      } catch (_) {}
     }
-    throw FormatException('Final ID QR failed independent decode on $pages pages. Regenerate the card before printing.');
+    throw FormatException(
+      'Final ID QR failed independent decode on $pages pages. Regenerate the card before printing.',
+    );
   }
+
+  static Future<PreparedIdCard> prepare(
+    IdCardManifest template,
+    Map<String, dynamic> data, {
+    Map<String, Uint8List> images = const {},
+    String qr = '',
+    Map<String, Uint8List> backgrounds = const {},
+    pw.Font? font,
+  }) async {
+    qr = compactQr(qr);
+    for (final r in template.regions) {
+      if (r.isRequired &&
+          (r.kind == 'image'
+              ? images[r.key] == null
+              : r.kind == 'qr'
+              ? qr.isEmpty
+              : (data[r.key]?.toString().trim().isEmpty ?? true)))
+        throw FormatException('Required ID field missing: ${r.key}');
+    }
+    return PreparedIdCard._(
+      template,
+      Map.unmodifiable(data),
+      Map.unmodifiable(images),
+      qr,
+      Map.unmodifiable(backgrounds),
+      font ?? await loadFont(),
+    );
+  }
+
+  static Future<pw.Font> loadFont() async =>
+      pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
 
   static Future<Uint8List> render(
     IdCardManifest template,
@@ -44,35 +100,80 @@ class IdCardEngine {
     String qr = '',
     Map<String, Uint8List> backgrounds = const {},
   }) async {
-    qr=compactQr(qr);
-    for(final r in template.regions){
-      if(r.isRequired && (r.kind=='image'?images[r.key]==null:r.kind=='qr'?qr.isEmpty:(data[r.key]?.toString().trim().isEmpty??true)))throw FormatException('Required ID field missing: ${r.key}');
-    }
-    final regular = pw.Font.ttf(
-      await rootBundle.load('assets/id_card_regular.ttf'),
+    final prepared = await prepare(
+      template,
+      data,
+      images: images,
+      qr: qr,
+      backgrounds: backgrounds,
     );
-    final pdf = pw.Document(theme: pw.ThemeData.withFont(base: regular));
-    pw.Widget side(String name) => pw.SizedBox(
-      width: template.width,
-      height: template.height,
-      child: pw.Stack(
-        children: [
-          pw.Positioned.fill(child: pw.Container(color: PdfColors.white)),
-          if (backgrounds[name] != null)
-            pw.Positioned.fill(
-              child: pw.Image(
-                pw.MemoryImage(backgrounds[name]!),
-                fit: pw.BoxFit.contain,
-              ),
+    final pdf = pw.Document(theme: pw.ThemeData.withFont(base: prepared.font));
+    final width = template.printWidth * PdfPageFormat.mm;
+    final height = template.printHeight * PdfPageFormat.mm;
+    final gap = 8 * PdfPageFormat.mm;
+    pw.Widget card(String name) => pw.SizedBox(
+      width: width,
+      height: height,
+      child: pw.FittedBox(
+        fit: pw.BoxFit.contain,
+        child: prepared.buildSide(name),
+      ),
+    );
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat(2 * width + gap, height),
+        margin: pw.EdgeInsets.zero,
+        build: (_) => pw.Row(
+          children: [
+            card('front'),
+            pw.SizedBox(width: gap),
+            card('back'),
+          ],
+        ),
+      ),
+    );
+    return pdf.save();
+  }
+}
+
+/// Existing single-card artwork reused by isolated bulk imposition.
+class PreparedIdCard {
+  PreparedIdCard._(
+    this.template,
+    this.data,
+    this.images,
+    this.qr,
+    this.backgrounds,
+    this.font,
+  );
+  final IdCardManifest template;
+  final Map<String, dynamic> data;
+  final Map<String, Uint8List> images, backgrounds;
+  final String qr;
+  final pw.Font font;
+  pw.Widget buildSide(String name) => pw.SizedBox(
+    width: template.width,
+    height: template.height,
+    child: pw.Stack(
+      children: [
+        pw.Positioned.fill(child: pw.Container(color: PdfColors.white)),
+        if (backgrounds[name] != null)
+          pw.Positioned.fill(
+            child: pw.Image(
+              pw.MemoryImage(backgrounds[name]!),
+              fit: pw.BoxFit.contain,
             ),
-          for (final r in template.regions.where((r) => r.side == name))
-            pw.Positioned(
-              left: r.x,
-              top: r.y,
-              child: pw.SizedBox(
-                width: r.width,
-                height: r.height,
-                child: pw.Padding(padding:pw.EdgeInsets.all(r.padding),child: pw.ClipRect(
+          ),
+        for (final r in template.regions.where((r) => r.side == name))
+          pw.Positioned(
+            left: r.x,
+            top: r.y,
+            child: pw.SizedBox(
+              width: r.width,
+              height: r.height,
+              child: pw.Padding(
+                padding: pw.EdgeInsets.all(r.padding),
+                child: pw.ClipRect(
                   child: r.kind == 'image'
                       ? images[r.key] == null
                             ? pw.SizedBox()
@@ -92,7 +193,7 @@ class IdCardEngine {
                               )
                       : IdCardLayout.text(
                           '${r.label}${data[r.key] ?? ''}',
-                          font: regular,
+                          font: font,
                           fontSize: r.fontSize,
                           minFontSize: r.minFontSize,
                           wrap: r.wrap,
@@ -104,33 +205,11 @@ class IdCardEngine {
                               ? pw.TextAlign.right
                               : pw.TextAlign.left,
                         ),
-                )),
+                ),
               ),
             ),
-        ],
-      ),
-    );
-    final width = template.printWidth * PdfPageFormat.mm;
-    final height = template.printHeight * PdfPageFormat.mm;
-    final gap = 8 * PdfPageFormat.mm;
-    pw.Widget card(String name) => pw.SizedBox(
-      width: width,
-      height: height,
-      child: pw.FittedBox(fit: pw.BoxFit.contain, child: side(name)),
-    );
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat(2 * width + gap, height),
-        margin: pw.EdgeInsets.zero,
-        build: (_) => pw.Row(
-          children: [
-            card('front'),
-            pw.SizedBox(width: gap),
-            card('back'),
-          ],
-        ),
-      ),
-    );
-    return pdf.save();
-  }
+          ),
+      ],
+    ),
+  );
 }

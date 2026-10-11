@@ -6,6 +6,7 @@
 // Existing deployments keep their stored School ID, root and secret.
 const VS_SETUP_SCHOOL_ID = '';
 const VS_SETUP_CREATE_NEW_STORAGE = false;
+const VS_MANAGED_CENTRAL_DEFAULT = 'https://saarthi-oauth-staging.onrender.com/school-cloud';
 // Cleared at every signed request / top-level record batch. Never persisted.
 let VS_BACKUP_READ_CACHE = null;
 
@@ -15,12 +16,15 @@ let VS_BACKUP_READ_CACHE = null;
 function VS_prepareSchoolStorage() {
   const p = PropertiesService.getScriptProperties();
   const existing = p.getProperty('VS_MANAGED_SCHOOL_ID');
-  const configured = VS_SETUP_SCHOOL_ID.trim();
+  const propertySchool = p.getProperty('VS_SETUP_SCHOOL_ID');
+  const configured = (propertySchool == null ? VS_SETUP_SCHOOL_ID : propertySchool).trim();
   const schoolId = configured || existing;
   if (!schoolId) throw new Error('Set VS_SETUP_SCHOOL_ID to the School ID from the developer website');
   if (existing && configured && existing !== configured) throw new Error('School rebinding is blocked');
   if (existing && !p.getProperty('VS_MANAGED_ROOT_ID')) throw new Error('Existing school root is missing; developer recovery required');
-  VS_setupManagedSchool(schoolId, {startEmpty: !existing && VS_SETUP_CREATE_NEW_STORAGE === true});
+  const storageConsent = p.getProperty('VS_SETUP_CREATE_NEW_STORAGE');
+  if (storageConsent != null && !['true','false'].includes(storageConsent)) throw new Error('Invalid new-storage consent');
+  VS_setupManagedSchool(schoolId, {startEmpty: !existing && (storageConsent == null ? VS_SETUP_CREATE_NEW_STORAGE === true : storageConsent === 'true')});
   VS_managedRoot();
   return {success: true, schoolId: schoolId, storageReady: true};
 }
@@ -610,12 +614,21 @@ function VS_binaryDownload(b) {
   if(item.sha256!==b.expectedSha256||item.version!==b.expectedVersion)throw new Error('School binary version changed; refresh inventory');
   return {...item,binaryDownloadVersion:1,verification:'bytes_hashed'};
 }
+function VS_managedCentralEndpoint(school) {
+  const configured = PropertiesService.getScriptProperties().getProperty('VS_MANAGED_CENTRAL_ENDPOINT');
+  const endpoint = configured == null ? VS_MANAGED_CENTRAL_DEFAULT : configured;
+  const production = 'https://saarthi-oauth-staging.onrender.com/school-cloud';
+  const isolated = 'https://saarthi-sync-v2-test.onrender.com/school-cloud';
+  if (endpoint !== production && endpoint !== isolated) throw new Error('Untrusted central endpoint');
+  if (endpoint === isolated && school !== 'vs-db8afb01a3be46a983c8284714d06e5d') throw new Error('TEST endpoint requires isolated TEST school');
+  return endpoint;
+}
 function VS_managedConnect(b) {
   const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
   if(!school||b.schoolId!==school||!/^[a-f0-9]{64}$/.test(b.ticket||''))throw new Error('School storage connection rejected');
   VS_managedRoot();
   // Fixed trusted broker. Never accept a caller-supplied URL or Firebase token.
-  const response=UrlFetchApp.fetch('https://saarthi-oauth-staging.onrender.com/school-cloud',{method:'post',contentType:'application/json',payload:JSON.stringify({action:'managed/storage/authorize',schoolId:school,ticket:b.ticket}),muteHttpExceptions:true});
+  const response=UrlFetchApp.fetch(VS_managedCentralEndpoint(school),{method:'post',contentType:'application/json',payload:JSON.stringify({action:'managed/storage/authorize',schoolId:school,ticket:b.ticket}),muteHttpExceptions:true,followRedirects:false});
   const authorization=JSON.parse(response.getContentText());
   if(response.getResponseCode()!==200||authorization.success!==true||authorization.schoolId!==school)throw new Error('Connection ticket rejected');
   const secret=p.getProperty('VS_MANAGED_SECRET');if(!/^[a-f0-9]{64}$/.test(secret||''))throw new Error('Managed storage not prepared');
@@ -671,7 +684,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.1',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.2',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
