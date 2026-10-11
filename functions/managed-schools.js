@@ -521,7 +521,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   }
   return {success:true,schoolId:m.schoolId,planId:b.planId,atomicBatch:false,outcomes,remaining:plan.operations.length-outcomes.length,verified:outcomes.length===plan.operations.length&&outcomes.every(o=>o.state==='verified')};
  }
- if(/^managed\\/card\\/(issue|reissue|revoke|status|verify)$/.test(action||'')){
+ if(['managed/card/issue','managed/card/reissue','managed/card/revoke','managed/card/status','managed/card/verify'].includes(action)){
   if(cardIssueEnabled!==true)fail(503,'Card lifecycle is not enabled','CARD_ISSUE_DISABLED');
   const operation=action.substring('managed/card/'.length);
   if(!lease(m).allowed||(m.entitlement.status!=='trial'&&m.entitlement.activated!==true))fail(403,'School licence is inactive');
