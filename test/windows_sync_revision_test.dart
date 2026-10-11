@@ -42,13 +42,14 @@ Future<void> openSyncTool(WidgetTester tester, String label) async {
     'Backup School Data',
   };
   final overview = find.widgetWithText(OutlinedButton, 'Overview');
-  // ListView lazily discards the header after scrolling through diagnostics.
-  // Move back through the actual scroller before resolving its button element.
-  await tester.scrollUntilVisible(overview, -350,
-      scrollable: find.byType(Scrollable).first);
-  await tester.ensureVisible(overview);
+  // Returning from a diagnostic section must restore the header to the
+  // viewport; ensureVisible alone can leave this padded sliver above the root.
+  final scrollState = tester.state<ScrollableState>(find.byType(Scrollable).first);
+  scrollState.position.jumpTo(scrollState.position.minScrollExtent);
+  await tester.pumpAndSettle();
+  expect(overview.hitTestable(), findsOneWidget);
   if (!primary.contains(label)) {
-    await tester.tap(overview);
+    await tester.tap(overview.hitTestable());
     await tester.pumpAndSettle();
     final expander = find.text('Diagnostics and recovery tools');
     await tester.scrollUntilVisible(
@@ -674,6 +675,11 @@ void main(){
   await tester.tap(find.byType(BackButton));
   await tester.pumpAndSettle();
   expect(find.byType(WindowsSyncStatusCard), findsOneWidget);
+  // The real route starts a bounded bootstrap Future.timeout. Exercise its
+  // expiry after leaving the page: disposed state must not update the widget,
+  // and the test must not leave its one-shot deadline pending.
+  await tester.pump(const Duration(seconds: 31));
+  expect(tester.takeException(), isNull);
   engine.state.value=SchoolCloudState.syncing;await tester.pump();
   expect(find.widgetWithText(OutlinedButton,'Sync Now'),findsNothing);
   expect(find.text('Open Sync & Backup Control Center'),findsOneWidget);
