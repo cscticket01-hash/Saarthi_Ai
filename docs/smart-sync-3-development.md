@@ -3,7 +3,19 @@
 Branch: `feature/smart-sync-3`; draft PR #23. Main starts at `de547d2c0a025db815ce97479e3f4f3fc4f8f1a8`. Production publication is not authorized.
 
 
-## Resumed implementation checkpoint (2026-10-11 UTC)
+## Latest verification checkpoint (2026-10-11 UTC)
+
+This section supersedes the historical implementation gaps below; historical results are not certification of the latest source. Application/engine source is `84e8938a670379bd0ce23fb7a6a39b4e1b9ae456`. Subsequent `502839750498bad3cee1a250206281fe2755261c` changes only the disaster workflow's evidence reference. Existing PR #23 remains OPEN/DRAFT.
+
+Confirmed Windows CI exposed a SQLite behavior: even a read-only connection can create WAL/SHM neighbours beside a sealed backup. Commit `b0576ef04347d41c6bd6d427476759de93673155` now inspects a privately copied, hash-verified SQLite generation, includes current-install WAL when checking freshness, and rechecks source bytes without opening the original. Nineteen clean-install cases are included; final hosted results are still required. Restore processor tests now use distinct synthetic profiles rather than accidentally retaining a previous test's profile. Commit `84e8938` corrects the controlled HTTP 503 acceptance assertion to expect the existing failure propagation; production retry/security checks are unchanged.
+
+[Real TEST Recycle Bin 38100482579](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38100482579) completed PASS: authenticated revision-checked restore, retained timestamp, durable readback and duplicate prevention. Its separate expiry-start job retained the same TEST Sheets tombstone and Drive snapshot. Fixture `recycle-expiry-v1-20261011-resume-acceptance`, deletion revision `26d0800c-5f42-4022-bfc2-a959bc5c3c9a`, server `deletedAt=1791680719426`, `recoverUntil=1791767119426`. Earliest actual elapsed-day verification is **2026-10-12 01:05:19.426 UTC / 06:35:19.426 IST**. Baseline artifact: [11688200206](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38100482579/artifacts/11688200206). No deadline was shortened and no permanent deletion was enabled.
+
+Existing isolated TEST Render runtime `84e8938` is live (`dep-db5e3r8473hc73ar1550`, finished 2026-10-11 01:10:49 UTC); TEST Script Version 8 and its existing hourly expiry audit remain unchanged. [Real cloud 38100863265](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38100863265), [platform 38100955120](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38100955120), and [disaster 38100955129](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38100955129) are **IN PROGRESS at this checkpoint**. A workflow still running is not PASS evidence. Local expiry/resume harness checks: **9/9 PASS**, with simulated cases explicitly separate from the real elapsed-day result.
+
+Release remains **BLOCKED**. Original PC/school/three pending entries are untouched; owner-side original Apps Script diagnostic and source line remain unavailable. Physical device acceptance, representative visual readability and separately approved genuine provider-load tests remain outstanding.
+
+## Earlier resumed implementation checkpoint (2026-10-11 UTC)
 
 Continued the existing branch and PR; inspected actual `1647e09` baseline before integration. Development commits: `e779788c0a43e5e88927d972c940fc75e296fbb1`, `f082ac414ee22660beccdb3c8ca68679f85afccf`, `c6c3b11a7da829fc18dc3a1fd866feea2139dc0b`. No original school/PC/pending operation was accessed or changed.
 
