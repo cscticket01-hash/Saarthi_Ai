@@ -28,7 +28,7 @@ void main(){
     final valid = {...row('valid'), 'schoolId': school, 'schoolSyncId': school};
     final deleted = {...row('deleted'), 'schoolId': school, 'deleted': true};
     final tombstone = {...row('tombstone'), '_syncDeleted': true};
-    expect(IdCardSchoolSource.scopedRecords([valid, deleted, tombstone], school).map((r) => r['_recordId']), ['valid']);
+    expect(IdCardSchoolSource.scopedRecords([valid, deleted, tombstone], school).map((r) => r['_recordId']).toList(), ['valid']);
     expect(() => IdCardSchoolSource.scopedRecords([
       {...row('foreign'), 'schoolSyncId': 'vs-${'b' * 32}'},
     ], school), throwsStateError);
