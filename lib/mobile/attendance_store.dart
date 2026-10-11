@@ -25,12 +25,14 @@ class AttendanceStore {
     sha256.convert(utf8.encode(jsonEncode([endpoint, school, role, person]))).toString();
   Future<String> save(String owner, String day, String mode, int capturedAt,
       Map<String, dynamic> gps) async {
+    if(gps['cardIssueId'] != null && !RegExp(r'^[a-f0-9]{64}$').hasMatch(gps['cardIssueId'].toString())) throw StateError('Invalid attendance card identity.');
     final id = sha256.convert(utf8.encode(jsonEncode([owner, day, mode]))).toString();
     await (await database).insert('attendance', {
       'id': id, 'owner': owner, 'day': day, 'mode': mode,
       'capturedAt': capturedAt, 'payload': jsonEncode({
         'latitude': gps['latitude'], 'longitude': gps['longitude'],
         'accuracy': gps['accuracy'], 'clientCapturedAt': capturedAt,
+        if(gps['cardIssueId'] != null)'cardIssueId':gps['cardIssueId'],
       }), 'state': 'pending',
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
     return id; // Only after the durable transaction commits.

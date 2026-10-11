@@ -4,8 +4,15 @@ Map<String, int> monitorSummary(List<Map<String, dynamic>> schools, int now) {
   int number(dynamic n) => n is num ? n.toInt() : 0;
   final active = schools.where((s) => s['managed']==true?schoolOnline(s,now):number(s['lastSeenAt']) >= now - day).length;
   // A stale school summary must never keep students online indefinitely.
-  final live = schools.where((s) => (s['managed']!=true||schoolOnline(s,now)) && number(s['lastSeenAt']) >= now - 10 * 60000 &&
-    number(s['reportedAt'] ?? s['lastSeenAt']) >= now - 10 * 60000);
+  // Student cloud activity is independent of the management PC's heartbeat.
+  // Require a bounded measured report; a future timestamp cannot stay live.
+  final live = schools.where((s) {
+    final reported = s['managed'] == true ? s['reportedAt'] :
+        s['reportedAt'] ?? s['lastSeenAt'];
+    return s['blocked'] != true && s['loginDisabled'] != true &&
+        s['deletedAt'] == null && reported is num && reported.isFinite &&
+        reported > 0 && reported <= now && now - reported <= 10 * 60000;
+  });
   return {
     'totalSchools': schools.length,
     'activeSchools': active,

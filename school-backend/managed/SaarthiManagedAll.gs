@@ -7145,7 +7145,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.3',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.4',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
@@ -7240,21 +7240,23 @@ function VS_readLastSyncDiagnostic() {
   // Owner-editor function ONLY. This is NOT a doGet/doPost action.
   const key='VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2';
   let trace=null;
-  try{
-    const raw=PropertiesService.getScriptProperties().getProperty(key);
-    if(raw){
+  function sanitized(raw,maxAge){
+    if(typeof raw!=='string'||raw.length>4096)return null;
+    try{
       const candidate=JSON.parse(raw);
       if(candidate&&candidate.event==='managed_storage_failure'&&
-          Number.isSafeInteger(candidate.at)&&candidate.at<=Date.now()&&
-          Date.now()-candidate.at<=86400000&&
+          Number.isSafeInteger(candidate.at)&&candidate.at>=0&&candidate.at<=Date.now()&&
+          Date.now()-candidate.at<=maxAge&&
           /^[A-Z0-9_]{4,80}$/.test(candidate.code||'')&&
-          Number.isSafeInteger(candidate.line)&&candidate.line>=0){
-        trace={at:candidate.at,phase:candidate.phase==='authorized_operation'?'authorized_operation':'request_verification',code:candidate.code,line:candidate.line};
+          Number.isSafeInteger(candidate.line)&&candidate.line>=0&&candidate.line<=1000000){
+        return {at:candidate.at,phase:candidate.phase==='authorized_operation'?'authorized_operation':'request_verification',code:candidate.code,line:candidate.line};
       }
-    }
-  }catch(_){}
+    }catch(_){}
+    return null;
+  }
+  try{trace=sanitized(PropertiesService.getScriptProperties().getProperty(key),86400000);}catch(_){}
   if(!trace){
-    try{trace=CacheService.getScriptCache().get('VS_SYNC_DIAGNOSTIC_V1');}catch(_){}
+    try{trace=sanitized(CacheService.getScriptCache().get('VS_SYNC_DIAGNOSTIC_V1'),1800000);}catch(_){}
   }
   Logger.log(trace||'No recent sync diagnostic captured');
 }

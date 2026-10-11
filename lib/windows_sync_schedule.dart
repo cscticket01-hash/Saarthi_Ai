@@ -36,3 +36,36 @@ class WindowsSyncSchedule {
   void reconnected() => request(const Duration(seconds: 2));
   void stop() {reconciliation?.cancel();hourly?.cancel();checkpoint?.cancel();reconciliation = null;hourly = null;checkpoint = null;}
 }
+
+/// Bounded dispatch debounce. Fresh durable changes can advance an older retry
+/// timer; ordinary polling cannot postpone or multiply the pending dispatch.
+class WindowsSyncDispatch {
+  WindowsSyncDispatch(this.dispatch,
+      {Timer Function(Duration,void Function())? once, DateTime Function()? now})
+      : once = once ?? Timer.new, now = now ?? DateTime.now;
+  final void Function() dispatch;
+  final Timer Function(Duration,void Function()) once;
+  final DateTime Function() now;
+  Timer? _timer;
+  DateTime? scheduledAt;
+
+  void request(Duration delay, {bool localMutation = false}) {
+    final bounded = delay.isNegative ? Duration.zero : delay;
+    final due = now().add(bounded);
+    if (_timer?.isActive == true &&
+        (!localMutation || scheduledAt == null || !due.isBefore(scheduledAt!))) return;
+    _timer?.cancel();
+    scheduledAt = due;
+    _timer = once(bounded,() {
+      _timer = null;
+      scheduledAt = null;
+      dispatch();
+    });
+  }
+
+  void cancel() {
+    _timer?.cancel();
+    _timer = null;
+    scheduledAt = null;
+  }
+}

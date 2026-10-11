@@ -65,3 +65,11 @@ flutter:
 
   assets:
     - assets/
+
+  fonts:
+    - family: VidyaNotoBengali
+      fonts:
+        - asset: "assets/fonts/NotoSansBengali[wdth,wght].ttf"
+    - family: VidyaNotoDevanagari
+      fonts:
+        - asset: "assets/fonts/NotoSansDevanagari[wdth,wght].ttf"

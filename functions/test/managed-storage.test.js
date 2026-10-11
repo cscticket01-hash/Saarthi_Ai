@@ -256,7 +256,7 @@ test('notice deletion is acknowledged as a tombstone and removes mobile delta ev
  assert.equal(f.call(deletion).success,true);assert.equal(f.call(deletion).success,true);
  const next=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevisions:first.revisions,knownNoticeRevisions:{n:first.notices[0]._noticeRevision}});
  assert.deepEqual(next.noticeIds,[]);assert.deepEqual(next.notices,[]);
- assert.equal(f.call({action:'managed_health'}).scriptBundleVersion,'2026-10-11.3');
+ assert.equal(f.call({action:'managed_health'}).scriptBundleVersion,'2026-10-11.4');
 });
 
 test('bounded migration resumes across requests and never activates a partial collection',()=>{
@@ -345,7 +345,7 @@ test('diagnostic owner cache is temporary metadata only and cache failure never 
  vm.runInContext(fs.readFileSync('../school-backend/managed/SaarthiManagedAdapter.gs','utf8'),c);
  c.VS_managedVerify=()=>{throw new Error('Invalid request signature');};
  const before=c.VS_managedHandle({postData:{contents:'{}'}});assert.equal(cached[0][0],'VS_SYNC_DIAGNOSTIC_V1');assert.equal(cached[0][2],1800);assert(!cached[0][1].includes(A));
- c.VS_readLastSyncDiagnostic();assert.equal(logs.at(-1),cached[0][1]);
+ c.VS_readLastSyncDiagnostic();assert.equal(logs.at(-1).code,'SCRIPT_SIGNATURE_REJECTED');assert.equal(logs.at(-1).phase,'request_verification');assert.equal(typeof logs.at(-1),'object');
  c.CacheService.getScriptCache=()=>{throw Error('Unavailable');};
  assert.deepEqual(c.VS_managedHandle({postData:{contents:'{}'}}),before);
 });

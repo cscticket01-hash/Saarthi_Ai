@@ -67,7 +67,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   static const reconciliationInterval = Duration(minutes: 4);
   late final _schedule = WindowsSyncSchedule((delay) => scheduleSoon(delay: delay));
-  Timer? _debounceTimer;
+  late final _dispatch = WindowsSyncDispatch(() => unawaited(syncNow()));
   bool _initialized = false;
   final _pause = WindowsSyncPause();
   String? _pauseDeviceId;
@@ -104,7 +104,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final ref = FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause');
     final saved = _pause.pause(duration);
     _pauseGeneration++;
-    _debounceTimer?.cancel();
+    _dispatch.cancel();
     _rerunRequested = false;
     _armPauseExpiry();
     // Gate admission synchronously before awaiting durable persistence.
@@ -442,11 +442,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (lastError == null) state.value = SchoolCloudState.syncPending;
     if (_nextRetry != null && _nextRetry!.isAfter(DateTime.now()))
       delay = _nextRetry!.difference(DateTime.now());
-    // Coalesce a burst without postponing the first durable operation forever.
-    if (_debounceTimer?.isActive == true) return;
-    _debounceTimer = Timer(delay, () {
-      unawaited(syncNow());
-    });
+    // Fresh data can advance an already armed long retry timer. The durable
+    // row-level backoff still protects the older failed operation.
+    _dispatch.request(delay,localMutation:localMutation);
   }
 
   Future<void> changeGoogleConnection({
@@ -567,7 +565,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _resetPaused = true;
     _schedule.stop();
     _pauseTimer?.cancel();
-    _debounceTimer?.cancel();
+    _dispatch.cancel();
     final deadline = DateTime.now().add(const Duration(seconds: 90));
     while (_syncing || _activating > 0) {
       if (DateTime.now().isAfter(deadline)) {
@@ -1277,7 +1275,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').set({'automaticSync': enabled}, const SetOptions(merge: true));
     if (_activeProfileId != origin) return;
     automaticSyncEnabled = enabled;
-    if (!enabled) { _debounceTimer?.cancel(); _rerunRequested = false; }
+    if (!enabled) { _dispatch.cancel(); _rerunRequested = false; }
     else scheduleSoon();
     await refreshDetails();
   }
@@ -1294,7 +1292,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _pause.resume();
     _pauseTimer?.cancel();
     if (_syncing) _rerunRequested = true;
-    _debounceTimer?.cancel();
+    _dispatch.cancel();
     _nextRetry = null;
     recoveryDecision = null;
     _failures = 0;
@@ -1487,24 +1485,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         if (queued.isNotEmpty &&
             (data['_syncRevision'] ?? '') !=
                 (queued.first.data()['baseCloudRevision'] ?? '')) {
-          final ref = db.collection(collection).doc(entry.key);
-          final batch = db.batch();
-          batch.set(
-            db.collection('_windows_sync_conflicts').doc('${queued.first.data()['operationId'] ?? queued.first.id}-${sha256.convert(utf8.encode(data['_syncRevision']?.toString() ?? ''))}'),
-            {
-              'schoolId': school,
-              'collection': collection,
-              'documentId': entry.key,
-              'local': (await ref.get()).data(),
-              'remote': data,
-              'detectedAt': DateTime.now().millisecondsSinceEpoch,
-            },
-          );
-          batch.set(queued.first.reference, {
-            'syncState': 'conflict',
-            'lastError': 'Record revision conflict',
-          }, const SetOptions(merge: true));
-          await batch.commit();
+          // Compare inside the serialized durable writer: a stale pull cannot
+          // re-mark a newer administrator-reviewed operation as conflicted.
+          await db.recordOutboxConflict(queued.first.reference,queued.first.data(),data);
         }
         await db.applySyncedDocument(
           db.collection(collection).doc(entry.key),
@@ -2113,7 +2096,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   void dispose() {
     _schedule.stop();
     _pauseTimer?.cancel();
-    _debounceTimer?.cancel();
+    _dispatch.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _initialized = false;
   }

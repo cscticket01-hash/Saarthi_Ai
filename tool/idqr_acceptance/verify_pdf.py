@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -15,7 +16,7 @@ class AcceptanceError(ValueError):
     pass
 
 
-def decode_original_qr_fallback(path):
+def _decode_original_qr_inprocess(path):
     try:
         import zxingcpp
         from PIL import Image
@@ -27,6 +28,28 @@ def decode_original_qr_fallback(path):
         return [symbol.text for symbol in symbols]
     except Exception as error:
         raise AcceptanceError('Independent original-raster QR decoder failed') from error
+
+
+def decode_original_qr_fallback(path):
+    # Native ZXing runs in a disposable process: its timeout can actually stop
+    # decoding, unlike a cooperative deadline around an in-process native call.
+    try:
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), '--fallback-worker', str(path)],
+            capture_output=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise AcceptanceError('Independent QR fallback unavailable or timed out') from error
+    if result.returncode != 0:
+        raise AcceptanceError('Independent original-raster QR decoder failed')
+    if len(result.stdout) > 1048576:
+        raise AcceptanceError('Independent QR fallback output exceeds safety bound')
+    try:
+        values = json.loads(result.stdout)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise AcceptanceError('Independent QR fallback returned invalid output') from error
+    if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+        raise AcceptanceError('Independent QR fallback returned invalid symbols')
+    return values
 
 
 def positive_number(value):
@@ -140,7 +163,7 @@ def verify(pdf_path, manifest, *, dpis=(150, 300, 600), decoder='zbarimg', decod
                     checks.append({'cardIndex': index, 'dpi': dpi, 'status': 'PASS'})
     return {'verdict': 'PASS', 'pdfSha256': hashlib.sha256(Path(pdf_path).read_bytes()).hexdigest(),
             'cardCount': len(manifest['cards']), 'checks': checks,
-            'decoderPolicy': 'QR-only zbar; exit4 no-symbol only allows QR-only ZXing on original unchanged raster; exactly one expected payload required',
+            'decoderPolicy': 'QR-only zbar; exit4 no-symbol only allows QR-only ZXing on original unchanged raster in a process with a 15-second hard timeout; exactly one expected payload required',
             'declaredNonQrPages': manifest.get('nonQrPages', []),
             'scope': 'Declared non-QR pages are geometry checked, not independently proven free of QR; declared QR regions decoded at every requested resolution; physical printing, complete inventory provenance, text shaping and visual contrast remain UNVERIFIED.'}
 
@@ -161,4 +184,11 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    if len(sys.argv) == 3 and sys.argv[1] == '--fallback-worker':
+        try:
+            print(json.dumps(_decode_original_qr_inprocess(Path(sys.argv[2]))))
+        except Exception:
+            # Parent owns diagnostics; never print raster contents or QR payloads.
+            raise SystemExit(1)
+    else:
+        raise SystemExit(main())

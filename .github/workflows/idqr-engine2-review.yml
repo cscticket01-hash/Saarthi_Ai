@@ -1,10 +1,16 @@
 name: ID QR Engine2 draft review
 'on':
   push:
-    branches: [feature/smart-id-qr-engine-2]
-    paths: ['lib/**','test/**','school-backend/**','functions/**','.github/scripts/**','.github/tests/**','.github/workflows/idqr-engine2-review.yml','tool/idqr_acceptance/**']
+    branches: [feature/smart-id-qr-engine-2, integration/master-review-20261011]
+    paths: ['pubspec.yaml','assets/fonts/**','lib/**','test/**','school-backend/**','functions/**','.github/scripts/**','.github/tests/**','.github/workflows/idqr-engine2-review.yml','tool/idqr_acceptance/**']
+  pull_request:
+    branches: [feature/smart-sync-3-finalization]
+    paths: ['pubspec.yaml','assets/fonts/**','lib/**','test/**','school-backend/**','functions/**','.github/scripts/**','.github/tests/**','.github/workflows/idqr-engine2-review.yml','tool/idqr_acceptance/**']
 permissions:
   contents: read
+concurrency:
+  group: idqr-review-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 jobs:
   draft-source:
     runs-on: ubuntu-latest
@@ -19,7 +25,7 @@ jobs:
       - name: Analyze new draft components
         run: flutter analyze lib/id_card_designer.dart lib/id_card_indic_text.dart lib/id_card_designer_screen.dart lib/id_card_draft_storage_io.dart lib/id_card_engine.dart lib/id_card_bulk_engine.dart lib/id_card_bulk_job_store.dart lib/windows_id_card_designer_entry.dart lib/windows_document_templates.dart lib/card_issue_lifecycle.dart
       - name: Existing ID and new bulk regressions
-        run: flutter test test/id_card_engine_test.dart test/id_card_indic_text_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_bulk_job_store_test.dart test/id_card_designer_screen_test.dart test/id_card_draft_storage_io_test.dart
+        run: flutter test test/id_card_engine_test.dart test/id_card_indic_text_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_bulk_job_store_test.dart test/id_card_designer_screen_test.dart test/id_card_draft_storage_io_test.dart test/qr_card_authorization_test.dart
       - name: Independent actual-renderer final PDF verification
         run: |
           sudo apt-get update -qq
@@ -79,7 +85,7 @@ jobs:
       - run: flutter pub get
       - name: Windows ID Card designer, storage and durable bulk regressions
         run: |
-          flutter test --concurrency=1 test/id_card_engine_test.dart test/id_card_indic_text_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_bulk_job_store_test.dart test/id_card_designer_screen_test.dart test/id_card_draft_storage_io_test.dart
+          flutter test --concurrency=1 test/id_card_engine_test.dart test/id_card_indic_text_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_bulk_job_store_test.dart test/id_card_designer_screen_test.dart test/id_card_draft_storage_io_test.dart test/qr_card_authorization_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Windows ID Card regressions failed' }
       - name: Exact-commit Windows application build review (not a release)
         run: |

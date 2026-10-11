@@ -37,6 +37,13 @@ void main() {
     await store.retryReview('foreign');expect((await store.pending('owner')).single['state'],'needsAttention');
     await store.retryReview('owner');expect(await store.hasDue('owner',100000),true);expect((await store.pending('owner')).single['state'],'pending');
   });
+  test('original issued-card identity survives restart without storing credentials', () async {
+    await store.save('issued-owner','2026-10-08','entry',1000,{...gps,'cardIssueId':'a'*64,'sessionToken':'must-not-store'});
+    await store.close();store=AttendanceStore(openDatabaseOverride:open);
+    final payload=jsonDecode((await store.pending('issued-owner')).single['payload'] as String) as Map;
+    expect(payload['cardIssueId'],'a'*64);expect(payload.containsKey('sessionToken'),false);
+    await expectLater(store.save('issued-owner','2026-10-08','exit',1001,{...gps,'cardIssueId':'invalid'}),throwsStateError);
+  });
   test('SQLite pending count is exact beyond a bounded inventory page', () async {
     final db = await store.database;
     await db.transaction((tx) async { for (var i=0;i<1001;i++) { await tx.insert('attendance', {'id':'row$i','owner':'owner','day':'2026-10-08','mode':'entry','capturedAt':i,'payload':'{}','state':'pending'}); }});

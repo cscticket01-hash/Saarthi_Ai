@@ -19,7 +19,7 @@ void main() {
   });
 
   test('Bengali Assamese and Devanagari use a valid offline rendered image', () async {
-    for (final name in ['বিদ্যা', 'অসমীয়া', 'मोहन']) {
+    for (final name in ['বিদ্যা', 'অসমীয়া ৰ ৱ', 'मोहन', 'বিদ্যা विद्यालय']) {
       expect(IdCardIndicText.needsShaping(name), true);
       final png = await IdCardIndicText.rasterize(
         name, width: 180, height: 35, fontSize: 14,
