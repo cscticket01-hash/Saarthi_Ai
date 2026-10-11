@@ -16,6 +16,8 @@ import 'windows_connect/school_drive_images.dart';
 import 'dart:async';
 import 'windows_admin_sidebar.dart';
 import 'windows_monthly_attendance.dart';
+import 'windows_analytics_identity.dart';
+import 'windows_expense_intent.dart';
 import 'windows_exam_service.dart';
 import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
@@ -7545,6 +7547,14 @@ class AdminAnalyticsScreen extends StatefulWidget {
 }
 
 class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
+  late final String _analyticsProfile;
+  int _loadGeneration = 0;
+
+  void _checkAnalyticsProfile() {
+    if (FirebaseFirestore.instance.activeProfileId != _analyticsProfile)
+      throw StateError('School changed. Reopen analytics.');
+  }
+
   static const List<String> _monthLabels = <String>[
     'Jan',
     'Feb',
@@ -7577,6 +7587,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   @override
   void initState() {
     super.initState();
+    _analyticsProfile = FirebaseFirestore.instance.activeProfileId;
     _selectedYear = _availableYears.first;
     _loadAcademicYearSettingsAndAnalytics();
   }
@@ -7584,6 +7595,10 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   Future<void> _loadAcademicYearSettingsAndAnalytics() async {
     final month = await WindowsAcademicYearSettings.load();
     if (!mounted) return;
+    if (FirebaseFirestore.instance.activeProfileId != _analyticsProfile) {
+      setState(() {_error = 'School changed. Reopen analytics.'; _data = null; _loading = false;});
+      return;
+    }
     setState(() {
       _academicYearRolloverMonth = month;
       _selectedYear = WindowsAcademicYearSettings.startYear(
@@ -7598,15 +7613,20 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     String collection,
   ) async {
     try {
-      return await FirebaseFirestore.instance.collection(collection).get();
+      _checkAnalyticsProfile();
+      final result = await FirebaseFirestore.instance.collection(collection).get();
+      _checkAnalyticsProfile();
+      return result;
     } catch (e) {
-      debugPrint('Analytics $collection read skipped: $e');
-      return null;
+      debugPrint('Analytics $collection read unavailable.');
+      rethrow;
     }
   }
 
   Future<List<Map<String, dynamic>>> _analyticsLoadExpenses() async {
+    _checkAnalyticsProfile();
     final snapshot = await FirebaseFirestore.instance.collection('school_expenses').get();
+    _checkAnalyticsProfile();
     return snapshot.docs.map((d) => <String,dynamic>{...d.data(), 'id': d.id}).toList();
   }
 
@@ -7807,56 +7827,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     return '';
   }
 
-  String _analyticsStudentIdentity(Map<String, dynamic> data) {
-    String valueFor(List<String> keys) {
-      for (final key in keys) {
-        final value = _normalizeIdentityPart(data[key]);
-        if (value.isNotEmpty) return value;
-      }
-      return '';
-    }
-
-    final profileParts = <String>[
-      valueFor(const ['name', 'studentName']),
-      valueFor(const ['parentName', 'fatherName', 'guardianName']),
-      valueFor(const ['dateOfBirth', 'dob']),
-      valueFor(const ['class', 'studentClass']),
-      valueFor(const ['rollNo', 'roll', 'rollNumber']),
-      valueFor(const ['parentContact', 'fatherContact', 'guardianContact']),
-    ];
-    final meaningfulParts = profileParts.where((value) => value.isNotEmpty);
-
-    // Student records can be duplicated with different Firestore document IDs.
-    // Prefer the stable profile fingerprint so one real student is counted once.
-    if (meaningfulParts.length >= 2) {
-      return 'profile:${profileParts.join('|')}';
-    }
-
-    final uid = valueFor(const [
-      'uniqueStudentId',
-      'studentUid',
-      'studentUidTest',
-      'studentId',
-      'admissionNo',
-      'admissionNumber',
-    ]);
-    if (uid.isNotEmpty) return 'uid:$uid';
-
-    final documentId = valueFor(const ['_analyticsDocId']);
-    return documentId.isEmpty ? 'record:${data.hashCode}' : 'doc:$documentId';
-  }
-
-  List<Map<String, dynamic>> _analyticsUniqueStudents(
-    List<Map<String, dynamic>> records,
-  ) {
-    final unique = <String, Map<String, dynamic>>{};
-    for (final record in records) {
-      unique.putIfAbsent(_analyticsStudentIdentity(record), () => record);
-    }
-    return unique.values.toList();
-  }
-
   Future<void> _loadAnalytics() async {
+    final generation = ++_loadGeneration;
     if (mounted) {
       setState(() {
         _loading = true;
@@ -7865,6 +7837,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     }
 
     try {
+      _checkAnalyticsProfile();
       final snapshots =
           await Future.wait<QuerySnapshot<Map<String, dynamic>>?>([
         _analyticsGet('students_directory'),
@@ -7882,7 +7855,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                   })
               .toList() ??
           <Map<String, dynamic>>[];
-      final students = _analyticsUniqueStudents(rawStudents);
+      final students = windowsAnalyticsUniqueStudents(rawStudents);
       final teachers = snapshots[1]?.docs
               .map((doc) => doc.data())
               .toList() ??
@@ -8043,17 +8016,20 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         admissionsByMonth: admissionsByMonth,
       );
 
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
+      _checkAnalyticsProfile();
       setState(() {
         _data = result;
         _loading = false;
       });
     } catch (e) {
-      debugPrint('Admin Analytics load error: $e');
-      if (!mounted) return;
+      debugPrint('Admin Analytics load unavailable.');
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _loading = false;
-        _error = 'Analytics data load nahi ho paaya: $e';
+        _error = FirebaseFirestore.instance.activeProfileId != _analyticsProfile
+            ? 'School changed. Reopen analytics.' : 'Analytics data is unavailable. Retry; existing school records are retained.';
+        if (FirebaseFirestore.instance.activeProfileId != _analyticsProfile) _data = null;
       });
     }
   }
@@ -8368,6 +8344,10 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (FirebaseFirestore.instance.activeProfileId != _analyticsProfile) {
+      return Scaffold(appBar: AppBar(title: const Text('Admin Analytics')),
+        body: const Center(child: Text('School changed. Reopen analytics.')));
+    }
     final data = _data;
 
     return Scaffold(
@@ -10552,6 +10532,10 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                ListTile(title: const Text('Device Management'),
+                  onTap: () => Navigator.of(context).pushNamed('/admin/device-management')),
+                ListTile(title: const Text('Student Import Sheet'),
+                  onTap: () => Navigator.of(context).pushNamed('/admin/student-import')),
                 // =====================================================
                 // ADMIN PROFILE
                 // =====================================================
@@ -23452,7 +23436,8 @@ class _ExamMarksEntryScreenState
 
 
 class WindowsSchoolExpensesScreen extends StatefulWidget {
-  const WindowsSchoolExpensesScreen({super.key});
+  const WindowsSchoolExpensesScreen({super.key, this.call});
+  final Future<Map<String, dynamic>> Function(Map<String, dynamic> body)? call;
 
   @override
   State<WindowsSchoolExpensesScreen> createState() => _WindowsSchoolExpensesScreenState();
@@ -23460,22 +23445,42 @@ class WindowsSchoolExpensesScreen extends StatefulWidget {
 
 class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScreen> {
   final List<Map<String, dynamic>> _items = [];
+  late final String _expenseProfile;
+  late final String _expenseSchool;
+  int _expenseLoadGeneration = 0;
+  void _checkExpenseProfile() {
+    final db = FirebaseFirestore.instance;
+    if (db.activeProfileId != _expenseProfile ||
+        (db.activeProfileIdentity['schoolSyncId']?.toString() ?? '') != _expenseSchool)
+      throw StateError('School changed. Reopen expenses.');
+  }
   bool _loading = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _expenseProfile = FirebaseFirestore.instance.activeProfileId;
+    _expenseSchool = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
     _load();
   }
 
   Future<Map<String, dynamic>> _call(Map<String, dynamic> body) async {
+    _checkExpenseProfile();
+    if (widget.call != null) {
+      final result = await widget.call!(Map<String, dynamic>.from(body));
+      _checkExpenseProfile();
+      if (result['success'] != true) throw StateError('Expense operation not verified.');
+      return result;
+    }
     final scriptUrl = await _windowsGoogleScriptUrl();
+    _checkExpenseProfile();
     final response = await WindowsBackendBridge.post(
       Uri.parse(scriptUrl),
       headers: const {'Content-Type': 'text/plain;charset=utf-8'},
       body: jsonEncode(body),
     );
+    _checkExpenseProfile();
     final decoded = jsonDecode(response.body);
     if (decoded is! Map) throw StateError('Expense backend response invalid hai.');
     final result = Map<String, dynamic>.from(decoded);
@@ -23484,6 +23489,8 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
+    final generation = ++_expenseLoadGeneration;
     setState(() { _loading = true; _error = null; });
     try {
       final result = await _call(const {'action': 'list_school_expenses'});
@@ -23492,10 +23499,10 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
           ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
           : <Map<String, dynamic>>[];
       list.sort((a,b) => (b['timestamp'] as num? ?? 0).compareTo(a['timestamp'] as num? ?? 0));
-      if (!mounted) return;
+      if (!mounted || generation != _expenseLoadGeneration) return;
       setState(() { _items..clear()..addAll(list); _loading = false; });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _expenseLoadGeneration) return;
       setState(() { _error = '$e'; _loading = false; });
     }
   }
@@ -23503,13 +23510,15 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
   double get _total => _items.fold<double>(0, (sum, item) => sum + (double.tryParse(item['amount']?.toString() ?? '') ?? 0));
 
   Future<void> _addExpense() async {
+    _checkExpenseProfile();
+    final intent = WindowsExpenseIntent();
     final title = TextEditingController();
     final amount = TextEditingController();
     final paidTo = TextEditingController();
     final note = TextEditingController();
     String category = 'General';
     bool saving = false;
-    final saved = await showDialog<bool>(
+    final route = DialogRoute<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
@@ -23546,20 +23555,12 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
             FilledButton(
               onPressed: saving ? null : () async {
                 final value = double.tryParse(amount.text.trim());
-                if (title.text.trim().isEmpty || value == null || value <= 0) return;
+                if (title.text.trim().isEmpty || value == null || !value.isFinite || value <= 0) return;
                 setDlg(() => saving = true);
                 try {
-                  await _call({
-                    'action':'save_school_expense',
-                    'expenseId':'EXP-${DateTime.now().millisecondsSinceEpoch}',
-                    'title':title.text.trim(),
-                    'category':category,
-                    'amount':value,
-                    'paidTo':paidTo.text.trim(),
-                    'note':note.text.trim(),
-                    'dateText':DateTime.now().toIso8601String().split('T').first,
-                    'timestamp':DateTime.now().millisecondsSinceEpoch,
-                  });
+                  _checkExpenseProfile();
+                  await _call(intent.prepare(title: title.text, category: category,
+                    amount: value, paidTo: paidTo.text, note: note.text));
                   if (ctx.mounted) Navigator.pop(ctx, true);
                 } catch (e) {
                   if (ctx.mounted) {
@@ -23574,6 +23575,10 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
         ),
       ),
     );
+    final saved = await Navigator.of(context, rootNavigator: true).push(route);
+    // The popped dialog remains mounted during its exit transition.
+    // Keep controllers alive until its widgets have actually been removed.
+    await route.completed;
     title.dispose(); amount.dispose(); paidTo.dispose(); note.dispose();
     if (saved == true) await _load();
   }
@@ -23587,6 +23592,11 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
 
   @override
   Widget build(BuildContext context) {
+    if (FirebaseFirestore.instance.activeProfileId != _expenseProfile ||
+        (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString() ?? '') != _expenseSchool) {
+      return Scaffold(appBar: AppBar(title: const Text('School Expenses')),
+        body: const Center(child: Text('School changed. Reopen expenses.')));
+    }
     return Scaffold(
       backgroundColor: const Color(0xFF0B141A),
       appBar: AppBar(

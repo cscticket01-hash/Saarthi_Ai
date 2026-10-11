@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {Readable}=require('node:stream');
-const {createHandler,isolatedTestSchool}=require('../../staging-school-cloud/server.cjs');
+const {createHandler,isolatedTestSchool,managedFeatureOptions}=require('../../staging-school-cloud/server.cjs');
 async function request(error){
  const logs=[];let status,body;const headers={};
  const req=Readable.from([Buffer.from(JSON.stringify({action:'managed/records',schoolId:'private-school',data:{password:'NEVER_LOG_THIS'}}))]);
@@ -28,14 +28,14 @@ test('isolated TEST mode fails closed and forwards only its school to existing a
  for(const body of [{action:'managed/records',schoolId:'vs-'+ 'b'.repeat(32)},
    {action:'developer/managed/create',schoolId:school},{action:'onboard',schoolId:school},
    {action:'developer/managed/delete',schoolId:school},{action:'managed/records',schoolId:school},
-   {action:'managed/session'},{action:'managed/session',schoolId:'vs-'+ 'b'.repeat(32)}]){
+   {action:'managed/device/register'},{action:'managed/session'},{action:'managed/session',schoolId:'vs-'+ 'b'.repeat(32)}]){
    let called=false,status,out;
    const req=Readable.from([Buffer.from(JSON.stringify(body))]);Object.assign(req,{url:'/school-cloud',method:'POST',headers:{'content-type':'application/json'}});
    const res={setHeader(){},writeHead:s=>status=s,end:v=>out=JSON.parse(v)};
    await createHandler({testSchoolId:school,logger:()=>{},health:async()=>{},handle:async req=>{
      assert.equal(req.body.schoolId,school);
      called=true;throw Object.assign(Error('School login required'),{status:401});}})(req,res);
-   assert.equal(called,body.action==='managed/records'&&body.schoolId===school||body.action==='managed/session'&&body.schoolId===undefined);
+   assert.equal(called,body.action==='managed/records'&&body.schoolId===school||['managed/session','managed/device/register'].includes(body.action)&&body.schoolId===undefined);
    assert.equal(status,called?401:403);assert.equal(out.success,false);
  }
 });
@@ -82,4 +82,16 @@ test('verified Script transport diagnostics expose only fixed stages and categor
  }
  const malformed=await request(Object.assign(new Error('NEVER_LOG_THIS'),failure,{syncDiagnostic:{...context,scriptStage:'private URL',transportKind:'private key'}}));
  assert.equal(malformed.body.schoolId,context.schoolId);assert.equal(malformed.body.scriptStage,undefined);assert.equal(malformed.body.transportKind,undefined);
+});
+
+test('new managed rollout flags are strict and isolated TEST only',()=>{
+ const school='vs-'+'a'.repeat(32);
+ assert.deepEqual(managedFeatureOptions({},null),{deviceAccessEnforced:false,studentImportEnabled:false});
+ for(const env of [{SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'TRUE'},
+  {SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true'}, {SAARTHI_TEST_STUDENT_IMPORT_ENABLED:'true'}])
+  assert.throws(()=>managedFeatureOptions(env,null));
+ assert.throws(()=>managedFeatureOptions({SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true'},school));
+ assert.deepEqual(managedFeatureOptions({SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true',
+  SAARTHI_TEST_STUDENT_IMPORT_ENABLED:'true',SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY:'synthetic-key'},school),
+  {deviceAccessEnforced:true,studentImportEnabled:true,deviceOfflinePrivateKey:'synthetic-key'});
 });

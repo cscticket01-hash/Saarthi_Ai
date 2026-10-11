@@ -7,13 +7,37 @@ bool isRecordSyncConflict(Object error) => error is CentralCloudException
     ? error.recordConflict
     : error is StateError && RegExp(r'record revision conflict|sync operation id conflict', caseSensitive:false).hasMatch(error.toString());
 
+/// The stored retry deadline is an admission boundary, never a claimed send time.
+bool pendingRecordBackoffDue(Map<String,dynamic> item, DateTime now,
+    {bool explicitRetry = false}) {
+  final deadline = item['retryAtMillis'];
+  return explicitRetry || item['syncState'] != 'retry' || deadline is! int ||
+      deadline <= now.millisecondsSinceEpoch;
+}
+
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
   static Future<void> flush({required String profileId,
     required Future<void> Function(String collection, String id, String operation, Map<String,dynamic>? data) send,
-    Future<String> Function(Map<String,dynamic> item)? sendVersioned}) async {
+    Future<String> Function(Map<String,dynamic> item)? sendVersioned,
+    bool Function()? canAdmit, String? onlyQueueId, String? onlyOperationId,
+    bool respectBackoff = false,
+    void Function(Map<String, dynamic>)? onActivity}) async {
     final db=FirebaseFirestore.instance;
+    void report(String stage, String queueId, Map<String,dynamic> item,
+        {String? category, DateTime? retryAt, int? elapsedMicros}) {
+      try {
+        onActivity?.call({'queueCollection':'_windows_firebase_outbox',
+          'queueId':queueId,'operationId':item['operationId'],
+          'schoolId':item['schoolId'] ?? db.activeProfileIdentity['schoolSyncId'],
+          'stage':stage,'at':DateTime.now().millisecondsSinceEpoch,
+          'isRetryable':stage=='retry' && {'networkPath','timeout','server'}.contains(category),
+          if(category!=null)'failureCategory':category,
+          if(retryAt!=null)'retryAt':retryAt.millisecondsSinceEpoch,
+          if(elapsedMicros!=null)'elapsedMicros':elapsedMicros});
+      } catch (_) { /* Observers never affect queue integrity or ACKs. */ }
+    }
     void unchanged() { if(db.activeProfileId != profileId) throw StateError('School changed during sync.'); }
     unchanged();
     final snapshot=await db.collection('_windows_firebase_outbox').get();
@@ -35,39 +59,67 @@ class WindowsPendingSchoolSync {
     Object? firstConflict;
     for(final queued in docs) {
       unchanged();queued.reference.requireOriginProfile();
-      final item=queued.data();
+      if (onlyQueueId != null && queued.id != onlyQueueId) continue;
+      if (canAdmit?.call() == false) break;
+      var item=queued.data();
+      if (sendVersioned != null && item['schoolId'] != null &&
+          item['schoolId'] != db.activeProfileIdentity['schoolSyncId']) {
+        report('needsAttention',queued.id,item,category:'configuration');
+        throw StateError('Pending operation belongs to another school; original binding retained.');
+      }
+      if (onlyOperationId != null && item['operationId'] != onlyOperationId) continue;
+      if (respectBackoff && !pendingRecordBackoffDue(item,DateTime.now(),explicitRetry:onlyOperationId!=null)) continue;
       final collection=item['collection']?.toString()??'';
       final id=item['documentId']?.toString()??'';
       final operation=item['operation']?.toString()??'';
       final raw=item['data'];
       if(collection.isEmpty || id.isEmpty || !{'set','update','delete'}.contains(operation) || operation != 'delete' && raw is! Map) {
-        await queued.reference.update({'syncState':'needsAttention','lastError':'Invalid pending sync record retained for recovery.'});
+        await db.recordOutboxFailure(queued.reference,item,state:'needsAttention',
+          error:'Invalid pending sync record retained for recovery.');
+        report('needsAttention',queued.id,item,category:'configuration');
         continue;
       }
       if(sendVersioned!=null && (item['operationId']==null || item['schoolId']==null)) {
         final ownSchool=db.activeProfileIdentity['schoolSyncId'];
         if(ownSchool is! String || ownSchool.isEmpty)throw StateError('School identity required for queue migration.');
-        // Adding a missing school binding must never replace an existing retry ID.
-        item['operationId'] ??= 'migration-${DateTime.now().microsecondsSinceEpoch}-${queued.id.hashCode.abs()}';
-        item['schoolId']=ownSchool;item['baseCloudRevision']=item['baseCloudRevision']??'';
-        await queued.reference.update(item);
+        // Migration is serialized with local writes and refuses foreign bindings.
+        final migrated = await db.migrateOutboxIdentity(queued.reference,item,schoolId:ownSchool);
+        unchanged();
+        if (migrated == null) continue; // A newer durable edit owns this row now.
+        item = migrated;
       }
       if (item['syncState'] == 'conflict' || item['syncState'] == 'needsAttention') continue;
+      if (canAdmit?.call() == false) break;
       String? revision;
+      final watch = Stopwatch()..start();
+      report('cloudRequest',queued.id,item);
       try {
-        revision = sendVersioned == null ? null : await sendVersioned(item);
-        if (sendVersioned == null) await send(collection,id,operation,raw is Map?Map<String,dynamic>.from(raw):null);
+        if (sendVersioned != null) {
+          final response = sendVersioned(item);
+          report('waitingForAck',queued.id,item);
+          revision = await response;
+        } else {
+          final response = send(collection,id,operation,raw is Map?Map<String,dynamic>.from(raw):null);
+          report('waitingForResponse',queued.id,item);
+          await response;
+        }
       } catch (e) {
         unchanged();
         final decision = windowsSyncRecovery(e);
         final recordConflict = isRecordSyncConflict(e) || decision.kind == SyncFailureKind.conflict;
         final code = e is CentralCloudException ? e.diagnosticCode : '';
-        final latest = (await queued.reference.get()).data();
-        if(latest?['operationId'] == item['operationId']) {
-          await queued.reference.update({'syncState': recordConflict ? 'conflict' : decision.review ? 'needsAttention' : 'retry',
-            'failureCategory': decision.kind.name,
-            'retryCount':(item['retryCount'] as num? ?? 0).toInt()+1, 'lastError': e.toString()});
+        final attempts = (item['retryCount'] as num? ?? 0).toInt()+1;
+        final retryAt = decision.retry ? DateTime.now().add(decision.delay(attempts)) : null;
+        if (decision.kind == SyncFailureKind.timeout) {
+          report('timeout',queued.id,item,category:decision.kind.name,elapsedMicros:watch.elapsedMicroseconds);
         }
+        report(recordConflict ? 'conflict' : decision.kind == SyncFailureKind.authorization
+          ? 'unauthorized' : decision.retry ? 'retry' : 'needsAttention',
+          queued.id,item,category:decision.kind.name,retryAt:retryAt,elapsedMicros:watch.elapsedMicroseconds);
+        await db.recordOutboxFailure(queued.reference,item,
+          state:recordConflict ? 'conflict' : decision.retry ? 'retry' : 'needsAttention',
+          failureCategory:decision.kind.name,retryCount:attempts,
+          retryAtMillis:retryAt?.millisecondsSinceEpoch,error:e.toString());
         if (recordConflict || {'SCRIPT_RECORD_VERIFY_FAILED', 'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED'}.contains(code)) {
           firstConflict ??= e;
           continue; // Independent rows must not be starved by a conflict.
@@ -76,6 +128,8 @@ class WindowsPendingSchoolSync {
       }
       unchanged();
       await db.acknowledgeOutbox(queued.reference,item,revision:revision);
+      watch.stop();
+      report(sendVersioned != null ? 'verified' : 'requestCompleted',queued.id,item,elapsedMicros:watch.elapsedMicroseconds);
     }
     if (firstConflict != null) throw firstConflict;
   }

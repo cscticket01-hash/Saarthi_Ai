@@ -1,4 +1,5 @@
 import '../qr_authentication_engine.dart';
+import '../qr_card_authorization.dart';
 import 'attendance_store.dart';
 import 'package:flutter/foundation.dart';
 
@@ -24,15 +25,49 @@ class SchoolAccessDenied extends StateError {
   SchoolAccessDenied(super.message);
 }
 
+/// A verified server response arrived, but its local cache commit failed.
+/// This must not be described as an upstream request timeout.
+class SchoolCacheFailure extends StateError {
+  SchoolCacheFailure() : super('School response arrived, but local cache verification failed. Previously verified cached data is retained.');
+}
+
 enum SchoolConnectionState { connected, syncing, cachedOffline, connectionError }
 
 class SchoolSession {
-  SchoolSession({http.Client? client, this.cacheDirectory, AttendanceStore? attendanceStore})
-    : _client = client ?? http.Client(), _attendanceStore = attendanceStore ?? AttendanceStore();
+  SchoolSession({http.Client? client, this.cacheDirectory, AttendanceStore? attendanceStore,
+      Future<void> Function(String value)? persistSession,this.cardPublicKey=QrCardAuthorization.configuredPublicKey})
+    : _client = client ?? http.Client(), _attendanceStore = attendanceStore ?? AttendanceStore(),
+      _persistSession = persistSession;
+  final Future<void> Function(String value)? _persistSession;
   final http.Client _client;
+  final String cardPublicKey;
   final AttendanceStore _attendanceStore;
   Future<void>? _attendanceFlush;
   String? _cachedAttendancePermit;
+  String? _cardAuthorizationToken, _cardOfflineLease;
+  int _cardOfflineUntil = 0;
+  bool _cardReaderEnforced = false;
+  Future<void> _adoptCardAuthorization(Map<String,dynamic> response, {String? session,bool restoring=false}) async {
+    final current=link, generation=_generation;
+    if(current == null) return;
+    if(response['cardReaderEnforced'] == true) {
+      final receipt=response['cardAuthorizationToken'],offline=response['cardOfflineLease'];
+      if(receipt is! String || offline is! String || receipt.isEmpty || offline.isEmpty ||
+          response['cardIssueId'] != (current.cardIssueId.isEmpty?null:current.cardIssueId)) {
+        throw SchoolAccessDenied('Fresh card verification is incomplete. School data is retained.');
+      }
+      final at=DateTime.now().millisecondsSinceEpoch,token=session??schoolToken;
+      final onlineExpires=await QrCardAuthorization.verifyOnline(receipt,current,deviceId:deviceId,sessionToken:token,now:at,publicKey:cardPublicKey);
+      final expires=await QrCardAuthorization.verifyOffline(offline,current,deviceId:deviceId,sessionToken:token,now:at,publicKey:cardPublicKey);
+      if(generation!=_generation || !identical(current,link)) throw SchoolAccessDenied('School session changed.');
+      if(!restoring && (onlineExpires==null || expires==null || expires>onlineExpires)) {
+        throw SchoolAccessDenied('Signed card verification failed. School data is retained.');
+      }
+      _cardReaderEnforced=true;_cardAuthorizationToken=receipt;_cardOfflineLease=offline;_cardOfflineUntil=onlineExpires==null || expires==null || expires>onlineExpires?0:expires;
+    } else if(_cardReaderEnforced || current.cardIssueId.isNotEmpty) {
+      throw SchoolAccessDenied('Issued card verification is unavailable. School data is retained.');
+    }
+  }
   String? get _currentAttendancePermit {
     final token=_cachedAttendancePermit, current=link;
     if(token==null || current==null || !cachedAccessAllowed)return null;
@@ -81,12 +116,21 @@ class SchoolSession {
   }
 
   Future<void> saveAttendance(Map<String, dynamic> gps, int capturedAt, String mode) async {
-    final owner = _attendanceOwner;
-    if (owner == null || !cachedAccessAllowed) throw SchoolAccessDenied('Verified school access required.');
+    final owner = _attendanceOwner,current=link,generation=_generation;
+    if (owner == null || current==null || !cachedAccessAllowed) throw SchoolAccessDenied('Verified school access required.');
     if (!['entry', 'exit'].contains(mode) || capturedAt <= 0) throw StateError('Invalid attendance capture.');
     final day = DateTime.fromMillisecondsSinceEpoch(capturedAt, isUtc: true).add(const Duration(hours: 5, minutes: 30));
     final date = '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
-    await _attendanceStore.save(owner, date, mode, capturedAt, gps);
+    final approval=<String,dynamic>{};
+    if(_cardReaderEnforced || current.cardIssueId.isNotEmpty) {
+      final permit=_currentAttendancePermit,offline=_cardOfflineLease;
+      final expires=await QrCardAuthorization.verifyOffline(offline,current,deviceId:deviceId,sessionToken:schoolToken,now:capturedAt,publicKey:cardPublicKey);
+      if(permit==null || offline==null || expires==null || capturedAt>DateTime.now().millisecondsSinceEpoch+120000) throw SchoolAccessDenied('Original attendance approval is unavailable.');
+      approval.addAll({'originalAttendancePermit':permit,'originalPermitHash':sha256.convert(utf8.encode(permit)).toString(),'originalCardOfflineLease':offline});
+    }
+    if(generation!=_generation || !identical(current,link)) throw SchoolAccessDenied('School session changed.');
+    await _attendanceStore.save(owner, date, mode, capturedAt, {...gps,...approval,if(current.cardIssueId.isNotEmpty)'cardIssueId':current.cardIssueId});
+    if(generation!=_generation || !identical(current,link)) throw SchoolAccessDenied('School session changed; original capture retained.');
     await refreshAttendanceStatus();
     unawaited(flushAttendance().catchError((_) {}));
   }
@@ -133,8 +177,17 @@ class SchoolSession {
       try {
         final payload = Map<String, dynamic>.from(jsonDecode(row['payload'] as String));
         final request = {...payload, 'role': current.role, 'personId': current.personId,
-          'linkToken': current.linkToken, 'mode': row['mode'], 'attendancePermit': permitToken};
+          'linkToken': current.linkToken, 'mode': row['mode'], 'attendancePermit': payload['originalAttendancePermit']??permitToken};
         if (row['state'] == 'pending') {
+          if(payload['cardIssueId'] != null && payload['cardIssueId'] != current.cardIssueId) throw StateError('Attendance card changed; school review required; original capture retained.');
+          if(_cardReaderEnforced || current.cardIssueId.isNotEmpty) {
+            final original=payload['originalAttendancePermit'],proof=payload['originalCardOfflineLease'];
+            if(original is! String || proof is! String || payload['originalPermitHash']!=sha256.convert(utf8.encode(original)).toString()) throw StateError('Original attendance approval needs school review; capture retained.');
+            final captured=payload['clientCapturedAt'];
+            final originalExpiry=captured is int?await QrCardAuthorization.verifyOffline(proof,current,deviceId:deviceId,sessionToken:schoolToken,now:captured,publicKey:cardPublicKey):null;
+            final oldPermit=jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(original.split('.').first)))) as Map;
+            if(originalExpiry==null || originalExpiry<=at || oldPermit['expiresAt'] is! int || oldPermit['expiresAt']<=at) throw StateError('Original attendance approval expired; school review required; capture retained.');
+          }
           if (row['day'] != permit['day']) throw StateError('Attendance day needs school review; original capture retained.');
           final expectedId = sha256.convert(utf8.encode(jsonEncode([
             current.schoolId, permit['role'], permit['personId'], row['day'], row['mode']]))).toString();
@@ -180,6 +233,7 @@ class SchoolSession {
   Timer? _recoveryTimer;
   final connectionChanges = ValueNotifier<int>(0);
   DateTime? lastDashboardVerifiedAt;
+  bool dashboardCleanupDeferred = false;
   DateTime? _pushRegisteredAt;
   String? _registeredPushToken;
   Duration? lastDashboardRefreshDuration;
@@ -193,6 +247,7 @@ class SchoolSession {
   int _policyExpiresAt = 0;
   bool get cachedAccessAllowed =>
       loggedIn &&
+      ((!_cardReaderEnforced && link!.cardIssueId.isEmpty) || DateTime.now().millisecondsSinceEpoch < _cardOfflineUntil) &&
       DateTime.now().millisecondsSinceEpoch < _expiresAt &&
       (_policyExpiresAt == 0 ||
           DateTime.now().millisecondsSinceEpoch < _policyExpiresAt);
@@ -227,6 +282,7 @@ class SchoolSession {
       );
       link = restoredLink;
       schoolToken = d['schoolToken'];
+      await _adoptCardAuthorization(Map<String,dynamic>.from(d),restoring:true);
       messaging = d['messaging'] is Map
           ? Map<String, dynamic>.from(d['messaging'])
           : null;
@@ -284,6 +340,9 @@ class SchoolSession {
                 ...body,
                 'action': action,
                 'sessionToken': schoolToken,
+                'deviceId':deviceId,
+                if(_cardAuthorizationToken != null)'cardAuthorizationToken':_cardAuthorizationToken,
+                if(current.cardIssueId.isNotEmpty)'cardIssueId':current.cardIssueId,
               },
             }),
           )
@@ -312,6 +371,7 @@ class SchoolSession {
         await clear();
         throw SchoolAccessDenied('School identity mismatch');
       }
+      if(action!='mobile_login') { await _adoptCardAuthorization(Map<String,dynamic>.from(d)); unchanged(); }
       if (d['policyExpiresAt'] is num)
         _policyExpiresAt = (d['policyExpiresAt'] as num).toInt();
       if(action!='mobile_login' && d['attendancePermit'] is String)_cachedAttendancePermit=d['attendancePermit'] as String;
@@ -414,6 +474,7 @@ class SchoolSession {
   }) async {
     await clear();
     link = newLink;
+    if(deviceId.isEmpty) {deviceId=base64UrlEncode(List.generate(32,(_) => Random.secure().nextInt(256)));await _secure.write(key:'vs_mobile_device',value:deviceId);}
     final generation = _generation;
     late final Map<String, dynamic> login;
     try {
@@ -435,7 +496,9 @@ class SchoolSession {
       await clear();
       throw StateError('School returned an invalid login session.');
     }
+    try {
     schoolToken = login['sessionToken'] as String;
+    await _adoptCardAuthorization(login,session:schoolToken);
     if(login['attendancePermit'] is String)_cachedAttendancePermit=login['attendancePermit'] as String;
     _expiresAt = (login['expiresAt'] as num).toInt();
     person = Map<String, dynamic>.from(login['person'] ?? {});
@@ -448,6 +511,7 @@ class SchoolSession {
       throw StateError('School messaging project mismatch');
     }
     await _persist();
+    } catch (_) { if(generation==_generation) await clear(); rethrow; }
   }
 
   Future<void> _persist() async {
@@ -461,6 +525,10 @@ class SchoolSession {
       'schoolName': schoolName,
       'expiresAt': _expiresAt,
       'policyExpiresAt': _policyExpiresAt,
+      'cardReaderEnforced':_cardReaderEnforced,
+      'cardIssueId':link!.cardIssueId.isEmpty?null:link!.cardIssueId,
+      if(_cardAuthorizationToken != null)'cardAuthorizationToken':_cardAuthorizationToken,
+      if(_cardOfflineLease != null)'cardOfflineLease':_cardOfflineLease,
       'cacheSchool': link!.projectId,
       'cachePerson': link!.personId,
       'dashboard': dashboard,
@@ -468,8 +536,10 @@ class SchoolSession {
       'pdfCache': _pdfCache,
     });
     final write = _storageTail.then((_) async {
-      if (generation == _generation)
-        await _secure.write(key: 'vs_mobile_session', value: value);
+      if (generation == _generation) {
+        if (_persistSession != null) await _persistSession!(value);
+        else await _secure.write(key: 'vs_mobile_session', value: value);
+      }
     });
     _storageTail = write.then<void>(
       (_) {},
@@ -503,6 +573,8 @@ class SchoolSession {
     final watch = Stopwatch()..start();
     final pending = _refreshDashboard();
     _refresh = pending;
+    connectionMessage = 'Checking the latest school dashboard; previously verified data remains available.';
+    connectionChanges.value++;
     pending.then(
       (_) {
         watch.stop();
@@ -510,7 +582,9 @@ class SchoolSession {
         lastDashboardRefreshDuration = watch.elapsed;
         _refreshFailures = 0;
         _recoveryTimer?.cancel();
-        connectionMessage = 'School cloud verified.';
+        connectionMessage = dashboardCleanupDeferred
+            ? 'School cloud verified. Optional local file cleanup is deferred.'
+            : 'School cloud verified.';
         connectionState = SchoolConnectionState.connected;
         connectionChanges.value++;
         if (identical(_refresh, pending)) _refresh = null;
@@ -521,8 +595,9 @@ class SchoolSession {
         lastDashboardRefreshDuration = watch.elapsed;
         // A failed API request does not prove the phone has no internet.
         connectionState = SchoolConnectionState.connectionError;
-        connectionMessage = error is SchoolApiFailure ? error.userMessage
-            : error is TimeoutException ? 'School server took too long to respond. Cached data is retained.'
+        connectionMessage = error is SchoolCacheFailure ? error.message
+            : error is SchoolApiFailure ? error.userMessage
+            : error is TimeoutException ? 'Latest school dashboard refresh took too long; its response is unverified. Previously verified cached data is retained.'
             : error is SocketException || error is http.ClientException
                 ? 'Network connection to the school server failed. Check connectivity; cached data is retained.'
                 : 'School connection needs review. Cached data is retained.';
@@ -561,8 +636,12 @@ class SchoolSession {
     });
     if (generation != _generation)
       throw SchoolAccessDenied('School session changed.');
+    final old = dashboard, oldPerson = person;
+    final previousVerified = lastDashboardVerifiedAt;
+    final oldPdfs = Map<String, dynamic>.from(_pdfCache);
+    final merged = {...dashboard, ...result};
+    final removedPdfs = <String, dynamic>{};
     if (result['unchanged'] != true) {
-      final merged = {...dashboard, ...result};
       if (result['noticesDelta'] == true && result['noticeIds'] is List) {
         final ids = (result['noticeIds'] as List).whereType<String>().toList();
         final rows = <String, Map>{};
@@ -574,50 +653,55 @@ class SchoolSession {
         }
         merged['notices'] = [for (final id in ids) if (rows[id] != null) rows[id]];
       }
-      if (jsonEncode(merged).length > 2 * 1024 * 1024)
-        throw StateError('School response exceeds cache safety limit.');
-      final old = dashboard, oldPerson = person;
-      final removedPdfs = <String, dynamic>{};
       if (result.containsKey('idCardPackage') && result['idCardPackage'] == null && _pdfCache.containsKey('idCard')) {
-        removedPdfs['idCard'] = _pdfCache.remove('idCard');
+        removedPdfs['idCard'] = _pdfCache['idCard'];
       }
       if (result['reportCards'] is List) {
         final current = (result['reportCards'] as List).whereType<Map>().map((r) =>
             'report:${r['id'] ?? r['reportCardId'] ?? r['examName'] ?? 'current'}').toSet();
-        for (final key in _pdfCache.keys.where((key) => key.startsWith('report:') && !current.contains(key)).toList()) {
-          removedPdfs[key] = _pdfCache.remove(key);
+        for (final key in _pdfCache.keys.where((key) => key.startsWith('report:') && !current.contains(key))) {
+          removedPdfs[key] = _pdfCache[key];
         }
       }
-      dashboard = merged;
-      person = Map<String, dynamic>.from(dashboard['person'] as Map? ?? person);
-      try {
-        await _persist();
-      } catch (_) {
-        dashboard = old;
-        person = oldPerson;
-        _pdfCache.addAll(removedPdfs);
-        rethrow;
-      }
-      for (final key in removedPdfs.keys) _pdfMemory.remove(key);
-      // Only acknowledged removal invalidates private files. Temporary outages
-      // never enter this path; unlink only files no longer referenced in this tenant.
-      for (final metadata in removedPdfs.values.whereType<Map>()) {
-        if (generation != _generation) break;
-        final hash = metadata['hash'];
-        if (hash is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(hash) &&
-            !_pdfCache.values.whereType<Map>().any((m) => m['hash'] == hash)) {
-          try { final file = File('${(await _files()).path}/$hash.pdf');
-            if (await file.exists()) await file.delete();
-          } on FileSystemException { /* Inaccessible orphan is not an active cache entry. */ }
-        }
-      }
-    } else {
-      dashboard = {...dashboard, ...result};
-      await _persist();
     }
-    final previousVerified = lastDashboardVerifiedAt;
+    if (jsonEncode(merged).length > 2 * 1024 * 1024)
+      throw StateError('School response exceeds cache safety limit.');
+    dashboard = merged;
+    person = Map<String, dynamic>.from(dashboard['person'] as Map? ?? person);
+    for (final key in removedPdfs.keys) _pdfCache.remove(key);
     lastDashboardVerifiedAt = DateTime.now();
-    try { await _persist(); } catch (_) { lastDashboardVerifiedAt = previousVerified; rethrow; }
+    try {
+      // One cache commit binds content and its verified timestamp. No second
+      // write can fail after the new dashboard has already been accepted.
+      await _persist();
+    } catch (_) {
+      if (generation != _generation) throw SchoolAccessDenied('School session changed.');
+      dashboard = old;
+      person = oldPerson;
+      lastDashboardVerifiedAt = previousVerified;
+      _pdfCache = oldPdfs;
+      throw SchoolCacheFailure();
+    }
+    if (generation != _generation) throw SchoolAccessDenied('School session changed.');
+    dashboardCleanupDeferred = false;
+    for (final key in removedPdfs.keys) _pdfMemory.remove(key);
+    // Only acknowledged removal invalidates private files. Temporary outages
+    // never enter this path; unlink only files no longer referenced in this tenant.
+    for (final metadata in removedPdfs.values.whereType<Map>()) {
+      if (generation != _generation) break;
+      final hash = metadata['hash'];
+      if (hash is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(hash) &&
+          !_pdfCache.values.whereType<Map>().any((m) => m['hash'] == hash)) {
+        try { final file = File('${(await _files()).path}/$hash.pdf');
+          if (await file.exists()) await file.delete();
+        } catch (_) {
+          // An orphan-cleanup failure cannot undo the committed dashboard ACK.
+          // Its file remains retained and no longer referenced by active cache.
+          dashboardCleanupDeferred = true;
+        }
+      }
+    }
+    if (generation != _generation) throw SchoolAccessDenied('School session changed.');
     return dashboard;
   }
 
@@ -745,6 +829,7 @@ class SchoolSession {
     _recoveryTimer?.cancel();
     _refreshFailures = 0;
     _cachedAttendancePermit=null;
+    _cardAuthorizationToken=null;_cardOfflineLease=null;_cardOfflineUntil=0;_cardReaderEnforced=false;
     attendanceStatusReady = false;
     attendancePending = 0; attendanceAccepted = 0; attendanceFailure = ''; lastAttendanceAck = null;
     attendanceChanges.value++;
@@ -758,6 +843,7 @@ class SchoolSession {
     dashboard = {};
     connectionState = SchoolConnectionState.cachedOffline;
     lastDashboardVerifiedAt = null;
+    dashboardCleanupDeferred = false;
     _pdfCache = {};
     _pdfMemory = {};
     _refresh = null;

@@ -14,8 +14,8 @@ original = source.read_text(encoding="utf-8")
 replacements = {
     "const VS_SETUP_SCHOOL_ID = '';": f"const VS_SETUP_SCHOOL_ID = '{SCHOOL}';",
     "const VS_SETUP_CREATE_NEW_STORAGE = false;": "const VS_SETUP_CREATE_NEW_STORAGE = true;",
-    "UrlFetchApp.fetch('https://saarthi-oauth-staging.onrender.com/school-cloud'":
-        f"UrlFetchApp.fetch('{TEST_URL}'",
+    "const VS_MANAGED_CENTRAL_DEFAULT = 'https://saarthi-oauth-staging.onrender.com/school-cloud'":
+        f"const VS_MANAGED_CENTRAL_DEFAULT = '{TEST_URL}'",
 }
 prepared = original
 for old, new in replacements.items():

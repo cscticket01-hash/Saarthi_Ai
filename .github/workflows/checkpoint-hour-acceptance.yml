@@ -1,0 +1,34 @@
+name: Actual elapsed durable checkpoint acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/smart-sync-3-finalization, feature/smart-sync-3]
+    paths:
+      - lib/windows_sync_schedule.dart
+      - .github/tests/windows_checkpoint_elapsed.dart
+      - .github/workflows/checkpoint-hour-acceptance.yml
+permissions:
+  contents: read
+concurrency:
+  group: actual-elapsed-checkpoint-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  actual-checkpoint-hour:
+    if: github.ref == 'refs/heads/feature/smart-sync-3-finalization' || github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - name: Actual hour with ordinary polling and restored durable checkpoint
+        timeout-minutes: 70
+        env:
+          ACCEPTANCE_SOURCE_SHA: ${{ github.sha }}
+        run: dart .github/tests/windows_checkpoint_elapsed.dart
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: actual-checkpoint-hour-${{ github.sha }}
+          path: build/hourly-standby/checkpoint-elapsed.json
+          if-no-files-found: warn
+          retention-days: 14

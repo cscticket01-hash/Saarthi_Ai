@@ -27,13 +27,16 @@ class SchoolCloudEngine extends ChangeNotifier {
     Future<Map<String, dynamic>?> Function()? legacyAccess,
     Future<void> Function(Map<String, dynamic>, int)? touchClock,
     DateTime Function()? clock,
-  }) : _read = readIdentity ?? CentralSchoolCloud.saved,
+    Future<bool> Function(Map<String,dynamic>, Map<String,dynamic>, int)? verifyDeviceLease,
+  }) : _deviceVerifier = verifyDeviceLease ?? _verifyDeviceLease,
+       _read = readIdentity ?? CentralSchoolCloud.saved,
        _verify = verify ?? (() => ManagedSchoolSession.call('managed/session')),
        _persist =
            persist ??
            ((identity, access) => CentralSchoolCloud.updateSession(
              identity['schoolId'],
-             {'verifiedAccess': access},
+             {'verifiedAccess': access,
+              if(access['deviceEnforced']==true || identity['deviceEnforced']==true)'deviceEnforced':true},
              expectedUid: identity['uid'],
            )),
        _activate =
@@ -57,6 +60,29 @@ class SchoolCloudEngine extends ChangeNotifier {
   final Future<void> Function() _activate;
   final Future<Map<String, dynamic>?> Function() _legacy;
   final DateTime Function() _clock;
+  final Future<bool> Function(Map<String,dynamic>,Map<String,dynamic>,int) _deviceVerifier;
+  int _deviceLeaseExpiry=0;
+  bool _deviceEnforcedSeen=false;
+  static const deviceEnforcementRequired=bool.fromEnvironment('SAARTHI_DEVICE_ENFORCEMENT_REQUIRED');
+  bool get _requiresDeviceProof => deviceEnforcementRequired || _deviceEnforcedSeen || identity?['deviceEnforced']==true || access?['deviceEnforced']==true;
+  static Future<bool> _verifyDeviceLease(Map<String,dynamic> identity,Map<String,dynamic> access,int now) async {
+    final token=access['offlineLease'];
+    if(token is! String || access['device'] is! Map || access['device']['authorizedAt'] is! int ||
+        identity['endpoint'] is! String || identity['uid'] is! String)return false;
+    return ManagedDeviceCredentials.verifyLease(token,schoolId:identity['schoolId'],uid:identity['uid'],
+      deviceIdentity:await ManagedDeviceCredentials.identity(accountUid:identity['uid'],endpoint:identity['endpoint']),
+      generationHash:await ManagedDeviceCredentials.generationHash(identity['schoolId'],accountUid:identity['uid'],
+        endpoint:identity['endpoint'],authorizedAt:(access['device'] as Map)['authorizedAt'] as int),now:now);
+  }
+  Future<void> _refreshDeviceProof() async {
+    _deviceLeaseExpiry=0;
+    if(!_requiresDeviceProof || identity==null || access==null)return;
+    final now=_clock().millisecondsSinceEpoch;
+    if(await _deviceVerifier(identity!,access!,now)) {
+      final payload=jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize((access!['offlineLease'] as String).split('.').first))));
+      _deviceLeaseExpiry=(payload['expiresAt'] as num).toInt();
+    }
+  }
   final Future<void> Function(Map<String, dynamic>, int) _touch;
   Map<String, dynamic>? identity, access;
   SchoolCloudState state = SchoolCloudState.authRequired;
@@ -75,6 +101,7 @@ class SchoolCloudEngine extends ChangeNotifier {
   bool get hasIdentity => identity != null;
   bool get canOpen => _localReady && _leaseUsable;
   bool get _leaseUsable =>
+      (!_requiresDeviceProof || _deviceLeaseExpiry > _clock().millisecondsSinceEpoch) &&
       access != null &&
       sameIdentity(access!, identity!) &&
       access!['allowed'] == true &&
@@ -128,6 +155,8 @@ class SchoolCloudEngine extends ChangeNotifier {
     _localReady = false;
     identity = null;
     access = null;
+    _deviceLeaseExpiry=0;
+    _deviceEnforcedSeen=false;
     error = null;
     _notify();
     try {
@@ -135,10 +164,16 @@ class SchoolCloudEngine extends ChangeNotifier {
       if (generation != _generation || _disposed) return;
       if (saved['managed'] == true) {
         identity = Map<String, dynamic>.from(saved);
+        _deviceEnforcedSeen=saved['deviceEnforced']==true;
         final cached = saved['verifiedAccess'] is Map
             ? Map<String, dynamic>.from(saved['verifiedAccess'])
             : await _legacy();
-        if (cached != null && sameIdentity(cached, saved)) access = cached;
+        if (cached != null && sameIdentity(cached, saved)) {
+          access = cached;
+          _deviceEnforcedSeen = _deviceEnforcedSeen || cached['deviceEnforced']==true;
+        }
+        await _refreshDeviceProof();
+        if(generation != _generation || _disposed)return;
         if (_leaseUsable) await _checkpoint(generation);
         await _activate(); // Selects this tenant's local cache, never refreshes a token.
         if (generation != _generation || _disposed) return;
@@ -208,10 +243,15 @@ class SchoolCloudEngine extends ChangeNotifier {
       final latest = await _read();
       if (!current() || !sameIdentity(latest, origin)) return;
       final snapshot = Map<String, dynamic>.from(result);
+      _deviceEnforcedSeen = _deviceEnforcedSeen || snapshot['deviceEnforced']==true;
+      if(_deviceEnforcedSeen && snapshot['deviceEnforced']!=true)
+        throw StateError('Device authorization downgrade rejected.');
       await _persist(origin, snapshot);
       if (!current()) return;
       final stored = await _read();
       if (!current() || !sameIdentity(stored, origin)) return;
+      identity=Map<String,dynamic>.from(stored);
+      _deviceEnforcedSeen = _deviceEnforcedSeen || stored['deviceEnforced']==true;
       final storedAccess = stored['verifiedAccess'];
       access =
           storedAccess is Map &&
@@ -220,6 +260,8 @@ class SchoolCloudEngine extends ChangeNotifier {
                   (snapshot['serverTime'] as num? ?? 0)
           ? Map<String, dynamic>.from(storedAccess)
           : snapshot;
+      await _refreshDeviceProof();
+      if(!current())return;
       _failures = 0;
       error = null;
       state = canOpen
@@ -240,6 +282,7 @@ class SchoolCloudEngine extends ChangeNotifier {
           'serverTime': _clock().millisecondsSinceEpoch,
         };
         access = denied;
+        _deviceLeaseExpiry=0;
         state = SchoolCloudState.authRequired;
         try {
           await _persist(origin, denied);

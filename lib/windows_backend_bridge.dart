@@ -26,6 +26,8 @@ import 'windows_local_storage.dart';
 import 'windows_service_status.dart';
 import 'windows_firebase_sync.dart';
 import 'school_backend_transport.dart';
+import 'windows_sync_recovery.dart';
+import 'sync_recovery_policy.dart';
 
 class WindowsBackendBridge {
   /// The exam editor is available even before a school connects its backend.
@@ -231,6 +233,10 @@ class WindowsBackendBridge {
 
   static Future<void> flushDocumentPending({
     Future<Map<String, dynamic>> Function(Map<String, dynamic>)? send,
+    bool Function()? canAdmit,
+    bool respectBackoff = false,
+    bool Function(String, Map<String, dynamic>)? admitRow,
+    void Function(Map<String, dynamic>)? onActivity,
   }) async {
     if (_documentDraining) return;
     _documentDraining = true;
@@ -240,9 +246,21 @@ class WindowsBackendBridge {
           .collection('_windows_document_outbox')
           .get();
       for (final queued in queue.docs) {
+        if (canAdmit?.call() == false) break;
         if (FirebaseFirestore.instance.activeProfileId != origin)
           throw StateError('School changed during document sync.');
         final record = queued.data();
+        if (admitRow?.call(queued.id, record) == false) continue;
+        if (respectBackoff && admitRow == null && (record['retryAtMillis'] as num? ?? 0) > DateTime.now().millisecondsSinceEpoch) continue;
+        void report(String stage, {String? category, DateTime? retryAt}) {
+          try { onActivity?.call({'queueCollection':'_windows_document_outbox',
+            'queueId':queued.id,'operationId':record['documentRevision'],
+            'schoolId':record['schoolId'],'stage':stage,
+            'at':DateTime.now().millisecondsSinceEpoch,
+            'isRetryable':stage=='retry' && {'networkPath','timeout','server'}.contains(category),
+            if(category!=null)'failureCategory':category,
+            if(retryAt!=null)'retryAt':retryAt.millisecondsSinceEpoch}); } catch (_) {}
+        }
         if (record['syncState'] == 'conflict' ||
             record['syncState'] == 'needsAttention')
           continue;
@@ -296,7 +314,14 @@ class WindowsBackendBridge {
             'baseCloudUploadedAt': record['baseCloudUploadedAt'],
             'fileBase64': base64Encode(bytes),
           };
-          final result = await (send ?? _handleCentral)(payload);
+          // A pause can arrive while preparing file bytes. Finish an admitted
+          // upload and its ACK atomically, but do not start another request.
+          if (canAdmit?.call() == false) break;
+          if (admitRow?.call(queued.id, record) == false) continue;
+          report('cloudRequest');
+          final response = (send ?? _handleCentral)(payload);
+          report('waitingForAck');
+          final result = await response;
           if (result['success'] != true)
             throw StateError('Document sync failed. Original retained.');
           await _documentWrite(() async {
@@ -351,18 +376,26 @@ class WindowsBackendBridge {
             );
             await batch.commit();
           });
+          report('verified');
         } catch (error) {
+          final decision = windowsSyncRecovery(error);
+          final attempts = (record['retryCount'] as num? ?? 0).toInt()+1;
+          final retryAt = decision.retry ? DateTime.now().add(decision.delay(attempts)) : null;
+          report(decision.kind == SyncFailureKind.conflict ? 'conflict'
+            : decision.kind == SyncFailureKind.authorization ? 'unauthorized'
+            : decision.retry ? 'retry' : 'needsAttention',
+            category:decision.kind.name,retryAt:retryAt);
           if (FirebaseFirestore.instance.activeProfileId == origin)
             await _documentWrite(() async {
               final current = (await queued.reference.get()).data();
               if (current != null &&
                   current['documentRevision'] == record['documentRevision'] &&
                   current['localPath'] == record['localPath']) {
-                final conflict = error.toString().toLowerCase().contains(
-                  'conflict',
-                );
+                final conflict = decision.kind == SyncFailureKind.conflict;
                 await queued.reference.set({
-                  'syncState': conflict ? 'conflict' : 'retry',
+                  'syncState': conflict ? 'conflict' : decision.retry ? 'retry' : 'needsAttention',
+                  'failureCategory':decision.kind.name,
+                  if(retryAt!=null)'retryAtMillis':retryAt.millisecondsSinceEpoch,
                   'retryCount':
                       (current['retryCount'] as num? ?? 0).toInt() + 1,
                   'lastError': conflict
@@ -752,7 +785,10 @@ class WindowsBackendBridge {
     return snapshot.docs.length;
   }
 
-  static Future<int> flushPending() async {
+  static Future<int> flushPending({bool Function()? canAdmit, bool respectBackoff = false,
+    void Function(Map<String, dynamic>)? onActivity,
+    Future<String> Function()? readActiveUrl,
+    Future<http.Response> Function(Uri, Map<String,String>, String)? send}) async {
     final snapshot = await FirebaseFirestore.instance
         .collection('_windows_google_outbox')
         .get();
@@ -762,7 +798,7 @@ class WindowsBackendBridge {
     }
 
     var completed = 0;
-    final activeUrl = await WindowsExternalConnections.googleScriptUrl();
+    final activeUrl = await (readActiveUrl ?? WindowsExternalConnections.googleScriptUrl)();
 
     final docs = snapshot.docs.toList()
       ..sort((a, b) {
@@ -772,15 +808,27 @@ class WindowsBackendBridge {
       });
 
     for (final queued in docs) {
+      if (canAdmit?.call() == false) break;
       final data = queued.data();
       final urlText = data['url']?.toString().trim() ?? '';
       final bodyData = data['body'];
+      void report(String stage, {String? category}) {
+        try { onActivity?.call({'queueCollection':'_windows_google_outbox',
+          'queueId':queued.id,'operationId':bodyData is Map ? bodyData['operationId'] : null,
+          'schoolId':bodyData is Map ? bodyData['schoolId'] : null,
+          'stage':stage,'at':DateTime.now().millisecondsSinceEpoch,
+          'isRetryable':false,if(category!=null)'failureCategory':category}); } catch (_) {}
+      }
 
       if (urlText.isEmpty || bodyData is! Map) {
-        await queued.reference.delete();
-        completed++;
+        await queued.reference.update({
+          'syncState': 'needsAttention',
+          'lastError': 'Invalid pending request retained for administrator review.',
+        });
         continue;
       }
+      if (data['syncState'] == 'needsAttention' || data['syncState'] == 'conflict') continue;
+      if(respectBackoff && (data['retryAtMillis'] as num? ?? 0)>DateTime.now().millisecondsSinceEpoch) continue;
 
       if (activeUrl.isEmpty ||
           _normalizedUrl(urlText) != _normalizedUrl(activeUrl)) {
@@ -799,15 +847,20 @@ class WindowsBackendBridge {
       }
 
       try {
-        final response = await _postFollowingAppsScriptRedirects(
-          Uri.parse(urlText),
-          headers: headers.isEmpty
-              ? const {'Content-Type': 'text/plain;charset=utf-8'}
-              : headers,
-          body: jsonEncode(Map<String, dynamic>.from(bodyData)),
-        ).timeout(const Duration(seconds: 30));
+        if (canAdmit?.call() == false) break;
+        report('cloudRequest');
+        final requestHeaders=headers.isEmpty ? const {'Content-Type':'text/plain;charset=utf-8'} : headers;
+        final requestBody=jsonEncode(Map<String,dynamic>.from(bodyData));
+        final pendingResponse=(send!=null
+          ? send(Uri.parse(urlText),requestHeaders,requestBody)
+          : _postFollowingAppsScriptRedirects(Uri.parse(urlText),headers:requestHeaders,body:requestBody)
+        ).timeout(const Duration(seconds:30));
+        report('waitingForAck');
+        final response = await pendingResponse;
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
+          final decision=SyncRecoveryDecision.classify(status:response.statusCode);
+          report(decision.retry ? 'retry' : 'needsAttention',category:decision.kind.name);
           break;
         }
 
@@ -822,12 +875,23 @@ class WindowsBackendBridge {
         final action = data['action']?.toString() ?? '';
 
         if (!_replayApplied(action, result)) {
+          await queued.reference.update({'syncState':'needsAttention',
+            'lastError':'Legacy response did not verify the original mutation. Administrator review required.'});
+          report('needsAttention',category:'unknown');
+          break;
+        }
+        final current=(await queued.reference.get()).data();
+        if(current==null || jsonEncode(current['body'])!=jsonEncode(bodyData) || current['url']!=data['url']) {
+          report('needsAttention',category:'unknown');
           break;
         }
 
         await queued.reference.delete();
         completed++;
-      } catch (_) {
+        report('verified');
+      } catch (error) {
+        final decision=windowsSyncRecovery(error);
+        report(decision.retry ? 'retry' : 'needsAttention',category:decision.kind.name);
         break;
       }
     }
@@ -874,22 +938,8 @@ class WindowsBackendBridge {
       return true;
     }
 
-    final code = result['code']?.toString().toUpperCase() ?? '';
-    final message = result['message']?.toString().toLowerCase() ?? '';
-
-    if (action == 'add_student' &&
-        (code == 'STUDENT_ALREADY_EXISTS' ||
-            message.contains('already exist'))) {
-      return true;
-    }
-
-    if (action.startsWith('delete_') &&
-        (message.contains('nahi mila') ||
-            message.contains('not found') ||
-            message.contains('already deleted'))) {
-      return true;
-    }
-
+    // Duplicate and missing-record text cannot verify the original intent.
+    // Retain it for explicit authoritative readback rather than guessing ACK.
     return false;
   }
 
