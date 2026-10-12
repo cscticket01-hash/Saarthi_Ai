@@ -1,4 +1,5 @@
 import 'health/health_panel.dart';
+import 'health/windows_healing_monitor.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
@@ -1632,6 +1633,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             ],
                           ],
                         ],
+                        ListTile(leading: const Icon(Icons.health_and_safety_outlined), title: const Text('Self-Healing Monitor'), subtitle: const Text('Health, diagnostics and authorized recovery'), trailing: const Icon(Icons.chevron_right), onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsHealingMonitor()))),
                         const ExpansionTile(title: Text('Universal Self-Healing 2.0'), children: [UniversalHealthPanel()]),
                       ],
                     ],
