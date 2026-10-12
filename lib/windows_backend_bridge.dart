@@ -242,6 +242,8 @@ class WindowsBackendBridge {
     if (_documentDraining) return;
     _documentDraining = true;
     final origin = FirebaseFirestore.instance.activeProfileId;
+    Object? firstConflict;
+    StackTrace? conflictStack;
     try {
       final queue = await FirebaseFirestore.instance
           .collection('_windows_document_outbox')
@@ -378,7 +380,7 @@ class WindowsBackendBridge {
             await batch.commit();
           });
           report('verified');
-        } catch (error) {
+        } catch (error, stack) {
           final decision = windowsSyncRecovery(error);
           final attempts = (record['retryCount'] as num? ?? 0).toInt()+1;
           final retryAt = decision.retry ? DateTime.now().add(decision.delay(attempts)) : null;
@@ -405,9 +407,15 @@ class WindowsBackendBridge {
                 }, SetOptions(merge: true));
               }
             });
+          if (decision.kind == SyncFailureKind.conflict) {
+            firstConflict ??= error;
+            conflictStack ??= stack;
+            continue; // Independent documents may still sync; retain this conflicting row.
+          }
           rethrow;
         }
       }
+      if (firstConflict != null) Error.throwWithStackTrace(firstConflict, conflictStack!);
     } finally {
       _documentDraining = false;
     }

@@ -55,7 +55,7 @@ SyncRecoveryDecision windowsSyncRecovery(Object error) {
   // Only existing fixed client messages are recognized. Raw text is never exported.
   if (error is StateError &&
       RegExp(
-        r'record revision conflict|sync operation id conflict|items need conflict review',
+        r'record revision conflict|sync operation id conflict|items need conflict review|Newer cloud document retained; resolve version conflict',
         caseSensitive: false,
       ).hasMatch(error.toString())) {
     return SyncRecoveryDecision.classify(recordConflict: true);
