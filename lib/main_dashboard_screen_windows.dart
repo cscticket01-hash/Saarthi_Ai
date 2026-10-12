@@ -1,3 +1,4 @@
+import 'school_profile_policy.dart';
 import 'health/health_runtime.dart';
 import 'student_inventory_policy.dart';
 import 'windows_fee_structure.dart';
@@ -1447,17 +1448,21 @@ Future<Map<String, dynamic>> _refreshSchoolProfileFromDrive() async {
       ? _mergeSchoolProfile(Map<String, dynamic>.from(raw))
       : _defaultSchoolProfile();
 
-  _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
-
-  await reference.set(
-    {
-      ...profile,
+  // The storage owner checks pending edits under its serialized write lock.
+  // Cache refreshes must not generate outbox work or race a settings save.
+  final previous = (await reference.get()).data() ?? <String,dynamic>{};
+  reference.requireOriginProfile();
+  if (!blankSchoolProfile(profile)) {
+    await FirebaseFirestore.instance.applySyncedDocument(reference, {
+      ...mergeSchoolProfileSafely(previous, profile),
       'cachedAt': FieldValue.serverTimestamp(),
-    },
-    SetOptions(merge: true),
-  );
-
-  return profile;
+    });
+  }
+  final saved = (await reference.get()).data();
+  reference.requireOriginProfile();
+  final safe = saved == null ? mergeSchoolProfileSafely(previous, profile) : _mergeSchoolProfile(saved);
+  _schoolProfileMemoryCache = Map<String,dynamic>.from(safe);
+  return safe;
 }
 
 Future<Map<String, dynamic>> _loadSchoolProfile({

@@ -6875,6 +6875,13 @@ function VS_managedRecordUnlocked(b) {
   const existing=VS_sheetItem(store,b.id),file=existing;
   if(existing&&b.createOnly===true)return {skipped:true};
   if(existing&&(existing.schoolId!==school||existing.id!==b.id))throw new Error('Foreign school record');
+  if(b.operation==='write' && b.collection==='school_config' && b.id==='school_profile_cache') {
+    const core=['schoolName','principalName','schoolContactNo'];
+    const empty=v=>v===undefined||v===null||String(v).trim()==='';
+    if(core.every(k=>empty((b.data||{})[k])))throw new Error('Blank school profile blocked');
+    if(existing && core.some(k=>!empty(existing.data[k])&&empty((b.data||{})[k])))
+      throw new Error('Empty school profile overwrite blocked');
+  }
   // A lost response may replay an already committed legacy document write.
   // Only identical, live, same-school content is a receipt; never rebase a stale edit.
   if(b.collection==='documents' && b.operation==='write' && b.syncProtocol!==2 &&
@@ -7119,6 +7126,8 @@ function VS_managedDiagnostic(error) {
     'Invalid or duplicate legacy record; operator review required':'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
     'Foreign school record':'SCRIPT_FOREIGN_RECORD_REJECTED',
     'Invalid sync operation':'SCRIPT_INVALID_SYNC_OPERATION',
+    'Blank school profile blocked':'SCRIPT_BLANK_SCHOOL_PROFILE',
+    'Empty school profile overwrite blocked':'SCRIPT_EMPTY_PROFILE_OVERWRITE',
     'Versioned document requires a matching revision':'SCRIPT_DOCUMENT_REVISION_REQUIRED',
     'Newer cloud document retained; resolve version conflict':'SCRIPT_DOCUMENT_REVISION_CONFLICT',
     'Migration conflict; both versions retained':'SCRIPT_MIGRATION_CONFLICT',

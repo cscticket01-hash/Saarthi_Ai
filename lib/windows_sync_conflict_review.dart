@@ -14,6 +14,7 @@ String _conflictPreview(Object? original) {
     if (--remaining < 0) return "[Preview budget reached]";
     if (value == null || value is bool || value is num) return value;
     if (value is DateTime) return value.toIso8601String();
+    if (value is Timestamp) return value.toDate().toIso8601String();
     if (value is String) {
       return value.length <= 2048
           ? value

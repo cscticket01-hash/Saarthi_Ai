@@ -1,3 +1,4 @@
+import 'school_profile_policy.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -317,6 +318,9 @@ class WindowsFirebaseRemote {
   static Future<Map<String,dynamic>> syncManagedRecord(Map<String,dynamic> item, String school) async {
     if(item['schoolId'] != school) throw StateError('Pending record belongs to another school.');
     final collection=item['collection'].toString(), id=item['documentId'].toString();
+    if (item['operation'] != 'delete' && collection == 'school_config' && id == 'school_profile_cache') {
+      requireSchoolProfile(item['data'] as Map);
+    }
     final data=item['operation']=='delete'?null:await prepareManagedRecord(
       Map<String,dynamic>.from(item['data'] as Map), school,
       (action, body)=>ManagedSchoolSession.callForSchool(school,action,body));

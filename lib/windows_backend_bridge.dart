@@ -1,3 +1,4 @@
+import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
 import 'document_processing_engine.dart';
 import 'school_qr_link.dart';
@@ -1293,7 +1294,8 @@ class WindowsBackendBridge {
       if (action == 'save_school_profile') {
         final existing =
             (await read('school_config'))['school_profile_cache'] ?? {};
-        final profile = <String, dynamic>{...existing, ...data};
+        requireSchoolProfile(data);
+        final profile = mergeSchoolProfileSafely(Map<String,dynamic>.from(existing), data);
         for (final prefix in ['logo', 'seal', 'principalSignature']) {
           final raw = data['${prefix}Base64']?.toString() ?? '';
           if (raw.isNotEmpty) {
@@ -1581,7 +1583,8 @@ class WindowsBackendBridge {
             .collection('school_config')
             .doc('school_profile_cache')
             .get();
-        final merged = <String, dynamic>{...?old.data(), ...profile};
+        requireSchoolProfile(profile);
+        final merged = mergeSchoolProfileSafely(old.data() ?? {}, profile);
         await FirebaseFirestore.instance
             .collection('school_config')
             .doc('school_profile_cache')

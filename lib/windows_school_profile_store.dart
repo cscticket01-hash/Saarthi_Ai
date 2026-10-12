@@ -1,3 +1,4 @@
+import 'school_profile_policy.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
 
@@ -22,11 +23,12 @@ class WindowsSchoolProfileStore {
     if (saved['managed'] == true && previous['schoolId'] != null && previous['schoolId'] != school) {
       throw StateError('Foreign school profile blocked.');
     }
-    final profile = <String,dynamic>{...previous,
+    requireSchoolProfile(payload);
+    final profile = mergeSchoolProfileSafely(previous, <String,dynamic>{
       for (final key in ['schoolName','principalName','schoolContactNo','latitude','longitude','attendanceRadiusMeters'])
         if (payload.containsKey(key)) key: payload[key],
       if (saved['managed'] == true) 'schoolId': school,
-      'updatedAt': DateTime.now().millisecondsSinceEpoch};
+      'updatedAt': DateTime.now().millisecondsSinceEpoch});
     for (final prefix in ['logo','seal','principalSignature']) {
       final raw = payload['${prefix}Base64'];
       if (raw is String && raw.startsWith('data:image/')) {
