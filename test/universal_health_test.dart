@@ -53,6 +53,12 @@ void main(){
  test('circuit rearms only after its explicit rolling window',()async{provider();await engine.recover('documents');time=time.add(const Duration(seconds:1));engine.observe('documents',const HealthObservation(HealthState.degraded,failure:HealthFailure.worker));await engine.recover('documents');time=time.add(const Duration(hours:2));engine.observe('documents',const HealthObservation(HealthState.degraded,failure:HealthFailure.worker));expect(await engine.recover('documents'),true);});
  test('future-clock history fails closed instead of resetting attempts',()async{provider();await engine.recover('documents');await engine.flushHistory();time=time.subtract(const Duration(days:1));await engine.bind(const HealthContext('school-B','profile-B'));await engine.bind(school);engine.observe('documents',const HealthObservation(HealthState.degraded,failure:HealthFailure.worker));expect(await engine.recover('documents'),false);});
  test('unregistered component cannot create false health evidence',(){engine.observe('unregistered',HealthObservation(HealthState.healthy,verifiedAt:time));expect(engine.observations,isEmpty);expect(engine.history,isEmpty);});
+ test('paused component never grants an overall healthy status',(){
+  provider();
+  engine.observe('documents',const HealthObservation(HealthState.paused));
+  expect(engine.overall,HealthState.paused);
+  expect(engine.telemetry('windows','2.0','a'.padRight(64,'a'))['healthy'],0);
+ });
  test('clock rollback invalidates prior healthy evidence and dependency admission',()async{
   var repairs=0;
   engine.register(HealthProvider(id:'database',version:'2.0',check:(_)async=>const HealthObservation(HealthState.unknown)));

@@ -340,7 +340,7 @@ class UniversalHealth {
     if (_paused) return HealthState.paused;
     final states = observations.values.map((o) => o.state).toSet();
     if (states.isEmpty) return HealthState.unknown;
-    for (final state in [HealthState.needsAttention, HealthState.recovering, HealthState.degraded, HealthState.unknown, HealthState.monitoring]) { if (states.contains(state)) return state; }
+    for (final state in [HealthState.needsAttention, HealthState.recovering, HealthState.degraded, HealthState.unknown, HealthState.monitoring, HealthState.paused]) { if (states.contains(state)) return state; }
     return HealthState.healthy;
   }
   Map<String, dynamic> telemetry(String platform, String version, String installation) => {
