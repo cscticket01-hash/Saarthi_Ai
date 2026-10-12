@@ -65,18 +65,20 @@ void main() {
       );
       await tester.pumpAndSettle();
       if (Platform.environment['HEALTH_PREVIEWS'] == '1') {
-        final image =
-            await (boundary.currentContext!.findRenderObject()
-                    as RenderRepaintBoundary)
-                .toImage();
-        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
         await tester.runAsync(() async {
-          await Directory('build/healing-monitor').create(recursive: true);
-          await File(
-            'build/healing-monitor/unknown-${size.width.toInt()}x${size.height.toInt()}.png',
-          ).writeAsBytes(bytes!.buffer.asUint8List());
+          final image =
+              await (boundary.currentContext!.findRenderObject()
+                      as RenderRepaintBoundary)
+                  .toImage();
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          await (() async {
+            await Directory('build/healing-monitor').create(recursive: true);
+            await File(
+              'build/healing-monitor/unknown-${size.width.toInt()}x${size.height.toInt()}.png',
+            ).writeAsBytes(bytes!.buffer.asUint8List());
+          })();
+          image.dispose();
         });
-        image.dispose();
       }
       expect(find.text('Self-Healing Monitor'), findsOneWidget);
       expect(find.text('Status Unknown'), findsOneWidget);
@@ -139,18 +141,22 @@ void main() {
         expect(find.text(incident ? '50%' : '100%'), findsOneWidget);
         expect(tester.takeException(), isNull);
         if (Platform.environment['HEALTH_PREVIEWS'] == '1') {
-          final image =
-              await (boundary.currentContext!.findRenderObject()
-                      as RenderRepaintBoundary)
-                  .toImage();
-          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          await tester.runAsync(() async {
-            await Directory('build/healing-monitor').create(recursive: true);
-            await File(
-              'build/healing-monitor/${incident ? 'warning' : 'healthy'}-1920x1080-TEST-FIXTURE.png',
-            ).writeAsBytes(bytes!.buffer.asUint8List());
+          await (() async {
+            final image =
+                await (boundary.currentContext!.findRenderObject()
+                        as RenderRepaintBoundary)
+                    .toImage();
+            final bytes = await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            await (() async {
+              await Directory('build/healing-monitor').create(recursive: true);
+              await File(
+                'build/healing-monitor/${incident ? 'warning' : 'healthy'}-1920x1080-TEST-FIXTURE.png',
+              ).writeAsBytes(bytes!.buffer.asUint8List());
+            })();
+            image.dispose();
           });
-          image.dispose();
         }
         await tester.tap(find.byType(DropdownButton<Duration>));
         await tester.pumpAndSettle();
