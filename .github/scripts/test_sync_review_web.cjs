@@ -50,7 +50,13 @@ const fs=require('node:fs'),path=require('node:path');
   proof.writeVerification={http:response.status(),success:ack.success===true,schoolMatches:ack.schoolId===school,
    protocolMatches:ack.syncProtocol===2,hasRevision:typeof ack.recordRevision==='string'&&ack.recordRevision.length>0};
   if(response.status()!==200||ack.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision)throw Error('Verified TEST write ACK required');
-  const read=await readPromise,reply=await read.json();
+  const read=await readPromise;
+  proof.readResponseObserved={http:read.status()};
+  // A response event is headers-only. Wait for its completed body before
+  // independently verifying readback; never repeat the business write here.
+  const readFailure=await read.finished();
+  if(readFailure)throw Error('TEST readback response did not finish');
+  const reply=await read.json();
   proof.readVerification={http:read.status(),schoolMatches:reply.schoolId===school,protocolMatches:reply.syncProtocol===2,
    hasNoticeChanges:!!reply.changes?.school_notices};
   if(read.status()!==200||reply.schoolId!==school||reply.syncProtocol!==2||!reply.changes?.school_notices)throw Error('Verified TEST post-write readback required');
@@ -107,7 +113,11 @@ const fs=require('node:fs'),path=require('node:path');
   proof.status='FAIL';proof.network=network;
   // Fixed categories only: never upload Playwright exception text, response
   // bodies, credentials, headers or school records as debugging evidence.
+  proof.failureType=['TimeoutError','SyntaxError','TypeError','ReferenceError','Error'].includes(e?.name)?e.name:'OTHER_ERROR';
   proof.failureCategory=e?.name==='TimeoutError'?'UI_OR_RESPONSE_TIMEOUT':
+   e?.name==='SyntaxError'?'RESPONSE_JSON_NOT_VERIFIED':
+   e?.message==='TEST readback response did not finish'?'READBACK_RESPONSE_INCOMPLETE':
+   typeof e?.message==='string'&&e.message.includes('Network.getResponseBody')?'BROWSER_RESPONSE_BODY_UNAVAILABLE':
    e?.message==='Verified TEST write ACK required'?'CLOUD_ACK_NOT_VERIFIED':
    e?.message==='Verified TEST post-write readback required'?'CLOUD_READBACK_NOT_VERIFIED':
    e?.message==='Duplicate TEST operation identity/revision changed'?'DUPLICATE_IDENTITY_CHANGED':
