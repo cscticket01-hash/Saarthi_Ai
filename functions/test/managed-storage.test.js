@@ -358,3 +358,15 @@ test('UTF-8 signed multilingual school records are accepted and preserved',()=>{
  assert.equal(read.records['unicode-student'].name,data.name);
  assert.equal(read.records['unicode-student'].address,data.address);
 });
+
+test('lost ACK document retry returns prior revision without changing stored data',()=>{
+ const f=storage(),body={action:'managed_records',operation:'write',collection:'documents',id:'lost-ack',expectedRevision:'',data:{schoolId:A,studentId:'S1',documentRevision:'generation-1',contentHash:'hash-1',uploadedAt:123}};
+ const first=f.call(body);assert.equal(first.success,true);
+ const before=JSON.stringify(f.call({action:'managed_records',operation:'read',collection:'documents'}).records);
+ const retry=f.call(body);assert.equal(retry.success,true);assert.equal(retry.recordRevision,first.recordRevision);
+ assert.equal(JSON.stringify(f.call({action:'managed_records',operation:'read',collection:'documents'}).records),before);
+ assert.equal(f.call({...body,data:{...body.data,contentHash:'changed'}}).success,false);
+ assert.equal(f.call({...body,data:{...body.data,documentRevision:'generation-2'}}).success,false);
+ assert.equal(f.call({...body,data:{...body.data,schoolId:B}}).success,false);
+ assert.equal(JSON.stringify(f.call({action:'managed_records',operation:'read',collection:'documents'}).records),before);
+});

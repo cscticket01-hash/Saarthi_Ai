@@ -56,6 +56,37 @@ void main() {
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
   });
+  test('document revision conflict retains original and allows independent ACK', () async {
+    final dir = await Directory.systemTemp.createTemp('document-conflict-');
+    try {
+      for (final id in ['conflict-doc', 'independent-doc']) {
+        final path = '${dir.path}/$id';
+        await File(path).writeAsBytes([1, 2, 3]);
+        final row = {'schoolId':school, 'documentRevision':'revision-$id',
+          'localPath':path, 'syncState':'Pending', 'baseCloudRevision':'base',
+          'studentId':'S1', 'deleted':false};
+        await db.collection('_local_student_documents').doc(id).set(row);
+        await db.collection('_windows_document_outbox').doc(id).set(row);
+      }
+      final sent = <String>[];
+      await expectLater(WindowsBackendBridge.flushDocumentPending(send:(payload) async {
+        final id = payload['documentId'] as String;
+        sent.add(id);
+        if (id == 'conflict-doc') throw CentralCloudException(409,'school_cloud',
+          'Document version conflict; both copies retained',
+          diagnosticCode:'SCRIPT_DOCUMENT_REVISION_CONFLICT');
+        return {'success':true,'document':{'documentRevision':payload['documentRevision'],'uploadedAt':42}};
+      }), throwsA(isA<CentralCloudException>()));
+      expect(sent, containsAll(['conflict-doc','independent-doc']));
+      final retained = (await db.collection('_windows_document_outbox').doc('conflict-doc').get()).data()!;
+      expect(retained['syncState'],'conflict');
+      expect(retained['documentRevision'],'revision-conflict-doc');
+      expect(retained['baseCloudRevision'],'base');
+      expect(await File(retained['localPath'] as String).exists(),true);
+      expect((await db.collection('_windows_document_outbox').doc('independent-doc').get()).exists,false);
+      expect((await db.collection('_local_student_documents').doc('independent-doc').get()).data()?['syncState'],'Synced');
+    } finally { await dir.delete(recursive:true); }
+  });
   test('malformed legacy pending request is retained instead of acknowledged', () async {
     final ref = db.collection('_windows_google_outbox').doc('retained-invalid');
     await ref.set({'operationId': 'original-operation', 'body': 'invalid', 'queuedAt': 42});

@@ -414,6 +414,15 @@ function VS_managedRecordUnlocked(b) {
   const existing=VS_sheetItem(store,b.id),file=existing;
   if(existing&&b.createOnly===true)return {skipped:true};
   if(existing&&(existing.schoolId!==school||existing.id!==b.id))throw new Error('Foreign school record');
+  // A lost response may replay an already committed legacy document write.
+  // Only identical, live, same-school content is a receipt; never rebase a stale edit.
+  if(b.collection==='documents' && b.operation==='write' && b.syncProtocol!==2 &&
+      existing && !existing.data._syncOperationId && !existing.data._syncDeleted &&
+      b.data && b.data.schoolId===school && typeof b.data.documentRevision==='string' &&
+      b.data.documentRevision.length>0 && b.data.documentRevision===existing.data.documentRevision &&
+      VS_layoutHash(VS_syncRequestShape(b))===VS_layoutHash(VS_syncRequestShape({operation:'write',data:existing.data}))) {
+    return {recordRevision:existing.data._syncRevision,syncProtocol:2};
+  }
   if(b.syncProtocol!==2 && existing&&existing.data._syncOperationId)throw new Error('Record revision conflict');
   if(b.syncProtocol===2){
     if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string')throw new Error('Invalid sync operation');
