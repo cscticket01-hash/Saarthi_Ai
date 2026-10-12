@@ -1,3 +1,5 @@
+import 'windows_sync_comparison.dart';
+import 'school_profile_policy.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'windows_local_firestore.dart';
@@ -82,6 +84,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
   final reason = TextEditingController();
   Map<String, dynamic>? remote, expected;
   String? choice;
+  String comparison = 'not performed';
   String error = '';
   bool busy = false;
   final db = FirebaseFirestore.instance;
@@ -133,11 +136,40 @@ class _ConflictReviewState extends State<_ConflictReview> {
       if (current == null || current['syncState'] != 'conflict')
         throw StateError('Pending version changed. Reopen Sync details.');
       final cloud = await readCloud(current);
+      final compared = compareSyncVersions(current, cloud);
       if (mounted)
         setState(() {
           expected = current;
           remote = cloud;
+          comparison = compared;
         });
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> alreadySynced() async {
+    setState(() => busy = true);
+    try {
+      final queued = expected!;
+      if (document || queued['operation'] == 'delete') throw StateError('Owner verification required.');
+      if (queued['collection'] == 'school_config' && queued['documentId'] == 'school_profile_cache') {
+        requireSchoolProfile(queued['data'] as Map);
+      }
+      final fresh = await readCloud(queued);
+      if (compareSyncVersions(queued, fresh) != 'identical' ||
+          fresh['_syncRevision'] is! String || (fresh['_syncRevision'] as String).isEmpty) {
+        throw StateError('Cloud payload changed or has no durable revision. Both copies retained.');
+      }
+      // Readback receipt, not a claim that this client's operation ran.
+      await db.collection('_windows_sync_conflict_history').doc(queued['operationId'] as String).set({
+        ...queued, 'verifiedCloud':fresh, 'resolution':'identical authenticated readback',
+      });
+      await db.acknowledgeOutbox(db.collection('_windows_firebase_outbox').doc(widget.item['id'] as String),
+          queued, revision:fresh['_syncRevision'] as String);
+      if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
     } finally {
@@ -208,9 +240,14 @@ class _ConflictReviewState extends State<_ConflictReview> {
                     const SizedBox(height: 12),
                     Text(remote == null
                         ? 'Cloud verification: not performed'
-                        : 'Cloud verification: authenticated read; checked again before queuing'),
-                    if (remote != null)
+                        : 'Cloud verification: $comparison. Authenticated read; checked again before resolution'),
+                    if (remote != null) ...[
+                      Text('Operation identity: local ${expected?['operationId'] ?? expected?['documentRevision'] ?? 'unknown'} / cloud ${remote?['_syncOperationId'] ?? remote?['documentRevision'] ?? 'unknown'}'),
+                      Text('Record revision: base ${expected?['baseCloudRevision'] ?? 'unknown'} / cloud ${remote?['_syncRevision'] ?? 'unknown'}'),
+                      if (expected?['data'] is Map)
+                        Text('Payload hash: local ${syncPayloadHash(expected!['data'] as Map)} / cloud ${syncPayloadHash(remote!)}'),
                       SelectableText(_conflictPreview(remote)),
+                    ],
                     if (document)
                       const Text(
                           'Document conflicts require comparing original files. This screen does not replace files or resolve their conflict.'),
@@ -246,6 +283,9 @@ class _ConflictReviewState extends State<_ConflictReview> {
             OutlinedButton(
                 onPressed: busy ? null : verify,
                 child: const Text('Verify cloud version')),
+            if (!document && comparison == 'identical')
+              FilledButton(onPressed: busy ? null : alreadySynced,
+                child: const Text('Record already synced')),
             if (!document)
               FilledButton(
                   onPressed: busy ||

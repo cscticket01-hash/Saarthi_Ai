@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'school_timestamp.dart';
 import 'package:crypto/crypto.dart';
 
 // UUID revisions are identities, not ordered version numbers. Never infer
@@ -6,6 +7,7 @@ import 'package:crypto/crypto.dart';
 const _bookkeeping = {'id', '_syncRevision', '_syncOperationId', '_syncRequestHash',
   '_syncDeleted', '_syncDeletedFileId', '_syncFileCleanupComplete'};
 Object? _canonical(Object? value) {
+  if (value is Timestamp) return {'__vidya_type':'timestamp','ms':value.millisecondsSinceEpoch};
   if (value is Map) {
     final keys = value.keys.map((k) => k.toString()).toList()..sort();
     return {for (final k in keys) k: _canonical(value[k])};
