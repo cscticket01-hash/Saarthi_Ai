@@ -1,3 +1,4 @@
+import 'sync_recovery_policy.dart' as failure_policy;
 import 'health/health_panel.dart';
 import 'health/windows_healing_monitor.dart';
 import 'dart:convert';
@@ -1265,7 +1266,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         '${item['collection'] ?? item['_queueCollection'] ?? 'documents'} • ${item['documentId'] ?? item['id']}',
                                       ),
                                       subtitle: Text(
-                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}',
+                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}${item['lastError'] == null ? '' : '\n${syncFailureReason(item)}'}',
                                       ),
                                       trailing:
                                           (item['syncState'] ??
@@ -1646,4 +1647,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       ),
     ),
   );
+}
+
+String syncFailureReason(Map item) {
+  final kind = failure_policy.SyncFailureKind.values.where((kind) => kind.name == item['failureCategory']);
+  return failure_policy.SyncRecoveryDecision(kind.isEmpty ? failure_policy.SyncFailureKind.unknown : kind.first).message;
 }

@@ -22,6 +22,7 @@ class WindowsHealthAdapter {
   Future<void> initialize() async {
     if(_started)return;
     _started=true;
+    guardian.sampleStore=FileHealthSamples(() async => WindowsLocalStorage.controlDirectory);
     guardian.store=FileHealthHistory(() async => WindowsLocalStorage.controlDirectory);
     // Approved repair changes the sync DISPLAY projection only. The Smart
     // Sync owner retains queue, IDs, schedule, retries and ACK authority.
@@ -51,7 +52,7 @@ class WindowsHealthAdapter {
     final context=current();
     if(guardian.context?.same(context)!=true){unawaited(guardian.bind(context).then((_)=>_syncSignal()));return;}
     final sync=WindowsSyncEngine.instance, kind=sync.recoveryDecision?.kind;
-    final failure=switch(kind){SyncFailureKind.authorization=>HealthFailure.authorization,SyncFailureKind.configuration=>HealthFailure.configuration,SyncFailureKind.conflict=>HealthFailure.conflict,SyncFailureKind.timeout=>HealthFailure.timeout,SyncFailureKind.networkPath=>HealthFailure.offline,SyncFailureKind.server=>HealthFailure.server,SyncFailureKind.quota=>HealthFailure.quota,_=>HealthFailure.none};
+    final failure=switch(kind){SyncFailureKind.authorization=>HealthFailure.authorization,SyncFailureKind.configuration=>HealthFailure.configuration,SyncFailureKind.validation=>HealthFailure.configuration,SyncFailureKind.fileMissing=>HealthFailure.storage,SyncFailureKind.conflict=>HealthFailure.conflict,SyncFailureKind.timeout=>HealthFailure.timeout,SyncFailureKind.networkPath=>HealthFailure.offline,SyncFailureKind.server=>HealthFailure.server,SyncFailureKind.quota=>HealthFailure.quota,_=>HealthFailure.none};
     guardian.observe('smart-sync',HealthObservation(sync.isPaused?HealthState.paused:failure!=HealthFailure.none?HealthState.degraded:sync.state.value==SchoolCloudState.synced?HealthState.healthy:HealthState.monitoring,failure:failure,verifiedAt:sync.lastSuccessfulSync,metrics:{'pending':(sync.details.value['pending'] as num?)??0}));
   }catch(_){} }
 }

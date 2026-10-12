@@ -1,3 +1,5 @@
+import 'package:http/http.dart' as http;
+import 'school_profile_policy.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -34,6 +36,13 @@ bool recoverablePendingAttention(
         (item['retryCount'] as num? ?? 0) < automaticRecordRetryLimit);
 
 SyncRecoveryDecision windowsSyncRecovery(Object error) {
+  if (error is BlankSchoolProfile) return SyncRecoveryDecision.classify(code:'BLANK_SCHOOL_PROFILE');
+  if (error is FileSystemException || error is StateError && error.message == 'Pending document file is missing.') {
+    return SyncRecoveryDecision.classify(code:'FILE_UNREADABLE');
+  }
+  if (error is StateError && {'Invalid document ID.', 'Document revision missing.', 'Valid school exact location required.'}.contains(error.message)) {
+    return SyncRecoveryDecision.classify(status:422);
+  }
   if (error is MissingSyncAcknowledgement) {
     return const SyncRecoveryDecision(SyncFailureKind.server, retry: true);
   }
@@ -50,7 +59,7 @@ SyncRecoveryDecision windowsSyncRecovery(Object error) {
     );
   if (error is TimeoutException)
     return SyncRecoveryDecision.classify(timedOut: true);
-  if (error is SocketException || error is HttpException)
+  if (error is SocketException || error is HttpException || error is http.ClientException)
     return SyncRecoveryDecision.classify(networkPathFailed: true);
   // Only existing fixed client messages are recognized. Raw text is never exported.
   if (error is StateError &&

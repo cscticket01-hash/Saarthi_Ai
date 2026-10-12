@@ -1,3 +1,4 @@
+import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
 export 'school_timestamp.dart' show Timestamp;
 import 'dart:async';
@@ -1210,6 +1211,14 @@ class _LocalSchoolDatabase {
             case _WriteType.set:
               final incoming =
                   _encodeMap(operation.data ?? {});
+              if (operation.collection == 'school_config' && operation.documentId == 'school_profile_cache' &&
+                  docs[operation.documentId] is Map) {
+                final prior = docs[operation.documentId] as Map;
+                for (final key in schoolProfileCoreFields) {
+                  if (incoming.containsKey(key) && (incoming[key] == null || incoming[key].toString().trim().isEmpty) &&
+                      prior[key] != null && prior[key].toString().trim().isNotEmpty) incoming[key] = prior[key];
+                }
+              }
               final oldDocumentQueue=docs[operation.documentId];
               if(operation.collection=='_windows_document_outbox' && oldDocumentQueue is Map &&
                   {'conflict','needsAttention'}.contains(oldDocumentQueue['syncState'])) {
@@ -1258,10 +1267,14 @@ class _LocalSchoolDatabase {
                 docs[operation.documentId] as Map,
               );
 
-              _applyFields(
-                current,
-                _encodeMap(operation.data ?? {}),
-              );
+              final fields = _encodeMap(operation.data ?? {});
+              if (operation.collection == 'school_config' && operation.documentId == 'school_profile_cache') {
+                for (final key in schoolProfileCoreFields) {
+                  if (fields.containsKey(key) && (fields[key] == null || fields[key].toString().trim().isEmpty) &&
+                      current[key] != null && current[key].toString().trim().isNotEmpty) fields[key] = current[key];
+                }
+              }
+              _applyFields(current, fields);
 
               docs[operation.documentId] = current;
               break;
@@ -1621,6 +1634,11 @@ class _LocalSchoolDatabase {
     _WriteOperation operation,
     Map<String, dynamic> finalDocs,
   ) {
+    if (operation.type != _WriteType.delete && operation.collection == 'school_config' &&
+        operation.documentId == 'school_profile_cache') {
+      // Keep legacy branding locally, but never turn an asset-only cache into a mutation.
+      if (blankSchoolProfile(finalDocs[operation.documentId] as Map)) return;
+    }
     final rawQueue = collections.putIfAbsent(
       '_windows_firebase_outbox',
       () => <String, dynamic>{},

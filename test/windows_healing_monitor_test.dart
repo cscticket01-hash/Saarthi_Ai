@@ -1,3 +1,4 @@
+import '../lib/health/health_history_io.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -10,6 +11,46 @@ import '../lib/health/universal_health.dart';
 import '../lib/health/windows_healing_monitor.dart';
 
 void main() {
+  test('monitoring label follows an actual running bound supervisor', () async {
+    final engine = UniversalHealth();
+    expect(monitoringHeadline(engine),contains('inactive'));
+    engine.register(HealthProvider(id:'database',version:'2.0',check:(_)async=>const HealthObservation(HealthState.unknown)));
+    await engine.bind(const HealthContext('school-a','profile-a'));
+    expect(engine.monitoringActive,isFalse);
+    engine.start();
+    expect(engine.monitoringActive,isTrue);
+    expect(monitoringHeadline(engine),'Monitoring active · auto-repair off');
+    engine.pause();
+    expect(engine.monitoringActive,isFalse);
+    expect(monitoringHeadline(engine),'Monitoring Paused');
+    await engine.dispose();
+  });
+
+  test('background trend survives restart, pauses and school changes without a page', () async {
+    final directory = await Directory.systemTemp.createTemp('health-trend-fixture');
+    var at = DateTime.utc(2026, 10, 12);
+    final store = FileHealthSamples(() async => directory);
+    final engine = UniversalHealth(now:()=>at)..sampleStore=store;
+    engine.register(HealthProvider(id:'database',version:'2.0',check:(_)async=>const HealthObservation(HealthState.unknown)));
+    await engine.bind(const HealthContext('a','a'));
+    await engine.sampleHistoryLoaded;
+    at = at.add(const Duration(minutes:1));
+    engine.observe('database', HealthObservation(HealthState.healthy,verifiedAt:at));
+    await engine.flushHistory();
+    expect(engine.samples.last.score,100);
+    engine.pause();
+    expect(engine.samples.last.score,100);
+    final saved = await store.loadSamples(const HealthContext('a','a'));
+    expect(saved.last.score,100);
+    await engine.bind(const HealthContext('b','b'));
+    await engine.sampleHistoryLoaded;
+    expect(engine.samples.every((p)=>p.score==null),isTrue);
+    await engine.flushHistory();
+    expect((await store.loadSamples(const HealthContext('b','b'))).every((p)=>p.score==null),isTrue);
+    await engine.dispose();
+    await directory.delete(recursive:true);
+  });
+
   setUpAll(() async {
     final root = Platform.environment['FLUTTER_ROOT'];
     if (root != null) {

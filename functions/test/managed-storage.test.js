@@ -370,3 +370,14 @@ test('lost ACK document retry returns prior revision without changing stored dat
  assert.equal(f.call({...body,data:{...body.data,schoolId:B}}).success,false);
  assert.equal(JSON.stringify(f.call({action:'managed_records',operation:'read',collection:'documents'}).records),before);
 });
+
+test('blank asset-only profile and empty identity overwrite never modify school record',()=>{
+ const f=storage();
+ const write=data=>f.call({action:'managed_records',operation:'write',collection:'school_config',id:'school_profile_cache',data:{schoolId:A,...data}});
+ const blank=write({schoolName:' ',principalName:'',schoolContactNo:'',logoFileId:'asset'});
+ assert.equal(blank.success,false);assert.equal(blank.code,'SCRIPT_BLANK_SCHOOL_PROFILE');
+ assert.equal(write({schoolName:'School',principalName:'Principal',schoolContactNo:'123'}).success,true);
+ const bad=write({schoolName:'',principalName:'Principal',schoolContactNo:'123'});
+ assert.equal(bad.success,false);assert.equal(bad.code,'SCRIPT_EMPTY_PROFILE_OVERWRITE');
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'school_config'}).records.school_profile_cache.schoolName,'School');
+});

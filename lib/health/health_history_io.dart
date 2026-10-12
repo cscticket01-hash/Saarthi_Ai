@@ -44,3 +44,38 @@ class FileHealthHistory implements HealthHistoryStore {
     return work;
   }
 }
+
+/// Separate diagnostic trend metadata; never the repair-admission ledger.
+class FileHealthSamples implements HealthSampleStore {
+  FileHealthSamples(this.directory);
+  final Future<Directory> Function() directory;
+  Future<File> file(HealthContext context) async => File('${(await directory()).path}/health_trends_2/${context.fingerprint}.json');
+  @override
+  Future<List<HealthSample>> loadSamples(HealthContext context) async {
+    final target = await file(context);
+    if (!await target.exists()) return [];
+    if (await target.length() > 1024*1024) throw const FormatException('Trend budget');
+    final raw = jsonDecode(await target.readAsString());
+    if (raw is! Map || raw['context'] != context.fingerprint || raw['samples'] is! List ||
+        (raw['samples'] as List).length > 10080) throw const FormatException('Trend scope');
+    final result = <HealthSample>[];
+    for (final row in raw['samples']) {
+      if (row is! List || row.length != 2 || row[0] is! int ||
+          row[1] != null && (row[1] is! int || row[1]<0 || row[1]>100)) throw const FormatException('Trend evidence');
+      final at = DateTime.fromMillisecondsSinceEpoch(row[0]);
+      if (result.isNotEmpty && !at.isAfter(result.last.at)) throw const FormatException('Trend chronology');
+      result.add(HealthSample(at, row[1]));
+    }
+    return result;
+  }
+  @override
+  Future<void> saveSamples(HealthContext context, List<HealthSample> samples) async {
+    final target = await file(context);
+    await target.parent.create(recursive:true);
+    final encoded = jsonEncode({'context':context.fingerprint,
+      'samples':samples.take(10080).map((s)=>[s.at.millisecondsSinceEpoch,s.score]).toList()});
+    final staged = File('${target.path}.next');
+    await staged.writeAsString(encoded, flush:true);
+    await staged.copy(target.path);
+  }
+}

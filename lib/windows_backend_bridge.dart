@@ -1,3 +1,5 @@
+import 'windows_sync_comparison.dart';
+import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
 import 'document_processing_engine.dart';
 import 'school_qr_link.dart';
@@ -232,6 +234,63 @@ class WindowsBackendBridge {
         '';
   }
 
+  /// Read-only proof from the owner-managed immutable local generation.
+  static Future<Map<String,dynamic>> documentReviewPayload(String id, Map<String,dynamic> record) async {
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    if (record['schoolId'] != db.activeProfileIdentity['schoolSyncId'] || record['deleted'] == true) {
+      throw StateError('Live same-school document required. Original retained.');
+    }
+    final path = (record['optimizedPath'] ?? record['localPath'])?.toString() ?? '';
+    if (path.isEmpty) throw StateError('Pending document file is missing.');
+    final bytes = await File(path).readAsBytes();
+    if (db.activeProfileId != origin) throw StateError('School changed. Reopen review.');
+    return {...record, 'documentId':id, 'action':'upload_student_document',
+      'contentHash':crypto.sha256.convert(bytes).toString(),
+      'fileName':record['optimizedFileName'] ?? record['fileName'],
+      'mimeType':record['optimizedMimeType'] ?? record['mimeType']};
+  }
+
+  /// Explicit administrator readback resolution. Never uploads or changes cloud files.
+  static Future<void> recordVerifiedDocumentReview(String id, Map<String,dynamic> expected) async {
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final payload = await documentReviewPayload(id, expected);
+    final reply = await ManagedSchoolSession.callForSchool(expected['schoolId'] as String, 'managed/records', {
+      'operation':'read', 'collection':'documents', 'syncProtocol':2,
+    });
+    if (reply['syncProtocol'] != 2) throw const MissingSyncAcknowledgement();
+    final cloud = (reply['records'] as Map?)?[id];
+    final result = {'success':true, 'cloudVerified':true, 'schoolId':reply['schoolId'], 'document':cloud};
+    if (!verifiedDocumentAcknowledgement(payload,result)) throw const MissingSyncAcknowledgement();
+    await _documentWrite(() async {
+      if (db.activeProfileId != origin) throw StateError('School changed. Reopen review.');
+      final queueRef = db.collection('_windows_document_outbox').doc(id);
+      final current = (await queueRef.get()).data();
+      if (current == null || syncPayloadHash(current) != syncPayloadHash(expected)) {
+        throw StateError('Pending generation changed. Verify again.');
+      }
+      final freshPayload = await documentReviewPayload(id,current);
+      if (!identicalDocumentPayload(freshPayload,cloud as Map)) throw const MissingSyncAcknowledgement();
+      final localRef = db.collection('_local_student_documents').doc(id);
+      final local = (await localRef.get()).data();
+      if (local?['documentRevision'] != expected['documentRevision'] || local?['localPath'] != expected['localPath']) {
+        throw StateError('Local generation changed. Verify again.');
+      }
+      final key = 'document-$id-${expected['documentRevision']}';
+      final batch = db.batch();
+      batch.set(db.collection('_windows_sync_conflict_history').doc(key), {
+        ...expected, 'verifiedCloud':cloud, 'resolution':'identical authenticated readback'});
+      batch.set(db.collection('_windows_sync_receipts').doc(key), {
+        'schoolId':expected['schoolId'], 'operationId':expected['documentRevision'],
+        'documentId':id, 'collection':'documents', 'recordRevision':cloud['_syncRevision'],
+        'contentHash':freshPayload['contentHash'], 'verification':'authenticated readback',
+        'acknowledgedAt':DateTime.now().millisecondsSinceEpoch});
+      batch.set(localRef, {'syncState':'Synced','cloudFileUrl':cloud['fileUrl'],
+        'cloudRevision':cloud['documentRevision'], 'cloudUploadedAt':cloud['uploadedAt']}, SetOptions(merge:true));
+      batch.delete(queueRef); // Exact owner-locked acknowledged row only; original file retained.
+      await batch.commit();
+    });
+  }
+
   static Future<void> flushDocumentPending({
     Future<Map<String, dynamic>> Function(Map<String, dynamic>)? send,
     bool Function()? canAdmit,
@@ -308,6 +367,7 @@ class WindowsBackendBridge {
             'documentId': queued.id,
             'schoolId': record['schoolId'],
             'documentRevision': record['documentRevision'],
+            if (record['uploadedAt'] is num && record['uploadedAt'] > 0) 'uploadedAt':record['uploadedAt'],
             'sizeBytes': record['sizeBytes'],
             'sourceBytes': record['sourceBytes'],
             'contentHash': crypto.sha256.convert(bytes).toString(),
@@ -325,8 +385,8 @@ class WindowsBackendBridge {
           final response = (send ?? _handleCentral)(payload);
           report('waitingForAck');
           final result = await response;
-          if (result['success'] != true)
-            throw StateError('Document sync failed. Original retained.');
+          if (!verifiedDocumentAcknowledgement(payload, result))
+            throw const MissingSyncAcknowledgement();
           await _documentWrite(() async {
             if (FirebaseFirestore.instance.activeProfileId != origin)
               throw StateError('School changed during document sync.');
@@ -334,7 +394,16 @@ class WindowsBackendBridge {
                 .collection('_local_student_documents')
                 .doc(queued.id);
             final current = (await ref.get()).data();
-            if (current?['localPath'] != generationPath ||
+            final receiptId = 'document-${queued.id}-${record['documentRevision']}';
+            await FirebaseFirestore.instance.collection('_windows_sync_receipts').doc(receiptId).set({
+              'schoolId':record['schoolId'], 'operationId':record['documentRevision'],
+              'collection':'documents', 'documentId':queued.id,
+              'recordRevision':result['document']['_syncRevision'],
+              'contentHash':payload['contentHash'], 'verification':'authenticated readback',
+              'acknowledgedAt':DateTime.now().millisecondsSinceEpoch,
+            });
+            if (current?['documentRevision'] != record['documentRevision'] ||
+                current?['localPath'] != generationPath ||
                 current?['deleted'] != record['deleted']) {
               // The earlier version reached the cloud, but the replacement is
               // still pending. Advance only its compare-and-set baseline.
@@ -401,9 +470,7 @@ class WindowsBackendBridge {
                   if(retryAt!=null)'retryAtMillis':retryAt.millisecondsSinceEpoch,
                   'retryCount':
                       (current['retryCount'] as num? ?? 0).toInt() + 1,
-                  'lastError': conflict
-                      ? 'Document version conflict; local original retained.'
-                      : 'Document synchronization failed; local original retained.',
+                  'lastError': decision.message,
                 }, SetOptions(merge: true));
               }
             });
@@ -1247,6 +1314,21 @@ class WindowsBackendBridge {
           idToken: token,
           collection: collection,
         );
+    Future<Map<String,dynamic>> documentReceipt(String id, Map payload) async {
+      if (connection['managed'] != true) throw const MissingSyncAcknowledgement();
+      final reply = await ManagedSchoolSession.callForSchool(school, 'managed/records', {
+        'operation':'read', 'collection':'documents', 'syncProtocol':2,
+      });
+      await ensureSchool();
+      final row = (reply['records'] as Map?)?[id];
+      final receipt = <String,dynamic>{'success':true, 'cloudVerified':true,
+        'schoolId':reply['schoolId'], 'documentId':id,
+        'document':row, 'fileUrl':row is Map ? row['fileUrl'] : null};
+      if (!verifiedDocumentAcknowledgement({...payload, 'schoolId':school, 'documentId':id}, receipt)) {
+        throw const MissingSyncAcknowledgement();
+      }
+      return receipt;
+    }
     Future<void> save(
       String collection,
       String id,
@@ -1293,7 +1375,8 @@ class WindowsBackendBridge {
       if (action == 'save_school_profile') {
         final existing =
             (await read('school_config'))['school_profile_cache'] ?? {};
-        final profile = <String, dynamic>{...existing, ...data};
+        requireSchoolProfile(data);
+        final profile = mergeSchoolProfileSafely(Map<String,dynamic>.from(existing), data);
         for (final prefix in ['logo', 'seal', 'principalSignature']) {
           final raw = data['${prefix}Base64']?.toString() ?? '';
           if (raw.isNotEmpty) {
@@ -1350,13 +1433,12 @@ class WindowsBackendBridge {
         final revision = data['documentRevision']?.toString() ?? '';
         if (revision.isEmpty || revision.length > 100)
           throw StateError('Document revision missing.');
-        if (old?['documentRevision'] == revision)
-          return {
-            'success': true,
-            'documentId': id,
-            'fileUrl': old?['fileUrl'],
-            'document': old,
-          };
+        if (old?['documentRevision'] == revision) {
+          if (!identicalDocumentPayload({...data, 'schoolId':school}, old!)) {
+            throw StateError('Sync operation ID conflict');
+          }
+          return await documentReceipt(id, data);
+        }
         final base = data['baseCloudRevision']?.toString() ?? '';
         if ((old?['documentRevision']?.toString() ?? '') != base)
           throw StateError(
@@ -1375,7 +1457,9 @@ class WindowsBackendBridge {
           ...data,
           ...file,
           'documentId': id,
-          'uploadedAt': DateTime.now().millisecondsSinceEpoch,
+          // Use the durable generation time on replay, never rebuild its request identity.
+          'uploadedAt': data['uploadedAt'] is num && data['uploadedAt'] > 0
+              ? data['uploadedAt'] : DateTime.now().millisecondsSinceEpoch,
         }, school);
         await save(
           'documents',
@@ -1384,12 +1468,7 @@ class WindowsBackendBridge {
           expectedRevision: base,
           expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );
-        return {
-          'success': true,
-          'documentId': id,
-          'fileUrl': file['fileUrl'],
-          'document': document,
-        };
+        return await documentReceipt(id, data);
       }
       if (action == 'delete_student_document') {
         final id = data['documentId']?.toString() ?? '';
@@ -1415,7 +1494,7 @@ class WindowsBackendBridge {
               .doc(data['documentId']),
           null,
         );
-        return {'success': true};
+        return await documentReceipt(id, data);
       }
       final lists = {
         'list_student_documents': ('documents', 'documents'),
@@ -1581,7 +1660,8 @@ class WindowsBackendBridge {
             .collection('school_config')
             .doc('school_profile_cache')
             .get();
-        final merged = <String, dynamic>{...?old.data(), ...profile};
+        requireSchoolProfile(profile);
+        final merged = mergeSchoolProfileSafely(old.data() ?? {}, profile);
         await FirebaseFirestore.instance
             .collection('school_config')
             .doc('school_profile_cache')

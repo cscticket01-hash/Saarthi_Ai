@@ -16,6 +16,16 @@ import '../lib/windows_local_storage.dart';
 import '../lib/windows_connect/managed_school_session.dart';
 import '../lib/platform/platform_config.dart';
 
+// Isolated signed-readback fixture. A legacy success bool is intentionally insufficient.
+Map<String,dynamic> documentAckFixture(Map<String,dynamic> payload, int at, {String? url}) => {
+  'success':true, 'cloudVerified':true, 'schoolId':payload['schoolId'], 'fileUrl':url,
+  'document':{...payload, 'id':payload['documentId'], 'schoolId':payload['schoolId'],
+    '_syncRevision':'fixture-record-$at', 'uploadedAt':at,
+    if(payload['action']=='delete_student_document') '_syncDeleted':true,
+    if(payload['action']=='delete_student_document') 'documentRevision':payload['baseCloudRevision'],
+  },
+};
+
 Future<Map<String, dynamic>> persistedRoot() async {
   final sqlite = await WindowsLocalStorage.sqliteFile();
   if (WindowsLocalStorage.sqliteEnabled && await sqlite.exists()) {
@@ -56,6 +66,18 @@ void main() {
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
   });
+  test('document review measures retained bytes and rejects foreign-school files', () async {
+    final dir=await Directory.systemTemp.createTemp('document-review-proof');
+    try {
+      final file=File('${dir.path}/original');await file.writeAsBytes([1,2,3]);
+      final row={'schoolId':school,'localPath':file.path,'documentRevision':'op','studentId':'S1'};
+      final proof=await WindowsBackendBridge.documentReviewPayload('doc',row);
+      expect(proof['contentHash'],matches(RegExp(r'^[a-f0-9]{64}$')));
+      expect(await file.readAsBytes(),[1,2,3]);
+      await expectLater(WindowsBackendBridge.documentReviewPayload('doc',{...row,'schoolId':'foreign'}),throwsStateError);
+      expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    } finally {await dir.delete(recursive:true);}
+  });
   test('document revision conflict retains original and allows independent ACK', () async {
     final dir = await Directory.systemTemp.createTemp('document-conflict-');
     try {
@@ -75,7 +97,7 @@ void main() {
         if (id == 'conflict-doc') throw CentralCloudException(409,'school_cloud',
           'Document version conflict; both copies retained',
           diagnosticCode:'SCRIPT_DOCUMENT_REVISION_CONFLICT');
-        return {'success':true,'document':{'documentRevision':payload['documentRevision'],'uploadedAt':42}};
+        return documentAckFixture(payload,42);
       }), throwsA(isA<CentralCloudException>()));
       expect(sent, containsAll(['conflict-doc','independent-doc']));
       final retained = (await db.collection('_windows_document_outbox').doc('conflict-doc').get()).data()!;
@@ -285,14 +307,7 @@ void main() {
       send: (payload) async {
         expect(payload['schoolId'], school);
         await save(id);
-        return {
-          'success': true,
-          'fileUrl': 'https://drive.google.com/file/d/old/view',
-          'document': {
-            'documentRevision': payload['documentRevision'],
-            'uploadedAt': 42,
-          },
-        };
+        return documentAckFixture(payload,42,url:'https://drive.google.com/file/d/old/view');
       },
     );
     expect(
@@ -300,14 +315,7 @@ void main() {
       1,
     );
     await WindowsBackendBridge.flushDocumentPending(
-      send: (payload) async => {
-        'success': true,
-        'fileUrl': 'https://drive.google.com/file/d/current/view',
-        'document': {
-          'documentRevision': payload['documentRevision'],
-          'uploadedAt': 43,
-        },
-      },
+      send: (payload) async => documentAckFixture(payload,43,url:'https://drive.google.com/file/d/current/view'),
     );
     expect(
       (await db.collection('_windows_document_outbox').get()).docs,
@@ -325,7 +333,7 @@ void main() {
     await WindowsBackendBridge.flushDocumentPending(
       send: (payload) async {
         expect(payload['action'], 'delete_student_document');
-        return {'success': true};
+        return documentAckFixture(payload,44);
       },
     );
     expect(await File(old).exists(), true);

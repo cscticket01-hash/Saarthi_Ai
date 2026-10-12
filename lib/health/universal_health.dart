@@ -83,6 +83,16 @@ abstract class HealthHistoryStore {
   Future<void> save(HealthContext context, List<HealthEvent> events);
 }
 
+class HealthSample {
+  const HealthSample(this.at, this.score);
+  final DateTime at;
+  final int? score; // Unknown is a gap, never a synthetic zero.
+}
+abstract class HealthSampleStore {
+  Future<List<HealthSample>> loadSamples(HealthContext context);
+  Future<void> saveSamples(HealthContext context, List<HealthSample> samples);
+}
+
 class HealthPrediction {
   const HealthPrediction(this.component, this.reason, this.samples, this.confidence);
   final String component, reason;
@@ -98,6 +108,54 @@ class UniversalHealth {
   static final instance = UniversalHealth();
   final DateTime Function() now;
   HealthHistoryStore? store;
+  HealthSampleStore? sampleStore;
+  final List<HealthSample> _samples = [];
+  bool _samplesReady = false;
+  int _sampleEpoch = 0;
+  Future<void> _sampleLoad = Future.value();
+  Future<void> get sampleHistoryLoaded => _sampleLoad;
+  Future<void> _sampleWrite = Future.value();
+  List<HealthSample> get samples => List.unmodifiable(_samples);
+  int get reviewedPlaybookCount => _providers.values.fold(0, (n, p) => n + p.playbooks.length);
+  int? get measuredScore {
+    final entries = observations.values.toList();
+    if (context == null || paused || entries.isEmpty || entries.length != registeredCount) return null;
+    var total = 0;
+    for (final entry in entries) {
+      switch(entry.state) {
+        case HealthState.healthy: total += 100;
+        case HealthState.degraded: total += 50;
+        case HealthState.recovering: total += 25;
+        case HealthState.needsAttention: break;
+        default: return null;
+      }
+    }
+    return (total / entries.length).round();
+  }
+  Future<void> _loadSamples(HealthContext bound, int epoch) async {
+    try {
+      final loaded = await (sampleStore?.loadSamples(bound) ?? Future.value(<HealthSample>[]))
+          .timeout(const Duration(seconds:2));
+      if (_disposed || epoch != _sampleEpoch || _context?.same(bound) != true) return;
+      final at = now();
+      _samples.addAll(loaded.where((s) => !s.at.isAfter(at) && at.difference(s.at) <= const Duration(days:7)).take(10080));
+    } catch (_) { /* Missing/corrupt diagnostic history is not health proof. */ }
+    if (!_disposed && epoch == _sampleEpoch && _context?.same(bound) == true) { _samplesReady = true; _notify(); }
+  }
+  void _captureSample() {
+    final bound = _context;
+    if (!_samplesReady || bound == null) return;
+    final at = now();
+    _samples.removeWhere((s) => s.at.isAfter(at) || at.difference(s.at) > const Duration(days:7));
+    if (_samples.isNotEmpty && at.difference(_samples.last.at) < const Duration(minutes:1)) return;
+    _samples.add(HealthSample(at, measuredScore));
+    if (_samples.length > 10080) _samples.removeAt(0);
+    final snapshot = List<HealthSample>.of(_samples);
+    _sampleWrite = _sampleWrite.catchError((_) {}).then((_) async {
+      if (sampleStore != null) await sampleStore!.saveSamples(bound, snapshot);
+    }).catchError((_) {});
+  }
+
   final int maxProviders, maxHistory, maxConcurrentChecks;
   final Map<String, HealthProvider> _providers = {};
   final Map<String, HealthObservation> _observations = {};
@@ -135,6 +193,8 @@ class UniversalHealth {
   int get pendingQuarantineVerification => _restartQuarantine.length;
   int get _activeChecks => _checks.keys.where((id)=>!_quarantinedChecks.contains(id)).length;
   bool get paused => _paused;
+  bool get monitoringActive => !_disposed && !_paused && _timer != null &&
+      _context != null && _context!.school.isNotEmpty && registeredCount > 0;
   bool get admissionHistoryVerified => _historyReady && store != null;
   HealthContext? get context => _context;
   static bool validId(dynamic id) => id is String && RegExp(r'^[a-z][a-z0-9_.-]{0,47}$').hasMatch(id);
@@ -151,6 +211,9 @@ class UniversalHealth {
     if (_disposed || _context?.same(context) == true) return;
     final generation = ++_generation;
     _context = context;
+    _samples.clear(); _samplesReady = false;
+    _sampleLoad = _loadSamples(context, ++_sampleEpoch);
+    unawaited(_sampleLoad);
     _historyReady=false;
     _history.clear(); _attempts.clear(); _nextAttempt.clear(); _dedup.clear(); _latencies.clear(); _restartQuarantine.clear();
     _observations.updateAll((_, __) => const HealthObservation(HealthState.unknown));
@@ -203,8 +266,8 @@ class UniversalHealth {
   void pause() { _paused = true; ++_generation; _notify(); }
   void resume() { if (_disposed) return; _paused = false; _notify(); unawaited(checkAll()); }
   Future<void> stop() async { _timer?.cancel(); _timer = null; _watchdog?.cancel();_watchdog=null;_loadTimer?.cancel();_loadTimer=null;if(_loadGate?.isCompleted==false)_loadGate!.complete([]);pause(); await flushHistory(); }
-  Future<void> flushHistory() => _write.catchError((_) {});
-  void _notify() { if (!_disposed) _changes.add(null); }
+  Future<void> flushHistory() async { await _write.catchError((_) {}); await _sampleWrite.catchError((_) {}); }
+  void _notify() { if (!_disposed) { _captureSample(); _changes.add(null); } }
   bool _pinnedQuarantine(HealthEvent event) => _restartQuarantine[event.component]?.at == event.at && _restartQuarantine[event.component]?.stage == event.stage;
   void _quarantine(String id, HealthFailure failure, String stage) {
     final at=now(),version=_providers[id]?.version??'2.0';

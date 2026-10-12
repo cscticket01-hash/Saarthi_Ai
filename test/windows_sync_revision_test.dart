@@ -192,6 +192,18 @@ void main(){
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('revision-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school,'schoolId':school});
  });
+ test('verified ACK persists a timestamp; rejected acknowledgement writes none', () async {
+   await db.collection('school_notices').doc('ack-timestamp').set({'schoolId':school,'message':'Fixture only'});
+   final queued=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+   expect(() => db.acknowledgeOutbox(queued.reference,queued.data(),revision:''),throwsStateError);
+   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+   final start=DateTime.now().millisecondsSinceEpoch;
+   await db.acknowledgeOutbox(queued.reference,queued.data(),revision:'verified-fixture-revision');
+   final receipt=(await db.collection('_windows_sync_receipts').get()).docs.single.data();
+   expect(receipt['schoolId'],school);
+   expect(receipt['acknowledgedAt'],inInclusiveRange(start,DateTime.now().millisecondsSinceEpoch));
+   expect(receipt['recordRevision'],'verified-fixture-revision');
+ });
  test('typed outage evidence is retryable while permission failure is retained for review', () async {
    expect(windowsSyncRecovery(TimeoutException('fixture')).kind, SyncFailureKind.timeout);
    expect(windowsSyncRecovery(const SocketException('fixture')).kind, SyncFailureKind.networkPath);
