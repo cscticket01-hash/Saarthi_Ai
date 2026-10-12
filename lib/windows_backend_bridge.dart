@@ -1,3 +1,4 @@
+import 'student_inventory_policy.dart';
 import 'document_processing_engine.dart';
 import 'school_qr_link.dart';
 import 'id_card_engine.dart';
@@ -500,6 +501,7 @@ class WindowsBackendBridge {
             'documents': rows.values
                 .where(
                   (r) =>
+                      StudentInventoryPolicy.visible(r) &&
                       r['deleted'] != true &&
                       r['_syncDeleted'] != true &&
                       !(r['syncState'] == 'Synced' &&
@@ -1422,7 +1424,7 @@ class WindowsBackendBridge {
               .where(
                 (e) =>
                     action != 'list_student_documents' ||
-                    e['studentId'] == data['studentId'],
+                    (e['studentId'] == data['studentId'] && StudentInventoryPolicy.visible(e)),
               )
               .toList(),
         };
@@ -1655,7 +1657,7 @@ class WindowsBackendBridge {
             .get();
         return {
           'success': true,
-          'documents': snapshot.docs.map((d) => d.data()).toList(),
+          'documents': snapshot.docs.map((d) => d.data()).where(StudentInventoryPolicy.visible).toList(),
         };
 
       case 'upload_student_document':
@@ -1785,6 +1787,7 @@ class WindowsBackendBridge {
         'studentClass': person['class'],
         'rollNo': person['rollNo'],
         'documentKind': 'idCard',
+        'inventoryCategory': 'generatedIdCard',
         'ownerRole': link.role,
         'personId': person['mobileStableId'] ?? link.personId,
         'inputRevision': inputRevision,
@@ -1920,6 +1923,7 @@ class WindowsBackendBridge {
       },
       if (body['documentKind'] == 'idCard') ...{
         'documentKind': 'idCard',
+        'inventoryCategory': 'generatedIdCard',
         'ownerRole': body['ownerRole'],
         'personId': body['personId'],
         'inputRevision': body['inputRevision'],
@@ -1955,6 +1959,8 @@ class WindowsBackendBridge {
           : safeName,
       'targetMet': processing['targetMet'] == true,
       'cleanupStatus': processing['cleanupStatus'] ?? processingWarning,
+      'optimizationReason': processing['optimizationReason'],
+      'sourceRetained': processing['sourceRetained'] == true,
       'deleted': false,
       'syncState': body['_queueCloud'] == true ? 'Pending' : 'Local',
       'localPath': file.path,

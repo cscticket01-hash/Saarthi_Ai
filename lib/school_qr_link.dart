@@ -13,8 +13,8 @@ class SchoolLink {
       required this.role,
       required this.personId,
       required this.linkToken,
-      required this.rawQr,this.managed=false,this.schoolId='',this.endpoint=''});
-  final String projectId, scriptUrl, role, personId, linkToken, rawQr;
+      required this.rawQr,this.cardIssueId='',this.managed=false,this.schoolId='',this.endpoint=''});
+  final String projectId, scriptUrl, role, personId, linkToken, rawQr, cardIssueId;
   final bool managed;final String schoolId,endpoint;
   /// Windows and Android use this exact versioned envelope.
   static String encode(Map<String, dynamic> fields) {
@@ -25,6 +25,7 @@ class SchoolLink {
   /// Compact managed identity only; DOB/password and server lease verification
   /// remain mandatory. No names, location, Drive URL or Firebase config in QR.
   static String encodeCompact(Map<String, dynamic> fields) {
+    if((fields['cardIssueId']?.toString()??'').isNotEmpty) return encodeIssued(fields);
     final checked = parse(jsonEncode({...fields, 'app':'VIDYA_SAARTHI','v':2}));
     if (!checked.managed) return encode(fields);
     final person = base64Url.encode(utf8.encode(checked.personId)).replaceAll('=', '');
@@ -37,8 +38,18 @@ class SchoolLink {
     }
     return 'VS3|${checked.schoolId.substring(3)}|${checked.role == 'student' ? 's' : 't'}|$person|${checked.linkToken}';
   }
+  /// New issues only. Existing printed v2/VS3 identities stay unchanged.
+  static String encodeIssued(Map<String, dynamic> fields) {
+    final issue = fields['cardIssueId']?.toString() ?? '';
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(issue)) throw const SchoolQrException('Exact card issue identity required.');
+    final checked = parse(jsonEncode({...fields, 'app':'VIDYA_SAARTHI','v':2}));
+    if (!checked.managed || !RegExp(r'^[A-Za-z0-9_-]{32,128}$').hasMatch(checked.linkToken)) throw const SchoolQrException('Issued cards require a managed school identity.');
+    final person = base64Url.encode(utf8.encode(checked.personId)).replaceAll('=', '');
+    return 'VS4|${checked.schoolId.substring(3)}|${checked.role == 'student' ? 's' : 't'}|$person|${checked.linkToken}|$issue';
+  }
   static int detectVersion(String raw) {
     final value = raw.trim();
+    if (value.startsWith('VS4|')) return 4;
     if (value.startsWith('VS3|')) return 3;
     if (RegExp(r'^VS[0-9]+\|').hasMatch(value)) {
       throw const SchoolQrException('Unsupported ID QR version. Update the app or ask the school to regenerate the card.');
@@ -68,6 +79,13 @@ class SchoolLink {
   }
   static SchoolLink _parse(String raw) {
     if (raw.length > 8192) throw const SchoolQrException('QR payload exceeds safety limit.');
+    if (raw.startsWith('VS4|')) {
+      final parts = raw.split('|');
+      if(parts.length != 6 || !RegExp(r'^[a-f0-9]{64}$').hasMatch(parts[5])) throw const SchoolQrException('Invalid issued school ID.');
+      final legacy = parse('VS3|${parts.sublist(1,5).join('|')}');
+      return SchoolLink(projectId:legacy.projectId,scriptUrl:legacy.scriptUrl,role:legacy.role,personId:legacy.personId,
+        linkToken:legacy.linkToken,rawQr:raw,managed:true,schoolId:legacy.schoolId,endpoint:legacy.endpoint,cardIssueId:parts[5]);
+    }
     if (raw.startsWith('VS3|')) {
       final parts = raw.split('|');
       if (parts.length != 5 || !{'s','t'}.contains(parts[2]) ||
@@ -92,12 +110,14 @@ class SchoolLink {
           'Scan a current Vidya Saarthi student or teacher ID card.');
     if(d['managed']==true){
       final id=d['schoolId']?.toString()??'',endpoint=d['centralEndpoint']?.toString()??'';
+      final issue=d['cardIssueId']?.toString()??'';
+      if(issue.isNotEmpty&&!RegExp(r'^[a-f0-9]{64}$').hasMatch(issue))throw const SchoolQrException('Invalid issued card identity.');
       const allowed=String.fromEnvironment('SAARTHI_SCHOOL_CLOUD_URL', defaultValue:'https://saarthi-oauth-staging.onrender.com/school-cloud');
       final role=d['type']?.toString()??'',person=d['personId']?.toString()??'',token=d['linkToken']?.toString()??'';
       if (role == 'school') throw const SchoolQrException('Scan a student or teacher ID card. A school setup QR cannot be used for attendance.', 'WRONG_QR_KIND');
       if (endpoint != allowed) throw const SchoolQrException('This card belongs to a different server environment. Use the app supplied by the issuing school; do not replace the card.', 'SERVER_ENVIRONMENT_MISMATCH');
       if(!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(id)||!{'student','teacher'}.contains(role)||person.isEmpty||person.length>200||person.contains('/')||token.length<20)throw const SchoolQrException('Invalid managed school ID card');
-      return SchoolLink(projectId:id,scriptUrl:'',role:role,personId:person,linkToken:token,rawQr:raw,managed:true,schoolId:id,endpoint:endpoint);
+      return SchoolLink(projectId:id,scriptUrl:'',role:role,personId:person,linkToken:token,rawQr:raw,managed:true,schoolId:id,endpoint:endpoint,cardIssueId:issue);
     }
     Map config = {};
     try {

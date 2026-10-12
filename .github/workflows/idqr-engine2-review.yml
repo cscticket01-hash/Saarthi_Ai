@@ -1,0 +1,104 @@
+name: ID QR Engine2 draft review
+'on':
+  push:
+    branches: [feature/smart-id-qr-engine-2, integration/master-review-20261011]
+    paths: ['pubspec.yaml','assets/fonts/**','lib/**','test/**','school-backend/**','functions/**','.github/scripts/**','.github/tests/**','.github/workflows/idqr-engine2-review.yml','tool/idqr_acceptance/**']
+  pull_request:
+    branches: [feature/smart-sync-3-finalization]
+    paths: ['pubspec.yaml','assets/fonts/**','lib/**','test/**','school-backend/**','functions/**','.github/scripts/**','.github/tests/**','.github/workflows/idqr-engine2-review.yml','tool/idqr_acceptance/**']
+permissions:
+  contents: read
+concurrency:
+  group: idqr-review-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  draft-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Analyze new draft components
+        run: flutter analyze lib/id_card_designer.dart lib/id_card_indic_text.dart lib/id_card_designer_screen.dart lib/id_card_draft_storage_io.dart lib/id_card_engine.dart lib/id_card_bulk_engine.dart lib/id_card_bulk_job_store.dart lib/id_card_bulk_screen.dart lib/id_card_local_cipher.dart lib/id_card_school_source.dart lib/windows_id_card_designer_entry.dart lib/windows_document_templates.dart lib/card_issue_lifecycle.dart
+      - name: Existing ID and new bulk regressions
+        run: flutter test test/id_card_engine_test.dart test/id_card_indic_text_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_bulk_job_store_test.dart test/id_card_designer_screen_test.dart test/id_card_draft_storage_io_test.dart test/id_card_local_cipher_test.dart test/id_card_school_source_test.dart test/id_card_bulk_screen_origin_test.dart test/qr_card_authorization_test.dart
+      - name: Independent actual-renderer final PDF verification
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libzbar0 zbar-tools
+          python -m pip install PyMuPDF==1.26.7 Pillow==12.1.0 zxing-cpp==2.3.0 reportlab==4.4.9
+          python -m unittest discover -s tool/idqr_acceptance -p test_verify_pdf.py
+          python tool/idqr_acceptance/verify_application_bulk.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: actual-draft-renderer-bulk-evidence
+          path: build/idcard-bulk-core
+          retention-days: 14
+      - name: Designer and lifecycle safety
+        run: |
+          dart .github/tests/id_card_designer_foundation.dart
+          dart .github/tests/card_issue_lifecycle_foundation.dart
+      - name: Universal configuration and source regressions
+        working-directory: functions
+        run: |
+          npm install --ignore-scripts
+          node --test test/*.test.js
+      - name: Universal package and upgrade safety
+        run: |
+          python -m unittest discover -s .github/scripts -p 'test_package_universal_script.py'
+          python -m unittest discover -s .github/scripts -p 'test_prepare_existing_test_upgrade.py'
+          python .github/scripts/package_universal_script.py --source-commit "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: universal-apps-script-reviewed-source
+          path: build/universal-script
+          retention-days: 14
+
+  windows-draft:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=windows --project-name saarthi_ai .
+      - name: Preserve Windows single instance registration
+        run: python .github/scripts/configure_windows_single_instance.py
+      - name: Keep Windows local dependencies (same exclusions as platform review)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re
+          p='pubspec.yaml'
+          s=open(p).read()
+          for name in ['firebase_core','firebase_auth','firebase_messaging','flutter_local_notifications','cloud_firestore','agora_rtc_engine','mobile_scanner','geolocator']:
+            s=re.sub(r'^  '+name+r':[^\n]*\n','',s,flags=re.M)
+          open(p,'w').write(s)
+          PY
+      - run: flutter pub get
+      - name: Windows ID Card designer, storage and durable bulk regressions
+        run: |
+          flutter test --concurrency=1 test/id_card_engine_test.dart test/id_card_indic_text_test.dart test/id_card_layout_test.dart test/id_card_bulk_engine_test.dart test/id_card_bulk_job_store_test.dart test/id_card_designer_screen_test.dart test/id_card_draft_storage_io_test.dart test/id_card_local_cipher_test.dart test/id_card_school_source_test.dart test/id_card_bulk_screen_origin_test.dart test/qr_card_authorization_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Windows ID Card regressions failed' }
+      - name: Exact-commit Windows application build review (not a release)
+        run: |
+          flutter build windows --release -t lib/main_windows.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
+          if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+      - name: Mark hosted preview as TEST only
+        run: |
+          New-Item -ItemType Directory -Force build/idqr-windows-review | Out-Null
+          Set-Content build/idqr-windows-review/TEST-COMMIT.txt $env:GITHUB_SHA
+          Set-Content build/idqr-windows-review/NOT-PRODUCTION.txt 'Hosted Windows build only. Do not replace production app or school data. Physical printer/camera/restart acceptance pending.'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: idqr-windows-exact-commit-evidence
+          path: build/idqr-windows-review
+          retention-days: 7

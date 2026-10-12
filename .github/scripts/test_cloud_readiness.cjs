@@ -49,11 +49,12 @@ async function run() {
   }
   check('Owner-connected TEST storage', r, true);
   const version=r.data.scriptBundleVersion;
+  const expectedReviewedSourceBundle=require('./reviewed_script_version.cjs').currentReviewedScriptVersion();
   report.deployedScriptEvidence={scope:'existing isolated TEST signed health response',
     scriptBundleVersion:typeof version==='string'&&/^20\d{2}-\d{2}-\d{2}\.\d{1,3}$/.test(version)?version:'Unknown',
     studentImportSheetVersion:r.data.studentImportSheetVersion===1?1:'Unknown',
     studentSlotUniquenessVersion:r.data.studentSlotUniquenessVersion===1?1:'Unknown',
-    expectedReviewedSourceBundle:'2026-10-11.1',matchesReviewedSource:version==='2026-10-11.1'};
+    expectedReviewedSourceBundle,matchesReviewedSource:version===expectedReviewedSourceBundle};
   r = await request(endpoint, {action: 'managed/records', schoolId, collection: 'school_settings', operation: 'read', syncProtocol: 2}, token);
   check('Read-only TEST settings protocol', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && r.data.syncProtocol === 2);
   r = await request(endpoint, {action: 'managed/sync/status', schoolId}, token);

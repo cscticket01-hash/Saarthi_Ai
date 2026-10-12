@@ -108,7 +108,17 @@ class StaffPayroll {
     _sameSchool(profile);
     if (row == null || row['netPaise'] is! num) throw StateError('Create a monthly salary record first.');
     final payments = List<dynamic>.from(row['payments'] as List? ?? []);
-    if (payments.any((p) => p['id'] == paymentId)) return; // retry is idempotent
+    if (payments.any((p) => p is! Map)) throw StateError('Stored payment history requires review. Original payments retained.');
+    final prior = payments.where((p) => p is Map && p['id'] == paymentId).toList();
+    if (prior.isNotEmpty) {
+      // A repeated submit is idempotent only for this exact financial intent.
+      // Reusing an ID for a correction must not falsely report a saved change.
+      final same = prior.length == 1 && prior.single['amountPaise'] == amount &&
+          prior.single['date'] == date.toIso8601String() &&
+          prior.single['mode'] == mode && prior.single['reference'] == reference.trim();
+      if (!same) throw StateError('Payment identity already belongs to different details. Original payment retained; review the correction.');
+      return;
+    }
     final next = paid(row) + amount;
     if (next > total(row)) throw StateError('Payment exceeds the remaining salary balance.');
     payments.add({'id': paymentId, 'amountPaise': amount, 'date': date.toIso8601String(), 'mode': mode, 'reference': reference.trim()});

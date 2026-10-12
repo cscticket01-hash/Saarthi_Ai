@@ -32,14 +32,42 @@ import '../lib/sync_recovery_policy.dart';
 import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/platform/platform_config.dart';
-// Exercise the actual narrow-window navigation; tools are intentionally absent
-// from Overview. Drawer scrolling avoids selecting the main content scroller.
+// Four inline primary destinations; deeper checks remain in Overview's
+// diagnostics expander. Re-enter Overview before revealing a tool after a check.
 Future<void> openSyncTool(WidgetTester tester, String label) async {
-  await tester.tap(find.byTooltip('Open navigation menu'));
+  const primary = {
+    'Overview',
+    'Smart Repair History',
+    'Recycle Bin',
+    'Backup School Data',
+  };
+  final overview = find.widgetWithText(OutlinedButton, 'Overview');
+  // Returning from a diagnostic section must restore the header to the
+  // viewport; ensureVisible alone can leave this padded sliver above the root.
+  final scrollState = tester.state<ScrollableState>(find.byType(Scrollable).first);
+  scrollState.position.jumpTo(scrollState.position.minScrollExtent);
   await tester.pumpAndSettle();
-  await tester.scrollUntilVisible(find.text(label), 250,
-      scrollable: find.descendant(of: find.byType(Drawer),
-          matching: find.byType(Scrollable)).first);
+  expect(overview.hitTestable(), findsOneWidget);
+  if (!primary.contains(label)) {
+    await tester.tap(overview.hitTestable());
+    await tester.pumpAndSettle();
+    final expander = find.text('Diagnostics and recovery tools');
+    await tester.scrollUntilVisible(
+      expander,
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    // Controls only exist while the expander is open.
+    if (find.text(label).evaluate().isEmpty) {
+      await tester.tap(expander);
+      await tester.pumpAndSettle();
+    }
+  }
+  await tester.scrollUntilVisible(
+    find.text(label),
+    250,
+    scrollable: find.byType(Scrollable).first,
+  );
   await tester.ensureVisible(find.text(label));
   await tester.pumpAndSettle();
 }
@@ -332,8 +360,9 @@ void main(){
               .onPressed,
           isNotNull,
         );
-        tester.state<ScaffoldState>(find.byType(Scaffold).first).closeDrawer();
-        await tester.pumpAndSettle();
+        // Reopening a control returns to Overview. Reveal the retained
+        // measurement through the status destination without repeating its request.
+        await selectSyncTool(tester, 'Measured Status');
         await tester.scrollUntilVisible(find.text('School Drive storage'),300,scrollable:find.byType(Scrollable).first);
         await tester.pumpAndSettle();
         expect(
@@ -356,9 +385,10 @@ void main(){
    expect(find.textContaining('Private upstream detail'),findsNothing);
    await openSyncTool(tester, 'Check Cloud Health');
    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Check Cloud Health')).onPressed,isNotNull);
-   tester.state<ScaffoldState>(find.byType(Scaffold).first).closeDrawer();
-   await tester.pumpAndSettle();
-   await tester.scrollUntilVisible(find.text('School cloud health'),-300,scrollable:find.byType(Scrollable).first);
+   // Check the retained failed result after returning from the controls,
+   // without rerunning the health probe.
+   await selectSyncTool(tester, 'Measured Status');
+   await tester.scrollUntilVisible(find.text('School cloud health'),300,scrollable:find.byType(Scrollable).first);
    await tester.pumpAndSettle();
    expect(find.text('Health check timed out — cloud readiness unverified'),findsOneWidget);
    expect(find.textContaining('Authenticated backend and school storage verified at'),findsNothing);
@@ -635,8 +665,25 @@ void main(){
   await tester.pump();expect(find.text('Pending: 1'),findsOneWidget);expect(find.textContaining('1 items pending'),findsOneWidget);
   final item=(await tester.runAsync(()=>db.collection('_windows_firebase_outbox').get()))!.docs.single;
   await tester.runAsync(()async{await item.reference.set({'syncState':'conflict','lastError':'Record revision conflict'},const SetOptions(merge:true));await engine.refreshDetails();});await tester.pump();expect(find.textContaining('1 items need attention'),findsOneWidget);
-  await tester.tap(find.text('Details'));await tester.pumpAndSettle();expect(find.textContaining('status-teacher: conflict'),findsOneWidget);
-  await tester.tap(find.text('Close'));await tester.pumpAndSettle();
+  expect(find.text('Details'), findsNothing);
+  await tester.tap(find.text('Open Sync & Backup Control Center'));
+  await tester.runAsync(() async { await Future<void>.delayed(const Duration(milliseconds: 50)); });
+  await tester.pumpAndSettle();
+  expect(find.byType(WindowsSyncControlCenter), findsOneWidget);
+  await tester.tap(find.text('Pending Uploads'));
+  await tester.pumpAndSettle();
+  await tester.scrollUntilVisible(find.text('teachers_directory • status-teacher'), 250,
+      scrollable: find.byType(Scrollable).first);
+  expect(find.text('teachers_directory • status-teacher'), findsOneWidget);
+  expect(find.textContaining('Status: conflict'), findsOneWidget);
+  await tester.tap(find.byType(BackButton));
+  await tester.pumpAndSettle();
+  expect(find.byType(WindowsSyncStatusCard), findsOneWidget);
+  // The real route starts a bounded bootstrap Future.timeout. Exercise its
+  // expiry after leaving the page: disposed state must not update the widget,
+  // and the test must not leave its one-shot deadline pending.
+  await tester.pump(const Duration(seconds: 31));
+  expect(tester.takeException(), isNull);
   engine.state.value=SchoolCloudState.syncing;await tester.pump();
   expect(find.widgetWithText(OutlinedButton,'Sync Now'),findsNothing);
   expect(find.text('Open Sync & Backup Control Center'),findsOneWidget);

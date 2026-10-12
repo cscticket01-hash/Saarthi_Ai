@@ -23,9 +23,34 @@ void main() {
     const now=1800000000000;
     final result=monitorSummary([
       {'lastSeenAt':now-11*60000,'onlineStudents':100,'licenseExpiresAt':now-1},
-      {'lastSeenAt':now-2*86400000,'reportedAt':now,'onlineStudents':100,'licenseExpiresAt':now+30*86400000},
+      {'lastSeenAt':now-2*86400000,'reportedAt':now-11*60000,'onlineStudents':100,'licenseExpiresAt':now+30*86400000},
     ],now);
     expect(result['onlineStudents'],0);expect(result['activeSchools'],1);
     expect(result['inactiveSchools'],1);expect(result['expiringSchools'],0);
   });
+  test('fresh measured student activity does not depend on a Windows heartbeat', () {
+    const now = 1800000000000;
+    final result = monitorSummary([
+      {'managed': true, 'lastSeenAt': 0, 'reportedAt': now,
+        'onlineStudents': 100, 'studentCount': 100},
+      {'managed': true, 'lastSeenAt': now, 'reportedAt': now + 1,
+        'onlineStudents': 99},
+      {'managed': true, 'lastSeenAt': now, 'reportedAt': now - 600001,
+        'onlineStudents': 99},
+      {'managed': true, 'lastSeenAt': now, 'reportedAt': now,
+        'blocked': true, 'onlineStudents': 99},
+    ], now);
+    expect(result['onlineStudents'], 100);
+    expect(result['totalStudents'], 100);
+  });
+  test('managed heartbeat without measured report cannot imply student activity', () {
+    const now = 1800000000000;
+    final result = monitorSummary([
+      {'managed': true, 'lastSeenAt': now, 'onlineStudents': 99},
+      {'managed': true, 'lastSeenAt': now, 'reportedAt': null, 'onlineStudents': 99},
+    ], now);
+    expect(result['activeSchools'], 2);
+    expect(result['onlineStudents'], 0);
+  });
+
 }

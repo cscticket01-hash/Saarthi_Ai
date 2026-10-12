@@ -30,3 +30,9 @@ test('database exceptions are not mislabeled as Script failures and foreign scho
  await assert.rejects(f.call(body),e=>e instanceof TypeError&&e.code===undefined);assert.equal(f.sent.length,0);
  await assert.rejects(f.call({...body,schoolId:'vs-'+ 'b'.repeat(32)}),e=>e.status===403);assert.equal(f.sent.length,0);
 });
+
+test('verified school-root failure retains safe provider provenance instead of generic operation failure',async()=>{
+ const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({success:false,schoolId:A,code:'SCRIPT_ROOT_IDENTITY_MISMATCH',message:'NEVER_EXPOSE'})}));
+ await assert.rejects(f.call(body),e=>e.status===502&&e.code==='SCRIPT_ROOT_IDENTITY_MISMATCH'&&!e.message.includes('NEVER_EXPOSE'));
+ assert.equal(f.sent.length,1);
+});

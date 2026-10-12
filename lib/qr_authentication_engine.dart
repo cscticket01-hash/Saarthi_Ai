@@ -1,3 +1,4 @@
+import 'health/health_runtime.dart';
 import 'school_qr_link.dart';
 
 /// Shared identity boundary. A QR identifies a person; it never grants a new
@@ -10,7 +11,7 @@ class QrAuthenticationEngine {
   static String encode(Map<String, dynamic> fields) =>
       SchoolLink.encode(fields);
   static SchoolLink decode(String raw, {String? expectedSchool}) {
-    final link = SchoolLink.parse(raw);
+    final link = HealthRuntime.measureSync('qr', () => SchoolLink.parse(raw));
     if (expectedSchool != null && link.projectId != expectedSchool) {
       throw StateError('This ID belongs to another school.');
     }
@@ -49,6 +50,10 @@ class QrAuthenticationEngine {
         throw StateError('ID and school person record do not match.');
       }
     }
+    if (!restored && link.cardIssueId.isNotEmpty &&
+        (session['cardReaderEnforced'] != true || session['cardIssueId'] != link.cardIssueId || session['cardAuthorizationToken'] is! String || session['cardOfflineLease'] is! String)) {
+      throw StateError('Issued card authorization was not verified by the school server.');
+    }
     final messaging = session['messaging'];
     if (messaging != null &&
         (messaging is! Map || messaging['projectId'] != link.projectId)) {
@@ -68,13 +73,15 @@ class QrAuthenticationEngine {
     if (decoded.role != link.role || decoded.personId != link.personId ||
         decoded.linkToken != link.linkToken || decoded.managed != link.managed ||
         decoded.endpoint != link.endpoint || decoded.scriptUrl != link.scriptUrl ||
-        decoded.schoolId != link.schoolId) {
+        decoded.schoolId != link.schoolId || decoded.cardIssueId != link.cardIssueId) {
       throw StateError('QR identity changed. Scan the original ID again.');
     }
     final response = await verify({
       'role': link.role,
       'personId': link.personId,
       'linkToken': link.linkToken,
+      if(link.cardIssueId.isNotEmpty)'cardIssueId':link.cardIssueId,
+      if(link.cardIssueId.isNotEmpty)'qrProtocolVersion':4,
       'studentClass': studentClass,
       'rollNo': roll,
       'dob': dob,

@@ -1,5 +1,6 @@
 import 'windows_sync_conflict_review.dart';
 import 'windows_sync_control_center.dart';
+import 'windows_school_backup_action.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
 import 'school_cloud_state.dart';
@@ -688,14 +689,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
   Future<void> _backup() async {
     setState(() => _busy = true);
     try {
-      final path = await WindowsLocalStorage.createBackup();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFF00A884),
-          content: Text('Backup ready: $path'),
-        ),
-      );
+      await exportWindowsSchoolBackup(context);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1006,37 +1000,10 @@ class WindowsSyncStatusCard extends StatelessWidget {
           title:'Sync',subtitle:'Sync Status • $label',child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
             Text('Last successful sync: ${engine.lastSuccessfulSync?.toLocal().toString()??'Not yet completed'}'),
             Text('Pending: $pending'),
-            TextButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsSyncControlCenter())),
+            TextButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => WindowsSyncControlCenter(backupRequest: () => exportWindowsSchoolBackup(context)))),
               icon: const Icon(Icons.dashboard_outlined), label: const Text('Open Sync & Backup Control Center')),
             if(engine.lastError!=null)Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent)),
-            Row(children:[TextButton(onPressed:()=>showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
-                title:const Text('Sync details'),content:SizedBox(width:600,child:SingleChildScrollView(child:Column(
-                  crossAxisAlignment:CrossAxisAlignment.start,children:[
-                    for(final item in details['items'] as List? ?? [])Row(children:[Expanded(child:Text('${item['collection']??'documents'} / ${item['documentId']??item['id']}: ${item['syncState']??'pending'} • ${item['lastError']??''}')), if(item['syncState']=='conflict')TextButton(onPressed:()=>showWindowsConflictReview(ctx,Map<String,dynamic>.from(item as Map)),child:const Text('Review'))]),
-                    Text('Session counters: ${details['metrics']??{}}'),
-                    const Text('Conflicting copies are retained. Review both versions before resolving.')]))),
-                actions:[TextButton(onPressed:() async {
-                  try {
-                    final report=await engine.safeQueueDiagnostics();
-                    if(!ctx.mounted)return;
-                    await showDialog<void>(context:ctx,builder:(reportContext)=>AlertDialog(
-                      title:const Text('Safe sync diagnostics'),
-                      content:SizedBox(width:600,child:SingleChildScrollView(child:Column(
-                        crossAxisAlignment:CrossAxisAlignment.start,children:[
-                          const Text('Read-only queue snapshot. No records, credentials, paths or raw responses. Record IDs are fingerprints. This does not verify cloud ACK.'),
-                          const SizedBox(height:12),
-                          SelectableText(const JsonEncoder.withIndent('  ').convert(report)),
-                        ]))),
-                      actions:[TextButton(onPressed:()=>Navigator.pop(reportContext),child:const Text('Close'))]));
-                  } catch (_) {
-                    if(!ctx.mounted)return;
-                    await showDialog<void>(context:ctx,builder:(errorContext)=>AlertDialog(
-                      title:const Text('Diagnostics unavailable'),
-                      content:const Text('Queue unchanged. Reopen Sync details for the current school and try again.'),
-                      actions:[TextButton(onPressed:()=>Navigator.pop(errorContext),child:const Text('Close'))]));
-                  }
-                },child:const Text('Safe diagnostics')),
-                  TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))])),child:const Text('Details'))])
+
           ]));
       }));
   }

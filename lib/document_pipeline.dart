@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+import 'health/health_runtime.dart';
 
 import 'package:crypto/crypto.dart';
 
@@ -20,7 +20,7 @@ class DocumentPipeline {
     final key = '$scope:$mime:${sha256.convert(bytes)}';
     if (_key == key && _prepared != null) return _prepared!;
     _key = key;
-    final future = _process(bytes, mime).catchError((
+    final future = HealthRuntime.measure('documents', () => _process(bytes, mime)).catchError((
       Object error,
       StackTrace stack,
     ) {
@@ -48,7 +48,9 @@ class DocumentPipeline {
       throw const FormatException('PDF exceeds source safety limit.');
     if (bytes.length < 12 ||
         String.fromCharCodes(bytes.take(5)) != '%PDF-' ||
-        !String.fromCharCodes(bytes.skip(bytes.length > 2048 ? bytes.length - 2048 : 0)).contains('%%EOF')) {
+        !String.fromCharCodes(
+                bytes.skip(bytes.length > 2048 ? bytes.length - 2048 : 0))
+            .contains('%%EOF')) {
       throw const FormatException('PDF is malformed or truncated.');
     }
     final pages = <Map<String, dynamic>>[];
@@ -78,18 +80,24 @@ class DocumentPipeline {
         (page['height'] as int) * 72 / 150,
       );
       void add(pw.Document doc, Uint8List image) => doc.addPage(
-        pw.Page(
-          pageFormat: format,
-          margin: pw.EdgeInsets.zero,
-          build: (_) => pw.Image(pw.MemoryImage(image), fit: pw.BoxFit.contain),
-        ),
-      );
+            pw.Page(
+              pageFormat: format,
+              margin: pw.EdgeInsets.zero,
+              build: (_) =>
+                  pw.Image(pw.MemoryImage(image), fit: pw.BoxFit.contain),
+            ),
+          );
       add(optimized, result['optimized'] as Uint8List);
       add(high, result['highQuality'] as Uint8List);
     }
-    final output = await optimized.save();
+    final processedOutput = await optimized.save();
+    // Preserve the usable original PDF when rasterization expands its vector
+    // content. This avoids uploading a larger, lower fidelity substitute.
+    final sourceRetained = processedOutput.length > bytes.length;
+    final output = sourceRetained ? Uint8List.fromList(bytes) : processedOutput;
     return {
       'optimized': output,
+      'sourceRetained': sourceRetained,
       'highQuality': await high.save(),
       'mimeType': 'application/pdf',
       'actualBytes': output.length,
@@ -97,8 +105,11 @@ class DocumentPipeline {
       'targetBytes': DocumentProcessingEngine.photoTarget * pages.length,
       'savingsPercent': 100 * (1 - output.length / bytes.length),
       'pageCount': pages.length,
-      'targetMet': output.length <= DocumentProcessingEngine.photoTarget * pages.length,
-      'cleanupStatus': '${pages.length} pages processed; original PDF retained',
+      'targetMet':
+          output.length <= DocumentProcessingEngine.photoTarget * pages.length,
+      'cleanupStatus': sourceRetained
+          ? 'Original PDF retained: processed encoding would enlarge upload'
+          : '${pages.length} pages processed; original PDF retained',
     };
   }
 }

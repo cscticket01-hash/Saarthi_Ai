@@ -6,6 +6,7 @@
 // Existing deployments keep their stored School ID, root and secret.
 const VS_SETUP_SCHOOL_ID = '';
 const VS_SETUP_CREATE_NEW_STORAGE = false;
+const VS_MANAGED_CENTRAL_DEFAULT = 'https://saarthi-oauth-staging.onrender.com/school-cloud';
 // Cleared at every signed request / top-level record batch. Never persisted.
 let VS_BACKUP_READ_CACHE = null;
 
@@ -15,12 +16,15 @@ let VS_BACKUP_READ_CACHE = null;
 function VS_prepareSchoolStorage() {
   const p = PropertiesService.getScriptProperties();
   const existing = p.getProperty('VS_MANAGED_SCHOOL_ID');
-  const configured = VS_SETUP_SCHOOL_ID.trim();
+  const propertySchool = p.getProperty('VS_SETUP_SCHOOL_ID');
+  const configured = (propertySchool == null ? VS_SETUP_SCHOOL_ID : propertySchool).trim();
   const schoolId = configured || existing;
   if (!schoolId) throw new Error('Set VS_SETUP_SCHOOL_ID to the School ID from the developer website');
   if (existing && configured && existing !== configured) throw new Error('School rebinding is blocked');
   if (existing && !p.getProperty('VS_MANAGED_ROOT_ID')) throw new Error('Existing school root is missing; developer recovery required');
-  VS_setupManagedSchool(schoolId, {startEmpty: !existing && VS_SETUP_CREATE_NEW_STORAGE === true});
+  const storageConsent = p.getProperty('VS_SETUP_CREATE_NEW_STORAGE');
+  if (storageConsent != null && !['true','false'].includes(storageConsent)) throw new Error('Invalid new-storage consent');
+  VS_setupManagedSchool(schoolId, {startEmpty: !existing && (storageConsent == null ? VS_SETUP_CREATE_NEW_STORAGE === true : storageConsent === 'true')});
   VS_managedRoot();
   return {success: true, schoolId: schoolId, storageReady: true};
 }
@@ -610,12 +614,21 @@ function VS_binaryDownload(b) {
   if(item.sha256!==b.expectedSha256||item.version!==b.expectedVersion)throw new Error('School binary version changed; refresh inventory');
   return {...item,binaryDownloadVersion:1,verification:'bytes_hashed'};
 }
+function VS_managedCentralEndpoint(school) {
+  const configured = PropertiesService.getScriptProperties().getProperty('VS_MANAGED_CENTRAL_ENDPOINT');
+  const endpoint = configured == null ? VS_MANAGED_CENTRAL_DEFAULT : configured;
+  const production = 'https://saarthi-oauth-staging.onrender.com/school-cloud';
+  const isolated = 'https://saarthi-sync-v2-test.onrender.com/school-cloud';
+  if (endpoint !== production && endpoint !== isolated) throw new Error('Untrusted central endpoint');
+  if (endpoint === isolated && school !== 'vs-db8afb01a3be46a983c8284714d06e5d') throw new Error('TEST endpoint requires isolated TEST school');
+  return endpoint;
+}
 function VS_managedConnect(b) {
   const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
   if(!school||b.schoolId!==school||!/^[a-f0-9]{64}$/.test(b.ticket||''))throw new Error('School storage connection rejected');
   VS_managedRoot();
   // Fixed trusted broker. Never accept a caller-supplied URL or Firebase token.
-  const response=UrlFetchApp.fetch('https://saarthi-oauth-staging.onrender.com/school-cloud',{method:'post',contentType:'application/json',payload:JSON.stringify({action:'managed/storage/authorize',schoolId:school,ticket:b.ticket}),muteHttpExceptions:true});
+  const response=UrlFetchApp.fetch(VS_managedCentralEndpoint(school),{method:'post',contentType:'application/json',payload:JSON.stringify({action:'managed/storage/authorize',schoolId:school,ticket:b.ticket}),muteHttpExceptions:true,followRedirects:false});
   const authorization=JSON.parse(response.getContentText());
   if(response.getResponseCode()!==200||authorization.success!==true||authorization.schoolId!==school)throw new Error('Connection ticket rejected');
   const secret=p.getProperty('VS_MANAGED_SECRET');if(!/^[a-f0-9]{64}$/.test(secret||''))throw new Error('Managed storage not prepared');
@@ -653,6 +666,59 @@ function VS_managedDiagnostic(error) {
   return 'SCRIPT_OPERATION_FAILED';
 }
 
+/** Account-wide quota requires explicit owner consent; not school file usage. */
+function VS_managedStorageQuota(b) {
+ const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
+ if(!b||b.schoolId!==school)throw new Error('Foreign school record');
+ VS_managedRoot();
+ if(p.getProperty('VS_ALLOW_DRIVE_QUOTA_REPORTING')!=='true')return {success:true,schoolId:school,driveQuotaVersion:1,status:'Unknown',reason:'School owner has not enabled Google account quota reporting'};
+ try {
+  const usage=DriveApp.getStorageUsed(),limit=DriveApp.getStorageLimit();
+  if(!Number.isSafeInteger(usage)||usage<0||!Number.isSafeInteger(limit))throw new Error('Invalid quota');
+  return {success:true,schoolId:school,driveQuotaVersion:1,status:'Measured',usage:usage,limit:limit<0?null:limit,scope:'Google account storage; separate from school application files',measuredAt:Date.now(),reason:limit<0?'Google reports no storage limit for this account':null};
+ }catch(_){return {success:true,schoolId:school,driveQuotaVersion:1,status:'Unknown',reason:'Authorized Google storage quota read unavailable; no additional permission requested'};}
+}
+
+/** Read-only record census. No sheet/folder creation, migration or recovery writes. */
+function VS_managedBackupSnapshot(b) {
+ const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID');
+ if(!b||b.schoolId!==school)throw new Error('Foreign school record');
+ const root=VS_managedRoot(),collections=VS_LAYOUT_COLLECTIONS.filter(c=>['mobile_sessions','mobile_users','mobile_complaints'].indexOf(c)<0);
+ const records={},heads={},missing=[],initial=p.getProperties();let bytes=0;
+ if(initial.VS_MANAGED_SHEET_PENDING)missing.push({collection:'school workbook',reason:'Pending workbook identity requires owner review'});
+ collections.forEach(col=>{
+  const lock=LockService.getScriptLock();lock.waitLock(5000);
+  try {
+   const state=VS_layoutState(col);let values=Object.create(null);
+   if(state&&['active','rollingBack'].indexOf(state.phase)>=0)values=VS_sheetRecords(VS_layoutStore(state));
+   else {
+    const id=p.getProperty('VS_MANAGED_SHEET_ID');
+    if(id){const f=VS_managedFile(id);if(f.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook identity mismatch');const sheet=SpreadsheetApp.openById(id).getSheetByName(col);if(sheet)values=VS_sheetRecords({sheet:sheet,school:school});else if(p.getProperty('VS_SHEET_MIGRATED_'+col)==='1')missing.push({collection:col,reason:'Verified school tab missing'});}
+    if(p.getProperty('VS_SHEET_MIGRATED_'+col)!=='1'){
+     const folders=root.getFoldersByName('records_'+col);
+     if(folders.hasNext()){
+      const folder=folders.next();if(folders.hasNext())throw new Error('Duplicate collection folders; operator review required');
+      const files=folder.getFiles();
+      while(files.hasNext()){
+       const raw=files.next().getBlob().getDataAsString();bytes+=raw.length*4;if(bytes>20*1024*1024)throw new Error('Backup exceeds verification limit');
+       const item=JSON.parse(raw);if(!item||item.schoolId!==school||typeof item.id!=='string'||!item.data||item.data.schoolId!==school)throw new Error('Foreign school record');
+       if(values[item.id]&&JSON.stringify(values[item.id])!==JSON.stringify(item.data))throw new Error('Migration conflict; both versions retained');
+       values[item.id]=item.data;
+      }
+     }
+    }
+    if(state)missing.push({collection:col,reason:'Organized layout migration is not active; partial census'});
+   }
+   Object.keys(values).forEach(id=>{if(values[id].schoolId!==school)throw new Error('Foreign school record');});
+   bytes+=JSON.stringify(values).length*4;if(bytes>20*1024*1024)throw new Error('Backup exceeds verification limit');
+   records[col]=values;heads[col]=p.getProperty('VS_RECORD_REV_'+col)||'legacy';
+  }finally{lock.releaseLock();}
+ });
+ const check=LockService.getScriptLock();check.waitLock(5000);
+ try {const current=p.getProperties();if(collections.some(col=>(initial['VS_RECORD_REV_'+col]||'legacy')!==heads[col]||heads[col]!== (current['VS_RECORD_REV_'+col]||'legacy')||initial['VS_LAYOUT_'+col]!==current['VS_LAYOUT_'+col]))throw new Error('Backup changed during capture; retry snapshot');}finally{check.releaseLock();}
+ return {success:true,schoolId:school,snapshotProtocol:1,collections:collections,records:records,collectionRevisions:heads,missingData:missing,recordsComplete:missing.length===0,documentBinariesIncluded:false,createdAt:Date.now()};
+}
+
 function VS_managedHandle(e) {
   VS_BACKUP_READ_CACHE=null;
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
@@ -661,7 +727,11 @@ function VS_managedHandle(e) {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
     const b=VS_managedVerify(e);verified=true;let result;
-    if(b.action==='managed_health'){
+    if(b.action==='managed_backup_snapshot'){
+      result=VS_managedBackupSnapshot(b);
+    }else if(b.action==='managed_storage_quota'){
+      result=VS_managedStorageQuota(b);
+    }else if(b.action==='managed_health'){
       VS_managedRoot();const p=PropertiesService.getScriptProperties();let sheetsVerified=null;
       if(VS_testBackupRecoveryEnabled()){
         const properties=p.getProperties(),collection=VS_LAYOUT_COLLECTIONS.find(col=>properties['VS_SHEET_MIGRATED_'+col]==='1');
@@ -671,7 +741,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.1',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.4',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
@@ -750,6 +820,12 @@ function VS_managedHandle(e) {
     // Anonymous web-app executions may not expose logs in the default Cloud
     // project. Keep only the same non-sensitive trace in a short-lived cache.
     try{CacheService.getScriptCache().put('VS_SYNC_DIAGNOSTIC_V1',JSON.stringify(trace),1800);}catch(_){}
+    // Anonymous web-app cache and owner-editor cache can be different.
+    // Save ONLY a sanitized owner-only category + line for at most 24 hours.
+    // Never persist payloads, URLs, school identifiers or raw exceptions.
+    if(verified){
+      try{PropertiesService.getScriptProperties().setProperty('VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2',JSON.stringify(trace));}catch(_){}
+    }
     const code=verified?diagnostic:'SCRIPT_OPERATION_FAILED';
     return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected',code:code});
   }
@@ -757,7 +833,27 @@ function VS_managedHandle(e) {
 
 // Run manually in the owner editor only; not routed through doPost/doGet.
 function VS_readLastSyncDiagnostic() {
-  const trace=CacheService.getScriptCache().get('VS_SYNC_DIAGNOSTIC_V1');
+  // Owner-editor function ONLY. This is NOT a doGet/doPost action.
+  const key='VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2';
+  let trace=null;
+  function sanitized(raw,maxAge){
+    if(typeof raw!=='string'||raw.length>4096)return null;
+    try{
+      const candidate=JSON.parse(raw);
+      if(candidate&&candidate.event==='managed_storage_failure'&&
+          Number.isSafeInteger(candidate.at)&&candidate.at>=0&&candidate.at<=Date.now()&&
+          Date.now()-candidate.at<=maxAge&&
+          /^[A-Z0-9_]{4,80}$/.test(candidate.code||'')&&
+          Number.isSafeInteger(candidate.line)&&candidate.line>=0&&candidate.line<=1000000){
+        return {at:candidate.at,phase:candidate.phase==='authorized_operation'?'authorized_operation':'request_verification',code:candidate.code,line:candidate.line};
+      }
+    }catch(_){}
+    return null;
+  }
+  try{trace=sanitized(PropertiesService.getScriptProperties().getProperty(key),86400000);}catch(_){}
+  if(!trace){
+    try{trace=sanitized(CacheService.getScriptCache().get('VS_SYNC_DIAGNOSTIC_V1'),1800000);}catch(_){}
+  }
   Logger.log(trace||'No recent sync diagnostic captured');
 }
 
@@ -944,7 +1040,7 @@ function VS_previewOrganizedStorageMigration() {
           if(folders.hasNext()){
             const folder=folders.next();if(folders.hasNext())throw new Error('Duplicate collection folders; operator review required');const files=folder.getFiles(),seen=Object.create(null);let bytes=0;
             while(files.hasNext()){
-              const raw=files.next().getBlob().getDataAsString();bytes+=raw.length;if(bytes>20*1024*1024)throw new Error('Collection migration exceeds safe limit');const item=JSON.parse(raw);
+              const raw=files.next().getBlob().getDataAsString();bytes+=raw.length*4;if(bytes>20*1024*1024)throw new Error('Collection migration exceeds safe limit');const item=JSON.parse(raw);
               if(!item||item.schoolId!==school||typeof item.id!=='string'||!item.data||item.data.schoolId!==school||seen[item.id])throw new Error('Invalid or duplicate legacy record; operator review required');seen[item.id]=true;
               if(records[item.id]&&VS_layoutHash(records[item.id])!==VS_layoutHash(item.data))throw new Error('Migration conflict; both versions retained');records[item.id]=item.data;
             }
