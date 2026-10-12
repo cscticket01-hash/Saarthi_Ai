@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -9,6 +10,29 @@ import '../lib/health/universal_health.dart';
 import '../lib/health/windows_healing_monitor.dart';
 
 void main() {
+  setUpAll(() async {
+    final root = Platform.environment['FLUTTER_ROOT'];
+    if (root != null) {
+      final font = FontLoader('Roboto');
+      font.addFont(
+        Future.value(
+          (await File(
+            '$root/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf',
+          ).readAsBytes()).buffer.asByteData(),
+        ),
+      );
+      await font.load();
+      final icons = FontLoader('MaterialIcons');
+      icons.addFont(
+        Future.value(
+          (await File(
+            '$root/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+          ).readAsBytes()).buffer.asByteData(),
+        ),
+      );
+      await icons.load();
+    }
+  });
   test('score requires conclusive current-school evidence', () async {
     final engine = UniversalHealth();
     engine.register(
@@ -141,7 +165,7 @@ void main() {
         expect(find.text(incident ? '50%' : '100%'), findsOneWidget);
         expect(tester.takeException(), isNull);
         if (Platform.environment['HEALTH_PREVIEWS'] == '1') {
-          await (() async {
+          await tester.runAsync(() async {
             final image =
                 await (boundary.currentContext!.findRenderObject()
                         as RenderRepaintBoundary)
