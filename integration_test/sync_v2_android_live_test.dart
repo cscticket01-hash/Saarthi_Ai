@@ -122,6 +122,7 @@ void main() {
               'syntheticTest': true,
               'name': 'Synthetic Android TEST Student',
               'class': '1',
+              'section': 'TEST-android-$run',
               'rollNo': '900002',
               'dob': '2015-01-01',
               'mobileStableId': person,
