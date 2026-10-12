@@ -1,3 +1,4 @@
+import 'windows_sync_comparison.dart';
 import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
 import 'document_processing_engine.dart';
@@ -1352,13 +1353,17 @@ class WindowsBackendBridge {
         final revision = data['documentRevision']?.toString() ?? '';
         if (revision.isEmpty || revision.length > 100)
           throw StateError('Document revision missing.');
-        if (old?['documentRevision'] == revision)
+        if (old?['documentRevision'] == revision) {
+          if (!identicalDocumentPayload({...data, 'schoolId':school}, old!)) {
+            throw StateError('Sync operation ID conflict');
+          }
           return {
             'success': true,
             'documentId': id,
             'fileUrl': old?['fileUrl'],
             'document': old,
           };
+        }
         final base = data['baseCloudRevision']?.toString() ?? '';
         if ((old?['documentRevision']?.toString() ?? '') != base)
           throw StateError(
