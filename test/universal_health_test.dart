@@ -59,6 +59,43 @@ void main(){
   expect(engine.overall,HealthState.paused);
   expect(engine.telemetry('windows','2.0','a'.padRight(64,'a'))['healthy'],0);
  });
+ test('timeout quarantine survives restart age and fault floods until fresh provider verification',()async{
+  final pending=Completer<void>(),admittedAt=time;
+  provider(execute:(_)async=>pending.future,timeout:const Duration(milliseconds:30));
+  expect(await engine.recover('documents'),false);await engine.flushHistory();
+  engine.pause();pending.complete();await Future<void>.delayed(Duration.zero);
+  time=time.add(const Duration(days:8));var fresh=false;
+  final restarted=UniversalHealth(now:()=>time,store:store);
+  restarted.register(HealthProvider(id:'documents',version:'2.0',check:(_)async=>HealthObservation(HealthState.healthy,verifiedAt:fresh?time:admittedAt),playbooks:[RecoveryPlaybook(id:'worker',kind:RecoveryKind.statelessWorker,failures:{HealthFailure.worker},precondition:(_)async=>true,execute:(_)async=>fail('Quarantined work must not restart'),verify:(_)async=>true)]));
+  try {
+   await restarted.bind(school);expect(restarted.pendingQuarantineVerification,1);
+   for(var i=0;i<300;i++){time=time.add(const Duration(seconds:3));restarted.observe('documents',const HealthObservation(HealthState.degraded,failure:HealthFailure.worker));}
+   await restarted.flushHistory();expect(restarted.history.any((e)=>e.stage=='timeout'),true);
+   expect(await restarted.recover('documents'),false);
+   await restarted.bind(const HealthContext('school-B','profile-B'));expect(restarted.pendingQuarantineVerification,0);
+   await restarted.bind(school);expect(restarted.pendingQuarantineVerification,1);
+   await restarted.check('documents');expect(restarted.pendingQuarantineVerification,1);
+   fresh=true;await restarted.check('documents');expect(restarted.pendingQuarantineVerification,0);
+   expect(restarted.history.last.stage,'quarantineVerified');await restarted.flushHistory();
+   final next=UniversalHealth(now:()=>time,store:store);
+   try{await next.bind(school);expect(next.pendingQuarantineVerification,0);}finally{await next.dispose();}
+  }finally{await restarted.dispose();}
+ });
+ test('unfinished durable admission is quarantined after restart without inventing completion',()async{
+  final admission=HealthEvent('documents',HealthFailure.worker,'started',time,'a'.padRight(64,'a'));
+  store.data[school.fingerprint]=[HealthEvent.parse(admission.toJson())!];
+  time=time.add(const Duration(hours:2));var calls=0;
+  final restarted=UniversalHealth(now:()=>time,store:store);
+  restarted.register(HealthProvider(id:'documents',version:'2.0',check:(_)async=>const HealthObservation(HealthState.degraded,failure:HealthFailure.worker),playbooks:[RecoveryPlaybook(id:'worker',kind:RecoveryKind.statelessWorker,failures:{HealthFailure.worker},precondition:(_)async=>true,execute:(_)async{calls++;},verify:(_)async=>true)]));
+  try{await restarted.bind(school);expect(restarted.pendingQuarantineVerification,1);expect(await restarted.recover('documents'),false);expect(calls,0);expect(restarted.history.any((e)=>e.stage=='verified'),false);}finally{await restarted.dispose();}
+ });
+ test('full protected history cannot execute an unrecorded repair or erase retained quarantine',()async{
+  store.data[school.fingerprint]=List.generate(4,(i)=>HealthEvent('retired$i',HealthFailure.worker,'started',time,'a'.padRight(64,'a')));
+  final before=jsonEncode(store.data[school.fingerprint]!.map((e)=>e.toJson()).toList());var calls=0;
+  final restarted=UniversalHealth(now:()=>time,store:store,maxProviders:1,maxHistory:4);
+  restarted.register(HealthProvider(id:'documents',version:'2.0',check:(_)async=>const HealthObservation(HealthState.degraded,failure:HealthFailure.worker),playbooks:[RecoveryPlaybook(id:'worker',kind:RecoveryKind.statelessWorker,failures:{HealthFailure.worker},precondition:(_)async=>true,execute:(_)async{calls++;},verify:(_)async=>true)]));
+  try{await restarted.bind(school);restarted.observe('documents',const HealthObservation(HealthState.degraded,failure:HealthFailure.worker));expect(await restarted.recover('documents'),false);expect(calls,0);await restarted.flushHistory();expect(jsonEncode(store.data[school.fingerprint]!.map((e)=>e.toJson()).toList()),before);}finally{await restarted.dispose();}
+ });
  test('clock rollback invalidates prior healthy evidence and dependency admission',()async{
   var repairs=0;
   engine.register(HealthProvider(id:'database',version:'2.0',check:(_)async=>const HealthObservation(HealthState.unknown)));

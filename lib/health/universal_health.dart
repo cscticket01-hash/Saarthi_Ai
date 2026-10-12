@@ -69,7 +69,7 @@ class HealthEvent {
   final HealthFailure failure;
   final DateTime at;
   Map<String, dynamic> toJson() => {'component': component, 'failure': failure.name, 'stage': stage, 'at': at.millisecondsSinceEpoch, 'fingerprint': fingerprint};
-  static const stages = {'observed', 'started', 'verified', 'unverified', 'blocked', 'timeout', 'checkTimeout', 'circuitOpen', 'checkFailed', 'persistenceFailed'};
+  static const stages = {'observed', 'started', 'verified', 'unverified', 'blocked', 'timeout', 'checkTimeout', 'quarantineVerified', 'circuitOpen', 'checkFailed', 'persistenceFailed'};
   static HealthEvent? parse(dynamic raw) {
     if (raw is! Map || !UniversalHealth.validId(raw['component']) || !stages.contains(raw['stage']) || raw['at'] is! int || raw['at'] <= 0 || raw['fingerprint'] is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['fingerprint'])) return null;
     final failure = HealthFailure.values.where((v) => v.name == raw['failure']);
@@ -93,7 +93,7 @@ class HealthPrediction {
 /// Independent, bounded guardian. It owns diagnostic metadata only.
 class UniversalHealth {
   UniversalHealth({DateTime Function()? now, this.store, this.maxProviders = 32, this.maxHistory = 128, this.maxConcurrentChecks = 2}) : now = now ?? DateTime.now {
-    if (maxProviders < 1 || maxProviders > 64 || maxHistory < maxProviders*3+1 || maxHistory > 256 || maxConcurrentChecks < 1 || maxConcurrentChecks > 4) throw ArgumentError('Invalid health budgets');
+    if (maxProviders < 1 || maxProviders > 64 || maxHistory < maxProviders*4 || maxHistory > 256 || maxConcurrentChecks < 1 || maxConcurrentChecks > 4) throw ArgumentError('Invalid health budgets');
   }
   static final instance = UniversalHealth();
   final DateTime Function() now;
@@ -103,6 +103,7 @@ class UniversalHealth {
   final Map<String, HealthObservation> _observations = {};
   final Map<String, Future<void>> _checks = {}, _repairs = {};
   final Set<String> _quarantinedChecks={},_quarantinedRepairs={};
+  final Map<String, HealthEvent> _restartQuarantine = {};
   final Map<String, int> _attempts = {};
   final Map<String, DateTime> _nextAttempt = {}, _dedup = {};
   final Map<String, List<double>> _latencies = {};
@@ -131,6 +132,7 @@ class UniversalHealth {
   int get registeredCount => _providers.length;
   int get activeRepairs => _repairs.keys.where((id)=>!_quarantinedRepairs.contains(id)).length;
   int get unsettledRepairs => _quarantinedRepairs.length;
+  int get pendingQuarantineVerification => _restartQuarantine.length;
   int get _activeChecks => _checks.keys.where((id)=>!_quarantinedChecks.contains(id)).length;
   bool get paused => _paused;
   bool get admissionHistoryVerified => _historyReady && store != null;
@@ -150,7 +152,7 @@ class UniversalHealth {
     final generation = ++_generation;
     _context = context;
     _historyReady=false;
-    _history.clear(); _attempts.clear(); _nextAttempt.clear(); _dedup.clear(); _latencies.clear();
+    _history.clear(); _attempts.clear(); _nextAttempt.clear(); _dedup.clear(); _latencies.clear(); _restartQuarantine.clear();
     _observations.updateAll((_, __) => const HealthObservation(HealthState.unknown));
     lastCheckAt = null;
     _notify();
@@ -167,10 +169,23 @@ class UniversalHealth {
       if (generation != _generation || _disposed) return;
       _historyReady=loaded&&store!=null&&events.length<=maxHistory;
       if(events.any((e)=>e.at.isAfter(now())))_historyReady=false;
-      for (final e in events.where((e) => !e.at.isAfter(now()) && now().difference(e.at) <= const Duration(days: 7)).toList().reversed.take(maxHistory).toList().reversed) {
+      final unfinished = <String,HealthEvent>{};
+      for (final e in events.where((e)=>!e.at.isAfter(now()))) {
+        if(e.stage=='started')unfinished[e.component]=e;
+        if(e.stage=='verified'||e.stage=='unverified')unfinished.remove(e.component);
+        if(e.stage=='timeout'||e.stage=='checkTimeout')_restartQuarantine[e.component]=e;
+        if(e.stage=='quarantineVerified'){_restartQuarantine.remove(e.component);unfinished.remove(e.component);}
+      }
+      // A crash can happen after durable admission and before a terminal event
+      // is saved. Missing completion is not permission to retry the action.
+      for(final e in unfinished.entries){_restartQuarantine.putIfAbsent(e.key,()=>e.value);}
+      for (final e in events.where((e) => !e.at.isAfter(now()) && (now().difference(e.at) <= const Duration(days: 7) || _pinnedQuarantine(e))).toList().reversed.take(maxHistory).toList().reversed) {
         _history.add(e);
         // Persisted attempts keep a crash/restart from resetting repair budgets.
         if (e.stage == 'started') _attempts[e.component] = (_attempts[e.component] ?? 0) + 1;
+      }
+      for(final e in _restartQuarantine.entries) {
+        if(_providers.containsKey(e.key))_observations[e.key]=HealthObservation(HealthState.needsAttention,failure:e.value.failure);
       }
     } catch (_) { if(generation==_generation) _event('supervisor', HealthFailure.storage, 'persistenceFailed'); }
     _notify();
@@ -190,18 +205,24 @@ class UniversalHealth {
   Future<void> stop() async { _timer?.cancel(); _timer = null; _watchdog?.cancel();_watchdog=null;_loadTimer?.cancel();_loadTimer=null;if(_loadGate?.isCompleted==false)_loadGate!.complete([]);pause(); await flushHistory(); }
   Future<void> flushHistory() => _write.catchError((_) {});
   void _notify() { if (!_disposed) _changes.add(null); }
-  void _event(String component, HealthFailure failure, String stage) {
-    final at = now();
+  bool _pinnedQuarantine(HealthEvent event) => _restartQuarantine[event.component]?.at == event.at && _restartQuarantine[event.component]?.stage == event.stage;
+  void _quarantine(String id, HealthFailure failure, String stage) {
+    final at=now(),version=_providers[id]?.version??'2.0';
+    _restartQuarantine[id]=HealthEvent(id,failure,stage,at,sha256.convert(utf8.encode('$id/$version/${failure.name}/$stage')).toString());
+    if(!_event(id,failure,stage,recordedAt:at))_historyReady=false;
+  }
+  bool _event(String component, HealthFailure failure, String stage, {DateTime? recordedAt}) {
+    final at = recordedAt ?? now();
     final key = '$component/${failure.name}/$stage';
-    if ({'observed','checkFailed'}.contains(stage) && _dedup[key] != null && at.difference(_dedup[key]!) < const Duration(seconds: 2)) { droppedEvents++; return; }
+    if ({'observed','checkFailed'}.contains(stage) && _dedup[key] != null && at.difference(_dedup[key]!) < const Duration(seconds: 2)) { droppedEvents++; return false; }
     final version = _providers[component]?.version ?? '2.0';
     final fp = sha256.convert(utf8.encode('$component/$version/${failure.name}/$stage')).toString();
     if (_dedup.length >= 512) _dedup.remove(_dedup.keys.first);
     _dedup[key] = at;
     if (_history.length >= maxHistory) {
       // Keep every admission inside its circuit window, even in a fault flood.
-      final removable=_history.where((e)=>e.stage!='started'||now().difference(e.at)>(_providers[e.component]?.playbooks.firstOrNull?.circuitWindow??const Duration(hours:1))).firstOrNull;
-      if(removable!=null)_history.remove(removable);else {droppedEvents++;return;}
+      final removable=_history.where((e)=>!_pinnedQuarantine(e)&&(e.stage!='started'||now().difference(e.at)>(_providers[e.component]?.playbooks.firstOrNull?.circuitWindow??const Duration(hours:1)))).firstOrNull;
+      if(removable!=null)_history.remove(removable);else {droppedEvents++;return false;}
     }
     _history.add(HealthEvent(component, failure, stage, at, fp));
     final bound = _context, events = history;
@@ -210,6 +231,7 @@ class UniversalHealth {
       _scheduleWrite(bound, events);
     }
     _notify();
+    return true;
   }
   List<HealthEvent>? _pendingWrite;
   HealthContext? _pendingContext;
@@ -264,7 +286,13 @@ class UniversalHealth {
     final task = Future<void>(() async {
       try {
         final value = await _providers[id]!.check(bound);
-        if (generation == _generation && !_paused && !_disposed) { observe(id, value); lastCheckAt = now(); }
+        if (generation == _generation && !_paused && !_disposed) {
+          observe(id, value); lastCheckAt = now();
+          final marker=_restartQuarantine[id];
+          if(marker!=null&&observations[id]?.state==HealthState.healthy&&value.failure==HealthFailure.none&&value.verifiedAt?.isAfter(marker.at)==true) {
+            _restartQuarantine.remove(id);_event(id,HealthFailure.none,'quarantineVerified');
+          }
+        }
       } catch (_) {
         if (generation == _generation && !_paused && !_disposed) { observe(id, const HealthObservation(HealthState.needsAttention, failure: HealthFailure.unknown)); _event(id, HealthFailure.unknown, 'checkFailed'); }
       }
@@ -272,12 +300,12 @@ class UniversalHealth {
     _checks[id] = task;
     unawaited(task.whenComplete(() { if (identical(_checks[id], task)) {_checks.remove(id);_quarantinedChecks.remove(id);} }));
     try { await task.timeout(const Duration(seconds: 2)); }
-    on TimeoutException { _quarantinedChecks.add(id);if (generation == _generation) { observe(id, const HealthObservation(HealthState.needsAttention, failure: HealthFailure.timeout)); _event(id, HealthFailure.timeout, 'checkTimeout'); } }
+    on TimeoutException { _quarantinedChecks.add(id);if (generation == _generation) { observe(id, const HealthObservation(HealthState.needsAttention, failure: HealthFailure.timeout)); _quarantine(id, HealthFailure.timeout, 'checkTimeout'); } }
   }
   static const _forbidden = {HealthFailure.authorization, HealthFailure.identity, HealthFailure.configuration, HealthFailure.conflict, HealthFailure.corrupt, HealthFailure.storage, HealthFailure.unknown, HealthFailure.offline, HealthFailure.none};
   Future<bool> recover(String id, {bool automatic = true}) async {
     final provider = _providers[id], observation = _observations[id], bound = _context;
-    if (_disposed || _paused || !_historyReady || store == null || activeRepairs>=1 || provider == null || observation == null || bound == null || _repairs.containsKey(id) || _checks.containsKey(id) || _forbidden.contains(observation.failure)) return false;
+    if (_disposed || _paused || !_historyReady || store == null || activeRepairs>=1 || provider == null || observation == null || bound == null || _restartQuarantine.containsKey(id) || _repairs.containsKey(id) || _checks.containsKey(id) || _forbidden.contains(observation.failure)) return false;
     // Policy never grants extra authority for a manual call.
     final plays = provider.playbooks.where((p) => p.failures.contains(observation.failure)).toList();
     if (plays.isEmpty || provider.dependencies.any((d) => observations[d]?.state != HealthState.healthy)) return false;
@@ -303,7 +331,7 @@ class UniversalHealth {
         admitted = true;
         _attempts[id] = (_attempts[id] ?? 0) + 1;
         _nextAttempt[id] = now().add(p.cooldown * _attempts[id]!);
-        _event(id, observation.failure, 'started');
+        if(!_event(id, observation.failure, 'started'))throw StateError('Recovery admission history is full');
         // No action starts unless its crash-loop admission is durable.
         await flushHistory().timeout(const Duration(seconds: 2)); lease.check();
         if (!_durable) throw StateError('Recovery history could not be persisted');
@@ -324,7 +352,7 @@ class UniversalHealth {
     _repairs[id] = task;
     unawaited(task.whenComplete(() { if (identical(_repairs[id], task)) {_repairs.remove(id);_quarantinedRepairs.remove(id);} }));
     try { await task.timeout(p.timeout); }
-    on TimeoutException { _quarantinedRepairs.add(id);if (generation == _generation) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure); _event(id, observation.failure, 'timeout'); } return false; }
+    on TimeoutException { _quarantinedRepairs.add(id);if (generation == _generation) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure); _quarantine(id, observation.failure, 'timeout'); } return false; }
     return verifiedThisAttempt && generation == _generation && _observations[id]?.state == HealthState.healthy;
   }
   List<HealthPrediction> get predictions {
