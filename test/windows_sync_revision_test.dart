@@ -949,6 +949,79 @@ void main(){
    await tester.pumpWidget(const SizedBox.shrink());
  });
 
+  testWidgets('conflict review stays usable with unsupported and cyclic queue fields',(tester)async{
+    final cycle=<String,Object?>{};
+    cycle['again']=cycle;
+    final item=<String,dynamic>{
+      'id':'pending-unusual', 'collection':'fee_payments',
+      'schoolId':school,'syncState':'conflict',
+      'data':<String,Object?>{
+        'amount':100,'createdAt':DateTime.utc(2026,10,12),
+        'object':const Object(),'recursive':cycle,
+        'description':List.filled(25000,'x').join(),
+        'authorizationToken':'never-show-this-secret',
+      },
+    };
+    await tester.pumpWidget(MaterialApp(home:Builder(builder:(context)=>
+      Scaffold(body:TextButton(onPressed:()=>showWindowsConflictReview(context,item),
+        child:const Text('Open unusual review'))))));
+    await tester.tap(find.text('Open unusual review'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(),isNull);
+    expect(find.text('Review sync conflict'),findsOneWidget);
+    expect(find.text('Cloud verification: not performed'),findsOneWidget);
+    expect(find.text('Close'),findsOneWidget);
+    final previews = tester.widgetList<SelectableText>(find.byType(SelectableText)).map((w)=>w.data ?? '').join();
+    expect(previews, isNot(contains('never-show-this-secret')));
+    expect(item['data']['authorizationToken'], 'never-show-this-secret');
+    expect(identical(item['data']['recursive']['again'], cycle), true);
+    expect(find.text('Use local version'),findsNothing);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(),isNull);
+    expect(find.text('Review sync conflict'),findsNothing);
+  });
+
+ testWidgets('nine conflict reviews fit laptop and preserve every pending row', (tester) async {
+   tester.view.physicalSize = const Size(1366,768);
+   tester.view.devicePixelRatio = 1;
+   addTearDown(tester.view.resetPhysicalSize);
+   addTearDown(tester.view.resetDevicePixelRatio);
+   final items = <Map<String,dynamic>>[];
+   for (var i=0;i<9;i++) {
+     final document = i>=2;
+     final queue = document?'_windows_document_outbox':'_windows_firebase_outbox';
+     final item = <String,dynamic>{'id':'review-$i','schoolId':school,
+       '_queueCollection':queue,'syncState':'conflict','operationId':'original-operation-$i',
+       if(!document)'collection':i==0?'fee_payments':'school_config',
+       'data':{'amount':100+i,'createdAt':DateTime.utc(2026,10,12)},
+       if(document)'localPath':'retained-original-$i',
+     };
+     await db.collection(queue).doc(item['id']).set(item);
+     items.add(item);
+   }
+   Future<String> snapshot() async => jsonEncode(migrationJsonValue({
+     for(final queue in ['_windows_firebase_outbox','_windows_document_outbox'])
+       queue:[for(final row in (await db.collection(queue).get()).docs){'id':row.id,...row.data()}],
+   }));
+   final before = await snapshot();
+   for(final item in items) {
+     await tester.pumpWidget(MaterialApp(home:Builder(builder:(context)=>Scaffold(
+       body:TextButton(onPressed:()=>showWindowsConflictReview(context,item),child:const Text('Open retained review'))))));
+     await tester.tap(find.text('Open retained review'));await tester.pumpAndSettle();
+     expect(tester.takeException(),isNull);
+     expect(find.text('Review sync conflict'),findsOneWidget);
+     expect(find.text('Cloud verification: not performed'),findsOneWidget);
+     expect(find.text('Use local version'),findsNothing);
+     expect(find.text('Verify cloud version'),findsOneWidget);
+     await tester.tap(find.text('Close'));await tester.pumpAndSettle();
+     expect(tester.takeException(),isNull);
+   }
+   expect(await snapshot(),before);
+   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+   await tester.pumpWidget(const SizedBox.shrink());
+ });
+
  test('reviewed conflict retains both versions and operation after durable reopen',()async{
    await db.collection('fee_payments').doc('restart-review').set({'amount':100,'schoolId':school});
    final row=(await db.collection('_windows_firebase_outbox').get()).docs.single;
