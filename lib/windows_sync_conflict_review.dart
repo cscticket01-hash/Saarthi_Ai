@@ -1,3 +1,4 @@
+import 'windows_backend_bridge.dart';
 import 'windows_sync_comparison.dart';
 import 'school_profile_policy.dart';
 import 'dart:convert';
@@ -136,7 +137,10 @@ class _ConflictReviewState extends State<_ConflictReview> {
       if (current == null || current['syncState'] != 'conflict')
         throw StateError('Pending version changed. Reopen Sync details.');
       final cloud = await readCloud(current);
-      final compared = compareSyncVersions(current, cloud);
+      final compared = document && queue == '_windows_document_outbox'
+          ? identicalDocumentPayload(await WindowsBackendBridge.documentReviewPayload(widget.item['id'] as String,current),cloud)
+              ? 'identical' : 'differs (revision order unknown)'
+          : compareSyncVersions(current, cloud);
       if (mounted)
         setState(() {
           expected = current;
@@ -154,7 +158,13 @@ class _ConflictReviewState extends State<_ConflictReview> {
     setState(() => busy = true);
     try {
       final queued = expected!;
-      if (document || queued['operation'] == 'delete') throw StateError('Owner verification required.');
+      if (document) {
+        if (widget.item['_queueCollection'] != '_windows_document_outbox') throw StateError('File owner verification required.');
+        await WindowsBackendBridge.recordVerifiedDocumentReview(widget.item['id'] as String,queued);
+        if (mounted) Navigator.pop(context);
+        return;
+      }
+      if (queued['operation'] == 'delete') throw StateError('Owner verification required.');
       if (queued['collection'] == 'school_config' && queued['documentId'] == 'school_profile_cache') {
         requireSchoolProfile(queued['data'] as Map);
       }
@@ -250,7 +260,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
                     ],
                     if (document)
                       const Text(
-                          'Document conflicts require comparing original files. This screen does not replace files or resolve their conflict.'),
+                          'Document comparison verifies the original local bytes and metadata. Only an identical authenticated cloud readback can be marked already synced; differing files remain for review.'),
                     if (remote != null &&
                         !document &&
                         expected?['operation'] != 'delete') ...[
@@ -283,7 +293,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
             OutlinedButton(
                 onPressed: busy ? null : verify,
                 child: const Text('Verify cloud version')),
-            if (!document && comparison == 'identical')
+            if (comparison == 'identical' && (!document || widget.item['_queueCollection'] == '_windows_document_outbox'))
               FilledButton(onPressed: busy ? null : alreadySynced,
                 child: const Text('Record already synced')),
             if (!document)
