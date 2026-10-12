@@ -997,14 +997,14 @@ void main(){
        'data':{'amount':100+i,'createdAt':DateTime.utc(2026,10,12)},
        if(document)'localPath':'retained-original-$i',
      };
-     await db.collection(queue).doc(item['id']).set(item);
+     await tester.runAsync(() => db.collection(queue).doc(item['id']).set(item));
      items.add(item);
    }
    Future<String> snapshot() async => jsonEncode(migrationJsonValue({
      for(final queue in ['_windows_firebase_outbox','_windows_document_outbox'])
        queue:[for(final row in (await db.collection(queue).get()).docs){'id':row.id,...row.data()}],
    }));
-   final before = await snapshot();
+   final before = await tester.runAsync(snapshot);
    for(final item in items) {
      await tester.pumpWidget(MaterialApp(home:Builder(builder:(context)=>Scaffold(
        body:TextButton(onPressed:()=>showWindowsConflictReview(context,item),child:const Text('Open retained review'))))));
@@ -1017,8 +1017,8 @@ void main(){
      await tester.tap(find.text('Close'));await tester.pumpAndSettle();
      expect(tester.takeException(),isNull);
    }
-   expect(await snapshot(),before);
-   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+   expect(await tester.runAsync(snapshot),before);
+   expect((await tester.runAsync(() => db.collection('_windows_sync_receipts').get()))!.docs,isEmpty);
    await tester.pumpWidget(const SizedBox.shrink());
  });
 
