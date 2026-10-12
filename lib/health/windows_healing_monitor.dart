@@ -10,6 +10,14 @@ import 'universal_health.dart';
 /// the score. Healthy=100, degraded=50, recovering=25, needsAttention=0.
 int? healthScore(UniversalHealth engine) => engine.measuredScore;
 
+String monitoringHeadline(UniversalHealth engine) {
+  if (engine.paused) return 'Monitoring Paused';
+  if (!engine.monitoringActive) return 'Monitoring inactive · auto-repair off';
+  return engine.admissionHistoryVerified && engine.reviewedPlaybookCount > 0
+      ? 'Monitoring active · limited safe repairs enabled'
+      : 'Monitoring active · auto-repair off';
+}
+
 class HealthPoint {
   const HealthPoint(this.at, this.score);
   final DateTime at;
@@ -190,11 +198,7 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     label(
-                      engine.paused
-                          ? 'Monitoring Paused'
-                          : engine.admissionHistoryVerified && engine.reviewedPlaybookCount > 0
-                          ? 'Monitoring active · limited safe repairs enabled'
-                          : 'Monitoring active · auto-repair off',
+                      monitoringHeadline(engine),
                       size: 26,
                       color: Colors.white,
                     ),
@@ -202,16 +206,16 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                     label('Current school · local diagnostics'),
                     const Divider(height: 36),
                     label(
-                      '● ${engine.paused ? 'Paused' : 'Monitoring enabled'}',
+                      '${engine.paused ? 'Paused' : engine.monitoringActive ? 'Monitoring enabled' : 'Monitoring not running'}',
                     ),
                     const SizedBox(height: 14),
-                    label('● ${engine.registeredCount} diagnostic providers'),
+                    label('${engine.registeredCount} diagnostic providers'),
                     const SizedBox(height: 14),
                     label(
-                      '● ${engine.activeRepairs} authorized repairs running',
+                      '${engine.activeRepairs} authorized repairs running',
                     ),
                     const SizedBox(height: 14),
-                    label('● Business data remains owner-controlled'),
+                    label('Business data remains owner-controlled'),
                   ],
                 ),
               ),

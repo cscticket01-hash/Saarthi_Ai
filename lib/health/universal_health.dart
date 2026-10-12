@@ -193,6 +193,8 @@ class UniversalHealth {
   int get pendingQuarantineVerification => _restartQuarantine.length;
   int get _activeChecks => _checks.keys.where((id)=>!_quarantinedChecks.contains(id)).length;
   bool get paused => _paused;
+  bool get monitoringActive => !_disposed && !_paused && _timer != null &&
+      _context != null && _context!.school.isNotEmpty && registeredCount > 0;
   bool get admissionHistoryVerified => _historyReady && store != null;
   HealthContext? get context => _context;
   static bool validId(dynamic id) => id is String && RegExp(r'^[a-z][a-z0-9_.-]{0,47}$').hasMatch(id);
