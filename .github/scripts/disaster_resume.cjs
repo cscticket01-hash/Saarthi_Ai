@@ -3,7 +3,8 @@ const assert=require('node:assert/strict');
 const repo='cscticket01-hash/Saarthi_Ai';
 const reviewOnly=new Set(['lib/windows_disaster_rehearsal.dart','test/windows_sync_revision_test.dart',
  '.github/scripts/test_disaster_live.cjs','.github/scripts/disaster_resume.cjs',
- '.github/scripts/disaster_resume.test.cjs','.github/workflows/disaster-test.yml']);
+ '.github/scripts/disaster_resume.test.cjs','.github/workflows/disaster-test.yml',
+ '.github/workflows/recycle-test.yml']);
 function fixture(env){
  assert.equal(env.GITHUB_REPOSITORY,repo);assert.ok(['refs/heads/feature/smart-sync-3','refs/heads/feature/universal-self-healing-2'].includes(env.GITHUB_REF));
  const resumed=Boolean(env.VS_TEST_DISASTER_FIXTURE_RUN_ID||env.VS_TEST_DISASTER_FIXTURE_ATTEMPT);

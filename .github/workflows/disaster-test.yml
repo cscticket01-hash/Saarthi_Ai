@@ -2,7 +2,7 @@ name: Isolated TEST disaster recovery acceptance
 on:
   workflow_dispatch:
   push:
-    branches: [feature/smart-sync-3, feature/universal-self-healing-2]
+    branches: [feature/smart-sync-3]
     paths:
       - .github/workflows/disaster-test.yml
       - .github/scripts/test_disaster_live.cjs
@@ -39,7 +39,7 @@ jobs:
           # Recovered monitoring requires fresh cloud proof for changed runtime.
           # Runtime provenance is verified against this successful cloud run;
           # changed backend/engine code cannot reuse its evidence.
-          VS_TEST_CLOUD_EVIDENCE_RUN_ID: '38100863265'
+          VS_TEST_CLOUD_EVIDENCE_RUN_ID: '38189627964'
           VS_TEST_DISASTER_FIXTURE_RUN_ID: '38020985989'
           VS_TEST_DISASTER_FIXTURE_ATTEMPT: '2'
         run: |
