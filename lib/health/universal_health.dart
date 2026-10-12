@@ -123,7 +123,10 @@ class UniversalHealth {
   DateTime? lastCheckAt;
   int droppedEvents = 0;
   int get epoch => _generation;
-  Map<String, HealthObservation> get observations => Map.unmodifiable({for(final e in _observations.entries)e.key:e.value.state==HealthState.healthy && (e.value.verifiedAt==null || now().difference(e.value.verifiedAt!)>const Duration(minutes:5)) ? const HealthObservation(HealthState.unknown) : e.value});
+  Map<String, HealthObservation> get observations {
+    final at = now();
+    return Map.unmodifiable({for(final e in _observations.entries)e.key:e.value.state==HealthState.healthy && (e.value.verifiedAt==null || e.value.verifiedAt!.isAfter(at) || at.difference(e.value.verifiedAt!)>const Duration(minutes:5)) ? const HealthObservation(HealthState.unknown) : e.value});
+  }
   List<HealthEvent> get history => List.unmodifiable(_history);
   int get registeredCount => _providers.length;
   int get activeRepairs => _repairs.keys.where((id)=>!_quarantinedRepairs.contains(id)).length;
