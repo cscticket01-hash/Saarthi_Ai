@@ -3,6 +3,7 @@
 // no hosting deployment, production app request or production data is used.
 const {chromium}=require('playwright');
 const fs=require('node:fs'),path=require('node:path');
+const {requestBody,matchesNoticeWrite,matchesNoticeRead}=require('./review_response_match.cjs');
 (async()=>{
  const school='vs-db8afb01a3be46a983c8284714d06e5d',run=process.env.GITHUB_RUN_ID;
  if(process.env.VS_TEST_CONNECT_CONFIRM!==school||process.env.GITHUB_ACTIONS!=='true')throw Error('Isolated hosted TEST runner required');
@@ -41,10 +42,9 @@ const fs=require('node:fs'),path=require('node:path');
   throw Error('TEST field input did not match; no write attempted');
  }
  async function publishAndReadback(id){
-  function requestBody(response){try{return JSON.parse(response.request().postData());}catch(_){return {};}}
   const endpoint='https://saarthi-sync-v2-test.onrender.com/school-cloud';
-  const writePromise=page.waitForResponse(response=>{const body=requestBody(response);return response.url()===endpoint&&body.action==='managed/records'&&body.operation==='write'&&body.collection==='school_notices'&&body.id===id;},{timeout:180000});
-  const readPromise=page.waitForResponse(response=>{const body=requestBody(response);return response.url()===endpoint&&body.action==='managed/changes'&&body.collections?.includes('school_notices');},{timeout:180000});
+  const writePromise=page.waitForResponse(response=>matchesNoticeWrite(response,endpoint,school,id),{timeout:180000});
+  const readPromise=page.waitForResponse(response=>matchesNoticeRead(response,endpoint,school),{timeout:180000});
   await page.getByRole('button',{name:'Publish TEST notice',exact:true}).click();
   const response=await writePromise,ack=await response.json(),body=requestBody(response);
   proof.writeVerification={http:response.status(),success:ack.success===true,schoolMatches:ack.schoolId===school,

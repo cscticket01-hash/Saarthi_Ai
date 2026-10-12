@@ -7,6 +7,8 @@ on:
       - .github/scripts/test_cloud_readiness.cjs
       - .github/scripts/reviewed_script_version.cjs
       - .github/scripts/reviewed_script_version.test.cjs
+      - .github/scripts/review_response_match.cjs
+      - .github/scripts/review_response_match.test.cjs
       - .github/scripts/connect_isolated_test_storage.cjs
       - .github/scripts/test_runtime_identity.cjs
       - staging-school-cloud/**
@@ -57,7 +59,7 @@ jobs:
         with:
           node-version: '22'
       - name: Verify exact canonical Script version and runtime source fences
-        run: node --test .github/scripts/reviewed_script_version.test.cjs .github/scripts/test_runtime_identity.test.cjs .github/scripts/disaster_resume.test.cjs
+        run: node --test .github/scripts/*.test.cjs
       - name: Pair owner-approved isolated TEST storage and verify signed readback
         env:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
