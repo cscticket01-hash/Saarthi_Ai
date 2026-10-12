@@ -1,6 +1,17 @@
+import 'dart:io';
+import '../lib/windows_sync_recovery.dart';
+import '../lib/sync_recovery_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_sync_comparison.dart';
 void main() {
+  test('invalid records and missing files require review, never automatic retry', () {
+    expect(windowsSyncRecovery(const FileSystemException('secret path')).kind, SyncFailureKind.fileMissing);
+    expect(SyncRecoveryDecision.classify(status:422).kind, SyncFailureKind.validation);
+    expect(SyncRecoveryDecision.classify(status:422).retry, isFalse);
+    expect(SyncRecoveryDecision.classify(status:502).kind, SyncFailureKind.server);
+    expect(SyncRecoveryDecision.classify(status:403).kind, SyncFailureKind.authorization);
+    expect(SyncRecoveryDecision.classify(networkPathFailed:true).kind, SyncFailureKind.networkPath);
+  });
   final row = {'schoolId':'school-a', 'documentRevision':'operation-a',
     'contentHash':'a'*64, 'studentId':'student-a', 'documentName':'ID'};
   test('exact replay is idempotent, metadata or bytes divergence is not', () {

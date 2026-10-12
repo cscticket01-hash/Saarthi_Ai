@@ -403,9 +403,7 @@ class WindowsBackendBridge {
                   if(retryAt!=null)'retryAtMillis':retryAt.millisecondsSinceEpoch,
                   'retryCount':
                       (current['retryCount'] as num? ?? 0).toInt() + 1,
-                  'lastError': conflict
-                      ? 'Document version conflict; local original retained.'
-                      : 'Document synchronization failed; local original retained.',
+                  'lastError': decision.message,
                 }, SetOptions(merge: true));
               }
             });

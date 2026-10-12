@@ -8,6 +8,8 @@ enum SyncFailureKind {
   authorization,
   configuration,
   conflict,
+  validation,
+  fileMissing,
   unknown,
 }
 
@@ -39,6 +41,8 @@ class SyncRecoveryDecision {
     SyncFailureKind.configuration =>
       'School storage configuration needs administrator attention.',
     SyncFailureKind.conflict => 'Versions conflict. Administrator review is required; both copies are retained.',
+    SyncFailureKind.validation => 'Invalid pending data. Correct the record before retrying.',
+    SyncFailureKind.fileMissing => 'Pending file could not be read. Restore access to the original file before retrying.',
     SyncFailureKind.unknown =>
       'Sync needs diagnosis. Pending data is retained.',
   };
@@ -55,6 +59,9 @@ class SyncRecoveryDecision {
     bool networkPathFailed = false,
     bool recordConflict = false,
   }) {
+    if ({'FILE_MISSING','FILE_UNREADABLE'}.contains(code)) {
+      return const SyncRecoveryDecision(SyncFailureKind.fileMissing, review:true, independentRecords:true);
+    }
     if (recordConflict ||
         code.contains('REVISION_CONFLICT') ||
         code == 'OPERATION_ID_CONFLICT') {
@@ -93,6 +100,9 @@ class SyncRecoveryDecision {
           'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
         }.contains(code),
       );
+    }
+    if (status == 400 || status == 422 || {'BLANK_SCHOOL_PROFILE','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_EMPTY_PROFILE_OVERWRITE'}.contains(code)) {
+      return const SyncRecoveryDecision(SyncFailureKind.validation, review:true, independentRecords:true);
     }
     if (status == 409)
       return const SyncRecoveryDecision(
