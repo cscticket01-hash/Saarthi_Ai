@@ -21,7 +21,11 @@ const fs=require('node:fs'),path=require('node:path');
  const network=[];
  context.on('request',request=>{const url=new URL(request.url());if(url.hostname==='identitytoolkit.googleapis.com'&&url.pathname.endsWith('signInWithPassword')){try{const body=JSON.parse(request.postData());network.push({stage:'auth-input-validation',emailMatches:body.email===process.env.VS_TEST_LOGIN_EMAIL.trim(),passwordMatches:body.password===process.env.VS_TEST_LOGIN_PASSWORD});}catch(_){network.push({stage:'auth-input-validation',validJson:false});}}});
  context.on('response',async response=>{const url=new URL(response.url());if(['saarthi-sync-v2-test.onrender.com','identitytoolkit.googleapis.com','securetoken.googleapis.com'].includes(url.hostname)){const entry={host:url.hostname,path:url.pathname,http:response.status()};if(url.hostname==='identitytoolkit.googleapis.com'&&response.status()>=400){try{const message=(await response.json()).error?.message;const allowed=['INVALID_LOGIN_CREDENTIALS','INVALID_EMAIL','MISSING_PASSWORD','MISSING_EMAIL','INVALID_PASSWORD','EMAIL_NOT_FOUND','TOO_MANY_ATTEMPTS_TRY_LATER','OPERATION_NOT_ALLOWED','API_KEY_HTTP_REFERRER_BLOCKED','API_KEY_INVALID','QUOTA_EXCEEDED'];entry.code=allowed.find(code=>typeof message==='string'&&(message===code||message.startsWith(code+' :')))||'OTHER_AUTH_ERROR';}catch(_){entry.code='UNREADABLE_AUTH_ERROR';}}network.push(entry);}});
- context.on('requestfailed',request=>{const url=new URL(request.url());if(['saarthi-sync-v2-test.onrender.com','identitytoolkit.googleapis.com','securetoken.googleapis.com'].includes(url.hostname))network.push({host:url.hostname,path:url.pathname,http:0});});
+ context.on('requestfailed',request=>{const url=new URL(request.url());if(['saarthi-sync-v2-test.onrender.com','identitytoolkit.googleapis.com','securetoken.googleapis.com'].includes(url.hostname)){
+  const failure=request.failure()?.errorText;
+  network.push({host:url.hostname,path:url.pathname,http:0,
+   category:typeof failure==='string'&&/^net::ERR_[A-Z_]+$/.test(failure)?failure:'OTHER_TRANSPORT_FAILURE'});
+ }});
  const page=await context.newPage();
  async function typeField(label,value){
   const input=page.getByRole('textbox',{name:label,exact:true});
@@ -43,8 +47,12 @@ const fs=require('node:fs'),path=require('node:path');
   const readPromise=page.waitForResponse(response=>{const body=requestBody(response);return response.url()===endpoint&&body.action==='managed/changes'&&body.collections?.includes('school_notices');},{timeout:180000});
   await page.getByRole('button',{name:'Publish TEST notice',exact:true}).click();
   const response=await writePromise,ack=await response.json(),body=requestBody(response);
+  proof.writeVerification={http:response.status(),success:ack.success===true,schoolMatches:ack.schoolId===school,
+   protocolMatches:ack.syncProtocol===2,hasRevision:typeof ack.recordRevision==='string'&&ack.recordRevision.length>0};
   if(response.status()!==200||ack.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision)throw Error('Verified TEST write ACK required');
   const read=await readPromise,reply=await read.json();
+  proof.readVerification={http:read.status(),schoolMatches:reply.schoolId===school,protocolMatches:reply.syncProtocol===2,
+   hasNoticeChanges:!!reply.changes?.school_notices};
   if(read.status()!==200||reply.schoolId!==school||reply.syncProtocol!==2||!reply.changes?.school_notices)throw Error('Verified TEST post-write readback required');
   await page.getByText('Website ACK and readback verified',{exact:true}).waitFor({timeout:180000});
   return {operationId:body.operationId,recordRevision:ack.recordRevision,readbackVerified:true};
@@ -97,6 +105,14 @@ const fs=require('node:fs'),path=require('node:path');
   await page.screenshot({path:'build/cloud-prerequisites/website-ui.png',fullPage:true});
  } catch(e){
   proof.status='FAIL';proof.network=network;
+  // Fixed categories only: never upload Playwright exception text, response
+  // bodies, credentials, headers or school records as debugging evidence.
+  proof.failureCategory=e?.name==='TimeoutError'?'UI_OR_RESPONSE_TIMEOUT':
+   e?.message==='Verified TEST write ACK required'?'CLOUD_ACK_NOT_VERIFIED':
+   e?.message==='Verified TEST post-write readback required'?'CLOUD_READBACK_NOT_VERIFIED':
+   e?.message==='Duplicate TEST operation identity/revision changed'?'DUPLICATE_IDENTITY_CHANGED':
+   e?.message==='Duplicate TEST row'?'DUPLICATE_ROW':
+   typeof e?.message==='string'&&e.message.includes('strict mode violation')?'UI_LOCATOR_AMBIGUOUS':'OTHER_ACCEPTANCE_FAILURE';
   proof.uiDiagnostic=await page.getByText(/^TEST diagnostic: /).allTextContents();
   // Never capture login credentials in failure screenshots.
   let cleared=true;
