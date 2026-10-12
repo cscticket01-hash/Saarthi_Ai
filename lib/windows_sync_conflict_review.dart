@@ -3,6 +3,68 @@ import 'package:flutter/material.dart';
 import 'windows_local_firestore.dart';
 import 'windows_connect/managed_school_session.dart';
 
+// Queue rows may contain DateTime, native objects or circular/large maps.
+// Never let diagnostic text throw during AlertDialog.build: on Windows that
+// leaves the modal barrier visible with no usable review controls.
+// This is a display-only, bounded, redacted preview. It never modifies the
+// original queue payload, cloud comparison or revision checks.
+String _conflictPreview(Object? original) {
+  var remaining = 512;
+  Object? normalize(Object? value, int depth) {
+    if (--remaining < 0) return "[Preview budget reached]";
+    if (value == null || value is bool || value is num) return value;
+    if (value is DateTime) return value.toIso8601String();
+    if (value is String) {
+      return value.length <= 2048
+          ? value
+          : '${value.substring(0, 2048)} [field preview shortened]';
+    }
+    if (depth >= 5) return '[Nested preview omitted]';
+    if (value is Map) {
+      final output = <String, Object?>{};
+      var count = 0;
+      for (final entry in value.entries) {
+        if (count++ >= 40 || remaining <= 0) {
+          output['...'] = '[Further fields omitted]';
+          break;
+        }
+        final key = entry.key.toString();
+        if (RegExp(r'password|secret|token|credential|authorization|private.?key|api.?key',
+                caseSensitive: false)
+            .hasMatch(key)) {
+          output[key] = '[REDACTED]';
+        } else {
+          output[key] = normalize(entry.value, depth + 1);
+        }
+      }
+      return output;
+    }
+    if (value is Iterable) {
+      final output = <Object?>[];
+      var count = 0;
+      for (final entry in value) {
+        if (count++ >= 40 || remaining <= 0) {
+          output.add('[Further entries omitted]');
+          break;
+        }
+        output.add(normalize(entry, depth + 1));
+      }
+      return output;
+    }
+    return '[${value.runtimeType}]';
+  }
+
+  try {
+    final text = const JsonEncoder.withIndent('  ').convert(normalize(original, 0));
+    return text.length <= 10000
+        ? text
+        : '${text.substring(0, 10000)}\n[Preview shortened; original preserved]';
+  } catch (_) {
+    return 'Preview unavailable for this record. Original data remains intact.';
+  }
+}
+
+
 /// Operator-initiated own-school review. Opening it never sends a write.
 Future<void> showWindowsConflictReview(
         BuildContext context, Map<String, dynamic> item) =>
@@ -125,9 +187,11 @@ class _ConflictReviewState extends State<_ConflictReview> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           title: const Text('Review sync conflict'),
           content: SizedBox(
-              width: 760,
+              width: (MediaQuery.sizeOf(context).width - 72).clamp(160.0, 760.0).toDouble(),
+              height: (MediaQuery.sizeOf(context).height - 220).clamp(160.0, 560.0).toDouble(),
               child: SingleChildScrollView(
                   child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -136,7 +200,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
                         'No version is selected automatically. Financial records need an explicit operator decision. Originals remain retained.'),
                     const SizedBox(height: 12),
                     const Text('Local pending version'),
-                    SelectableText(const JsonEncoder.withIndent('  ').convert(
+                    SelectableText(_conflictPreview(
                         expected?['data'] ??
                             widget.item['data'] ??
                             widget.item)),
@@ -145,8 +209,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
                         ? 'Cloud verification: not performed'
                         : 'Cloud verification: authenticated read; checked again before queuing'),
                     if (remote != null)
-                      SelectableText(
-                          const JsonEncoder.withIndent('  ').convert(remote)),
+                      SelectableText(_conflictPreview(remote)),
                     if (document)
                       const Text(
                           'Document conflicts require comparing original files. This screen does not replace files or resolve their conflict.'),
