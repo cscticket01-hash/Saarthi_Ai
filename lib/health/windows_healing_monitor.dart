@@ -8,35 +8,12 @@ import 'universal_health.dart';
 /// Equal-weight component availability score. Every registered provider must
 /// have a conclusive state; missing, stale, monitoring or paused evidence hides
 /// the score. Healthy=100, degraded=50, recovering=25, needsAttention=0.
-int? healthScore(UniversalHealth engine) {
-  final entries = engine.observations.values.toList();
-  if (engine.context == null ||
-      engine.paused ||
-      entries.isEmpty ||
-      entries.length != engine.registeredCount)
-    return null;
-  var total = 0;
-  for (final e in entries) {
-    switch (e.state) {
-      case HealthState.healthy:
-        total += 100;
-      case HealthState.degraded:
-        total += 50;
-      case HealthState.recovering:
-        total += 25;
-      case HealthState.needsAttention:
-        break;
-      default:
-        return null;
-    }
-  }
-  return (total / entries.length).round();
-}
+int? healthScore(UniversalHealth engine) => engine.measuredScore;
 
 class HealthPoint {
   const HealthPoint(this.at, this.score);
   final DateTime at;
-  final int score;
+  final int? score;
 }
 
 class WindowsHealingMonitor extends StatefulWidget {
@@ -50,7 +27,6 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
   late final UniversalHealth engine = widget.engine ?? UniversalHealth.instance;
   StreamSubscription<void>? subscription;
   final List<HealthPoint> points = [];
-  int generation = -1;
   Duration window = const Duration(hours: 24);
   static const cyan = Color(0xff20dbed);
   static const muted = Color(0xffa4bbcf);
@@ -64,20 +40,7 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
   }
 
   void capture() {
-    if (generation != engine.epoch) {
-      points.clear();
-      generation = engine.epoch;
-    }
-    final at = engine.now(), score = healthScore(engine);
-    points.removeWhere(
-      (p) => at.difference(p.at) > const Duration(days: 7) || p.at.isAfter(at),
-    );
-    if (score != null &&
-        (points.isEmpty ||
-            at.difference(points.last.at) >= const Duration(minutes: 1))) {
-      points.add(HealthPoint(at, score));
-      if (points.length > 10080) points.removeAt(0);
-    }
+    points..clear()..addAll(engine.samples.map((s) => HealthPoint(s.at, s.score)));
   }
 
   @override
@@ -229,9 +192,9 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                     label(
                       engine.paused
                           ? 'Monitoring Paused'
-                          : engine.admissionHistoryVerified
-                          ? 'Auto Recovery Active'
-                          : 'Recovery Unavailable',
+                          : engine.admissionHistoryVerified && engine.reviewedPlaybookCount > 0
+                          ? 'Monitoring active · limited safe repairs enabled'
+                          : 'Monitoring active · auto-repair off',
                       size: 26,
                       color: Colors.white,
                     ),
@@ -282,7 +245,7 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
             () => details(
               'Devices',
               label(
-                'No registered-device inventory is exposed by this local engine. Providers are not devices.',
+                'Registered-device inventory has not been verified for this school. Unknown until authorized registry data is available.',
               ),
             ),
           ),
@@ -300,13 +263,13 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
             ),
           ),
           stat(
-            'Alerts',
+            'Component Alerts',
             '${alerts.length}',
             Icons.notifications_active,
             Colors.amber,
             (c.maxWidth - 16) / 2,
             () => details(
-              'Unresolved alerts',
+              'Unresolved component alerts (each may group multiple queued items)',
               Column(
                 children: [
                   for (final e in alerts)
@@ -357,7 +320,7 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
           SizedBox(
             height: 220,
             width: double.infinity,
-            child: filtered.length < 2
+            child: filtered.where((p) => p.score != null).length < 2
                 ? Center(
                     child: label(
                       'Insufficient recorded history\nSamples collect while this monitor is open.',
@@ -583,10 +546,11 @@ class _Trend extends CustomPainter {
     Offset? previous;
     DateTime? previousAt;
     for (final p in points) {
+      if (p.score == null) { previous = null; previousAt = null; continue; }
       final x =
               size.width *
               (1 - now.difference(p.at).inMilliseconds / window.inMilliseconds),
-          point = Offset(x, size.height * (1 - p.score / 100));
+          point = Offset(x, size.height * (1 - p.score! / 100));
       if (previous != null &&
           p.at.difference(previousAt!) <= const Duration(minutes: 2))
         canvas.drawLine(previous, point, paint);

@@ -22,6 +22,7 @@ class WindowsHealthAdapter {
   Future<void> initialize() async {
     if(_started)return;
     _started=true;
+    guardian.sampleStore=FileHealthSamples(() async => WindowsLocalStorage.controlDirectory);
     guardian.store=FileHealthHistory(() async => WindowsLocalStorage.controlDirectory);
     // Approved repair changes the sync DISPLAY projection only. The Smart
     // Sync owner retains queue, IDs, schedule, retries and ACK authority.
