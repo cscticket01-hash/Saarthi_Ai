@@ -1,3 +1,4 @@
+import 'health/health_runtime.dart';
 import 'student_inventory_policy.dart';
 import 'windows_fee_structure.dart';
 import 'fitted_document_preview.dart';
@@ -20398,7 +20399,9 @@ class _StudentDocumentsScreenState
     return _windowsGoogleScriptUrl();
   }
 
-  Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> _post(Map<String, dynamic> body) => HealthRuntime.measure('inventory', () => _postOwned(body));
+
+  Future<Map<String, dynamic>> _postOwned(Map<String, dynamic> body) async {
     if(FirebaseFirestore.instance.activeProfileId!=_schoolProfile) throw StateError('School changed. Reopen documents.');
     final response = await WindowsBackendBridge.post(
       Uri.parse(await _scriptUrl()),

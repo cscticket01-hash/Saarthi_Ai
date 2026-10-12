@@ -26,7 +26,7 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
     if(origin && !allowedOrigins.includes(origin)) return send(403,{success:false,message:'Origin is not allowed'});
     if(origin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
     if(req.method==='OPTIONS' && req.url==='/school-cloud'){
-      res.setHeader('Access-Control-Allow-Methods','POST');res.setHeader('Access-Control-Allow-Headers','Authorization,Content-Type');res.writeHead(204);return res.end();
+      res.setHeader('Access-Control-Allow-Methods','POST');res.setHeader('Access-Control-Allow-Headers','Authorization,Content-Type,X-Vidya-Device-Id,X-Vidya-Device-Credential');res.writeHead(204);return res.end();
     }
     if(Date.now()-windowStart>=60000){windowStart=Date.now();requests=0;anonymousRequests=0;}
     if(++requests>6000 || !req.headers.authorization&&++anonymousRequests>1200) return send(429,{success:false,message:'Retry school setup shortly'});

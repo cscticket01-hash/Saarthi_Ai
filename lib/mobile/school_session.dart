@@ -1,3 +1,4 @@
+import '../health/universal_health.dart';
 import '../qr_authentication_engine.dart';
 import '../qr_card_authorization.dart';
 import 'attendance_store.dart';
@@ -309,6 +310,16 @@ class SchoolSession {
     throw StateError(
       'School service returned an invalid response. Try again; if it continues, contact the school administrator.',
     );
+  }
+
+  // Diagnostics cannot clear or renew the session, including on HTTP403.
+  Future<int> sendHealthReport(Map<String,dynamic> report) async {
+    final current=link,permit=_currentAttendancePermit,generation=_generation;
+    if(current==null || !current.managed || permit==null)return 204;
+    final response=await _client.post(Uri.parse(current.endpoint),headers:{'Content-Type':'application/json'},body:jsonEncode({'action':'managed/mobile','schoolId':current.schoolId,'request':{'action':'mobile_health_report','report':report,'attendancePermit':permit,'sessionToken':schoolToken,'deviceId':deviceId,'role':current.role,'personId':current.personId,'linkToken':current.linkToken,if(_cardAuthorizationToken!=null)'cardAuthorizationToken':_cardAuthorizationToken,if(current.cardIssueId.isNotEmpty)'cardIssueId':current.cardIssueId}})).timeout(const Duration(seconds:8));
+    if(generation!=_generation || !identical(current,link))return 409;
+    if(response.statusCode==200){final result=_decodeSchoolResponse(response.body);if(result['success']==true&&result['schoolId']==current.schoolId)return result['accepted']==true?200:429;}
+    return response.statusCode;
   }
 
   Future<Map<String, dynamic>> schoolCall(
@@ -683,6 +694,7 @@ class SchoolSession {
       throw SchoolCacheFailure();
     }
     if (generation != _generation) throw SchoolAccessDenied('School session changed.');
+    try {final h=UniversalHealth.instance;final c=h.context;if(c!=null && c.school==link?.schoolId && c.profile==link?.personId)h.observe('notices',HealthObservation(HealthState.healthy,verifiedAt:lastDashboardVerifiedAt));}catch(_){}
     dashboardCleanupDeferred = false;
     for (final key in removedPdfs.keys) _pdfMemory.remove(key);
     // Only acknowledged removal invalidates private files. Temporary outages

@@ -35,7 +35,8 @@ class ManagedSchoolSession {
     return {'action':'managed/device/register','deviceName':name.isNotEmpty&&name.length<=100?name:'Windows PC','deviceOs':'Windows','type':'pc'};
   }
   static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) => callForSchool(null, action, body);
-  static Future<Map<String,dynamic>> callForSchool(String? expectedSchoolId, String action, Map<String,dynamic> body) async {
+  static Future<Map<String,dynamic>> callForSchool(String? expectedSchoolId, String action, Map<String,dynamic> body, {bool observationOnly=false}) async {
+    if(observationOnly && action != 'managed/health/report')throw StateError('Observational action rejected');
     final saved=await CentralSchoolCloud.saved();verifyBuildEndpoint(saved['endpoint']?.toString()??'');if(saved['managed']!=true)throw StateError('Managed school login required');
     if(expectedSchoolId != null && saved['schoolId'] != expectedSchoolId) throw StateError('School changed before operation.');
     final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId'],
@@ -62,7 +63,7 @@ class ManagedSchoolSession {
       return result;
     } catch (error) {
       // Revision, quota and transport failures do not invalidate authentication.
-      if (error is CentralCloudException &&
+      if (!observationOnly && error is CentralCloudException &&
           (error.status == 401 || error.invalidRefresh)) {
         CentralSchoolCloud.clearFirebaseToken();
       }

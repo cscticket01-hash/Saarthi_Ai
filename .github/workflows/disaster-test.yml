@@ -8,6 +8,9 @@ on:
       - .github/scripts/test_disaster_live.cjs
       - .github/scripts/disaster_resume.cjs
       - .github/scripts/test_runtime_identity.cjs
+      - .github/scripts/test_sync_review_web.cjs
+      - .github/scripts/review_response_match.cjs
+      - .github/scripts/review_response_body.cjs
       - lib/windows_local_firestore.dart
       - lib/windows_sync_engine.dart
       - functions/**
@@ -21,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   disaster-live:
-    if: github.ref == 'refs/heads/feature/smart-sync-3'
+    if: github.ref == 'refs/heads/feature/smart-sync-3' || github.ref == 'refs/heads/feature/universal-self-healing-2'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -39,7 +42,7 @@ jobs:
           # Recovered monitoring requires fresh cloud proof for changed runtime.
           # Runtime provenance is verified against this successful cloud run;
           # changed backend/engine code cannot reuse its evidence.
-          VS_TEST_CLOUD_EVIDENCE_RUN_ID: '38100863265'
+          VS_TEST_CLOUD_EVIDENCE_RUN_ID: '38189627964'
           VS_TEST_DISASTER_FIXTURE_RUN_ID: '38020985989'
           VS_TEST_DISASTER_FIXTURE_ATTEMPT: '2'
         run: |

@@ -20,6 +20,18 @@ test('canonical student writes enforce new/changed occupied slots inside ScriptL
  assert.equal(write(s,'S2',{name:'B',class:'VI',section:'B',rollNo:'1'}).success,true);
  assert.equal(write(s,'S1',{name:'Changed',studentClass:'VI',section:'',rollNo:'1'},a.recordRevision,'different-operation123').success,true);assert.equal(locked,false);assert.equal(checks,4);
 });
+test('separate hosted TEST fixtures retain existing student slots without weakening uniqueness',()=>{
+ const s=storage();
+ const original=write(s,'retained',{name:'Retained',class:'1',rollNo:'900001'});
+ assert.equal(original.success,true);
+ for(const section of ['TEST-protocol-isolated-v2-4000-1','TEST-engine-4000-1','TEST-protocol-isolated-v2-4000-2']){
+   assert.equal(write(s,section,{name:'Synthetic',class:'1',section,rollNo:'900001'}).success,true);
+ }
+ assert.equal(write(s,'collision',{name:'Must reject',class:'1',section:'TEST-engine-4000-1',rollNo:'900001'}).success,false);
+ const rows=s.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2}).records;
+ assert.equal(rows.retained._syncRevision,original.recordRevision);
+ assert.equal(rows.retained.name,'Retained');assert.equal(Object.keys(rows).length,4);
+});
 test('tombstones release slots without resurrecting identity and legacy unmeasured slots report partial scope',()=>{
  const s=storage(),a=write(s,'S1',{name:'A',class:'VI',rollNo:1});assert.equal(a.success,true);
  const deleted=s.call({action:'managed_records',operation:'delete',collection:'students_directory',syncProtocol:2,id:'S1',operationId:'delete-operation12345',expectedRecordRevision:a.recordRevision});assert.equal(deleted.success,true);

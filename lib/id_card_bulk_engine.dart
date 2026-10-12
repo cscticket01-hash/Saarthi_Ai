@@ -1,3 +1,4 @@
+import 'health/health_runtime.dart';
 /// Isolated bulk rendering core. No issuance, storage, sync or UI activation.
 import 'dart:convert';
 import 'dart:math' as math;
@@ -392,7 +393,8 @@ class IdCardBulkResult {
 class IdCardBulkEngine {
   /// Rebuilds the exact immutable selection. It does not publish partial PDFs.
   /// A caller persisting cancellation can pass the fingerprint to reject drift.
-  static Future<IdCardBulkResult> render(
+  static Future<IdCardBulkResult> render(IdCardBulkPlan plan,{bool Function()? isCancelled,void Function(int,int)? onProgress,String? resumeSelectionFingerprint})=>HealthRuntime.measure('id-card',()=>_render(plan,isCancelled:isCancelled,onProgress:onProgress,resumeSelectionFingerprint:resumeSelectionFingerprint));
+  static Future<IdCardBulkResult> _render(
     IdCardBulkPlan plan, {
     bool Function()? isCancelled,
     void Function(int completed, int total)? onProgress,

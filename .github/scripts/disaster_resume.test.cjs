@@ -15,10 +15,22 @@ test('partial resume identities and foreign branch/repository fail closed',()=>{
 test('successful same-code evidence accepts review-only changes without rerunning cloud writers',()=>{
  assert.equal(verifyEvidence(run,sha).sha,sha);assert.equal(verifyEvidence(run,next,compare).runId,123);
 });
+test('retained expiry acceptance metadata reuses successful ancestor proof but cannot admit changed runtime',()=>{
+ const files=['.github/workflows/recycle-test.yml','.github/workflows/disaster-test.yml','.github/scripts/disaster_resume.cjs','.github/scripts/disaster_resume.test.cjs'].map(filename=>({filename}));
+ assert.equal(verifyEvidence(run,next,{...compare,files}).runId,123);
+ assert.throws(()=>verifyEvidence(run,next,{...compare,files:[...files,{filename:'lib/mobile/school_session.dart'}]}));
+ assert.throws(()=>verifyEvidence({...run,conclusion:'failure'},next,{...compare,files}));
+});
 test('changed runtime, renamed runtime, truncated comparison and non-ancestor evidence fail closed',()=>{
  for(const files of [[{filename:'functions/managed-schools.js'}],[{filename:'.github/scripts/test_disaster_live.cjs',previous_filename:'lib/windows_sync_engine.dart'}],Array(300).fill(compare.files[0])])assert.throws(()=>verifyEvidence(run,next,{...compare,files}));
  assert.throws(()=>verifyEvidence(run,next,{...compare,merge_base_commit:{sha:next}}));
 });
 test('failed, running, foreign or wrong-branch cloud workflows cannot certify recovery',()=>{
  for(const bad of [{status:'in_progress'},{conclusion:'failure'},{head_branch:'main'},{head_repository:{full_name:'foreign/repo'}}])assert.throws(()=>verifyEvidence({...run,...bad},sha));
+});
+
+test('existing guardian branch retains TEST fixture and requires same-branch evidence',()=>{
+ const branch='feature/universal-self-healing-2';assert.equal(fixture({...env,GITHUB_REF:'refs/heads/'+branch}).id,fixture(env).id);
+ assert.equal(verifyEvidence({...run,head_branch:branch},sha,undefined,branch).sha,sha);
+ assert.throws(()=>verifyEvidence(run,sha,undefined,branch));assert.throws(()=>verifyEvidence({...run,head_branch:branch},sha));
 });

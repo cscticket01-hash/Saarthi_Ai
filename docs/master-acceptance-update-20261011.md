@@ -1,3 +1,27 @@
+# Retained real-day Recycle Bin acceptance — 12 October 2026
+
+This addendum supersedes the Recycle Bin deadline status below. The retained isolated TEST fixture was checked only after its genuine server deadline; it was not recreated, retimed, purged, rebound or restored while recoverable.
+
+- Result: **PASS (isolated TEST, not physical acceptance)**.
+- Guarded workflow: [run 38190801364](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/38190801364), job `recycle-live`, exact check source `d15f85198734a96d2b40abe1ce45ec2bdedc7f6e`.
+- Artifact: `isolated-test-recycle-readback` ID `11720623590`, digest `sha256:1529c671f7f9cdfd53eb6eccc9dfe2e63f88e825cd306c16ef5ade41ef1f01ae`.
+- Fixture: `recycle-expiry-v1-20261011-resume-acceptance`; deleted revision `26d0800c-5f42-4022-bfc2-a959bc5c3c9a`; `deletedAt=1791680719426`; `recoverUntil=1791767119426`.
+- Provider-observed `serverNow=1791767398899`; elapsed `86679473 ms`; status `expired`.
+- The authenticated expired restore probe was rejected with HTTP 502 / `SCRIPT_OPERATION_FAILED`. The sanitized provider response does not expose the owner-only exception, so no narrower provider reason is claimed.
+- Post-probe authenticated readback proved the same Sheets tombstone, Drive snapshot deadline and retained audit were unchanged. `expiredRestoreRejected=true`, `auditRetainedAfterProbe=true`, `fixtureRetained=true`, `permanentDeletion=false`.
+- Harness scope tests: **5 passed, 0 failed** before the live probe.
+
+State discovered before this report-only update:
+
+- `feature/smart-sync-3` acceptance source: `d15f85198734a96d2b40abe1ce45ec2bdedc7f6e`.
+- TEST Render service `srv-db3tgfu7bikc73abm7a0`: LIVE deploy `dep-db62uftckfvc73bultmg` at runtime `4598fd3560f0610b8b21fe82876592a060b558ba`; auto-deploy remains off.
+- PR24 is no longer a draft: it merged at `2026-10-11T16:58:22Z`; its recorded head remains `afd5308991e10c9de7cae6f56812651c18723766`.
+- Current main is `cd02207127cc2b6dd360c63bc0661a0bd2d5dbcb` (later PR29 merge). Historical runtime/application `335a21c57e1fe77944897d905631e8785171ff3c` evidence remains valid only for its earlier exact-source runs; it is not claimed as the current TEST runtime.
+
+Still not verified here: canonical Apps Script owner upgrade/live import, five physical PCs, physical Android/printer testing, and complete ID Card 2 / QR 2 real-device acceptance. No production deploy, release, EXE/APK publication or main merge was performed by this acceptance update.
+
+---
+
 # Vidya Saarthi acceptance update — 11 October 2026
 
 Overall: **PARTIAL**. Application source `335a21c57e1fe77944897d905631e8785171ff3c` passes all six exact-source platform jobs in run38129113241, after rerunning only the failed read-only cloud job once the deployment was live. Initial cloud failures occurred during deployment; their reports ended after storage health and did not expose a precise transport cause. That cause remains unconfirmed. The successful rerun proves ten prerequisites against exact runtime335a21c, not canonical script upgrade or import/device rollout.

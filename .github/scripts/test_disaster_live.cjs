@@ -18,9 +18,9 @@ async function run(){
  // A concurrent accepted write safely invalidates this generation instead of
  // silently mixing two different school states into a "complete" backup.
  stage='cloud_evidence';
- const identity=fixture(process.env);let writersFinished=false;
+ const identity=fixture(process.env),branch=process.env.GITHUB_REF.replace('refs/heads/','');let writersFinished=false;
  for(let n=0;n<140;n++){
-  const r=await fetch('https://api.github.com/repos/'+process.env.GITHUB_REPOSITORY+'/actions/runs?branch=feature%2Fsmart-sync-3&per_page=30',{
+  const r=await fetch('https://api.github.com/repos/'+process.env.GITHUB_REPOSITORY+'/actions/runs?branch='+encodeURIComponent(branch)+'&per_page=30',{
     headers:{Authorization:'Bearer '+process.env.GITHUB_TOKEN,Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(30000)});assert.equal(r.status,200);
   const runs=(await r.json()).workflow_runs,cloud=runs.filter(run=>run.name==='Isolated TEST cloud prerequisites');
   const run=cloud.find(run=>run.head_sha===process.env.GITHUB_SHA)||cloud.find(run=>String(run.id)===process.env.VS_TEST_CLOUD_EVIDENCE_RUN_ID);
@@ -29,7 +29,7 @@ async function run(){
    let comparison;if(run.head_sha!==process.env.GITHUB_SHA){
     const c=await fetch('https://api.github.com/repos/'+process.env.GITHUB_REPOSITORY+'/compare/'+run.head_sha+'...'+process.env.GITHUB_SHA,{headers:{Authorization:'Bearer '+process.env.GITHUB_TOKEN,Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(30000)});assert.equal(c.status,200);comparison=await c.json();
    }
-   report.cloudEvidence=verifyEvidence(run,process.env.GITHUB_SHA,comparison);report.originalRecoveryOperationResumed=identity.resumed;writersFinished=true;break;
+   report.cloudEvidence=verifyEvidence(run,process.env.GITHUB_SHA,comparison,branch);report.originalRecoveryOperationResumed=identity.resumed;writersFinished=true;break;
   }if(n%10===0)console.log('Waiting for verified compatible end-to-end TEST writers');await delay(15000);
  }assert.ok(writersFinished);
  stage='test_authentication';

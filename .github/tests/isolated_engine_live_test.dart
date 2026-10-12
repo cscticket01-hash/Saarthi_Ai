@@ -146,7 +146,7 @@ void main() {
    report['binaryInventoryCoverage']=binaries.summary['inventory'];
    report['binaryAcceptanceScope']='At most five first-page TEST Drive binaries; hashes/cache restart/missing cache/corrupt response checked. Remaining files and native Google documents not certified.';
 
-   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
+   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','section':'TEST-engine-$unique','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
    final existingDocuments=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'read','syncProtocol':2});
    final fixturePerson='isolated-v2-$unique-student';
    final fixture=(existingDocuments['records'] as Map).values.firstWhere((r)=>r['syntheticTest']==true&&r['personId']==fixturePerson&&r['documentKind']=='idCard') as Map;

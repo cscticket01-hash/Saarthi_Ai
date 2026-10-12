@@ -3,18 +3,20 @@ const assert=require('node:assert/strict');
 const repo='cscticket01-hash/Saarthi_Ai';
 const reviewOnly=new Set(['lib/windows_disaster_rehearsal.dart','test/windows_sync_revision_test.dart',
  '.github/scripts/test_disaster_live.cjs','.github/scripts/disaster_resume.cjs',
- '.github/scripts/disaster_resume.test.cjs','.github/workflows/disaster-test.yml']);
+ '.github/scripts/disaster_resume.test.cjs','.github/workflows/disaster-test.yml',
+ '.github/workflows/recycle-test.yml']);
 function fixture(env){
- assert.equal(env.GITHUB_REPOSITORY,repo);assert.equal(env.GITHUB_REF,'refs/heads/feature/smart-sync-3');
+ assert.equal(env.GITHUB_REPOSITORY,repo);assert.ok(['refs/heads/feature/smart-sync-3','refs/heads/feature/universal-self-healing-2'].includes(env.GITHUB_REF));
  const resumed=Boolean(env.VS_TEST_DISASTER_FIXTURE_RUN_ID||env.VS_TEST_DISASTER_FIXTURE_ATTEMPT);
  const run=resumed?env.VS_TEST_DISASTER_FIXTURE_RUN_ID:env.GITHUB_RUN_ID;
  const attempt=resumed?env.VS_TEST_DISASTER_FIXTURE_ATTEMPT:env.GITHUB_RUN_ATTEMPT;
  assert.match(run||'',/^[1-9][0-9]{0,19}$/);assert.match(attempt||'',/^[1-9][0-9]{0,5}$/);
  return {id:'disaster-rehearsal-'+run+'-'+attempt,resumed};
 }
-function verifyEvidence(run,currentSha,comparison){
+function verifyEvidence(run,currentSha,comparison,branch='feature/smart-sync-3'){
+ assert.ok(['feature/smart-sync-3','feature/universal-self-healing-2'].includes(branch));
  assert.equal(run.name,'Isolated TEST cloud prerequisites');assert.equal(run.status,'completed');assert.equal(run.conclusion,'success');
- assert.equal(run.head_branch,'feature/smart-sync-3');assert.equal(run.head_repository.full_name,repo);
+ assert.equal(run.head_branch,branch);assert.equal(run.head_repository.full_name,repo);
  assert.match(run.head_sha,/^[a-f0-9]{40}$/);assert.match(currentSha,/^[a-f0-9]{40}$/);
  if(run.head_sha!==currentSha){
   assert.ok(comparison&&comparison.merge_base_commit.sha===run.head_sha);

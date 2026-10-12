@@ -26,7 +26,7 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  await write('school_calendar',isolatedAttendanceDay(schoolId),{isOpen:true,purpose:'isolated-attendance-acceptance'});
  await write('school_settings','school_location',{latitude:24.8,longitude:92.7,radiusMeters:100});
  const personId=prefix+'-student',linkToken=createHash('sha256').update(prefix+'/synthetic-qr').digest('hex');
- await write('students_directory',personId,{name:'Synthetic TEST Student',class:'1',rollNo:'900001',dob:'2015-01-01',mobileStableId:personId,mobileLinkToken:linkToken});
+ await write('students_directory',personId,{name:'Synthetic TEST Student',class:'1',section:'TEST-protocol-'+prefix,rollNo:'900001',dob:'2015-01-01',mobileStableId:personId,mobileLinkToken:linkToken});
  r=await mobile({action:'mobile_login',projectId:schoolId,role:'student',personId,linkToken,studentClass:'1',rollNo:'900001',dob:'2015-01-01'});
  check('Real mobile protocol login',r,r.http===200&&typeof r.data.sessionToken==='string');
  const sessionToken=r.data.sessionToken;
