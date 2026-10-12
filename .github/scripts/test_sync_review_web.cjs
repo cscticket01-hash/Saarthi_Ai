@@ -4,6 +4,7 @@
 const {chromium}=require('playwright');
 const fs=require('node:fs'),path=require('node:path');
 const {requestBody,matchesNoticeWrite,matchesNoticeRead}=require('./review_response_match.cjs');
+const {responseJson}=require('./review_response_body.cjs');
 (async()=>{
  const school='vs-db8afb01a3be46a983c8284714d06e5d',run=process.env.GITHUB_RUN_ID;
  if(process.env.VS_TEST_CONNECT_CONFIRM!==school||process.env.GITHUB_ACTIONS!=='true')throw Error('Isolated hosted TEST runner required');
@@ -46,17 +47,15 @@ const {requestBody,matchesNoticeWrite,matchesNoticeRead}=require('./review_respo
   const writePromise=page.waitForResponse(response=>matchesNoticeWrite(response,endpoint,school,id),{timeout:180000});
   const readPromise=page.waitForResponse(response=>matchesNoticeRead(response,endpoint,school),{timeout:180000});
   await page.getByRole('button',{name:'Publish TEST notice',exact:true}).click();
-  const response=await writePromise,ack=await response.json(),body=requestBody(response);
+  const response=await writePromise,ack=await responseJson(response),body=requestBody(response);
   proof.writeVerification={http:response.status(),success:ack.success===true,schoolMatches:ack.schoolId===school,
    protocolMatches:ack.syncProtocol===2,hasRevision:typeof ack.recordRevision==='string'&&ack.recordRevision.length>0};
   if(response.status()!==200||ack.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision)throw Error('Verified TEST write ACK required');
   const read=await readPromise;
   proof.readResponseObserved={http:read.status()};
-  // A response event is headers-only. Wait for its completed body before
-  // independently verifying readback; never repeat the business write here.
-  const readFailure=await read.finished();
-  if(readFailure)throw Error('TEST readback response did not finish');
-  const reply=await read.json();
+  // JSON decoding waits for the completed body with an explicit deadline.
+  // No second request or fallback ACK is manufactured by the observer.
+  const reply=await responseJson(read);
   proof.readVerification={http:read.status(),schoolMatches:reply.schoolId===school,protocolMatches:reply.syncProtocol===2,
    hasNoticeChanges:!!reply.changes?.school_notices};
   if(read.status()!==200||reply.schoolId!==school||reply.syncProtocol!==2||!reply.changes?.school_notices)throw Error('Verified TEST post-write readback required');
@@ -115,6 +114,7 @@ const {requestBody,matchesNoticeWrite,matchesNoticeRead}=require('./review_respo
   // bodies, credentials, headers or school records as debugging evidence.
   proof.failureType=['TimeoutError','SyntaxError','TypeError','ReferenceError','Error'].includes(e?.name)?e.name:'OTHER_ERROR';
   proof.failureCategory=e?.name==='TimeoutError'?'UI_OR_RESPONSE_TIMEOUT':
+   e?.message==='TEST response body verification timed out'?'BROWSER_RESPONSE_BODY_TIMEOUT':
    e?.name==='SyntaxError'?'RESPONSE_JSON_NOT_VERIFIED':
    e?.message==='TEST readback response did not finish'?'READBACK_RESPONSE_INCOMPLETE':
    typeof e?.message==='string'&&e.message.includes('Network.getResponseBody')?'BROWSER_RESPONSE_BODY_UNAVAILABLE':

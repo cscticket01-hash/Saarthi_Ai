@@ -8,6 +8,9 @@ on:
       - .github/scripts/test_disaster_live.cjs
       - .github/scripts/disaster_resume.cjs
       - .github/scripts/test_runtime_identity.cjs
+      - .github/scripts/test_sync_review_web.cjs
+      - .github/scripts/review_response_match.cjs
+      - .github/scripts/review_response_body.cjs
       - lib/windows_local_firestore.dart
       - lib/windows_sync_engine.dart
       - functions/**
