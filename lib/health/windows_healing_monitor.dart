@@ -721,12 +721,12 @@ class _KnowledgeBrowserState extends State<_KnowledgeBrowser> {
   Widget build(BuildContext context) {
     final knowledge = HealthKnowledge.instance;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('${knowledge.rules.length} reviewed patterns / 1000 target. A: safe infrastructure; B: owner guidance; C: escalation. Catalog entries grant no repair permission.'),
+      Text('${knowledge.rules.length} source-backed diagnostic cases / 1000 target. A: safe infrastructure; B: owner guidance; C: escalation. Catalog entries grant no repair permission.'),
       TextField(maxLength: 120, decoration: const InputDecoration(labelText: 'Search error, component or solution'),
         onChanged: (value) => setState(() => query = value)),
       for (final rule in knowledge.search(query))
         ExpansionTile(title: Text('${rule.id} · Level ${rule.level}'), subtitle: Text(rule.name),
-          children: [ListTile(title: Text(rule.solution), subtitle: Text('Verify: ${rule.verification}'))]),
+          children: [ListTile(title: Text(rule.solution), subtitle: Text('Verify: ${rule.verification}\nSource: ${(rule.data['source'] as List).join(', ')}\nEvidence: ${rule.data['evidenceType']}'))]),
     ]);
   }
 }

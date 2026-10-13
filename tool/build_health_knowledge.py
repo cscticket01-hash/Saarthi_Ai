@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import re
+from extend_health_knowledge import source_cases, make_rule
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / 'lib/health/knowledge/catalog.v1.json'
@@ -24,9 +25,10 @@ FIELDS = {'id', 'component', 'name', 'signature', 'symptoms', 'evidence',
 def validate(data, root=ROOT):
     if data.get('schema') != 1 or data.get('version') != '2.1.0':
         raise ValueError('Unsupported knowledge schema/version')
-    if data.get('target') != 1000 or not isinstance(data.get('rules'), list) or not 0 < len(data['rules']) <= 1000:
+    if data.get('target') != 1000 or not isinstance(data.get('rules'), list) or len(data['rules']) != 1000:
         raise ValueError('Invalid catalog budget/target')
     ids, signatures = set(), set()
+    actual_cases = {(c['path'], c['kind'], c['literal']): c for c in source_cases(root)}
     failures = {'offline', 'timeout', 'server', 'quota', 'authorization', 'identity',
                 'configuration', 'conflict', 'databaseLocked', 'storage', 'corrupt',
                 'worker', 'decoding', 'rendering', 'overloaded', 'unknown'}
@@ -34,7 +36,8 @@ def validate(data, root=ROOT):
                         'authorization', 'configuration', 'conflict', 'validation',
                         'fileMissing', 'unknown'}
     for rule in data['rules']:
-        if set(rule) != FIELDS:
+        contextual = 'sourceCase' in rule
+        if set(rule) != FIELDS | ({'sourceCase'} if contextual else set()):
             raise ValueError('Missing or unrecognized rule fields')
         for field in ('id', 'component', 'name', 'severity', 'dataLossRisk', 'diagnostic',
                       'solution', 'level', 'playbook', 'verification', 'escalation',
@@ -45,17 +48,31 @@ def validate(data, root=ROOT):
                       'preconditions', 'source', 'testEvidence'):
             if not isinstance(rule[field], list) or len(rule[field]) > 32 or any(not isinstance(v, str) or len(v) > 2000 for v in rule[field]):
                 raise ValueError('Invalid bounded evidence list')
-        if not isinstance(rule['signature'], dict) or set(rule['signature']) != {'component', 'failure', 'ownerCategory'}:
+        if not isinstance(rule['signature'], dict) or set(rule['signature']) != {'component', 'failure', 'ownerCategory'} | ({'diagnosticCode'} if contextual else set()):
             raise ValueError('Invalid typed signature schema')
         for field in ('timeoutSeconds', 'cooldownSeconds', 'attemptLimit'):
             if type(rule[field]) is not int:
                 raise ValueError('Invalid numeric admission field')
-        signature = tuple(rule['signature'][key] for key in ('component', 'failure', 'ownerCategory'))
+        signature = tuple(rule['signature'][key] for key in ('component', 'failure', 'ownerCategory')) + (rule['signature'].get('diagnosticCode', ''),)
         if not re.fullmatch(r'[a-z][a-z0-9_.-]{0,47}', rule['id']) or signature[1] not in failures or signature[2] not in owner_categories:
             raise ValueError('Invalid ID or unreachable typed signature')
         if rule['id'] in ids or signature in signatures:
             raise ValueError('Duplicate ID/signature or contradictory rule')
         ids.add(rule['id']); signatures.add(signature)
+        if contextual:
+            case = rule['sourceCase']
+            if not isinstance(case, dict) or set(case) != {'path', 'kind', 'literal', 'line'}:
+                raise ValueError('Invalid source case schema')
+            if any(not isinstance(case[k], str) for k in ('path', 'kind', 'literal')) or type(case['line']) is not int:
+                raise ValueError('Invalid source case types')
+            actual = actual_cases.get((case['path'], case['kind'], case['literal']))
+            if actual != case or rule['source'] != [case['path']]:
+                raise ValueError('Source guard is missing or changed; review and regenerate')
+            expected = make_rule(case, rule)
+            if any(rule[k] != expected[k] for k in ('id', 'component', 'signature', 'name', 'level', 'solution', 'verification')):
+                raise ValueError('Source context/signature/guidance parity failed')
+            if rule['level'] == 'A':
+                raise ValueError('Source cases cannot execute recovery')
         if signature[0] != rule['component'] or signature[1] in {'none', 'unknown'} and rule['level'] == 'A':
             raise ValueError('Unreachable or unsafe rule')
         if rule['level'] not in {'A', 'B', 'C'}:
@@ -72,7 +89,7 @@ def validate(data, root=ROOT):
                 raise ValueError('Missing diagnostic/recovery evidence')
         if rule['verifiedCause'] is not None:
             raise ValueError('This seed catalog establishes hypotheses only')
-        if rule['evidenceType'] != 'source-backed; synthetic matching':
+        if rule['evidenceType'] != ('source-backed exact guard; synthetic matching' if contextual else 'source-backed; synthetic matching'):
             raise ValueError('Unsubstantiated production evidence')
         for path in [*rule['source'], *rule['testEvidence']]:
             if path.startswith('/') or '..' in Path(path).parts or not (root / path).is_file():

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'universal_health.dart';
+import 'health_knowledge.dart';
 
 /// Optional observation: a guardian failure cannot change the business result.
 class HealthRuntime {
@@ -32,7 +33,7 @@ class HealthRuntime {
       return result;
     } catch (e) {
       if (context != null && generation==engine.epoch && engine.context?.same(context) == true) {
-        try { engine.observe(component, HealthObservation(HealthState.needsAttention, failure:classify(e), metrics:{'latencyMs':watch.elapsedMicroseconds/1000})); } catch (_) {}
+        try { engine.observe(component, HealthObservation(HealthState.needsAttention, failure:classify(e), diagnosticCode:HealthKnowledge.instance.codeForError(component, e), metrics:{'latencyMs':watch.elapsedMicroseconds/1000})); } catch (_) {}
       }
       rethrow;
     }
@@ -43,6 +44,6 @@ class HealthRuntime {
       final value=operation();
       if(bound!=null) { try {engine.observe(component,HealthObservation(HealthState.healthy,verifiedAt:DateTime.now()));}catch(_){} }
       return value;
-    }catch(e){if(bound!=null){try{engine.observe(component,HealthObservation(HealthState.needsAttention,failure:classify(e)));}catch(_){}}rethrow;}
+    }catch(e){if(bound!=null){try{engine.observe(component,HealthObservation(HealthState.needsAttention,failure:classify(e),diagnosticCode:HealthKnowledge.instance.codeForError(component, e)));}catch(_){}}rethrow;}
   }
 }

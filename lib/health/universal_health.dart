@@ -15,7 +15,7 @@ class HealthContext {
 }
 
 class HealthObservation {
-  const HealthObservation(this.state, {this.failure = HealthFailure.none, this.verifiedAt, this.operation = '', this.metrics = const {}, this.ownerCategory = ''});
+  const HealthObservation(this.state, {this.failure = HealthFailure.none, this.verifiedAt, this.operation = '', this.metrics = const {}, this.ownerCategory = '', this.diagnosticCode = '', this.ownerStage = ''});
   final HealthState state;
   final HealthFailure failure;
   final DateTime? verifiedAt;
@@ -24,6 +24,11 @@ class HealthObservation {
   final Map<String, num> metrics;
   // Local typed owner diagnosis only; never a raw exception or cloud telemetry.
   final String ownerCategory;
+  // Local catalog ID only. Raw messages are never stored in an observation.
+  final String diagnosticCode;
+  final String ownerStage;
+  String get safeOwnerStage => const {'responseHeaders', 'responseBody'}.contains(ownerStage) ? ownerStage : '';
+  String get safeDiagnosticCode => RegExp(r'^sh-src-[a-f0-9]{20}$').hasMatch(diagnosticCode) ? diagnosticCode : '';
   String get safeOwnerCategory => const {'networkPath','timeout','server','quota','authorization','configuration','conflict','validation','fileMissing','unknown'}.contains(ownerCategory) ? ownerCategory : '';
   static const metricKeys = {'latencyMs', 'pending', 'completed', 'lockCount', 'memoryPressure', 'progressAgeMs', 'conflicts', 'needsAttention', 'verifiedReceipts'};
   Map<String, num> get safeMetrics => {for (final e in metrics.entries) if (metricKeys.contains(e.key) && e.value.isFinite && e.value >= 0 && e.value <= 1e12) e.key: e.value};
@@ -369,7 +374,7 @@ class UniversalHealth {
     if (_disposed || _context == null || _paused || !_providers.containsKey(component)) return;
     final at = now();
     final verified = value.verifiedAt != null && !value.verifiedAt!.isAfter(at) && at.difference(value.verifiedAt!) <= const Duration(minutes: 5);
-    final normalized = HealthObservation(value.state == HealthState.healthy && !verified ? HealthState.unknown : value.state, failure: value.failure, verifiedAt: verified ? value.verifiedAt : null, operation: value.operation, metrics: value.safeMetrics, ownerCategory: value.safeOwnerCategory);
+    final normalized = HealthObservation(value.state == HealthState.healthy && !verified ? HealthState.unknown : value.state, failure: value.failure, verifiedAt: verified ? value.verifiedAt : null, operation: value.operation, metrics: value.safeMetrics, ownerCategory: value.safeOwnerCategory, diagnosticCode: value.safeDiagnosticCode, ownerStage: value.safeOwnerStage);
     _observations[component] = normalized;
     final latency = normalized.metrics['latencyMs'];
     if (latency != null) {
@@ -555,7 +560,9 @@ class HealthRepairLearning {
           providerVersion != null && event.providerVersion != providerVersion ||
           event.at.isAfter(now)) continue;
       if (event.stage == 'started') { pending = event; starts++; }
-      if (pending != null && !event.at.isBefore(pending.at) &&
+      if (pending != null && event.failure == pending.failure &&
+          event.providerVersion == pending.providerVersion &&
+          !event.at.isBefore(pending.at) &&
           {'verified', 'unverified', 'timeout'}.contains(event.stage)) {
         if (event.stage == 'verified') { success++; } else { failures++; }
         pending = null;

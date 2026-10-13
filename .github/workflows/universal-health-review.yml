@@ -2,7 +2,7 @@ name: Universal Self-Healing 2 draft review
 'on':
   pull_request:
     branches: [main]
-    paths: ['lib/**','test/**','functions/**','tool/health_benchmark.dart','tool/*health_knowledge*','tool/health_knowledge_benchmark.dart','.github/workflows/universal-health-review.yml']
+    paths: ['lib/**','test/**','functions/**','school-backend/**','oauth-broker/**','tool/health_benchmark.dart','tool/*health_knowledge*','tool/health_knowledge_benchmark.dart','.github/workflows/universal-health-review.yml']
   push:
     branches: [feature/universal-self-healing-2]
 permissions:
@@ -26,7 +26,7 @@ jobs:
           python tool/build_health_knowledge.py --check
           python -m unittest discover -s tool -p test_health_knowledge.py
       - name: Guardian source safety
-        run: flutter analyze lib/health lib/document_pipeline.dart lib/qr_authentication_engine.dart lib/windows_connect/central_school_cloud.dart
+        run: flutter analyze lib/health lib/document_pipeline.dart lib/qr_authentication_engine.dart lib/windows_connect/central_school_cloud.dart lib/windows_sync_recovery.dart lib/sync_recovery_policy.dart
       - name: Actual guardian and existing owner regression tests
         env:
           APPDATA: ${{ runner.temp }}/universal-health-tests

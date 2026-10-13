@@ -62,7 +62,7 @@ class WindowsHealthAdapter {
     final sync=WindowsSyncEngine.instance, kind=sync.recoveryDecision?.kind;
     final failure=switch(kind){SyncFailureKind.authorization=>HealthFailure.authorization,SyncFailureKind.configuration=>HealthFailure.configuration,SyncFailureKind.validation=>HealthFailure.configuration,SyncFailureKind.fileMissing=>HealthFailure.storage,SyncFailureKind.conflict=>HealthFailure.conflict,SyncFailureKind.timeout=>HealthFailure.timeout,SyncFailureKind.networkPath=>HealthFailure.offline,SyncFailureKind.server=>HealthFailure.server,SyncFailureKind.quota=>HealthFailure.quota,SyncFailureKind.unknown=>HealthFailure.unknown,_=>HealthFailure.none};
     final measured=sync.details.value;
-    guardian.observe('smart-sync',HealthObservation(sync.isPaused?HealthState.paused:failure!=HealthFailure.none?HealthState.degraded:sync.state.value==SchoolCloudState.synced?HealthState.healthy:HealthState.monitoring,failure:failure,verifiedAt:sync.lastSuccessfulSync,ownerCategory:kind?.name??'',metrics:{
+    guardian.observe('smart-sync',HealthObservation(sync.isPaused?HealthState.paused:failure!=HealthFailure.none?HealthState.degraded:sync.state.value==SchoolCloudState.synced?HealthState.healthy:HealthState.monitoring,failure:failure,verifiedAt:sync.lastSuccessfulSync,ownerCategory:kind?.name??'',ownerStage:sync.recoveryDecision?.timeoutStage.name??'',metrics:{
       if(measured['pending'] is num)'pending':measured['pending'] as num,
       if(measured['conflictCount'] is num)'conflicts':measured['conflictCount'] as num,
       if(measured['needsAttention'] is num)'needsAttention':measured['needsAttention'] as num,

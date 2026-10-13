@@ -23,23 +23,82 @@ void main() {
       final signature = rule.data['signature'] as Map<String, dynamic>;
       final failure = HealthFailure.values.byName(signature['failure'] as String);
       final category = signature['ownerCategory'] as String;
+      final code = signature['diagnosticCode'] as String? ?? '';
       expect(knowledge.match(rule.component, HealthObservation(
-          HealthState.degraded, failure: failure, ownerCategory: category))?.id, rule.id);
+          HealthState.degraded, failure: failure, ownerCategory: category, diagnosticCode: code))?.id, rule.id);
       for (final state in [HealthState.healthy, HealthState.paused]) {
         expect(knowledge.match(rule.component, HealthObservation(
-            state, failure: failure, ownerCategory: category)), isNull);
+            state, failure: failure, ownerCategory: category, diagnosticCode: code)), isNull);
       }
       expect(knowledge.match('unregistered-component', HealthObservation(
-          HealthState.degraded, failure: failure, ownerCategory: category)), isNull);
+          HealthState.degraded, failure: failure, ownerCategory: category, diagnosticCode: code)), isNull);
+      if (code.isNotEmpty) {
+        final source = rule.data['sourceCase'] as Map<String, dynamic>;
+        expect(knowledge.matchSourceCase(rule.component, source['kind'] as String,
+            source['literal'] as String, source: source['path'] as String)?.id, rule.id);
+        expect(knowledge.matchSourceCase(rule.component, source['kind'] as String,
+            '${source['literal']} private student', source: source['path'] as String), isNull);
+        expect(knowledge.matchSourceCase(rule.component, source['kind'] as String,
+            source['literal'] as String, source: 'lib/unrelated_owner.dart'), isNull);
+        expect(knowledge.match(rule.component, HealthObservation(HealthState.degraded,
+            failure: HealthFailure.worker, diagnosticCode: code)), isNull);
+      }
     });
   }
   test('coverage is actual; search and returned rules are bounded', () {
     expect(knowledge.rules.length, (raw['rules'] as List).length);
-    expect(knowledge.rules.length, lessThan(1000));
-    expect(knowledge.search('quota').single.id, 'sh-smart-sync-quota');
+    expect(knowledge.rules.length, 1000);
+    expect(knowledge.rules.where((r) => r.level == 'A').length, 4);
+    expect(knowledge.search('quota').map((r) => r.id), contains('sh-smart-sync-quota'));
+    expect(knowledge.search('').length, 32);
     expect(knowledge.search('x' * 121), isEmpty);
     expect(knowledge.rules.map((r) => r.id).toSet().length, knowledge.rules.length);
     expect(() => knowledge.rules.clear(), throwsUnsupportedError);
+    expect(() => (knowledge.rules.first.data['signature'] as Map)['failure'] = 'worker', throwsUnsupportedError);
+    expect(() => (knowledge.rules.first.data['source'] as List).clear(), throwsUnsupportedError);
+  });
+  test('unregistered and raw diagnostic IDs fail closed rather than match a fallback', () {
+    for (final code in ['sh-src-${'0' * 20}', 'private student name']) {
+      expect(knowledge.match('smart-sync', HealthObservation(HealthState.degraded,
+          failure: HealthFailure.timeout, ownerCategory: 'timeout', diagnosticCode: code)), isNull);
+    }
+  });
+  test('only fixed client deadline stages survive observation normalization', () async {
+    final engine = UniversalHealth();
+    engine.register(HealthProvider(id: 'smart-sync', version: '2.1',
+      check: (_) async => const HealthObservation(HealthState.unknown)));
+    try {
+      await engine.bind(const HealthContext('school-a', 'profile-a'));
+      for (final stage in ['responseHeaders', 'responseBody', 'private credential']) {
+        engine.observe('smart-sync', HealthObservation(HealthState.degraded,
+          failure: HealthFailure.timeout, ownerCategory: 'timeout', ownerStage: stage));
+        expect(engine.observations['smart-sync']!.safeOwnerStage,
+            stage == 'private credential' ? '' : stage);
+      }
+    } finally { await engine.dispose(); }
+  });
+  test('identical messages in multiple owners require the explicit source', () {
+    final groups = <String, List<HealthKnowledgeRule>>{};
+    for (final rule in knowledge.rules.where((r) => r.data.containsKey('sourceCase'))) {
+      final source = rule.data['sourceCase'] as Map;
+      groups.putIfAbsent(jsonEncode([rule.component, source['kind'], source['literal']]), () => []).add(rule);
+    }
+    final ambiguous = groups.values.where((g) => g.length > 1).first;
+    final rule = ambiguous.first, source = ambiguous.first.data['sourceCase'] as Map;
+    expect(knowledge.matchSourceCase(rule.component, source['kind'] as String, source['literal'] as String), isNull);
+    expect(knowledge.matchSourceCase(rule.component, source['kind'] as String,
+        source['literal'] as String, source: source['path'] as String)?.id, rule.id);
+  });
+  test('runtime error matching retains only a catalog ID and requires an exact typed literal', () {
+    final rule = knowledge.rules.firstWhere((r) =>
+        r.component == 'id-card' && (r.data['sourceCase'] as Map?)?['kind'] == 'FormatException');
+    final literal = (rule.data['sourceCase'] as Map)['literal'] as String;
+    // May be ambiguous: explicit context lookup above resolves those safely.
+    final expected = knowledge.matchSourceCase('id-card', 'FormatException', literal)?.id ?? '';
+    expect(knowledge.codeForError('id-card', FormatException(literal)), expected);
+    expect(knowledge.codeForError('id-card', FormatException('$literal private student')), '');
+    expect(knowledge.codeForError('id-card', StateError(literal)), '');
+    expect(knowledge.codeForError('foreign-owner', FormatException(literal)), '');
   });
   test('45-second measured latency ranks hypotheses, never confirms upstream cause', () {
     const observation = HealthObservation(HealthState.degraded,
@@ -88,6 +147,19 @@ void main() {
         providerVersion: '2.1').verified, 0);
     expect(HealthRepairLearning.forPlaybook(history, 'worker', 'safe', now,
         failure: HealthFailure.worker).verified, 0);
+  });
+  test('unfiltered learning never pairs terminals from a different version or failure', () {
+    final now = DateTime.utc(2026, 10, 13);
+    final history = [
+      HealthEvent('worker', HealthFailure.worker, 'started', now, 'a' * 64,
+          playbook: 'safe', providerVersion: '2.1'),
+      HealthEvent('worker', HealthFailure.timeout, 'verified', now, 'b' * 64,
+          playbook: 'safe', providerVersion: '2.1'),
+      HealthEvent('worker', HealthFailure.worker, 'verified', now, 'b' * 64,
+          playbook: 'safe', providerVersion: '2.0'),
+    ];
+    final learning = HealthRepairLearning.forPlaybook(history, 'worker', 'safe', now);
+    expect([learning.started, learning.verified, learning.failed], [1, 0, 0]);
   });
   test('blank school or installation identity never admits automatic or manual repair', () async {
     final engine = UniversalHealth(store: KnowledgeHistory());
