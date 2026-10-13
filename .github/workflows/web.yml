@@ -123,7 +123,10 @@ jobs:
           <!-- VIDYA_SAARTHI_INSPECT_PROTECTION -->
           <script>
           (() => {
-            // Keep native and Flutter Copy/Paste context menus available.
+            // Block right-click menus while preserving keyboard clipboard actions.
+            document.addEventListener('contextmenu', function(event) {
+              event.preventDefault();
+            }, true);
 
             // Disable common browser developer-tool shortcuts.
             document.addEventListener('keydown', function(event) {
