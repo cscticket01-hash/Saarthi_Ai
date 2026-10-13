@@ -89,6 +89,26 @@ void main() {
     expect(HealthRepairLearning.forPlaybook(history, 'worker', 'safe', now,
         failure: HealthFailure.worker).verified, 0);
   });
+  test('blank school or installation identity never admits automatic or manual repair', () async {
+    final engine = UniversalHealth(store: KnowledgeHistory());
+    var executions = 0;
+    engine.register(HealthProvider(id: 'worker', version: '2.1',
+      check: (_) async => const HealthObservation(HealthState.unknown),
+      playbooks: [RecoveryPlaybook(id: 'safe', kind: RecoveryKind.statelessWorker,
+        failures: {HealthFailure.worker}, precondition: (_) async => true,
+        execute: (_) async { executions++; }, verify: (_) async => true)]));
+    try {
+      for (final scope in [const HealthContext('', 'installation'),
+          const HealthContext('school', ''), const HealthContext(' ', 'installation')]) {
+        await engine.bind(scope);
+        engine.observe('worker', const HealthObservation(HealthState.degraded, failure: HealthFailure.worker));
+        expect(await engine.recover('worker'), false);
+        expect(await engine.recover('worker', automatic: false), false);
+        expect(engine.history.any((event) => event.stage == 'started'), false);
+      }
+      expect(executions, 0);
+    } finally { await engine.dispose(); }
+  });
   test('school-scoped verified history ranks only registered alternatives', () async {
     final store = KnowledgeHistory();
     final now = DateTime.utc(2026, 10, 13);

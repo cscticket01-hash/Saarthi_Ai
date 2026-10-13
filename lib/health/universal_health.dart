@@ -453,7 +453,7 @@ class UniversalHealth {
   static const _forbidden = {HealthFailure.authorization, HealthFailure.identity, HealthFailure.configuration, HealthFailure.conflict, HealthFailure.corrupt, HealthFailure.storage, HealthFailure.unknown, HealthFailure.offline, HealthFailure.none};
   Future<bool> recover(String id, {bool automatic = true}) async {
     final provider = _providers[id], observation = _observations[id], bound = _context;
-    if (_disposed || _paused || !_historyReady || store == null || activeRepairs>=1 || provider == null || observation == null || bound == null || _restartQuarantine.containsKey(id) || _repairs.containsKey(id) || _checks.containsKey(id) || _forbidden.contains(observation.failure)) return false;
+    if (_disposed || _paused || !_historyReady || store == null || activeRepairs>=1 || provider == null || observation == null || bound == null || bound.school.trim().isEmpty || bound.profile.trim().isEmpty || _restartQuarantine.containsKey(id) || _repairs.containsKey(id) || _checks.containsKey(id) || _forbidden.contains(observation.failure)) return false;
     // Policy never grants extra authority for a manual call.
     final plays = provider.playbooks.where((p) => p.failures.contains(observation.failure)).toList();
     if (plays.isEmpty || provider.dependencies.any((d) => observations[d]?.state != HealthState.healthy)) return false;
