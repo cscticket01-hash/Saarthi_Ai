@@ -1,6 +1,7 @@
 import '../school_timestamp.dart' show Timestamp;
 
 import 'dart:convert';
+import 'dart:async';
 
 import '../windows_secure_storage.dart';
 
