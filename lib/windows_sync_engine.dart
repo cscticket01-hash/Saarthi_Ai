@@ -1309,6 +1309,20 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   bool _manualSync = false;
+  /// Guardian may repair the owner's local timer, never its queue or ACKs.
+  bool get automaticScheduleExpected => _initialized && automaticSyncEnabled &&
+      !_syncBlocked && !_resetPaused && !isPaused && _activeSchoolSyncId.isNotEmpty &&
+      FirebaseFirestore.instance.activeProfileId == _activeProfileId;
+  bool get automaticScheduleRunning => _schedule.reconciliation?.isActive == true;
+  void repairAutomaticSchedule({required String school, required String profile}) {
+    if (!automaticScheduleExpected || school != _activeSchoolSyncId || profile != _activeProfileId) {
+      throw StateError('Automatic scheduling is paused or the school changed.');
+    }
+    if (automaticScheduleRunning) return;
+    // No immediate sync, backoff reset, pause override or business submission.
+    // Subsequent timer ticks still enter scheduleSoon's owner admission policy.
+    _schedule.repairReconciliationTimer(reconciliationInterval);
+  }
   Future<void> setAutomaticSync(bool enabled) async {
     final origin = _activeProfileId;
     await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').set({'automaticSync': enabled}, const SetOptions(merge: true));

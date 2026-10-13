@@ -9,6 +9,8 @@ import '../lib/health/health_panel.dart';
 import '../lib/health/health_diagnostics.dart';
 import '../lib/health/health_reporter.dart';
 import '../lib/health/health_transport.dart';
+import '../lib/health/owner_timer_provider.dart';
+import '../lib/windows_sync_schedule.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../lib/storage/windows_sqlite_store.dart';
@@ -24,6 +26,63 @@ void main(){
  late UniversalHealth engine;late MemoryHistory store;late DateTime time;
  setUp(()async{time=DateTime.utc(2026,10,11);store=MemoryHistory();engine=UniversalHealth(now:()=>time,store:store);await engine.bind(school);});
  tearDown(()async=>engine.dispose());
+ test('repairing reconciliation timer preserves checkpoint and sends no immediate work',(){
+  var requests=0;
+  final schedule=WindowsSyncSchedule((_){requests++;});
+  schedule.start(const Duration(minutes:4));
+  schedule.armCheckpoint(DateTime.now());
+  final checkpoint=schedule.checkpoint;
+  schedule.reconciliation!.cancel();
+  schedule.repairReconciliationTimer(const Duration(minutes:4));
+  expect(schedule.reconciliation!.isActive,true);expect(identical(schedule.checkpoint,checkpoint),true);
+  expect(requests,0);schedule.stop();
+ });
+ test('owner timer automatically repairs only its verified local schedule',()async{
+  var running=false,calls=0;
+  engine.register(ownerTimerProvider(id:'sync-scheduler',sameScope:(scope)=>scope.same(school),expected:()=>true,running:()=>running,restart:(_){calls++;running=true;},now:()=>time));
+  final verified=engine.changes.firstWhere((_)=>engine.observations['sync-scheduler']?.state==HealthState.healthy);
+  await engine.checkAll();
+  await verified.timeout(const Duration(seconds:1));
+  await engine.flushHistory();
+  expect(calls,1);expect(engine.observations['sync-scheduler']!.state,HealthState.healthy);
+  expect(engine.history.where((e)=>e.stage=='verified').length,1);
+  expect(engine.observations.containsKey('smart-sync'),false);
+ });
+ test('owner timer respects user-disabled schedules and school changes',()async{
+  var expected=false,same=true,calls=0;
+  engine.register(ownerTimerProvider(id:'sync-scheduler',sameScope:(_)=>same,expected:()=>expected,running:()=>false,restart:(_){calls++;},now:()=>time));
+  await engine.check('sync-scheduler');expect(await engine.recover('sync-scheduler'),false);
+  expected=true;await engine.check('sync-scheduler');same=false;
+  expect(await engine.recover('sync-scheduler'),false);expect(calls,0);
+ });
+ test('owner timer failed verification never claims repair success',()async{
+  engine.register(ownerTimerProvider(id:'health-report-timer',sameScope:(_)=>true,expected:()=>true,running:()=>false,restart:(_){},now:()=>time));
+  await engine.check('health-report-timer');expect(await engine.recover('health-report-timer'),false);
+  expect(engine.observations['health-report-timer']!.state,HealthState.needsAttention);
+  expect(engine.history.any((e)=>e.stage=='verified'),false);
+ });
+ test('report timer repair retains authorization latch and does not send immediately',()async{
+  SharedPreferences.setMockInitialValues({});
+  Timer? timer;var sends=0;
+  final reporter=HealthReporter(engine,platform:'windows',version:'2.0',periodic:(d,callback)=>timer=Timer.periodic(d,callback),send:(_,__)async{sends++;return HealthSendResult.attention;});
+  await reporter.start();await reporter.report();expect(sends,1);
+  timer!.cancel();expect(reporter.timerExpected,true);expect(reporter.timerRunning,false);
+  reporter.repairTimer();expect(reporter.timerRunning,true);expect(sends,1);
+  await reporter.report();expect(sends,1);reporter.pause();
+  expect(()=>reporter.repairTimer(),throwsStateError);
+ });
+ test('diagnosis distinguishes conflicts from code defects with actionable source pointers',(){
+  engine.register(HealthProvider(id:'smart-sync',version:'2.0',check:(_)async=>const HealthObservation(HealthState.unknown)));
+  engine.observe('smart-sync',const HealthObservation(HealthState.degraded,failure:HealthFailure.conflict,ownerCategory:'conflict'));
+  final report=HealthDiagnostics.report(engine).single;
+  expect(report,contains('data-version conflict'));expect(report,contains('code defect is not established'));
+  expect(report,contains('windows_sync_conflict_review.dart'));expect(report,contains('exact faulty line is not confirmed'));
+  expect(report,contains('Owner category: conflict'));expect(report,isNot(contains('school-A')));
+  engine.observe('smart-sync',const HealthObservation(HealthState.needsAttention,failure:HealthFailure.unknown,ownerCategory:'secret-token'));
+  expect(engine.observations['smart-sync']!.ownerCategory,isEmpty);
+  expect(HealthDiagnostics.report(engine).single,contains('remain Unknown'));
+  expect(engine.telemetry('windows','2.0','a'.padRight(64,'a')).toString(),isNot(contains('ownerCategory')));
+ });
  test('manual diagnostics sweep visits every provider without running repairs',()async{
   var active=0, peak=0, repairs=0;
   final calls=<String>[];

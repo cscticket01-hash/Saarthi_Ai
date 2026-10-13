@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'universal_health.dart';
+import 'health_diagnostics.dart';
 
 /// Equal-weight component availability score. Every registered provider must
 /// have a conclusive state; missing, stale, monitoring or paused evidence hides
@@ -73,6 +74,34 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
     value,
     style: TextStyle(fontSize: size, color: color ?? muted),
   );
+  Widget diagnosisReport() {
+    final report = HealthDiagnostics.report(engine);
+    return SelectionArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            engine.paused
+                ? 'Automatic repair is paused.'
+                : engine.admissionHistoryVerified
+                ? 'Repair admission history verified; ${engine.reviewedPlaybookCount} reviewed playbooks available. Owner checks, cooldown and circuit limits still apply.'
+                : 'Automatic repair is off: durable admission history is unavailable or unverified. History and school data are retained.',
+          ),
+          const SizedBox(height: 12),
+          if (report.isEmpty)
+            const Text(
+              'No actionable failure category was observed. Unknown components still require owner evidence.',
+            ),
+          for (final text in report)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Text(text),
+            ),
+        ],
+      ),
+    );
+  }
+
   void details(String title, Widget content) => showDialog<void>(
     context: context,
     builder: (context) => Theme(
@@ -116,6 +145,12 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                 ),
             if (result.skipped.isNotEmpty)
               Text('Not checked: ${result.skipped.join(", ")}'),
+            const SizedBox(height: 12),
+            if (!result.interrupted) ...[
+              const Text('Actionable diagnosis & repair guidance'),
+              const SizedBox(height: 8),
+              diagnosisReport(),
+            ],
             const SizedBox(height: 12),
             const Text(
               'Unknown means no fresh verification is available. Diagnostics do not upload data, clear queues or resolve conflicts.',
@@ -332,6 +367,8 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                         '${e.value.state.name} · ${e.value.failure.name}',
                       ),
                     ),
+                  const Divider(),
+                  diagnosisReport(),
                 ],
               ),
             ),
@@ -449,6 +486,14 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                   Wrap(
                     spacing: 12,
                     children: [
+                      TextButton.icon(
+                        onPressed: () => details(
+                          'Problem diagnosis & next actions',
+                          diagnosisReport(),
+                        ),
+                        icon: const Icon(Icons.troubleshoot),
+                        label: const Text('Problem diagnosis'),
+                      ),
                       TextButton.icon(
                         onPressed: engine.paused ? engine.resume : engine.pause,
                         icon: Icon(

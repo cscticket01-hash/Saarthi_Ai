@@ -12,6 +12,7 @@ import '../windows_service_status.dart';
 import 'universal_health.dart';
 import 'health_history_io.dart';
 import 'health_runtime.dart';
+import 'owner_timer_provider.dart';
 
 class WindowsHealthAdapter {
   static final instance=WindowsHealthAdapter();
@@ -36,6 +37,13 @@ class WindowsHealthAdapter {
       guardian.register(HealthProvider(id:id,version:'2.0',check:(_)async=>guardian.observations[id]??const HealthObservation(HealthState.unknown)));
     }
     await guardian.bind(current());
+    guardian.register(ownerTimerProvider(id:'sync-scheduler',sameScope:(scope)=>current().same(scope),
+      expected:()=>WindowsSyncEngine.instance.automaticScheduleExpected,
+      running:()=>WindowsSyncEngine.instance.automaticScheduleRunning,
+      restart:(scope)=>WindowsSyncEngine.instance.repairAutomaticSchedule(school:scope.school,profile:scope.profile),now:guardian.now));
+    guardian.register(ownerTimerProvider(id:'health-report-timer',sameScope:(scope)=>current().same(scope),
+      expected:()=>reporter.timerExpected,running:()=>reporter.timerRunning,
+      restart:(_)=>reporter.repairTimer(),now:guardian.now));
     WindowsSyncEngine.instance.state.addListener(_syncSignal);
     WindowsSyncEngine.instance.details.addListener(_syncSignal);
     WindowsServiceStatus.instance.addListener(_databaseSignal);
@@ -52,7 +60,13 @@ class WindowsHealthAdapter {
     final context=current();
     if(guardian.context?.same(context)!=true){unawaited(guardian.bind(context).then((_)=>_syncSignal()));return;}
     final sync=WindowsSyncEngine.instance, kind=sync.recoveryDecision?.kind;
-    final failure=switch(kind){SyncFailureKind.authorization=>HealthFailure.authorization,SyncFailureKind.configuration=>HealthFailure.configuration,SyncFailureKind.validation=>HealthFailure.configuration,SyncFailureKind.fileMissing=>HealthFailure.storage,SyncFailureKind.conflict=>HealthFailure.conflict,SyncFailureKind.timeout=>HealthFailure.timeout,SyncFailureKind.networkPath=>HealthFailure.offline,SyncFailureKind.server=>HealthFailure.server,SyncFailureKind.quota=>HealthFailure.quota,_=>HealthFailure.none};
-    guardian.observe('smart-sync',HealthObservation(sync.isPaused?HealthState.paused:failure!=HealthFailure.none?HealthState.degraded:sync.state.value==SchoolCloudState.synced?HealthState.healthy:HealthState.monitoring,failure:failure,verifiedAt:sync.lastSuccessfulSync,metrics:{'pending':(sync.details.value['pending'] as num?)??0}));
+    final failure=switch(kind){SyncFailureKind.authorization=>HealthFailure.authorization,SyncFailureKind.configuration=>HealthFailure.configuration,SyncFailureKind.validation=>HealthFailure.configuration,SyncFailureKind.fileMissing=>HealthFailure.storage,SyncFailureKind.conflict=>HealthFailure.conflict,SyncFailureKind.timeout=>HealthFailure.timeout,SyncFailureKind.networkPath=>HealthFailure.offline,SyncFailureKind.server=>HealthFailure.server,SyncFailureKind.quota=>HealthFailure.quota,SyncFailureKind.unknown=>HealthFailure.unknown,_=>HealthFailure.none};
+    final measured=sync.details.value;
+    guardian.observe('smart-sync',HealthObservation(sync.isPaused?HealthState.paused:failure!=HealthFailure.none?HealthState.degraded:sync.state.value==SchoolCloudState.synced?HealthState.healthy:HealthState.monitoring,failure:failure,verifiedAt:sync.lastSuccessfulSync,ownerCategory:kind?.name??'',metrics:{
+      if(measured['pending'] is num)'pending':measured['pending'] as num,
+      if(measured['conflictCount'] is num)'conflicts':measured['conflictCount'] as num,
+      if(measured['needsAttention'] is num)'needsAttention':measured['needsAttention'] as num,
+      if(measured['verifiedReceiptCount'] is num)'verifiedReceipts':measured['verifiedReceiptCount'] as num,
+    }));
   }catch(_){} }
 }

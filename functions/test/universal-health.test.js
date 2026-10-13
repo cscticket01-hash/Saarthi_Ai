@@ -4,6 +4,13 @@ const {sanitize,createHealthTelemetry}=require('../universal-health-telemetry');
 const {fixture,A,B,time}=require('./helpers/managed-school-broker');
 const report=()=>({schema:2,measuredAt:time,platform:'windows',version:'2.0',installation:'a'.repeat(64),state:'unknown',registered:1,healthy:0,issues:1,verifiedRepairs:0,failedRepairs:0,components:[{id:'documents',state:'needsAttention',failure:'decoding'}]});
 test('strict telemetry retains only approved metadata, no secrets or raw logs',()=>{assert.deepEqual(sanitize(report()),report());for(const raw of [{...report(),password:'secret'},{...report(),stack:'student/private/name'},{...report(),installation:'person-name'},{...report(),components:[{id:'documents',state:'unknown',failure:'none',message:'secret'}]}])assert.throws(()=>sanitize(raw),e=>e.status===400);});
+test('reviewed local scheduler/reporting providers are accepted without remote commands',()=>{
+ for(const id of ['sync-scheduler','health-report-timer']){
+  const raw={...report(),components:[{id,state:'needsAttention',failure:'worker'}]};
+  assert.equal(sanitize(raw).components[0].id,id);
+  assert.throws(()=>sanitize({...raw,repairCommand:'clear-queue'}),e=>e.status===400);
+ }
+});
 test('invalid counters, unknown identifiers and oversized reports fail closed',()=>{for(const raw of [{...report(),healthy:1},{...report(),issues:99},{...report(),version:'secret-version'},{...report(),components:Array(100).fill(report().components[0])},{...report(),components:[{id:'student-names',state:'unknown',failure:'none'}]}])assert.throws(()=>sanitize(raw));});
 test('authenticated report is school-scoped, pseudonymous and rate limited',async()=>{const f=fixture();const first=await f.call({action:'managed/health/report',schoolId:A,report:report()});assert.equal(first.accepted,true);const saved=[...f.docs.values()].find(r=>r.schema===2);assert.equal(saved.schoolId,A);assert.notEqual(saved.installation,report().installation);assert.equal(saved.expiresAt,time+7*86400000);assert.equal((await f.call({action:'managed/health/report',schoolId:A,report:report()})).accepted,false);assert.equal(f.sent.length,0);});
 test('forged or foreign school cannot submit or read health evidence',async()=>{const f=fixture();await assert.rejects(f.call({action:'managed/health/report',schoolId:B,report:report()},'forged'),e=>e.status===403);await assert.rejects(f.call({action:'developer/managed/health/summary',schoolId:A},'A'),e=>e.status===403);assert.equal([...f.docs.keys()].filter(k=>k.startsWith('universal_health_reports/')).length,0);});
