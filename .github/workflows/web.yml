@@ -123,14 +123,17 @@ jobs:
           <!-- VIDYA_SAARTHI_INSPECT_PROTECTION -->
           <script>
           (() => {
-            // Disable right-click context menu.
-            document.addEventListener('contextmenu', function(event) {
-              event.preventDefault();
-            }, true);
+            // Keep native and Flutter Copy/Paste context menus available.
 
             // Disable common browser developer-tool shortcuts.
             document.addEventListener('keydown', function(event) {
               const key = (event.key || '').toLowerCase();
+
+              // Clipboard shortcuts belong to the focused field/selection.
+              if ((event.ctrlKey || event.metaKey) &&
+                  !event.altKey && ['a', 'c', 'v', 'x'].includes(key)) {
+                return;
+              }
 
               // F12
               if (event.key === 'F12') {
