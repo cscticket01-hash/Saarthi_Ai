@@ -39,5 +39,13 @@ class CatalogValidationTests(unittest.TestCase):
         self.data['rules'][0]['verification'] = ''
         with self.assertRaises(ValueError): validate(self.data)
 
+    def test_unreachable_owner_signal(self):
+        self.data['rules'][0]['signature']['ownerCategory'] = 'raw exception text'
+        with self.assertRaises(ValueError): validate(self.data)
+
+    def test_malformed_solution_type(self):
+        self.data['rules'][0]['solution'] = {'execute': 'shell'}
+        with self.assertRaises(ValueError): validate(self.data)
+
 
 if __name__ == '__main__': unittest.main()

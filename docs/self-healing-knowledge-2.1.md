@@ -18,7 +18,7 @@ Attributed audit events add optional playbook ID/provider contract version, pres
 
 Transparent hypothesis ranking assigns two evidence points to the owner's transport category and one each to concurrent database failure and measured >=45s end-to-end latency. These are heuristic evidence points, not probability or a confirmed root cause. Existing latency-trend warning stays uncalibrated. No external AI service is invoked.
 
-Windows monitor adds a searchable Error Knowledge dialog. Existing Run Diagnostics, pause/resume, diagnosis, history and sanitized export are retained. Knowledge ID, solution, verification, hypotheses and attributed history appear in existing reports. Android remains a hidden observer.
+Windows monitor adds a searchable Error Knowledge dialog. Existing Run Diagnostics, pause/resume, diagnosis, history and sanitized export are retained. Knowledge ID, solution, verification, hypotheses and attributed history appear in existing reports. Export Sanitized Diagnostics opens a JSON preview and Copy report writes that sanitized snapshot to the clipboard; school/profile names, operations and unapproved metrics are excluded. Android remains a hidden observer.
 
 ## Known incident limitations
 

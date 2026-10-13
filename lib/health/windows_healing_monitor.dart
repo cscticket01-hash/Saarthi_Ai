@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'universal_health.dart';
 import 'health_diagnostics.dart';
@@ -40,6 +42,25 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
   Duration window = const Duration(hours: 24);
   bool diagnosing = false;
   Widget knowledgeBrowser() => _KnowledgeBrowser();
+  void exportDiagnostics() {
+    final report = const JsonEncoder.withIndent('  ').convert({
+      'schema': 2,
+      'knowledgeVersion': HealthKnowledge.version,
+      'actualPatterns': HealthKnowledge.instance.rules.length,
+      'state': engine.overall.name,
+      'measuredAt': engine.now().toUtc().toIso8601String(),
+      'diagnosis': HealthDiagnostics.report(engine),
+      'history': engine.history.map((event) => event.toJson()).toList(),
+    });
+    details('Sanitized diagnostics export', Column(children: [
+      SelectableText(report),
+      TextButton(onPressed: () async {
+        await Clipboard.setData(ClipboardData(text: report));
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sanitized diagnostics copied')));
+      }, child: const Text('Copy report')),
+    ]));
+  }
   static const cyan = Color(0xff20dbed);
   static const muted = Color(0xffa4bbcf);
   @override
@@ -500,6 +521,11 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                         onPressed: () => details('Error knowledge 2.1', knowledgeBrowser()),
                         icon: const Icon(Icons.search),
                         label: const Text('View Error Knowledge'),
+                      ),
+                      TextButton.icon(
+                        onPressed: exportDiagnostics,
+                        icon: const Icon(Icons.file_download_outlined),
+                        label: const Text('Export Sanitized Diagnostics'),
                       ),
                       TextButton.icon(
                         onPressed: engine.paused ? engine.resume : engine.pause,

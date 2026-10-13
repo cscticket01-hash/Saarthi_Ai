@@ -24,6 +24,8 @@ FIELDS = {'id', 'component', 'name', 'signature', 'symptoms', 'evidence',
 def validate(data, root=ROOT):
     if data.get('schema') != 1 or data.get('version') != '2.1.0':
         raise ValueError('Unsupported knowledge schema/version')
+    if data.get('target') != 1000 or not isinstance(data.get('rules'), list) or not 0 < len(data['rules']) <= 1000:
+        raise ValueError('Invalid catalog budget/target')
     ids, signatures = set(), set()
     failures = {'offline', 'timeout', 'server', 'quota', 'authorization', 'identity',
                 'configuration', 'conflict', 'databaseLocked', 'storage', 'corrupt',
@@ -34,6 +36,20 @@ def validate(data, root=ROOT):
     for rule in data['rules']:
         if set(rule) != FIELDS:
             raise ValueError('Missing or unrecognized rule fields')
+        for field in ('id', 'component', 'name', 'severity', 'dataLossRisk', 'diagnostic',
+                      'solution', 'level', 'playbook', 'verification', 'escalation',
+                      'reviewedSource', 'evidenceType'):
+            if not isinstance(rule[field], str) or len(rule[field]) > 2000:
+                raise ValueError('Invalid or oversized text field')
+        for field in ('symptoms', 'evidence', 'possibleCauses', 'dependencies',
+                      'preconditions', 'source', 'testEvidence'):
+            if not isinstance(rule[field], list) or len(rule[field]) > 32 or any(not isinstance(v, str) or len(v) > 2000 for v in rule[field]):
+                raise ValueError('Invalid bounded evidence list')
+        if not isinstance(rule['signature'], dict) or set(rule['signature']) != {'component', 'failure', 'ownerCategory'}:
+            raise ValueError('Invalid typed signature schema')
+        for field in ('timeoutSeconds', 'cooldownSeconds', 'attemptLimit'):
+            if type(rule[field]) is not int:
+                raise ValueError('Invalid numeric admission field')
         signature = tuple(rule['signature'][key] for key in ('component', 'failure', 'ownerCategory'))
         if not re.fullmatch(r'[a-z][a-z0-9_.-]{0,47}', rule['id']) or signature[1] not in failures or signature[2] not in owner_categories:
             raise ValueError('Invalid ID or unreachable typed signature')

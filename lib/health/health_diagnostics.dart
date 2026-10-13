@@ -105,10 +105,7 @@ class HealthDiagnostics {
 
   static List<String> report(UniversalHealth engine) => [
     for (final d in diagnose(engine))
-      '${d.component}: ${d.failure.name}\n${d.reason}\nOwner category: ${engine.observations[d.component]?.safeOwnerCategory.isNotEmpty == true ? engine.observations[d.component]!.safeOwnerCategory : "Unknown"}\nMeasured owner counters: ${engine.observations[d.component]?.safeMetrics}\nEvidence: ${d.evidence}\nRepair history: ${engine.history.where((e) => e.component == d.component && e.stage != "observed").map((e) => e.stage).toSet().join(", ")}\nNext action: ${d.nextAction}\nSource: ${d.sourceLocation}\n${d.sourceMeaning}${d.possibleSharedCause == null ? "" : "\n${d.possibleSharedCause}"}',
-    for (final entry in engine.observations.entries)
-      if (entry.value.failure != HealthFailure.none)
-        knowledgeReport(engine, entry.key, entry.value),
+      '${d.component}: ${d.failure.name}\n${d.reason}\nOwner category: ${engine.observations[d.component]?.safeOwnerCategory.isNotEmpty == true ? engine.observations[d.component]!.safeOwnerCategory : "Unknown"}\nMeasured owner counters: ${engine.observations[d.component]?.safeMetrics}\nEvidence: ${d.evidence}\nRepair history: ${engine.history.where((e) => e.component == d.component && e.stage != "observed").map((e) => e.stage).toSet().join(", ")}\nNext action: ${d.nextAction}\nSource: ${d.sourceLocation}\n${d.sourceMeaning}${d.possibleSharedCause == null ? "" : "\n${d.possibleSharedCause}"}\n${knowledgeReport(engine, d.component, engine.observations[d.component]!)}',
   ];
   static String knowledgeReport(UniversalHealth engine, String component,
       HealthObservation observation) {

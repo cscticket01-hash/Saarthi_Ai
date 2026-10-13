@@ -79,6 +79,16 @@ void main() {
     expect(HealthEvent.parse(legacy)?.playbook, '');
     expect(HealthEvent.parse({...event.toJson(), 'playbook': 'execute shell command'}), isNull);
   });
+  test('old provider versions and other failure classes cannot influence learning', () {
+    final now = DateTime.utc(2026, 10, 13);
+    final history = [for (final stage in ['started', 'verified'])
+      HealthEvent('worker', HealthFailure.timeout, stage, now, 'a' * 64,
+          playbook: 'safe', providerVersion: '2.0')];
+    expect(HealthRepairLearning.forPlaybook(history, 'worker', 'safe', now,
+        providerVersion: '2.1').verified, 0);
+    expect(HealthRepairLearning.forPlaybook(history, 'worker', 'safe', now,
+        failure: HealthFailure.worker).verified, 0);
+  });
   test('school-scoped verified history ranks only registered alternatives', () async {
     final store = KnowledgeHistory();
     final now = DateTime.utc(2026, 10, 13);
