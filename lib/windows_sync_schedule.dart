@@ -13,6 +13,16 @@ class WindowsSyncSchedule {
   final Timer Function(Duration, void Function()) once;
   final DateTime Function() now;
   Timer? reconciliation, hourly, checkpoint;
+  DateTime? _checkpointDue;
+  bool get checkpointExpected => _checkpointDue?.isAfter(now()) == true;
+  bool get checkpointRunning => checkpoint?.isActive == true;
+  void repairCheckpoint() {
+    if (!checkpointExpected || checkpointRunning) return;
+    checkpoint = once(_checkpointDue!.difference(now()), () {
+      checkpoint = null; _checkpointDue = null;
+      request(const Duration(milliseconds: 250));
+    });
+  }
 
   /// Anchored to a durable verified checkpoint, not process uptime or polling.
   void armCheckpoint(DateTime? lastVerified) {
@@ -22,8 +32,10 @@ class WindowsSyncSchedule {
     final due = lastVerified == null || lastVerified.isAfter(current)
         ? current : lastVerified.add(const Duration(hours: 1));
     final remaining = due.difference(current);
+    _checkpointDue = due;
     checkpoint = once(remaining.isNegative ? Duration.zero : remaining, () {
       checkpoint = null;
+      _checkpointDue = null;
       request(const Duration(milliseconds: 250));
     });
   }
@@ -40,7 +52,7 @@ class WindowsSyncSchedule {
   }
   void wake() => request(const Duration(milliseconds: 250));
   void reconnected() => request(const Duration(seconds: 2));
-  void stop() {reconciliation?.cancel();hourly?.cancel();checkpoint?.cancel();reconciliation = null;hourly = null;checkpoint = null;}
+  void stop() {reconciliation?.cancel();hourly?.cancel();checkpoint?.cancel();reconciliation = null;hourly = null;checkpoint = null;_checkpointDue=null;}
 }
 
 /// Bounded dispatch debounce. Fresh durable changes can advance an older retry
@@ -54,6 +66,17 @@ class WindowsSyncDispatch {
   final DateTime Function() now;
   Timer? _timer;
   DateTime? scheduledAt;
+  bool get expected => scheduledAt != null;
+  bool get running => _timer?.isActive == true;
+  // Restore only an already-admitted owner deadline. No new retry admission.
+  void repair() {
+    final due = scheduledAt;
+    if (due == null || running) return;
+    final remaining = due.difference(now());
+    _timer = once(remaining.isNegative ? Duration.zero : remaining, () {
+      _timer = null; scheduledAt = null; dispatch();
+    });
+  }
 
   void request(Duration delay, {bool localMutation = false}) {
     final bounded = delay.isNegative ? Duration.zero : delay;

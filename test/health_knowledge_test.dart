@@ -189,8 +189,8 @@ void main() {
     const schoolA = HealthContext('A', 'installation-A');
     final executed = <String>[];
     store.scopes[schoolA.fingerprint] = [
-      HealthEvent('worker', HealthFailure.worker, 'started', now.subtract(const Duration(minutes: 30)), 'a' * 64, playbook: 'second', providerVersion: '2.1'),
-      HealthEvent('worker', HealthFailure.worker, 'verified', now.subtract(const Duration(minutes: 29)), 'b' * 64, playbook: 'second', providerVersion: '2.1'),
+      HealthEvent('worker', HealthFailure.worker, 'started', now.subtract(const Duration(hours: 2,minutes: 1)), 'a' * 64, playbook: 'second', providerVersion: '2.1'),
+      HealthEvent('worker', HealthFailure.worker, 'verified', now.subtract(const Duration(hours: 2)), 'b' * 64, playbook: 'second', providerVersion: '2.1'),
     ];
     final engine = UniversalHealth(store: store, now: () => now);
     RecoveryPlaybook play(String id) => RecoveryPlaybook(id: id,

@@ -13,6 +13,7 @@ import 'universal_health.dart';
 import 'health_history_io.dart';
 import 'health_runtime.dart';
 import 'owner_timer_provider.dart';
+import 'document_worker_owner.dart';
 
 class WindowsHealthAdapter {
   static final instance=WindowsHealthAdapter();
@@ -37,6 +38,7 @@ class WindowsHealthAdapter {
       guardian.register(HealthProvider(id:id,version:'2.0',check:(_)async=>guardian.observations[id]??const HealthObservation(HealthState.unknown)));
     }
     await guardian.bind(current());
+    guardian.register(DocumentWorkerOwner.instance.provider());
     guardian.register(ownerTimerProvider(id:'sync-scheduler',sameScope:(scope)=>current().same(scope),
       expected:()=>WindowsSyncEngine.instance.automaticScheduleExpected,
       running:()=>WindowsSyncEngine.instance.automaticScheduleRunning,
@@ -44,6 +46,19 @@ class WindowsHealthAdapter {
     guardian.register(ownerTimerProvider(id:'health-report-timer',sameScope:(scope)=>current().same(scope),
       expected:()=>reporter.timerExpected,running:()=>reporter.timerRunning,
       restart:(_)=>reporter.repairTimer(),now:guardian.now));
+    guardian.register(ownerTimerProvider(id:'sync-retry-dispatch',sameScope:(scope)=>current().same(scope),
+      expected:()=>WindowsSyncEngine.instance.retryDispatchExpected,
+      running:()=>WindowsSyncEngine.instance.retryDispatchRunning,
+      restart:(scope)=>WindowsSyncEngine.instance.repairRetryDispatch(school:scope.school,profile:scope.profile),
+      playbook:'restore-admitted-dispatch',now:guardian.now));
+    guardian.register(ownerTimerProvider(id:'sync-checkpoint-timer',sameScope:(scope)=>current().same(scope),
+      expected:()=>WindowsSyncEngine.instance.checkpointTimerExpected,
+      running:()=>WindowsSyncEngine.instance.checkpointTimerRunning,
+      restart:(scope)=>WindowsSyncEngine.instance.repairCheckpointTimer(school:scope.school,profile:scope.profile),
+      playbook:'restore-checkpoint-deadline',now:guardian.now));
+    guardian.register(ownerTimerProvider(id:'health-delivery-scheduler',sameScope:(scope)=>current().same(scope),
+      expected:()=>reporter.retryExpected,running:()=>reporter.retryRunning,observation:()=>reporter.deliveryObservation,
+      restart:(_)=>reporter.repairRetry(),playbook:'restore-health-delivery',now:guardian.now));
     WindowsSyncEngine.instance.state.addListener(_syncSignal);
     WindowsSyncEngine.instance.details.addListener(_syncSignal);
     WindowsServiceStatus.instance.addListener(_databaseSignal);

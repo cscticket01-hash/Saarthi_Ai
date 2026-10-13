@@ -8,11 +8,14 @@ HealthProvider ownerTimerProvider({
   required bool Function() running,
   required void Function(HealthContext) restart,
   required DateTime Function() now,
+  String playbook = 'restore-owner-timer',
+  HealthObservation Function()? observation,
 }) => HealthProvider(
   id: id,
   version: '2.0',
   check: (scope) async {
     if (!sameScope(scope)) return const HealthObservation(HealthState.unknown);
+    if(observation!=null)return observation();
     if (!expected()) return const HealthObservation(HealthState.paused);
     return running()
         ? HealthObservation(HealthState.healthy, verifiedAt: now())
@@ -23,7 +26,7 @@ HealthProvider ownerTimerProvider({
   },
   playbooks: [
     RecoveryPlaybook(
-      id: 'restore-owner-timer',
+      id: playbook,
       kind: RecoveryKind.statelessWorker,
       failures: {HealthFailure.worker},
       precondition: (lease) async =>

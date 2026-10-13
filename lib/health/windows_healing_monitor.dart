@@ -211,7 +211,8 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
             'timeout' ||
             'checkFailed' ||
             'persistenceFailed' => 'Failed',
-            _ => 'Detection Only',
+            'blocked' || 'circuitOpen' => 'Repair blocked',
+            _ => 'Observed',
           }, style: const TextStyle(fontSize: 12)),
         ),
     ],
@@ -369,7 +370,7 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
             () => details(
               'Authorized recovery',
               label(
-                '${engine.activeRepairs} executing · ${engine.unsettledRepairs} quarantined. Only existing Engine 2.0 playbooks may run.',
+                '${engine.activeRepairs} executing · ${engine.unsettledRepairs} quarantined. Only registered reviewed capabilities may run.',
               ),
             ),
           ),

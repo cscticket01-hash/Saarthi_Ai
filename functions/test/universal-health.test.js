@@ -5,7 +5,7 @@ const {fixture,A,B,time}=require('./helpers/managed-school-broker');
 const report=()=>({schema:2,measuredAt:time,platform:'windows',version:'2.0',installation:'a'.repeat(64),state:'unknown',registered:1,healthy:0,issues:1,verifiedRepairs:0,failedRepairs:0,components:[{id:'documents',state:'needsAttention',failure:'decoding'}]});
 test('strict telemetry retains only approved metadata, no secrets or raw logs',()=>{assert.deepEqual(sanitize(report()),report());for(const raw of [{...report(),password:'secret'},{...report(),stack:'student/private/name'},{...report(),installation:'person-name'},{...report(),components:[{id:'documents',state:'unknown',failure:'none',message:'secret'}]}])assert.throws(()=>sanitize(raw),e=>e.status===400);});
 test('reviewed local scheduler/reporting providers are accepted without remote commands',()=>{
- for(const id of ['sync-scheduler','health-report-timer']){
+ for(const id of ['sync-scheduler','health-report-timer','sync-retry-dispatch','sync-checkpoint-timer','health-delivery-scheduler','mobile-context-timer','document-worker']){
   const raw={...report(),components:[{id,state:'needsAttention',failure:'worker'}]};
   assert.equal(sanitize(raw).components[0].id,id);
   assert.throws(()=>sanitize({...raw,repairCommand:'clear-queue'}),e=>e.status===400);

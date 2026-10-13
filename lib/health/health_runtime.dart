@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'universal_health.dart';
 import 'health_knowledge.dart';
+import 'document_worker_owner.dart';
 
 /// Optional observation: a guardian failure cannot change the business result.
 class HealthRuntime {
@@ -16,6 +17,7 @@ class HealthRuntime {
       if(id=='monitor-worker'){engine.register(monitorProvider(engine));continue;}
       engine.register(HealthProvider(id:id, version:'2.0', check:(_) async => engine.observations[id] ?? const HealthObservation(HealthState.unknown)));
     }
+    engine.register(DocumentWorkerOwner.instance.provider());
   }
   static HealthFailure classify(Object error) {
     if (error is TimeoutException) return HealthFailure.timeout;

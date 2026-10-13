@@ -114,11 +114,12 @@ class HealthDiagnostics {
     final learning = rule == null || rule.playbook.isEmpty ? null :
         HealthRepairLearning.forPlaybook(engine.history, component, rule.playbook, engine.now());
     return 'Knowledge: ${rule?.id ?? "Unrecognized; no matching reviewed rule"}\n'
+        'Registered capability IDs: ${engine.repairCapabilities(component).join(", ")}; independent owner admission is required\n'
         'Measured client deadline stage: ${observation.safeOwnerStage.isEmpty ? "Unknown" : observation.safeOwnerStage}; upstream root cause unconfirmed\n'
         '${rule == null ? "Escalation only" : "Level ${rule.level}: ${rule.solution}"}\n'
         'Verification: ${rule?.verification ?? "Collect fresh owner evidence; no repair is authorized"}\n'
         'Hypotheses (evidence points, not probability): ${causes.isEmpty ? "Unknown" : causes.map((c) => "${c.title}: ${c.score} (${c.basis})").join("; ")}\n'
-        '${learning == null ? "No attributed repair-learning evidence" : "Retained attributed attempts: ${learning.started}; verified: ${learning.verified}; failed: ${learning.failed}"}';
+        '${learning == null ? "No attributed repair-learning evidence" : "Retained attributed attempts: ${learning.started}; verified: ${learning.verified}; failed: ${learning.failed}; recurring failures: ${learning.recurrences}; mean verified duration ms: ${learning.meanVerifiedMillis ?? "Unknown"}"}';
   }
   static List<HealthDiagnosis> diagnose(UniversalHealth engine) {
     final observations = engine.observations, history = engine.history;

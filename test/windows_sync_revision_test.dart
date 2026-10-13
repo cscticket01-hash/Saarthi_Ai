@@ -950,6 +950,27 @@ void main(){
    expect((await queue.get()).data(),before);
    expect((await db.collection('students_directory').doc('retained-id').get()).data()?['mobileLinkToken'],'original-token');
  });
+ testWidgets('verification failure stays visible above a long retained payload',(tester)async{
+   final item={'id':'missing-review-row','collection':'fee_payments','schoolId':school,
+     'syncState':'conflict','data':{'description':List.filled(10000,'x').join()}};
+   await tester.pumpWidget(MaterialApp(home:Builder(builder:(context)=>Scaffold(body:
+     TextButton(onPressed:()=>showWindowsConflictReview(context,item),child:const Text('Open review'))))));
+   await tester.tap(find.text('Open review'));await tester.pumpAndSettle();
+   await tester.runAsync(()async{
+     await tester.tap(find.text('Verify cloud version'));
+     await Future<void>.delayed(const Duration(milliseconds:100));
+   });
+   await tester.pumpAndSettle();
+   expect(find.text('Cloud verification failed'),findsOneWidget);
+   final error=find.textContaining('Pending version changed');
+   expect(error,findsOneWidget);
+   expect(tester.getRect(error).top,lessThan(tester.getRect(find.textContaining('Local pending version')).top));
+   expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Verify cloud version')).onPressed,isNotNull);
+   expect(find.text('Use local version'),findsNothing);
+   expect(tester.takeException(),isNull);
+   await tester.pumpWidget(const SizedBox.shrink());
+ });
+
  testWidgets('production conflict review opens read-only with no automatic financial choice',(tester)async{
    await tester.pumpWidget(MaterialApp(home:Builder(builder:(context)=>Scaffold(body:TextButton(onPressed:()=>showWindowsConflictReview(context,{'id':'pending','collection':'fee_payments','schoolId':school,'syncState':'conflict','data':{'amount':100}}),child:const Text('Open review'))))));
    await tester.tap(find.text('Open review'));await tester.pumpAndSettle();

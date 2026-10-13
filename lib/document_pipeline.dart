@@ -1,4 +1,5 @@
 import 'health/health_runtime.dart';
+import 'health/document_worker_owner.dart';
 
 import 'package:crypto/crypto.dart';
 
@@ -12,26 +13,33 @@ import 'document_processing_engine.dart';
 class DocumentPipeline {
   static String? _key;
   static Future<Map<String, dynamic>>? _prepared;
+  static Map<String,dynamic> _copy(Map<String,dynamic> result)=>{
+    for(final e in result.entries)e.key:e.value is Uint8List?Uint8List.fromList(e.value as Uint8List):e.value,
+  };
+  static Future<Map<String,dynamic>> _image(Map<String,dynamic> input)=>kIsWeb
+      ? compute(DocumentProcessingEngine.process,input)
+      : DocumentWorkerOwner.instance.process(input);
   static Future<Map<String, dynamic>> process(
     Uint8List bytes,
     String mime, {
     String scope = '',
   }) {
-    final key = '$scope:$mime:${sha256.convert(bytes)}';
-    if (_key == key && _prepared != null) return _prepared!;
+    final key = '${HealthRuntime.engine.context?.fingerprint}:$scope:$mime:${sha256.convert(bytes)}';
+    if (_key == key && _prepared != null) return _prepared!.then(_copy);
     _key = key;
-    final future = HealthRuntime.measure('documents', () => _process(bytes, mime)).catchError((
+    late final Future<Map<String,dynamic>> future;
+    future = HealthRuntime.measure('documents', () => _process(Uint8List.fromList(bytes), mime)).catchError((
       Object error,
       StackTrace stack,
     ) {
-      if (_key == key) {
+      if (_key == key && identical(_prepared,future)) {
         _key = null;
         _prepared = null;
       }
       Error.throwWithStackTrace(error, stack);
     });
     _prepared = future;
-    return future;
+    return future.then(_copy);
   }
 
   static Future<Map<String, dynamic>> _process(
@@ -39,7 +47,7 @@ class DocumentPipeline {
     String mime,
   ) async {
     if (mime != 'application/pdf') {
-      final result = await compute(DocumentProcessingEngine.process, {
+      final result = await _image({
         'bytes': bytes,
       });
       return result;
@@ -71,7 +79,7 @@ class DocumentPipeline {
       throw const FormatException('PDF has no readable pages.');
     final optimized = pw.Document(), high = pw.Document();
     for (final page in pages) {
-      final result = await compute(DocumentProcessingEngine.process, {
+      final result = await _image({
         'bytes': page['bytes'],
         'targetBytes': DocumentProcessingEngine.photoTarget,
       });

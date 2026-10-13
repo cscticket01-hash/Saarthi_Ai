@@ -794,7 +794,7 @@
         "database"
       ],
       "diagnostic": "Run bounded diagnostics; review fresh owner status and retained sanitized history. Correlation does not confirm a cause.",
-      "solution": "Keep the original and in-flight work. Locate the processing or owner request stage; wait for actual settlement and let the owner authorize any retry.",
+      "solution": "For a typed timeout/exit of the fixed owned pure-image worker, require actual worker exit, retained private input and same-school lease before one reviewed restart. Invalid input, native/PDF work, unsupported causes and business retries remain Needs Attention.",
       "level": "B",
       "playbook": "",
       "preconditions": [
@@ -806,15 +806,17 @@
       "timeoutSeconds": 0,
       "cooldownSeconds": 0,
       "attemptLimit": 0,
-      "verification": "Fresh owner evidence must establish resolution. Only Sync may verify business ACK/revision/readback; an attempted action is not success.",
+      "verification": "Verify actual owned-process exit, matching input fingerprint, valid output containers/dimensions and current lease. Resume only a still-pending original processing request; otherwise verify the derived cache. No upload or cloud ACK is implied.",
       "escalation": "Keep original inputs, records and queues. Export sanitized diagnostics; ask the owning component to investigate. Do not reset identity, authorization or storage.",
       "source": [
         "lib/document_pipeline.dart",
-        "lib/health/health_runtime.dart"
+        "lib/health/health_runtime.dart",
+        "lib/health/document_worker_owner.dart"
       ],
       "testEvidence": [
         "test/document_processing_engine_test.dart",
-        "test/health_knowledge_test.dart"
+        "test/health_knowledge_test.dart",
+        "test/document_worker_repair_test.dart"
       ],
       "reviewedSource": "15f3049 (2026-10-13 audit)",
       "evidenceType": "source-backed; synthetic matching"
@@ -896,7 +898,7 @@
         "database"
       ],
       "diagnostic": "Run bounded diagnostics; review fresh owner status and retained sanitized history. Correlation does not confirm a cause.",
-      "solution": "Retain originals. Obtain sanitized owner stage evidence; no automatic worker restart or business retry is available.",
+      "solution": "For a typed timeout/exit of the fixed owned pure-image worker, require actual worker exit, retained private input and same-school lease before one reviewed restart. Invalid input, native/PDF work, unsupported causes and business retries remain Needs Attention.",
       "level": "C",
       "playbook": "",
       "preconditions": [
@@ -908,15 +910,17 @@
       "timeoutSeconds": 0,
       "cooldownSeconds": 0,
       "attemptLimit": 0,
-      "verification": "Fresh owner evidence must establish resolution. Only Sync may verify business ACK/revision/readback; an attempted action is not success.",
+      "verification": "Verify actual owned-process exit, matching input fingerprint, valid output containers/dimensions and current lease. Resume only a still-pending original processing request; otherwise verify the derived cache. No upload or cloud ACK is implied.",
       "escalation": "Keep original inputs, records and queues. Export sanitized diagnostics; ask the owning component to investigate. Do not reset identity, authorization or storage.",
       "source": [
         "lib/document_pipeline.dart",
-        "lib/health/health_runtime.dart"
+        "lib/health/health_runtime.dart",
+        "lib/health/document_worker_owner.dart"
       ],
       "testEvidence": [
         "test/document_processing_engine_test.dart",
-        "test/health_knowledge_test.dart"
+        "test/health_knowledge_test.dart",
+        "test/document_worker_repair_test.dart"
       ],
       "reviewedSource": "15f3049 (2026-10-13 audit)",
       "evidenceType": "source-backed; synthetic matching"
@@ -1781,7 +1785,7 @@
         "PDF exceeds source safety limit."
       ],
       "evidence": [
-        "Constant FormatException throw operand in lib/document_pipeline.dart:48",
+        "Constant FormatException throw operand in lib/document_pipeline.dart:56",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -1791,7 +1795,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/document_pipeline.dart:48 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/document_pipeline.dart:56 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -1819,7 +1823,7 @@
         "path": "lib/document_pipeline.dart",
         "kind": "FormatException",
         "literal": "PDF exceeds source safety limit.",
-        "line": 48,
+        "line": 56,
         "origins": 1
       }
     },
@@ -6653,7 +6657,7 @@
         "School changed. Reopen review."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:99",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:105",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -6663,7 +6667,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:99 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:105 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -6691,7 +6695,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "School changed. Reopen review.",
-        "line": 99,
+        "line": 105,
         "origins": 2
       }
     },
@@ -7493,7 +7497,7 @@
         "Health reporting is paused"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/health/health_reporter.dart:26",
+        "Constant StateError throw operand in lib/health/health_reporter.dart:66",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -7503,7 +7507,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/health_reporter.dart:26 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/health_reporter.dart:66 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -7531,7 +7535,7 @@
         "path": "lib/health/health_reporter.dart",
         "kind": "StateError",
         "literal": "Health reporting is paused",
-        "line": 26,
+        "line": 66,
         "origins": 1
       }
     },
@@ -7549,7 +7553,7 @@
         "Owner paused or school changed"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/health/owner_timer_provider.dart:34",
+        "Constant StateError throw operand in lib/health/owner_timer_provider.dart:37",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -7559,7 +7563,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/owner_timer_provider.dart:34 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/owner_timer_provider.dart:37 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -7587,7 +7591,7 @@
         "path": "lib/health/owner_timer_provider.dart",
         "kind": "StateError",
         "literal": "Owner paused or school changed",
-        "line": 34,
+        "line": 37,
         "origins": 1
       }
     },
@@ -7661,7 +7665,7 @@
         "School changed"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/health/windows_health_adapter.dart:34",
+        "Constant StateError throw operand in lib/health/windows_health_adapter.dart:35",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -7671,7 +7675,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/windows_health_adapter.dart:34 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/windows_health_adapter.dart:35 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -7699,7 +7703,7 @@
         "path": "lib/health/windows_health_adapter.dart",
         "kind": "StateError",
         "literal": "School changed",
-        "line": 34,
+        "line": 35,
         "origins": 3
       }
     },
@@ -8109,7 +8113,7 @@
         "PDF is malformed or truncated."
       ],
       "evidence": [
-        "Constant FormatException throw operand in lib/document_pipeline.dart:54",
+        "Constant FormatException throw operand in lib/document_pipeline.dart:62",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -8119,7 +8123,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/document_pipeline.dart:54 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/document_pipeline.dart:62 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -8147,7 +8151,7 @@
         "path": "lib/document_pipeline.dart",
         "kind": "FormatException",
         "literal": "PDF is malformed or truncated.",
-        "line": 54,
+        "line": 62,
         "origins": 1
       }
     },
@@ -12309,7 +12313,7 @@
         "Same-school cloud version unavailable. Both copies retained."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:114",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:123",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -12319,7 +12323,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:114 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:123 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Locate the measured owner stage and respect its retry/backoff deadline. Keep in-flight work and originals; only the owner may admit a retry after checking settlement and operation identity.",
       "level": "B",
       "playbook": "",
@@ -12347,7 +12351,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Same-school cloud version unavailable. Both copies retained.",
-        "line": 114,
+        "line": 123,
         "origins": 1
       }
     },
@@ -13037,7 +13041,7 @@
         "Invalid health budgets"
       ],
       "evidence": [
-        "Constant ArgumentError throw operand in lib/health/universal_health.dart:122",
+        "Constant ArgumentError throw operand in lib/health/universal_health.dart:126",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -13047,7 +13051,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/universal_health.dart:122 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/universal_health.dart:126 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -13075,7 +13079,7 @@
         "path": "lib/health/universal_health.dart",
         "kind": "ArgumentError",
         "literal": "Invalid health budgets",
-        "line": 122,
+        "line": 126,
         "origins": 1
       }
     },
@@ -13429,7 +13433,7 @@
         "PDF exceeds 20 pages / 40 megapixel processing safety limit."
       ],
       "evidence": [
-        "Constant FormatException throw operand in lib/document_pipeline.dart:61",
+        "Constant FormatException throw operand in lib/document_pipeline.dart:69",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -13439,7 +13443,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/document_pipeline.dart:61 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/document_pipeline.dart:69 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -13467,7 +13471,7 @@
         "path": "lib/document_pipeline.dart",
         "kind": "FormatException",
         "literal": "PDF exceeds 20 pages / 40 megapixel processing safety limit.",
-        "line": 61,
+        "line": 69,
         "origins": 1
       }
     },
@@ -16957,7 +16961,7 @@
         "Invalid queue."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:133",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:148",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -16967,7 +16971,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:133 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:148 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -16995,7 +16999,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Invalid queue.",
-        "line": 133,
+        "line": 148,
         "origins": 1
       }
     },
@@ -17685,7 +17689,7 @@
         "Invalid or duplicate health provider"
       ],
       "evidence": [
-        "Constant ArgumentError throw operand in lib/health/universal_health.dart:240",
+        "Constant ArgumentError throw operand in lib/health/universal_health.dart:247",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -17695,7 +17699,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/universal_health.dart:240 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/universal_health.dart:247 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -17723,7 +17727,7 @@
         "path": "lib/health/universal_health.dart",
         "kind": "ArgumentError",
         "literal": "Invalid or duplicate health provider",
-        "line": 240,
+        "line": 247,
         "origins": 1
       }
     },
@@ -17965,7 +17969,7 @@
         "PDF has no readable pages."
       ],
       "evidence": [
-        "Constant FormatException throw operand in lib/document_pipeline.dart:71",
+        "Constant FormatException throw operand in lib/document_pipeline.dart:79",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -17975,7 +17979,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/document_pipeline.dart:71 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/document_pipeline.dart:79 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -18003,7 +18007,7 @@
         "path": "lib/document_pipeline.dart",
         "kind": "FormatException",
         "literal": "PDF has no readable pages.",
-        "line": 71,
+        "line": 79,
         "origins": 1
       }
     },
@@ -20933,7 +20937,7 @@
         "Pending version changed. Reopen Sync details."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:138",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:153",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -20943,7 +20947,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:138 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:153 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -20971,7 +20975,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Pending version changed. Reopen Sync details.",
-        "line": 138,
+        "line": 153,
         "origins": 1
       }
     },
@@ -21717,7 +21721,7 @@
         "Invalid recovery contract"
       ],
       "evidence": [
-        "Constant ArgumentError throw operand in lib/health/universal_health.dart:243",
+        "Constant ArgumentError throw operand in lib/health/universal_health.dart:250",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -21727,7 +21731,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/universal_health.dart:243 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/universal_health.dart:250 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -21755,7 +21759,7 @@
         "path": "lib/health/universal_health.dart",
         "kind": "ArgumentError",
         "literal": "Invalid recovery contract",
-        "line": 243,
+        "line": 250,
         "origins": 1
       }
     },
@@ -24517,7 +24521,7 @@
         "File owner verification required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:162",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:191",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -24527,7 +24531,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:162 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:191 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Review original availability, free space and access in the owning storage/file interface. Restore access to the original input; never reset storage, substitute a file or clear pending records.",
       "level": "B",
       "playbook": "",
@@ -24555,7 +24559,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "File owner verification required.",
-        "line": 162,
+        "line": 191,
         "origins": 1
       }
     },
@@ -25189,7 +25193,7 @@
         "Recovery admission history is full"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/health/universal_health.dart:497",
+        "Constant StateError throw operand in lib/health/universal_health.dart:506",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -25199,7 +25203,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/universal_health.dart:497 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/universal_health.dart:506 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -25227,7 +25231,7 @@
         "path": "lib/health/universal_health.dart",
         "kind": "StateError",
         "literal": "Recovery admission history is full",
-        "line": 497,
+        "line": 506,
         "origins": 1
       }
     },
@@ -27709,7 +27713,7 @@
         "Owner verification required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:167",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:200",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -27719,7 +27723,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:167 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:200 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -27747,7 +27751,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Owner verification required.",
-        "line": 167,
+        "line": 200,
         "origins": 1
       }
     },
@@ -28437,7 +28441,7 @@
         "Recovery history could not be persisted"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/health/universal_health.dart:500",
+        "Constant StateError throw operand in lib/health/universal_health.dart:509",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -28447,7 +28451,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/universal_health.dart:500 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/universal_health.dart:509 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -28475,7 +28479,7 @@
         "path": "lib/health/universal_health.dart",
         "kind": "StateError",
         "literal": "Recovery history could not be persisted",
-        "line": 500,
+        "line": 509,
         "origins": 1
       }
     },
@@ -30677,7 +30681,7 @@
         "Cloud payload changed or has no durable revision. Both copies retained."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:174",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:209",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -30687,7 +30691,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:174 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:209 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -30715,7 +30719,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Cloud payload changed or has no durable revision. Both copies retained.",
-        "line": 174,
+        "line": 209,
         "origins": 1
       }
     },
@@ -31349,7 +31353,7 @@
         "Recovery outcome unverified"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/health/universal_health.dart:505",
+        "Constant StateError throw operand in lib/health/universal_health.dart:514",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -31359,7 +31363,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/universal_health.dart:505 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/universal_health.dart:514 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -31387,7 +31391,7 @@
         "path": "lib/health/universal_health.dart",
         "kind": "StateError",
         "literal": "Recovery outcome unverified",
-        "line": 505,
+        "line": 514,
         "origins": 1
       }
     },
@@ -33365,7 +33369,7 @@
         "Cloud version changed. Verify both versions again."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:210",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:262",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -33375,7 +33379,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:210 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:262 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -33403,7 +33407,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Cloud version changed. Verify both versions again.",
-        "line": 210,
+        "line": 262,
         "origins": 1
       }
     },
@@ -33925,7 +33929,7 @@
         "Verified outcome audit unavailable"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/health/universal_health.dart:506",
+        "Constant StateError throw operand in lib/health/universal_health.dart:515",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -33935,7 +33939,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/health/universal_health.dart:506 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/health/universal_health.dart:515 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Locate the measured owner stage and respect its retry/backoff deadline. Keep in-flight work and originals; only the owner may admit a retry after checking settlement and operation identity.",
       "level": "B",
       "playbook": "",
@@ -33963,7 +33967,7 @@
         "path": "lib/health/universal_health.dart",
         "kind": "StateError",
         "literal": "Verified outcome audit unavailable",
-        "line": 506,
+        "line": 515,
         "origins": 1
       }
     },
@@ -46189,7 +46193,7 @@
         "Automatic scheduling is paused or the school changed."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1319",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1339",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -46199,7 +46203,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1319 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1339 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -46227,7 +46231,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "Automatic scheduling is paused or the school changed.",
-        "line": 1319,
+        "line": 1339,
         "origins": 1
       }
     },
@@ -47253,7 +47257,7 @@
         "This queue requires its own verified recovery action."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1369",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1389",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -47263,7 +47267,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1369 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1389 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -47291,7 +47295,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "This queue requires its own verified recovery action.",
-        "line": 1369,
+        "line": 1389,
         "origins": 1
       }
     },
@@ -48429,7 +48433,7 @@
         "Sync is busy, paused, or unavailable. Pending data retained."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1372",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1392",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -48439,7 +48443,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1372 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1392 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Locate the measured owner stage and respect its retry/backoff deadline. Keep in-flight work and originals; only the owner may admit a retry after checking settlement and operation identity.",
       "level": "B",
       "playbook": "",
@@ -48467,7 +48471,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "Sync is busy, paused, or unavailable. Pending data retained.",
-        "line": 1372,
+        "line": 1392,
         "origins": 1
       }
     },
@@ -49549,7 +49553,7 @@
         "Retry is stale or requires administrator review."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1385",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1405",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -49559,7 +49563,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1385 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1405 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -49587,7 +49591,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "Retry is stale or requires administrator review.",
-        "line": 1385,
+        "line": 1405,
         "origins": 1
       }
     },
@@ -50613,7 +50617,7 @@
         "Verified managed school storage required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1388",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1408",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -50623,7 +50627,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1388 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1408 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Review original availability, free space and access in the owning storage/file interface. Restore access to the original input; never reset storage, substitute a file or clear pending records.",
       "level": "B",
       "playbook": "",
@@ -50651,7 +50655,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "Verified managed school storage required.",
-        "line": 1388,
+        "line": 1408,
         "origins": 1
       }
     },
@@ -51621,7 +51625,7 @@
         "School authorization needs verification."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1392",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1412",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -51631,7 +51635,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1392 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1412 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -51659,7 +51663,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "School authorization needs verification.",
-        "line": 1392,
+        "line": 1412,
         "origins": 1
       }
     },
@@ -52461,7 +52465,7 @@
         "School sync protocol verification required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1397",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1417",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -52471,7 +52475,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1397 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1417 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -52499,7 +52503,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "School sync protocol verification required.",
-        "line": 1397,
+        "line": 1417,
         "origins": 1
       }
     },
@@ -53301,7 +53305,7 @@
         "Operation changed during retry preparation."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1399",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1419",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -53311,7 +53315,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1399 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1419 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -53339,7 +53343,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "Operation changed during retry preparation.",
-        "line": 1399,
+        "line": 1419,
         "origins": 1
       }
     },
@@ -53973,7 +53977,7 @@
         "Operation remains pending; completion is unverified."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1412",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1432",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -53983,7 +53987,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1412 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1432 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -54011,7 +54015,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "Operation remains pending; completion is unverified.",
-        "line": 1412,
+        "line": 1432,
         "origins": 1
       }
     },
@@ -54757,7 +54761,7 @@
         "School identity changed before recovery."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1468",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1488",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -54767,7 +54771,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1468 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1488 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -54795,7 +54799,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "School identity changed before recovery.",
-        "line": 1468,
+        "line": 1488,
         "origins": 1
       }
     },
@@ -55317,7 +55321,7 @@
         "School changed during recovery inventory."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1479",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1499",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55327,7 +55331,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1479 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1499 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -55355,7 +55359,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "School changed during recovery inventory.",
-        "line": 1479,
+        "line": 1499,
         "origins": 1
       }
     },
@@ -55821,7 +55825,7 @@
         "School changed during reconciliation."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_engine.dart:1484",
+        "Constant StateError throw operand in lib/windows_sync_engine.dart:1504",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55831,7 +55835,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_engine.dart:1484 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_engine.dart:1504 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -55859,7 +55863,7 @@
         "path": "lib/windows_sync_engine.dart",
         "kind": "StateError",
         "literal": "School changed during reconciliation.",
-        "line": 1484,
+        "line": 1504,
         "origins": 1
       }
     }
