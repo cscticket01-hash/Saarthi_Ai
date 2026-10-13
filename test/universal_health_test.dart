@@ -24,6 +24,36 @@ void main(){
  late UniversalHealth engine;late MemoryHistory store;late DateTime time;
  setUp(()async{time=DateTime.utc(2026,10,11);store=MemoryHistory();engine=UniversalHealth(now:()=>time,store:store);await engine.bind(school);});
  tearDown(()async=>engine.dispose());
+ test('manual diagnostics sweep visits every provider without running repairs',()async{
+  var active=0, peak=0, repairs=0;
+  final calls=<String>[];
+  for(var i=0;i<11;i++){
+   final id='component-$i';
+   engine.register(HealthProvider(id:id,version:'2.0',check:(_)async{
+    active++;if(active>peak)peak=active;
+    await Future<void>.delayed(Duration.zero);active--;calls.add(id);
+    return const HealthObservation(HealthState.degraded,failure:HealthFailure.worker);
+   },playbooks:[RecoveryPlaybook(id:'restart',kind:RecoveryKind.statelessWorker,failures:{HealthFailure.worker},precondition:(_)async=>true,execute:(_)async{repairs++;},verify:(_)async=>true)]));
+  }
+  final first=engine.runDiagnostics(),second=engine.runDiagnostics();
+  expect(identical(first,second),true);
+  final result=await first;
+  expect(result.checked.length,11);expect(calls.toSet().length,11);
+  expect(result.skipped,isEmpty);expect(result.interrupted,false);
+  expect(peak,lessThanOrEqualTo(2));expect(repairs,0);
+  expect(engine.history.any((e)=>e.stage=='started'),false);
+ });
+ test('manual diagnostics retains busy locks and stops on school change',()async{
+  final pending=Completer<HealthObservation>();var calls=0;
+  engine.register(HealthProvider(id:'busy',version:'2.0',check:(_)async=>pending.future));
+  engine.register(HealthProvider(id:'independent',version:'2.0',check:(_)async{calls++;await engine.bind(const HealthContext('school-B','profile-B'));return HealthObservation(HealthState.healthy,verifiedAt:time);}));
+  engine.register(HealthProvider(id:'remaining',version:'2.0',check:(_)async=>fail('Old school sweep must stop')));
+  final busy=engine.check('busy');
+  final result=await engine.runDiagnostics();
+  expect(result.skipped,contains('busy'));expect(result.interrupted,true);expect(calls,1);
+  expect(engine.observations.values.every((o)=>o.state==HealthState.unknown),true);
+  pending.complete(const HealthObservation(HealthState.unknown));await busy;
+ });
  void provider({HealthFailure failure=HealthFailure.worker,Future<void> Function(RecoveryLease)? execute,Future<bool> Function(RecoveryLease)? precondition,Future<bool> Function(RecoveryLease)? verify,Duration timeout=const Duration(seconds:1)}){
   engine.register(HealthProvider(id:'documents',version:'2.0',check:(_)async=>HealthObservation(HealthState.degraded,failure:failure),playbooks:[RecoveryPlaybook(id:'restart-derived-worker',kind:RecoveryKind.statelessWorker,failures:{failure},precondition:precondition??((_)async=>true),execute:execute??((_)async{}),verify:verify??((_)async=>true),cooldown:const Duration(milliseconds:100),timeout:timeout)]));
   engine.observe('documents',HealthObservation(HealthState.degraded,failure:failure,operation:'original-private-operation'));

@@ -36,6 +36,7 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
   StreamSubscription<void>? subscription;
   final List<HealthPoint> points = [];
   Duration window = const Duration(hours: 24);
+  bool diagnosing = false;
   static const cyan = Color(0xff20dbed);
   static const muted = Color(0xffa4bbcf);
   @override
@@ -48,7 +49,9 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
   }
 
   void capture() {
-    points..clear()..addAll(engine.samples.map((s) => HealthPoint(s.at, s.score)));
+    points
+      ..clear()
+      ..addAll(engine.samples.map((s) => HealthPoint(s.at, s.score)));
   }
 
   @override
@@ -89,6 +92,50 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
       ),
     ),
   );
+  Future<void> runDiagnostics() async {
+    if (diagnosing) return;
+    setState(() => diagnosing = true);
+    try {
+      final result = await engine.runDiagnostics();
+      if (!mounted) return;
+      details(
+        'Diagnostics results',
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              result.interrupted
+                  ? 'Diagnostics stopped: monitoring paused, school changed or no school is bound.'
+                  : 'Checked ${result.checked.length} components. Skipped ${result.skipped.length} busy components.',
+            ),
+            const SizedBox(height: 12),
+            if (!result.interrupted)
+              for (final id in result.checked)
+                Text(
+                  '$id: ${engine.observations[id]?.state.name ?? "unknown"} · ${engine.observations[id]?.failure.name ?? "none"}',
+                ),
+            if (result.skipped.isNotEmpty)
+              Text('Not checked: ${result.skipped.join(", ")}'),
+            const SizedBox(height: 12),
+            const Text(
+              'Unknown means no fresh verification is available. Diagnostics do not upload data, clear queues or resolve conflicts.',
+            ),
+          ],
+        ),
+      );
+    } catch (_) {
+      if (mounted)
+        details(
+          'Diagnostics unavailable',
+          const Text(
+            'The diagnostic check could not finish. Existing school data and queues are retained.',
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => diagnosing = false);
+    }
+  }
+
   Widget events(Iterable<HealthEvent> items) => Column(
     children: [
       for (final e in items)
@@ -206,14 +253,16 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                     label('Current school · local diagnostics'),
                     const Divider(height: 36),
                     label(
-                      '${engine.paused ? 'Paused' : engine.monitoringActive ? 'Monitoring enabled' : 'Monitoring not running'}',
+                      '${engine.paused
+                          ? 'Paused'
+                          : engine.monitoringActive
+                          ? 'Monitoring enabled'
+                          : 'Monitoring not running'}',
                     ),
                     const SizedBox(height: 14),
                     label('${engine.registeredCount} diagnostic providers'),
                     const SizedBox(height: 14),
-                    label(
-                      '${engine.activeRepairs} authorized repairs running',
-                    ),
+                    label('${engine.activeRepairs} authorized repairs running'),
                     const SizedBox(height: 14),
                     label('Business data remains owner-controlled'),
                   ],
@@ -412,11 +461,23 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                         ),
                       ),
                       TextButton.icon(
-                        onPressed: engine.paused
+                        onPressed: engine.paused || diagnosing
                             ? null
-                            : () => engine.checkAll(),
-                        icon: const Icon(Icons.fact_check),
-                        label: const Text('Run diagnostics'),
+                            : runDiagnostics,
+                        icon: diagnosing
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.fact_check),
+                        label: Text(
+                          diagnosing
+                              ? 'Running diagnostics…'
+                              : 'Run diagnostics',
+                        ),
                       ),
                     ],
                   ),
@@ -550,7 +611,11 @@ class _Trend extends CustomPainter {
     Offset? previous;
     DateTime? previousAt;
     for (final p in points) {
-      if (p.score == null) { previous = null; previousAt = null; continue; }
+      if (p.score == null) {
+        previous = null;
+        previousAt = null;
+        continue;
+      }
       final x =
               size.width *
               (1 - now.difference(p.at).inMilliseconds / window.inMilliseconds),
