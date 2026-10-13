@@ -100,6 +100,12 @@ class HealthPrediction {
   final double confidence;
 }
 
+class HealthDiagnosticResult {
+  const HealthDiagnosticResult(this.checked, this.skipped, {this.interrupted = false});
+  final List<String> checked, skipped;
+  final bool interrupted;
+}
+
 /// Independent, bounded guardian. It owns diagnostic metadata only.
 class UniversalHealth {
   UniversalHealth({DateTime Function()? now, this.store, this.maxProviders = 32, this.maxHistory = 128, this.maxConcurrentChecks = 2}) : now = now ?? DateTime.now {
@@ -381,11 +387,47 @@ class UniversalHealth {
     await Future.wait(work);
     for (final id in ids) { if (!_checks.containsKey(id)) unawaited(recover(id)); }
   }
+  Future<HealthDiagnosticResult>? _diagnostics;
+  /// A manual sweep visits every registered component, retaining the existing
+  /// concurrency/timeouts and underlying locks. It never submits business data
+  /// or invokes recovery; absent provider evidence stays Unknown.
+  Future<HealthDiagnosticResult> runDiagnostics() {
+    if (_diagnostics != null) return _diagnostics!;
+    final task = _runDiagnostics();
+    _diagnostics = task;
+    unawaited(task.then<void>((_) { if (identical(_diagnostics, task)) _diagnostics = null; },
+      onError: (Object _, StackTrace __) { if (identical(_diagnostics, task)) _diagnostics = null; }));
+    return task;
+  }
+  Future<HealthDiagnosticResult> _runDiagnostics() async {
+    final generation = _generation, bound = _context;
+    final ids = _providers.keys.toList(), checked = <String>[], skipped = <String>[];
+    bool valid() => !_paused && !_disposed && bound != null &&
+        bound.school.isNotEmpty && generation == _generation && _context?.same(bound) == true;
+    if (!valid()) return HealthDiagnosticResult([], ids, interrupted: true);
+    var cursor = 0;
+    while (cursor < ids.length) {
+      if (!valid()) return HealthDiagnosticResult(checked, [...skipped, ...ids.skip(cursor)], interrupted: true);
+      final work = <Future<void>>[];
+      while (cursor < ids.length && work.length < maxConcurrentChecks) {
+        final id = ids[cursor++];
+        if (_checks.containsKey(id) || _repairs.containsKey(id) || _activeChecks >= maxConcurrentChecks) {
+          skipped.add(id);
+        } else {
+          checked.add(id);
+          work.add(check(id));
+        }
+      }
+      await Future.wait(work);
+    }
+    return HealthDiagnosticResult(checked, skipped, interrupted: !valid());
+  }
   Future<void> check(String id) async {
     if (_paused || _disposed || _context == null || !_providers.containsKey(id) || _checks.containsKey(id) || _repairs.containsKey(id) || _activeChecks >= maxConcurrentChecks) return;
     final generation = _generation, bound = _context!;
     final task = Future<void>(() async {
       try {
+        if (generation != _generation || _paused || _disposed) return;
         final value = await _providers[id]!.check(bound);
         if (generation == _generation && !_paused && !_disposed) {
           observe(id, value); lastCheckAt = now();

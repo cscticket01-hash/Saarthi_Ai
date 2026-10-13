@@ -1,5 +1,6 @@
 import '../lib/health/health_history_io.dart';
 import 'dart:io';
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
@@ -11,6 +12,45 @@ import '../lib/health/universal_health.dart';
 import '../lib/health/windows_healing_monitor.dart';
 
 void main() {
+  testWidgets('Run diagnostics shows progress then all component results', (tester) async {
+    final engine = UniversalHealth(), release = Completer<void>();
+    final checked = <String>[];
+    for (var i = 0; i < 11; i++) {
+      engine.register(HealthProvider(id: 'component-$i', version: '2.0', check: (_) async {
+        if (i == 0) await release.future;
+        checked.add('component-$i');
+        return const HealthObservation(HealthState.unknown);
+      }));
+    }
+    await engine.bind(const HealthContext('school-a', 'profile-a'));
+    await tester.pumpWidget(MaterialApp(home: WindowsHealingMonitor(engine: engine)));
+    await tester.tap(find.text('Run diagnostics'));
+    await tester.pump();
+    expect(find.text('Running diagnostics…'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    release.complete();
+    await tester.pumpAndSettle();
+    expect(checked.length, 11);
+    expect(find.text('Diagnostics results'), findsOneWidget);
+    expect(find.text('Checked 11 components. Skipped 0 busy components.'), findsOneWidget);
+    expect(find.text('component-10: unknown · none'), findsOneWidget);
+    expect(find.text('Run diagnostics'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+    await engine.dispose();
+  });
+
+  testWidgets('unbound diagnostics explains why no check can run', (tester) async {
+    final engine = UniversalHealth();
+    await tester.pumpWidget(MaterialApp(home: WindowsHealingMonitor(engine: engine)));
+    await tester.tap(find.text('Run diagnostics'));
+    await tester.pumpAndSettle();
+    expect(find.text('Diagnostics results'), findsOneWidget);
+    expect(find.textContaining('no school is bound'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await engine.dispose();
+  });
   test('monitoring label follows an actual running bound supervisor', () async {
     final engine = UniversalHealth();
     expect(monitoringHeadline(engine),contains('inactive'));
