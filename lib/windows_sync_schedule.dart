@@ -133,3 +133,14 @@ class WindowsSyncDispatch {
     scheduledAt = null;
   }
 }
+
+bool canRestoreOwnerDispatch({
+  required bool retryAllowed,
+  required DateTime? admittedAt,
+  DateTime? nextRetry,
+  DateTime? quotaRetry,
+}) {
+  if (!retryAllowed || admittedAt == null) return false;
+  return (nextRetry == null || !admittedAt.isBefore(nextRetry)) &&
+      (quotaRetry == null || !admittedAt.isBefore(quotaRetry));
+}
