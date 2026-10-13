@@ -2,7 +2,7 @@
 const {createHash}=require('node:crypto');
 const STATES=new Set(['healthy','monitoring','degraded','recovering','needsAttention','paused','unknown']);
 const FAILURES=new Set(['none','offline','timeout','server','quota','authorization','identity','configuration','conflict','databaseLocked','storage','corrupt','worker','decoding','rendering','overloaded','unknown']);
-const COMPONENTS=new Set(['startup','database','smart-sync','sync-view','id-card','qr','inventory','documents','attendance','notices','monitor-worker']);
+const COMPONENTS=new Set(['startup','database','smart-sync','sync-view','id-card','qr','inventory','documents','attendance','notices','monitor-worker','sync-scheduler','health-report-timer']);
 function reject(status,message){const e=Error(message);e.status=status;e.publicMessage=true;throw e;}
 function sanitize(report){
  if(!report||Object.getPrototypeOf(report)!==Object.prototype||Buffer.byteLength(JSON.stringify(report))>8192)reject(400,'Invalid health report');

@@ -9,19 +9,29 @@ enum HealthSendResult { accepted, retryable, attention, unavailable }
 
 /// One coalesced, persistent diagnostic report; no credential is queued.
 class HealthReporter {
-  HealthReporter(this.engine,{required this.platform,required this.version,required this.send,DateTime Function()? now}):now=now??DateTime.now;
+  HealthReporter(this.engine,{required this.platform,required this.version,required this.send,DateTime Function()? now,Timer Function(Duration,void Function(Timer))? periodic}):now=now??DateTime.now,periodic=periodic??Timer.periodic;
   final UniversalHealth engine;
   final DateTime Function() now;
   final String platform,version;
+  final Timer Function(Duration,void Function(Timer)) periodic;
   final Future<HealthSendResult> Function(HealthContext,Map<String,dynamic>) send;
   Timer? _timer;
   bool _sending=false,_stopped=true;
   int _attempts=0;
   String? _blocked,_scope;
   DateTime? _next;
+  bool get timerExpected => !_stopped;
+  bool get timerRunning => _timer?.isActive == true;
+  void repairTimer() {
+    if (_stopped || engine.paused) throw StateError('Health reporting is paused');
+    if (timerRunning) return;
+    _timer?.cancel();
+    _timer=periodic(const Duration(minutes:5),(_)=>unawaited(report()));
+    // Preserve authentication latch, retry deadlines and pending evidence.
+  }
   Future<void> start() async {
     _stopped=false;
-    _timer??=Timer.periodic(const Duration(minutes:5),(_)=>unawaited(report()));
+    _timer??=periodic(const Duration(minutes:5),(_)=>unawaited(report()));
   }
   void pause(){_stopped=true;_timer?.cancel();_timer=null;}
   Future<void> report() async {

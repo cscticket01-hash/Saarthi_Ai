@@ -12,6 +12,20 @@ import '../lib/health/universal_health.dart';
 import '../lib/health/windows_healing_monitor.dart';
 
 void main() {
+  testWidgets('problem diagnosis provides real counters, next action and reviewed source', (tester) async {
+    final engine=UniversalHealth();
+    engine.register(HealthProvider(id:'smart-sync',version:'2.0',check:(_)async=>const HealthObservation(HealthState.unknown)));
+    await engine.bind(const HealthContext('school-a','profile-a'));
+    engine.observe('smart-sync',const HealthObservation(HealthState.degraded,failure:HealthFailure.conflict,ownerCategory:'conflict',metrics:{'pending':9,'conflicts':6,'verifiedReceipts':14}));
+    await tester.pumpWidget(MaterialApp(home:WindowsHealingMonitor(engine:engine)));
+    await tester.tap(find.text('Problem diagnosis'));await tester.pumpAndSettle();
+    expect(find.text('Problem diagnosis & next actions'),findsOneWidget);
+    expect(find.textContaining('windows_sync_conflict_review.dart'),findsOneWidget);
+    expect(find.textContaining('pending: 9'),findsOneWidget);
+    expect(find.textContaining('code defect is not established'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+    await tester.pumpWidget(const SizedBox());await engine.dispose();
+  });
   testWidgets('Run diagnostics shows progress then all component results', (tester) async {
     final engine = UniversalHealth(), release = Completer<void>();
     final checked = <String>[];

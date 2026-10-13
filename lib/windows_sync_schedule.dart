@@ -32,6 +32,12 @@ class WindowsSyncSchedule {
     reconciliation = periodic(interval, (_) => request(const Duration(milliseconds: 250)));
     hourly = periodic(const Duration(hours: 1), (_) => request(const Duration(milliseconds: 250)));
   }
+  void repairReconciliationTimer(Duration interval) {
+    if (reconciliation?.isActive == true) return;
+    reconciliation?.cancel();
+    // Preserve the anchored checkpoint and any existing hourly timer.
+    reconciliation = periodic(interval, (_) => request(const Duration(milliseconds:250)));
+  }
   void wake() => request(const Duration(milliseconds: 250));
   void reconnected() => request(const Duration(seconds: 2));
   void stop() {reconciliation?.cancel();hourly?.cancel();checkpoint?.cancel();reconciliation = null;hourly = null;checkpoint = null;}

@@ -15,14 +15,17 @@ class HealthContext {
 }
 
 class HealthObservation {
-  const HealthObservation(this.state, {this.failure = HealthFailure.none, this.verifiedAt, this.operation = '', this.metrics = const {}});
+  const HealthObservation(this.state, {this.failure = HealthFailure.none, this.verifiedAt, this.operation = '', this.metrics = const {}, this.ownerCategory = ''});
   final HealthState state;
   final HealthFailure failure;
   final DateTime? verifiedAt;
   // Used locally to bind recovery; never serialized or sent as telemetry.
   final String operation;
   final Map<String, num> metrics;
-  static const metricKeys = {'latencyMs', 'pending', 'completed', 'lockCount', 'memoryPressure', 'progressAgeMs'};
+  // Local typed owner diagnosis only; never a raw exception or cloud telemetry.
+  final String ownerCategory;
+  String get safeOwnerCategory => const {'networkPath','timeout','server','quota','authorization','configuration','conflict','validation','fileMissing','unknown'}.contains(ownerCategory) ? ownerCategory : '';
+  static const metricKeys = {'latencyMs', 'pending', 'completed', 'lockCount', 'memoryPressure', 'progressAgeMs', 'conflicts', 'needsAttention', 'verifiedReceipts'};
   Map<String, num> get safeMetrics => {for (final e in metrics.entries) if (metricKeys.contains(e.key) && e.value.isFinite && e.value >= 0 && e.value <= 1e12) e.key: e.value};
 }
 
@@ -364,7 +367,7 @@ class UniversalHealth {
     if (_disposed || _context == null || _paused || !_providers.containsKey(component)) return;
     final at = now();
     final verified = value.verifiedAt != null && !value.verifiedAt!.isAfter(at) && at.difference(value.verifiedAt!) <= const Duration(minutes: 5);
-    final normalized = HealthObservation(value.state == HealthState.healthy && !verified ? HealthState.unknown : value.state, failure: value.failure, verifiedAt: verified ? value.verifiedAt : null, operation: value.operation, metrics: value.safeMetrics);
+    final normalized = HealthObservation(value.state == HealthState.healthy && !verified ? HealthState.unknown : value.state, failure: value.failure, verifiedAt: verified ? value.verifiedAt : null, operation: value.operation, metrics: value.safeMetrics, ownerCategory: value.safeOwnerCategory);
     _observations[component] = normalized;
     final latency = normalized.metrics['latencyMs'];
     if (latency != null) {
