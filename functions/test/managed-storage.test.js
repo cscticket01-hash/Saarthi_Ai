@@ -358,3 +358,26 @@ test('UTF-8 signed multilingual school records are accepted and preserved',()=>{
  assert.equal(read.records['unicode-student'].name,data.name);
  assert.equal(read.records['unicode-student'].address,data.address);
 });
+
+test('lost ACK document retry returns prior revision without changing stored data',()=>{
+ const f=storage(),body={action:'managed_records',operation:'write',collection:'documents',id:'lost-ack',expectedRevision:'',data:{schoolId:A,studentId:'S1',documentRevision:'generation-1',contentHash:'hash-1',uploadedAt:123}};
+ const first=f.call(body);assert.equal(first.success,true);
+ const before=JSON.stringify(f.call({action:'managed_records',operation:'read',collection:'documents'}).records);
+ const retry=f.call(body);assert.equal(retry.success,true);assert.equal(retry.recordRevision,first.recordRevision);
+ assert.equal(JSON.stringify(f.call({action:'managed_records',operation:'read',collection:'documents'}).records),before);
+ assert.equal(f.call({...body,data:{...body.data,contentHash:'changed'}}).success,false);
+ assert.equal(f.call({...body,data:{...body.data,documentRevision:'generation-2'}}).success,false);
+ assert.equal(f.call({...body,data:{...body.data,schoolId:B}}).success,false);
+ assert.equal(JSON.stringify(f.call({action:'managed_records',operation:'read',collection:'documents'}).records),before);
+});
+
+test('blank asset-only profile and empty identity overwrite never modify school record',()=>{
+ const f=storage();
+ const write=data=>f.call({action:'managed_records',operation:'write',collection:'school_config',id:'school_profile_cache',data:{schoolId:A,...data}});
+ const blank=write({schoolName:' ',principalName:'',schoolContactNo:'',logoFileId:'asset'});
+ assert.equal(blank.success,false);assert.equal(blank.code,'SCRIPT_BLANK_SCHOOL_PROFILE');
+ assert.equal(write({schoolName:'School',principalName:'Principal',schoolContactNo:'123'}).success,true);
+ const bad=write({schoolName:'',principalName:'Principal',schoolContactNo:'123'});
+ assert.equal(bad.success,false);assert.equal(bad.code,'SCRIPT_EMPTY_PROFILE_OVERWRITE');
+ assert.equal(f.call({action:'managed_records',operation:'read',collection:'school_config'}).records.school_profile_cache.schoolName,'School');
+});

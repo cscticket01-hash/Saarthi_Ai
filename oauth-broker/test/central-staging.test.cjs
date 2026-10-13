@@ -26,6 +26,19 @@ test('future central web origin must be explicitly allowlisted and preflight can
  const handler=createHandler({health:async()=>{},allowedOrigins:['https://school.example'],handle:async()=>{calls++;return{success:true};}});
  await withServer(handler,async base=>{const r=await fetch(base+'/school-cloud',{method:'OPTIONS',headers:{Origin:'https://school.example'}});assert.equal(r.status,204);assert.equal(r.headers.get('access-control-allow-origin'),'https://school.example');assert.equal(calls,0);});
 });
+test('allowlisted browser can preflight exact device proof headers without invoking records',async()=>{
+ let calls=0;const handler=createHandler({health:async()=>{},handle:async()=>{calls++;return {};},allowedOrigins:['https://school.example']});
+ await withServer(handler,async base=>{
+  const requested='authorization,content-type,x-vidya-device-id,x-vidya-device-credential';
+  const headers={Origin:'https://school.example','Access-Control-Request-Method':'POST','Access-Control-Request-Headers':requested};
+  const r=await fetch(base+'/school-cloud',{method:'OPTIONS',headers});
+  assert.equal(r.status,204);const allowed=r.headers.get('access-control-allow-headers').toLowerCase().split(',');
+  for(const key of requested.split(','))assert.ok(allowed.includes(key));
+  assert.ok(!allowed.includes('*'));assert.ok(!allowed.includes('x-untrusted-header'));assert.equal(calls,0);
+  const denied=await fetch(base+'/school-cloud',{method:'OPTIONS',headers:{...headers,Origin:'https://foreign.example'}});
+  assert.equal(denied.status,403);assert.equal(denied.headers.get('access-control-allow-origin'),null);assert.equal(calls,0);
+ });
+});
 test('real installed modular Admin SDK initializes staging with a disposable test key and rejects another project',async()=>{
  const {generateKeyPairSync}=require('node:crypto');
  const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs8',format:'pem'},publicKeyEncoding:{type:'spki',format:'pem'}});
