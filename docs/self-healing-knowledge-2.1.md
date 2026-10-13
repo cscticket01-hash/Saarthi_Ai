@@ -22,7 +22,7 @@ Windows monitor adds a searchable Error Knowledge dialog. Existing Run Diagnosti
 
 ## Known incident limitations
 
-The generic 45-second TimeoutException and retained-pending server message do not establish a failing stage. Exact original-school slow-stage tracing, owner Apps Script logs and physical-PC pending operations were not available in this change. No timeout was simply increased and no production restart/deploy was attempted. Diagnostics-button and lifecycle defects were already fixed on main; this branch preserves them.
+The generic 45-second TimeoutException and retained-pending server message do not establish a failing stage. Exact original-school slow-stage tracing, owner Apps Script logs and physical-PC pending operations were not available in this change. Confirmed client defect fixed: CentralSchoolCloud.send bounded only response headers; body collection could wait indefinitely. The same 45s deadline now bounds headers plus body together and exposes a fixed sanitized headers/body timeout stage. Synthetic tests delay headers 44s then stall the body, stall headers entirely, and deliver a late success; no duplicate retry, shared-client close or retrospective success occurs. This does not establish the original-school backend root cause. A Future deadline does not cancel a possible server commit or the underlying transport; retries remain exclusively owner-managed. No deadline increase or production restart/deploy was attempted. Diagnostics-button and lifecycle defects were already fixed on main; this branch preserves them.
 
 ## Validation
 

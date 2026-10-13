@@ -94,6 +94,16 @@ Map<String, dynamic> centralSchoolData(
 
 /// New central connection is stored separately from legacy links/authentication.
 /// Disconnecting it restores the existing installation without deleting data.
+enum CentralTimeoutStage { responseHeaders, responseBody }
+
+/// Fixed sanitized stage only; retains TimeoutException owner classification.
+class CentralRequestTimeout extends TimeoutException {
+  CentralRequestTimeout(this.stage)
+      : super('School response deadline exceeded during ${stage.name}. Pending work remains owner-managed.',
+              const Duration(seconds: 45));
+  final CentralTimeoutStage stage;
+}
+
 class CentralSchoolCloud {
   CentralSchoolCloud({
     http.Client? client,
@@ -281,9 +291,17 @@ class CentralSchoolCloud {
           accountUid:identity['uid'],endpoint:endpoint));
       }
     }
-    final response = await http.Response.fromStream(
-      await client.send(r).timeout(const Duration(seconds: 45)),
-    );
+    var headersReceived = false;
+    // One existing 45s budget covers headers AND the complete response body.
+    // Timing out the caller does not prove the server failed to commit; only
+    // the existing owner may retry the same durable operation and verify ACK.
+    final response = await (() async {
+      final stream = await client.send(r);
+      headersReceived = true;
+      return http.Response.fromStream(stream);
+    })().timeout(const Duration(seconds: 45), onTimeout: () =>
+      throw CentralRequestTimeout(headersReceived
+        ? CentralTimeoutStage.responseBody : CentralTimeoutStage.responseHeaders));
     check();
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final stage = _stage(method, uri);

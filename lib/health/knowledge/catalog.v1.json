@@ -98,11 +98,13 @@
       "source": [
         "lib/sync_recovery_policy.dart",
         "lib/windows_sync_recovery.dart",
-        "lib/health/windows_health_adapter.dart"
+        "lib/health/windows_health_adapter.dart",
+        "lib/windows_connect/central_school_cloud.dart"
       ],
       "testEvidence": [
         "test/sync_recovery_policy_test.dart",
-        "test/health_knowledge_test.dart"
+        "test/health_knowledge_test.dart",
+        "test/central_school_cloud_test.dart"
       ],
       "reviewedSource": "15f3049 (2026-10-13 audit)",
       "evidenceType": "source-backed; synthetic matching"

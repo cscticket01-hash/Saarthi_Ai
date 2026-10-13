@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:async';
+import 'package:fake_async/fake_async.dart';
 import 'package:saarthi_ai/windows_connect/school_drive_images.dart';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,7 +17,63 @@ class _CountingClient extends MockClient {
   int closes=0;
   @override void close(){closes++;super.close();}
 }
+class _StreamClient extends http.BaseClient {
+  _StreamClient(this.response);
+  final Future<http.StreamedResponse> Function() response;
+  int sends = 0, closes = 0;
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    sends++;
+    return response();
+  }
+  @override
+  void close() { closes++; }
+}
 void main() {
+  test('45-second budget bounds delayed headers and delayed body with sanitized stage', () {
+    for (final delayedHeaders in [true, false]) {
+      fakeAsync((clock) {
+        final body = StreamController<List<int>>();
+        final transport = _StreamClient(() async {
+          if (delayedHeaders) await Future<void>.delayed(const Duration(seconds: 44));
+          return http.StreamedResponse(body.stream, 200);
+        });
+        final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
+            client: transport, closeClient: false);
+        Object? failure;
+        var completed = false;
+        cloud.send('POST', Uri.parse(cloud.endpoint), body: {'action':'managed/records'})
+          .then<void>((_) { completed = true; }, onError: (Object error) { failure = error; });
+        clock.flushMicrotasks();
+        clock.elapse(const Duration(seconds: 44)); clock.flushMicrotasks();
+        expect(failure, isNull);
+        clock.elapse(const Duration(seconds: 1)); clock.flushMicrotasks();
+        expect(failure, isA<CentralRequestTimeout>());
+        expect((failure as CentralRequestTimeout).stage, CentralTimeoutStage.responseBody);
+        expect(completed, false);
+        expect(transport.sends, 1); expect(transport.closes, 0);
+        // A late successful response cannot retroactively certify the caller.
+        body.add(utf8.encode('{"success":true}')); body.close(); clock.flushMicrotasks();
+        expect(completed, false); expect(transport.sends, 1);
+        cloud.close(); expect(transport.closes, 0);
+      });
+    }
+  });
+  test('no response headers are classified without retrying or resetting the shared client', () {
+    fakeAsync((clock) {
+      final response = Completer<http.StreamedResponse>();
+      final transport = _StreamClient(() => response.future);
+      final cloud = CentralSchoolCloud(endpoint:'https://school.example/api', client:transport,closeClient:false);
+      Object? failure;
+      cloud.send('GET', Uri.parse(cloud.endpoint)).then<void>((_) {}, onError:(Object error) { failure=error; });
+      clock.flushMicrotasks(); clock.elapse(const Duration(seconds:45)); clock.flushMicrotasks();
+      expect((failure as CentralRequestTimeout).stage, CentralTimeoutStage.responseHeaders);
+      expect(failure.toString(), isNot(contains('school.example')));
+      expect(transport.sends,1); expect(transport.closes,0);
+      response.complete(http.StreamedResponse(Stream.value(utf8.encode('{}')),200)); clock.flushMicrotasks();
+      cloud.close();
+    });
+  });
   test('only central managed-record revision conflict reaches conflict recovery', () async {
     for (final specific in [true, false]) {
       final cloud=CentralSchoolCloud(endpoint:'https://school.example/api',client:MockClient((r) async =>
