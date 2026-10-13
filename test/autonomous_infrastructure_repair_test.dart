@@ -45,6 +45,18 @@ class ControlledTimer implements Timer {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('dispatch restoration respects withdrawn admission and current retry floors', () {
+    final due = DateTime.utc(2026, 10, 13);
+    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: due), isTrue);
+    expect(canRestoreOwnerDispatch(retryAllowed: false, admittedAt: due), isFalse);
+    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: null), isFalse);
+    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: due,
+        nextRetry: due.add(const Duration(seconds: 1))), isFalse);
+    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: due,
+        quotaRetry: due.add(const Duration(seconds: 1))), isFalse);
+    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: due,
+        nextRetry: due, quotaRetry: due.subtract(const Duration(seconds: 1))), isTrue);
+  });
   const scope = HealthContext('school-A', 'profile-A');
   test(
     'restart-monitor-timer: real heartbeat owner recovery and pause denial',
