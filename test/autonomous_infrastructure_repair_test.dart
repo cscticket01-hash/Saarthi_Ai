@@ -112,6 +112,7 @@ void main() {
       (await db.collection('_windows_firebase_outbox').get()).docs
           .map((row) => {'id': row.id, 'value': row.data()})
           .toList(),
+      toEncodable: (value) => (value as dynamic).toDate().toUtc().toIso8601String(),
     );
     try {
       // Owner stays uninitialized: no cloud connection or report is admitted.
@@ -125,6 +126,7 @@ void main() {
         (await db.collection('_windows_firebase_outbox').get()).docs
             .map((row) => {'id': row.id, 'value': row.data()})
             .toList(),
+        toEncodable: (value) => (value as dynamic).toDate().toUtc().toIso8601String(),
       );
       expect(after, before);
       expect(await engine.recover('sync-view'), false);
