@@ -71,11 +71,11 @@ throw new Error('Actual backend guard');
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'lib').mkdir()
-            for name in ('id_card_first.dart', 'id_card_second.dart'):
+            for name in ('id_card_first.dart', 'id_card_second.dart', 'windows_backup_integrity.dart'):
                 (root / 'lib' / name).write_text("throw const FormatException('Same actual guard');")
             cases = source_cases(root)
-            self.assertEqual(len(cases), 2)
-            self.assertEqual([c['origins'] for c in cases], [2, 2])
+            self.assertEqual(len(cases), 3)
+            self.assertEqual([c['origins'] for c in cases], [3, 3, 3])
 
     def test_forged_unique_origin_count_is_rejected(self):
         rule = next(r for r in self.data['rules'] if r.get('sourceCase', {}).get('origins', 0) > 1)

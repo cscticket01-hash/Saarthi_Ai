@@ -2772,7 +2772,7 @@
         "kind": "StateError",
         "literal": "School changed. Reopen the directory.",
         "line": 78,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -3164,7 +3164,7 @@
         "kind": "StateError",
         "literal": "No update is published yet.",
         "line": 66,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -5180,7 +5180,7 @@
         "kind": "StateError",
         "literal": "School changed.",
         "line": 17,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -5460,7 +5460,7 @@
         "kind": "StateError",
         "literal": "Windows application data folder unavailable.",
         "line": 13,
-        "origins": 1
+        "origins": 3
       }
     },
     {
@@ -7252,7 +7252,7 @@
         "kind": "Error",
         "literal": "Set VS_SETUP_SCHOOL_ID to the School ID from the developer website",
         "line": 22,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -7308,7 +7308,7 @@
         "kind": "Error",
         "literal": "Isolated TEST backup authorization required",
         "line": 8,
-        "origins": 1
+        "origins": 3
       }
     },
     {
@@ -7700,7 +7700,7 @@
         "kind": "StateError",
         "literal": "School changed",
         "line": 34,
-        "origins": 1
+        "origins": 3
       }
     },
     {
@@ -7756,7 +7756,7 @@
         "kind": "Error",
         "literal": "Invalid attendance operation",
         "line": 11,
-        "origins": 1
+        "origins": 3
       }
     },
     {
@@ -7980,7 +7980,7 @@
         "kind": "Error",
         "literal": "Invalid attendance collection",
         "line": 25,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -11956,7 +11956,7 @@
         "kind": "StateError",
         "literal": "Invalid school image.",
         "line": 24,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -12852,7 +12852,7 @@
         "kind": "Error",
         "literal": "School rebinding is blocked",
         "line": 23,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -12908,7 +12908,7 @@
         "kind": "Error",
         "literal": "Disaster inventory requires review",
         "line": 14,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -16828,7 +16828,7 @@
         "kind": "StateError",
         "literal": "Foreign school profile blocked.",
         "line": 24,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -17164,7 +17164,7 @@
         "kind": "StateError",
         "literal": "Internet connection nahi mil raha.",
         "line": 157,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -17500,7 +17500,7 @@
         "kind": "Error",
         "literal": "Existing school root is missing; developer recovery required",
         "line": 24,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -17556,7 +17556,7 @@
         "kind": "Error",
         "literal": "Disaster binary scope requires review",
         "line": 19,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -18116,7 +18116,7 @@
         "kind": "StateError",
         "literal": "School changed. Reopen documents.",
         "line": 135,
-        "origins": 1
+        "origins": 3
       }
     },
     {
@@ -20916,7 +20916,7 @@
         "kind": "StateError",
         "literal": "School identity changed.",
         "line": 55,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -21532,7 +21532,7 @@
         "kind": "Error",
         "literal": "Invalid new-storage consent",
         "line": 26,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -21588,7 +21588,7 @@
         "kind": "Error",
         "literal": "Disaster checkpoint requires review",
         "line": 26,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -25060,7 +25060,7 @@
         "kind": "Error",
         "literal": "Use School ID from developer website",
         "line": 34,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -25116,7 +25116,7 @@
         "kind": "Error",
         "literal": "Disaster checkpoint integrity requires review",
         "line": 28,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -28252,7 +28252,7 @@
         "kind": "Error",
         "literal": "Existing root must already be verified for this school; no automatic migration",
         "line": 41,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -28308,7 +28308,7 @@
         "kind": "Error",
         "literal": "Foreign disaster checkpoint",
         "line": 29,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -31164,7 +31164,7 @@
         "kind": "Error",
         "literal": "Use startEmpty:true only for a NEW storage connection. Existing data migration requires review.",
         "line": 44,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -31220,7 +31220,7 @@
         "kind": "Error",
         "literal": "Disaster checkpoint verification failed",
         "line": 35,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -33796,7 +33796,7 @@
         "kind": "Error",
         "literal": "School Drive root mismatch",
         "line": 57,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -33852,7 +33852,7 @@
         "kind": "Error",
         "literal": "Disaster copy collision",
         "line": 39,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -34860,7 +34860,7 @@
         "kind": "StateError",
         "literal": "School changed during operation.",
         "line": 463,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -35924,7 +35924,7 @@
         "kind": "Error",
         "literal": "Signed school request required",
         "line": 92,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -35980,7 +35980,7 @@
         "kind": "Error",
         "literal": "Disaster binary verification failed",
         "line": 41,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -37884,7 +37884,7 @@
         "kind": "Error",
         "literal": "Invalid request signature",
         "line": 94,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -37940,7 +37940,7 @@
         "kind": "Error",
         "literal": "Disaster source changed; retry a new backup generation",
         "line": 47,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -39396,7 +39396,7 @@
         "kind": "StateError",
         "literal": "Resolve school sync before creating a Drive backup.",
         "line": 1103,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -39676,7 +39676,7 @@
         "kind": "Error",
         "literal": "Request already used",
         "line": 100,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -39732,7 +39732,7 @@
         "kind": "Error",
         "literal": "Legacy disaster record scope requires operator review",
         "line": 51,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -41300,7 +41300,7 @@
         "kind": "Error",
         "literal": "Retry storage shortly",
         "line": 103,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -41356,7 +41356,7 @@
         "kind": "Error",
         "literal": "Invalid disaster operation",
         "line": 58,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -42756,7 +42756,7 @@
         "kind": "Error",
         "literal": "Unknown collection",
         "line": 108,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -42812,7 +42812,7 @@
         "kind": "Error",
         "literal": "Disaster job busy; retry shortly",
         "line": 60,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -44100,7 +44100,7 @@
         "kind": "Error",
         "literal": "Duplicate collection folders; operator review required",
         "line": 113,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -44156,7 +44156,7 @@
         "kind": "Error",
         "literal": "Disaster operation ID conflict",
         "line": 64,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -44660,7 +44660,7 @@
         "kind": "StateError",
         "literal": "School changed before upload.",
         "line": 345,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -45388,7 +45388,7 @@
         "kind": "Error",
         "literal": "Duplicate storage folder; operator review required",
         "line": 120,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -45444,7 +45444,7 @@
         "kind": "Error",
         "literal": "Verified complete disaster backup required",
         "line": 71,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -46452,7 +46452,7 @@
         "kind": "Error",
         "literal": "Pending workbook identity mismatch",
         "line": 133,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -46508,7 +46508,7 @@
         "kind": "Error",
         "literal": "Disaster source integrity requires review",
         "line": 88,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -46900,7 +46900,7 @@
         "kind": "StateError",
         "literal": "School changed while loading documents.",
         "line": 545,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -47516,7 +47516,7 @@
         "kind": "Error",
         "literal": "School workbook identity mismatch",
         "line": 135,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -47572,7 +47572,7 @@
         "kind": "Error",
         "literal": "Disaster workbook collision",
         "line": 94,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -48692,7 +48692,7 @@
         "kind": "Error",
         "literal": "School workbook requires operator review",
         "line": 141,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -48748,7 +48748,7 @@
         "kind": "Error",
         "literal": "Disaster Sheets readback failed",
         "line": 99,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -49812,7 +49812,7 @@
         "kind": "Error",
         "literal": "Verified school tab is missing; operator recovery required",
         "line": 151,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -49868,7 +49868,7 @@
         "kind": "Error",
         "literal": "Disaster lease expired; copies retained",
         "line": 114,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -49924,7 +49924,7 @@
         "kind": "Error",
         "literal": "File limit exceeded",
         "line": 124,
-        "origins": 2
+        "origins": 3
       }
     },
     {
@@ -50820,7 +50820,7 @@
         "kind": "Error",
         "literal": "Collection migration exceeds safe limit",
         "line": 158,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -50876,7 +50876,7 @@
         "kind": "Error",
         "literal": "Invalid disaster readback audit",
         "line": 135,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -51828,7 +51828,7 @@
         "kind": "Error",
         "literal": "Invalid or duplicate legacy record; operator review required",
         "line": 160,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -51884,7 +51884,7 @@
         "kind": "Error",
         "literal": "Disaster readback busy; retry shortly",
         "line": 139,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -52668,7 +52668,7 @@
         "kind": "Error",
         "literal": "Migration conflict; both versions retained",
         "line": 163,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -52724,7 +52724,7 @@
         "kind": "Error",
         "literal": "Disaster readback audit inventory requires review",
         "line": 148,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -53508,7 +53508,7 @@
         "kind": "Error",
         "literal": "School data organization in progress; retry Sync. Pending data retained",
         "line": 164,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -53564,7 +53564,7 @@
         "kind": "Error",
         "literal": "Verified complete disaster rehearsal required",
         "line": 155,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -54180,7 +54180,7 @@
         "kind": "Error",
         "literal": "Duplicate Sheet record; operator review required",
         "line": 176,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -54236,7 +54236,7 @@
         "kind": "Error",
         "literal": "Disaster readback workbook identity requires review",
         "line": 157,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -54964,7 +54964,7 @@
         "kind": "Error",
         "literal": "Sheet identity mismatch",
         "line": 179,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -55020,7 +55020,7 @@
         "kind": "Error",
         "literal": "Disaster readback backup scope requires review",
         "line": 160,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -55524,7 +55524,7 @@
         "kind": "Error",
         "literal": "Foreign school record",
         "line": 183,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -55580,7 +55580,7 @@
         "kind": "Error",
         "literal": "Disaster readback record scope requires review",
         "line": 162,
-        "origins": 1
+        "origins": 2
       }
     },
     {

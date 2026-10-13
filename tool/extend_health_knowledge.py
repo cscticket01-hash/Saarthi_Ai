@@ -48,10 +48,10 @@ def source_cases(root=ROOT):
     # outside the selected 1,000-rule library. A subset cannot prove uniqueness.
     origins = {}
     for case in cases.values():
-        key = (component(case['path']), case['kind'], case['literal'])
+        key = (case['kind'], case['literal'])
         origins[key] = origins.get(key, 0) + 1
     for case in cases.values():
-        case['origins'] = origins[(component(case['path']), case['kind'], case['literal'])]
+        case['origins'] = origins[(case['kind'], case['literal'])]
     return list(cases.values())
 
 
