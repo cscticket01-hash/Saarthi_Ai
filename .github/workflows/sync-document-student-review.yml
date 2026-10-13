@@ -1,0 +1,32 @@
+name: Document conflict and student Sheet review
+'on':
+  pull_request:
+    branches: [main]
+    paths: ['lib/**', 'test/**', 'school-backend/**', 'functions/**', '.github/workflows/sync-document-student-review.yml']
+  push:
+    branches: [fix/verified-document-review-student-view]
+permissions:
+  contents: read
+concurrency:
+  group: document-student-review-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  owner-regressions:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_backend_bridge.dart lib/windows_firebase_sync.dart lib/windows_sync_conflict_review.dart lib/windows_sync_control_center.dart lib/windows_document_templates.dart lib/windows_student_sync_audit.dart test/windows_document_review_owner_test.dart test/windows_student_sync_audit_test.dart
+      - name: Actual owner recovery and existing queue regressions
+        env:
+          APPDATA: ${{ runner.temp }}/document-student-review
+        run: flutter test --concurrency=1 --timeout 90s test/windows_document_review_owner_test.dart test/windows_student_sync_audit_test.dart test/windows_document_queue_test.dart test/windows_sync_revision_test.dart test/windows_sync_comparison_test.dart test/windows_sync_durable_admission_test.dart test/windows_sync_modern_ui_test.dart test/windows_healing_monitor_test.dart

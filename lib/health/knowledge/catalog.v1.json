@@ -342,8 +342,8 @@
       "dependencies": [
         "database"
       ],
-      "diagnostic": "Run bounded diagnostics; review fresh owner status and retained sanitized history. Correlation does not confirm a cause.",
-      "solution": "Use authenticated owner Conflict Review to compare both versions. The guardian must not choose a winner or overwrite newer data.",
+      "diagnostic": "Inspect the same-school retained document queue and authenticated cloud readback in lib/windows_sync_conflict_review.dart. Compare document/input revision and actual retained-byte hash. A missing local generation before cloud pull can create a second ID PDF; this is a suspected cause until owner evidence confirms it.",
+      "solution": "Open Sync details \u2192 Review \u2192 Verify cloud version. Preview local and cloud PDFs; an explicit owner choice queues a new CAS upload or retains verified cloud bytes locally. The guardian never chooses a winner. Identical readback may acknowledge only the exact original generation.",
       "level": "B",
       "playbook": "",
       "preconditions": [
@@ -360,11 +360,15 @@
       "source": [
         "lib/sync_recovery_policy.dart",
         "lib/windows_sync_recovery.dart",
-        "lib/health/windows_health_adapter.dart"
+        "lib/health/windows_health_adapter.dart",
+        "lib/windows_backend_bridge.dart",
+        "lib/windows_document_templates.dart",
+        "lib/windows_sync_conflict_review.dart"
       ],
       "testEvidence": [
         "test/sync_recovery_policy_test.dart",
-        "test/health_knowledge_test.dart"
+        "test/health_knowledge_test.dart",
+        "test/windows_document_review_owner_test.dart"
       ],
       "reviewedSource": "15f3049 (2026-10-13 audit)",
       "evidenceType": "source-backed; synthetic matching"
@@ -4921,7 +4925,7 @@
         "Verified ID owner changed. Reopen ID card."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_document_templates.dart:172",
+        "Constant StateError throw operand in lib/windows_document_templates.dart:174",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -4931,7 +4935,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_document_templates.dart:172 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_document_templates.dart:174 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -4959,7 +4963,7 @@
         "path": "lib/windows_document_templates.dart",
         "kind": "StateError",
         "literal": "Verified ID owner changed. Reopen ID card.",
-        "line": 172,
+        "line": 174,
         "origins": 1
       }
     },
@@ -5201,7 +5205,7 @@
         "Firebase Admin Email daalein."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:107",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:108",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -5211,7 +5215,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:107 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:108 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -5239,7 +5243,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase Admin Email daalein.",
-        "line": 107,
+        "line": 108,
         "origins": 1
       }
     },
@@ -6657,7 +6661,7 @@
         "School changed. Reopen review."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:105",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:110",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -6667,7 +6671,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:105 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:110 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -6695,7 +6699,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "School changed. Reopen review.",
-        "line": 105,
+        "line": 110,
         "origins": 2
       }
     },
@@ -6713,7 +6717,7 @@
         "Current school required"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:93",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:97",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -6723,7 +6727,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:93 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:97 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -6751,7 +6755,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "Current school required",
-        "line": 93,
+        "line": 97,
         "origins": 1
       }
     },
@@ -6808,7 +6812,7 @@
         "kind": "StateError",
         "literal": "School changed. Reopen Sync details.",
         "line": 324,
-        "origins": 1
+        "origins": 2
       }
     },
     {
@@ -9905,7 +9909,7 @@
         "Foreign school document blocked."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:141",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:147",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -9915,7 +9919,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:141 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:147 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -9943,7 +9947,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Foreign school document blocked.",
-        "line": 141,
+        "line": 147,
         "origins": 1
       }
     },
@@ -10801,7 +10805,7 @@
         "School changed during ID publication."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_document_templates.dart:216",
+        "Constant StateError throw operand in lib/windows_document_templates.dart:232",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -10811,7 +10815,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_document_templates.dart:216 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_document_templates.dart:232 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -10839,8 +10843,8 @@
         "path": "lib/windows_document_templates.dart",
         "kind": "StateError",
         "literal": "School changed during ID publication.",
-        "line": 216,
-        "origins": 1
+        "line": 232,
+        "origins": 2
       }
     },
     {
@@ -11025,7 +11029,7 @@
         "Firebase Password daalein."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:111",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:112",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -11035,7 +11039,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:111 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:112 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Use the existing authenticated account/licence interface to review validity and permissions. Preserve credentials and school binding; never grant privileges or bypass the guard automatically.",
       "level": "C",
       "playbook": "",
@@ -11063,7 +11067,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase Password daalein.",
-        "line": 111,
+        "line": 112,
         "origins": 1
       }
     },
@@ -12313,7 +12317,7 @@
         "Same-school cloud version unavailable. Both copies retained."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:123",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:128",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -12323,7 +12327,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:123 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:128 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Locate the measured owner stage and respect its retry/backoff deadline. Keep in-flight work and originals; only the owner may admit a retry after checking settlement and operation identity.",
       "level": "B",
       "playbook": "",
@@ -12351,7 +12355,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Same-school cloud version unavailable. Both copies retained.",
-        "line": 123,
+        "line": 128,
         "origins": 1
       }
     },
@@ -15001,7 +15005,7 @@
         "Verified local school context required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:146",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:152",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -15011,7 +15015,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:146 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:152 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -15039,7 +15043,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Verified local school context required.",
-        "line": 146,
+        "line": 152,
         "origins": 1
       }
     },
@@ -15729,7 +15733,7 @@
         "Selected ID renderer returned no package."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_document_templates.dart:257",
+        "Constant StateError throw operand in lib/windows_document_templates.dart:287",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -15739,7 +15743,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_document_templates.dart:257 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_document_templates.dart:287 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -15767,7 +15771,7 @@
         "path": "lib/windows_document_templates.dart",
         "kind": "StateError",
         "literal": "Selected ID renderer returned no package.",
-        "line": 257,
+        "line": 287,
         "origins": 1
       }
     },
@@ -15841,7 +15845,7 @@
         "Firebase config incomplete hai."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:123",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:124",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -15851,7 +15855,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:123 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:124 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -15879,7 +15883,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase config incomplete hai.",
-        "line": 123,
+        "line": 124,
         "origins": 1
       }
     },
@@ -16961,7 +16965,7 @@
         "Invalid queue."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:148",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:154",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -16971,7 +16975,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:148 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:154 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -16999,7 +17003,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Invalid queue.",
-        "line": 148,
+        "line": 154,
         "origins": 1
       }
     },
@@ -19425,7 +19429,7 @@
         "Document cloud file is not available yet."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:171",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:177",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -19435,7 +19439,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:171 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:177 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Review original availability, free space and access in the owning storage/file interface. Restore access to the original input; never reset storage, substitute a file or clear pending records.",
       "level": "B",
       "playbook": "",
@@ -19463,7 +19467,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Document cloud file is not available yet.",
-        "line": 171,
+        "line": 177,
         "origins": 1
       }
     },
@@ -20041,7 +20045,7 @@
         "Another school document is not accessible."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_document_templates.dart:278",
+        "Constant StateError throw operand in lib/windows_document_templates.dart:309",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -20051,7 +20055,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_document_templates.dart:278 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_document_templates.dart:309 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -20079,7 +20083,7 @@
         "path": "lib/windows_document_templates.dart",
         "kind": "StateError",
         "literal": "Another school document is not accessible.",
-        "line": 278,
+        "line": 309,
         "origins": 1
       }
     },
@@ -20097,7 +20101,7 @@
         "Firebase login token nahi mila."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:139",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:140",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -20107,7 +20111,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:139 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:140 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Use the existing authenticated account/licence interface to review validity and permissions. Preserve credentials and school binding; never grant privileges or bypass the guard automatically.",
       "level": "C",
       "playbook": "",
@@ -20135,7 +20139,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase login token nahi mila.",
-        "line": 139,
+        "line": 140,
         "origins": 1
       }
     },
@@ -20937,7 +20941,7 @@
         "Pending version changed. Reopen Sync details."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:153",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:159",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -20947,7 +20951,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:153 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:159 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -20975,7 +20979,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Pending version changed. Reopen Sync details.",
-        "line": 153,
+        "line": 159,
         "origins": 1
       }
     },
@@ -20993,7 +20997,7 @@
         "Storage usage unverified"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:204",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:267",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -21003,7 +21007,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:204 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:267 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Review original availability, free space and access in the owning storage/file interface. Restore access to the original input; never reset storage, substitute a file or clear pending records.",
       "level": "B",
       "playbook": "",
@@ -21031,7 +21035,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "Storage usage unverified",
-        "line": 204,
+        "line": 267,
         "origins": 1
       }
     },
@@ -23289,7 +23293,7 @@
         "School document restore failed."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:207",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:213",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -23299,7 +23303,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:207 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:213 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -23327,7 +23331,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School document restore failed.",
-        "line": 207,
+        "line": 213,
         "origins": 1
       }
     },
@@ -23793,7 +23797,7 @@
         "School changed during document preview."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_document_templates.dart:288",
+        "Constant StateError throw operand in lib/windows_document_templates.dart:319",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -23803,7 +23807,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_document_templates.dart:288 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_document_templates.dart:319 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -23831,7 +23835,7 @@
         "path": "lib/windows_document_templates.dart",
         "kind": "StateError",
         "literal": "School changed during document preview.",
-        "line": 288,
+        "line": 319,
         "origins": 1
       }
     },
@@ -23849,7 +23853,7 @@
         "Firebase link saved nahi hai."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:175",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:176",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -23859,7 +23863,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:175 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:176 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -23887,7 +23891,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase link saved nahi hai.",
-        "line": 175,
+        "line": 176,
         "origins": 1
       }
     },
@@ -24521,7 +24525,7 @@
         "File owner verification required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:191",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:199",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -24531,7 +24535,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:191 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:199 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Review original availability, free space and access in the owning storage/file interface. Restore access to the original input; never reset storage, substitute a file or clear pending records.",
       "level": "B",
       "playbook": "",
@@ -24559,7 +24563,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "File owner verification required.",
-        "line": 191,
+        "line": 199,
         "origins": 1
       }
     },
@@ -24577,7 +24581,7 @@
         "School quota response unverified"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:210",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:280",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -24587,7 +24591,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:210 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:280 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Locate the measured owner stage and respect its retry/backoff deadline. Keep in-flight work and originals; only the owner may admit a retry after checking settlement and operation identity.",
       "level": "B",
       "playbook": "",
@@ -24615,7 +24619,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "School quota response unverified",
-        "line": 210,
+        "line": 280,
         "origins": 1
       }
     },
@@ -26481,7 +26485,7 @@
         "Invalid restored document size."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:210",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:216",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -26491,7 +26495,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:210 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:216 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -26519,7 +26523,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Invalid restored document size.",
-        "line": 210,
+        "line": 216,
         "origins": 1
       }
     },
@@ -26929,7 +26933,7 @@
         "School changed during reviewed preview"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_document_templates.dart:300",
+        "Constant StateError throw operand in lib/windows_document_templates.dart:341",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -26939,7 +26943,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_document_templates.dart:300 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_document_templates.dart:341 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -26967,7 +26971,7 @@
         "path": "lib/windows_document_templates.dart",
         "kind": "StateError",
         "literal": "School changed during reviewed preview",
-        "line": 300,
+        "line": 341,
         "origins": 1
       }
     },
@@ -26985,7 +26989,7 @@
         "Firebase session refresh nahi hua."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:219",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:220",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -26995,7 +26999,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:219 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:220 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -27023,7 +27027,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase session refresh nahi hua.",
-        "line": 219,
+        "line": 220,
         "origins": 1
       }
     },
@@ -27713,7 +27717,7 @@
         "Owner verification required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:200",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:208",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -27723,7 +27727,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:200 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:208 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -27751,7 +27755,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Owner verification required.",
-        "line": 200,
+        "line": 208,
         "origins": 1
       }
     },
@@ -27769,7 +27773,7 @@
         "School changed during quota read"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:215",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:287",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -27779,7 +27783,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:215 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:287 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -27807,7 +27811,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "School changed during quota read",
-        "line": 215,
+        "line": 287,
         "origins": 1
       }
     },
@@ -29561,7 +29565,7 @@
         "Document hash mismatch."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:213",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:219",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -29571,7 +29575,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:213 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:219 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve the original and quarantine this result. Have the owner compare expected and measured integrity/signature evidence against the trusted manifest; never replace it with an empty file.",
       "level": "C",
       "playbook": "",
@@ -29599,7 +29603,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Document hash mismatch.",
-        "line": 213,
+        "line": 219,
         "origins": 1
       }
     },
@@ -30009,7 +30013,7 @@
         "School changed during template preview."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_document_templates.dart:392",
+        "Constant StateError throw operand in lib/windows_document_templates.dart:433",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -30019,7 +30023,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_document_templates.dart:392 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_document_templates.dart:433 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -30047,7 +30051,7 @@
         "path": "lib/windows_document_templates.dart",
         "kind": "StateError",
         "literal": "School changed during template preview.",
-        "line": 392,
+        "line": 433,
         "origins": 1
       }
     },
@@ -30065,7 +30069,7 @@
         "Firebase connected nahi hai."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:239",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:240",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -30075,7 +30079,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:239 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:240 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -30103,7 +30107,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase connected nahi hai.",
-        "line": 239,
+        "line": 240,
         "origins": 1
       }
     },
@@ -30177,7 +30181,7 @@
         "Current verified school administrator approval required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:262",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:269",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -30187,7 +30191,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:262 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:269 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -30215,7 +30219,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "Current verified school administrator approval required.",
-        "line": 262,
+        "line": 269,
         "origins": 1
       }
     },
@@ -30681,7 +30685,7 @@
         "Cloud payload changed or has no durable revision. Both copies retained."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:209",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:217",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -30691,7 +30695,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:209 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:217 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -30719,7 +30723,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Cloud payload changed or has no durable revision. Both copies retained.",
-        "line": 209,
+        "line": 217,
         "origins": 1
       }
     },
@@ -30737,7 +30741,7 @@
         "Verified own-school cache required"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:267",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:339",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -30747,7 +30751,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:267 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:339 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -30775,7 +30779,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "Verified own-school cache required",
-        "line": 267,
+        "line": 339,
         "origins": 1
       }
     },
@@ -32361,7 +32365,7 @@
         "Live same-school document required. Original retained."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:241",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:252",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -32371,7 +32375,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:241 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:252 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -32399,7 +32403,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Live same-school document required. Original retained.",
-        "line": 241,
+        "line": 252,
         "origins": 1
       }
     },
@@ -32753,7 +32757,7 @@
         "Firebase session saved nahi hai."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:252",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:253",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -32763,7 +32767,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:252 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:253 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -32791,7 +32795,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase session saved nahi hai.",
-        "line": 252,
+        "line": 253,
         "origins": 1
       }
     },
@@ -32865,7 +32869,7 @@
         "School profile changed; reopen this query."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:299",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:306",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -32875,7 +32879,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:299 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:306 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -32903,7 +32907,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School profile changed; reopen this query.",
-        "line": 299,
+        "line": 306,
         "origins": 1
       }
     },
@@ -33369,7 +33373,7 @@
         "Cloud version changed. Verify both versions again."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:262",
+        "Constant StateError throw operand in lib/windows_sync_conflict_review.dart:328",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -33379,7 +33383,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:262 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_conflict_review.dart:328 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -33407,7 +33411,7 @@
         "path": "lib/windows_sync_conflict_review.dart",
         "kind": "StateError",
         "literal": "Cloud version changed. Verify both versions again.",
-        "line": 262,
+        "line": 328,
         "origins": 1
       }
     },
@@ -33425,7 +33429,7 @@
         "Verified file bytes unavailable. Recover the file first."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:270",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:342",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -33435,7 +33439,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:270 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:342 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Locate the measured owner stage and respect its retry/backoff deadline. Keep in-flight work and originals; only the owner may admit a retry after checking settlement and operation identity.",
       "level": "B",
       "playbook": "",
@@ -33463,7 +33467,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "Verified file bytes unavailable. Recover the file first.",
-        "line": 270,
+        "line": 342,
         "origins": 1
       }
     },
@@ -34713,7 +34717,7 @@
         "Pending document file is missing."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:244",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:257",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -34723,7 +34727,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:244 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:257 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Review original availability, free space and access in the owning storage/file interface. Restore access to the original input; never reset storage, substitute a file or clear pending records.",
       "level": "B",
       "playbook": "",
@@ -34751,7 +34755,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Pending document file is missing.",
-        "line": 244,
+        "line": 257,
         "origins": 1
       }
     },
@@ -35105,7 +35109,7 @@
         "School profile changed; reopen this record."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:480",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:487",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -35115,7 +35119,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:480 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:487 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -35143,7 +35147,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School profile changed; reopen this record.",
-        "line": 480,
+        "line": 487,
         "origins": 1
       }
     },
@@ -35553,7 +35557,7 @@
         "School changed. Reopen this page."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:354",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:426",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -35563,7 +35567,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:354 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:426 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -35591,7 +35595,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "School changed. Reopen this page.",
-        "line": 354,
+        "line": 426,
         "origins": 1
       }
     },
@@ -36953,7 +36957,7 @@
         "Pending record belongs to another school."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:319",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:324",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -36963,7 +36967,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:319 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:324 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -36991,7 +36995,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Pending record belongs to another school.",
-        "line": 319,
+        "line": 324,
         "origins": 1
       }
     },
@@ -37065,7 +37069,7 @@
         "Windows local database Map data require karta hai."
       ],
       "evidence": [
-        "Constant ArgumentError throw operand in lib/windows_local_firestore.dart:528",
+        "Constant ArgumentError throw operand in lib/windows_local_firestore.dart:535",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -37075,7 +37079,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:528 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:535 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -37103,7 +37107,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "ArgumentError",
         "literal": "Windows local database Map data require karta hai.",
-        "line": 528,
+        "line": 535,
         "origins": 1
       }
     },
@@ -37513,7 +37517,7 @@
         "School changed during health check"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:410",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:482",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -37523,7 +37527,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:410 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:482 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -37551,7 +37555,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "School changed during health check",
-        "line": 410,
+        "line": 482,
         "origins": 1
       }
     },
@@ -38465,7 +38469,7 @@
         "Pending generation changed. Verify again."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:269",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:299",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -38475,7 +38479,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:269 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:299 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -38503,7 +38507,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Pending generation changed. Verify again.",
-        "line": 269,
+        "line": 299,
         "origins": 1
       }
     },
@@ -38801,7 +38805,7 @@
         "Version-safe acknowledgement missing. Pending operation retained."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:333",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:356",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -38811,7 +38815,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:333 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:356 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -38839,7 +38843,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Version-safe acknowledgement missing. Pending operation retained.",
-        "line": 333,
+        "line": 356,
         "origins": 1
       }
     },
@@ -38913,7 +38917,7 @@
         "Batch set Map require karta hai."
       ],
       "evidence": [
-        "Constant ArgumentError throw operand in lib/windows_local_firestore.dart:616",
+        "Constant ArgumentError throw operand in lib/windows_local_firestore.dart:623",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -38923,7 +38927,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:616 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:623 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -38951,7 +38955,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "ArgumentError",
         "literal": "Batch set Map require karta hai.",
-        "line": 616,
+        "line": 623,
         "origins": 1
       }
     },
@@ -39305,7 +39309,7 @@
         "This backup verification is isolated TEST only"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:433",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:505",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -39315,7 +39319,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:433 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:505 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -39343,7 +39347,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "This backup verification is isolated TEST only",
-        "line": 433,
+        "line": 505,
         "origins": 1
       }
     },
@@ -40313,7 +40317,7 @@
         "Local generation changed. Verify again."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:276",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:306",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -40323,7 +40327,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:276 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:306 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -40351,7 +40355,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Local generation changed. Verify again.",
-        "line": 276,
+        "line": 306,
         "origins": 1
       }
     },
@@ -40649,7 +40653,7 @@
         "Version-safe school delta unavailable."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:341",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:374",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -40659,7 +40663,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:341 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:374 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Locate the measured owner stage and respect its retry/backoff deadline. Keep in-flight work and originals; only the owner may admit a retry after checking settlement and operation identity.",
       "level": "B",
       "playbook": "",
@@ -40687,7 +40691,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Version-safe school delta unavailable.",
-        "line": 341,
+        "line": 374,
         "origins": 1
       }
     },
@@ -40705,7 +40709,7 @@
         "School profile changed during batch."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:657",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:664",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -40715,7 +40719,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:657 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:664 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -40743,7 +40747,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School profile changed during batch.",
-        "line": 657,
+        "line": 664,
         "origins": 1
       }
     },
@@ -40985,7 +40989,7 @@
         "Cloud backup remains unverified"
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:445",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:517",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -40995,7 +40999,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:445 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:517 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -41023,7 +41027,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "Cloud backup remains unverified",
-        "line": 445,
+        "line": 517,
         "origins": 1
       }
     },
@@ -41825,7 +41829,7 @@
         "School changed during document sync."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:313",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:538",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -41835,7 +41839,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:313 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:538 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -41863,7 +41867,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed during document sync.",
-        "line": 313,
+        "line": 538,
         "origins": 1
       }
     },
@@ -42105,7 +42109,7 @@
         "Incomplete school delta."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:343",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:376",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -42115,7 +42119,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:343 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:376 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -42143,7 +42147,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Incomplete school delta.",
-        "line": 343,
+        "line": 376,
         "origins": 1
       }
     },
@@ -42161,7 +42165,7 @@
         "Transaction set Map require karta hai."
       ],
       "evidence": [
-        "Constant ArgumentError throw operand in lib/windows_local_firestore.dart:685",
+        "Constant ArgumentError throw operand in lib/windows_local_firestore.dart:692",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -42171,7 +42175,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:685 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:692 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -42199,7 +42203,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "ArgumentError",
         "literal": "Transaction set Map require karta hai.",
-        "line": 685,
+        "line": 692,
         "origins": 1
       }
     },
@@ -42441,7 +42445,7 @@
         "Secure school backup export is unavailable in this build."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_sync_control_center.dart:931",
+        "Constant StateError throw operand in lib/windows_sync_control_center.dart:1007",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -42451,7 +42455,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_sync_control_center.dart:931 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_sync_control_center.dart:1007 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -42479,7 +42483,7 @@
         "path": "lib/windows_sync_control_center.dart",
         "kind": "StateError",
         "literal": "Secure school backup export is unavailable in this build.",
-        "line": 931,
+        "line": 1007,
         "origins": 1
       }
     },
@@ -43337,7 +43341,7 @@
         "Pending document belongs to another school."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:333",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:567",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -43347,7 +43351,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:333 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:567 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -43375,7 +43379,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Pending document belongs to another school.",
-        "line": 333,
+        "line": 567,
         "origins": 1
       }
     },
@@ -43617,7 +43621,7 @@
         "Invalid school delta checkpoint."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:347",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:380",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -43627,7 +43631,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:347 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:380 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -43655,7 +43659,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Invalid school delta checkpoint.",
-        "line": 347,
+        "line": 380,
         "origins": 1
       }
     },
@@ -43673,7 +43677,7 @@
         "School profile changed during transaction."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:728",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:735",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -43683,7 +43687,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:728 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:735 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -43711,7 +43715,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School profile changed during transaction.",
-        "line": 728,
+        "line": 735,
         "origins": 1
       }
     },
@@ -44625,7 +44629,7 @@
         "School changed before upload."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:345",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:579",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -44635,7 +44639,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:345 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:579 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -44663,7 +44667,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed before upload.",
-        "line": 345,
+        "line": 579,
         "origins": 2
       }
     },
@@ -44905,7 +44909,7 @@
         "Foreign school delta rejected."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:351",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:390",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -44915,7 +44919,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:351 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:390 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -44943,7 +44947,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Foreign school delta rejected.",
-        "line": 351,
+        "line": 390,
         "origins": 1
       }
     },
@@ -44961,7 +44965,7 @@
         "Verified school scope required for backup."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:880",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:887",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -44971,7 +44975,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:880 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:887 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -44999,7 +45003,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "Verified school scope required for backup.",
-        "line": 880,
+        "line": 887,
         "origins": 1
       }
     },
@@ -46025,7 +46029,7 @@
         "Version-safe school manifest unavailable."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:361",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:414",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -46035,7 +46039,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:361 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:414 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Locate the measured owner stage and respect its retry/backoff deadline. Keep in-flight work and originals; only the owner may admit a retry after checking settlement and operation identity.",
       "level": "B",
       "playbook": "",
@@ -46063,7 +46067,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Version-safe school manifest unavailable.",
-        "line": 361,
+        "line": 414,
         "origins": 1
       }
     },
@@ -46081,7 +46085,7 @@
         "School changed before backup snapshot."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:884",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:891",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -46091,7 +46095,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:884 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:891 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -46119,7 +46123,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School changed before backup snapshot.",
-        "line": 884,
+        "line": 891,
         "origins": 1
       }
     },
@@ -46865,7 +46869,7 @@
         "School changed while loading documents."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:545",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:790",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -46875,7 +46879,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:545 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:790 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -46903,7 +46907,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed while loading documents.",
-        "line": 545,
+        "line": 790,
         "origins": 2
       }
     },
@@ -47089,7 +47093,7 @@
         "Firestore collection response invalid hai."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:425",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:485",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -47099,7 +47103,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:425 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:485 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -47127,7 +47131,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firestore collection response invalid hai.",
-        "line": 425,
+        "line": 485,
         "origins": 1
       }
     },
@@ -47145,7 +47149,7 @@
         "School changed during backup snapshot."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:902",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:909",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -47155,7 +47159,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:902 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:909 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -47183,7 +47187,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School changed during backup snapshot.",
-        "line": 902,
+        "line": 909,
         "origins": 1
       }
     },
@@ -48041,7 +48045,7 @@
         "Current school durable document storage is unavailable."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:592",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:837",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -48051,7 +48055,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:592 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:837 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -48079,7 +48083,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Current school durable document storage is unavailable.",
-        "line": 592,
+        "line": 837,
         "origins": 1
       }
     },
@@ -48265,7 +48269,7 @@
         "School identity mismatch."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:485",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:546",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -48275,7 +48279,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:485 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:546 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -48303,7 +48307,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "School identity mismatch.",
-        "line": 485,
+        "line": 546,
         "origins": 1
       }
     },
@@ -48321,7 +48325,7 @@
         "School cache provenance could not be verified."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:973",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:980",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -48331,7 +48335,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:973 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:980 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -48359,7 +48363,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School cache provenance could not be verified.",
-        "line": 973,
+        "line": 980,
         "origins": 1
       }
     },
@@ -49161,7 +49165,7 @@
         "School changed before document removal."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:598",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:843",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -49171,7 +49175,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:598 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:843 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -49199,7 +49203,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed before document removal.",
-        "line": 598,
+        "line": 843,
         "origins": 1
       }
     },
@@ -49385,7 +49389,7 @@
         "Invalid school document ID."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:518",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:584",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -49395,7 +49399,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:518 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:584 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -49423,7 +49427,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Invalid school document ID.",
-        "line": 518,
+        "line": 584,
         "origins": 1
       }
     },
@@ -49441,7 +49445,7 @@
         "Foreign school cache blocked."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:980",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:987",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -49451,7 +49455,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:980 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:987 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -49479,7 +49483,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "Foreign school cache blocked.",
-        "line": 980,
+        "line": 987,
         "origins": 1
       }
     },
@@ -50225,7 +50229,7 @@
         "Invalid document ID."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:601",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:846",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -50235,7 +50239,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:601 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:846 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -50263,7 +50267,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Invalid document ID.",
-        "line": 601,
+        "line": 846,
         "origins": 1
       }
     },
@@ -50449,7 +50453,7 @@
         "Verified school cloud connection is required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:633",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:699",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -50459,7 +50463,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:633 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:699 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -50487,7 +50491,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Verified school cloud connection is required.",
-        "line": 633,
+        "line": 699,
         "origins": 1
       }
     },
@@ -50505,7 +50509,7 @@
         "School profile changed before queued write."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:1105",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:1112",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -50515,7 +50519,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:1105 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:1112 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -50543,7 +50547,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School profile changed before queued write.",
-        "line": 1105,
+        "line": 1112,
         "origins": 1
       }
     },
@@ -51233,7 +51237,7 @@
         "Document belongs to another student."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:614",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:859",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -51243,7 +51247,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:614 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:859 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -51271,7 +51275,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Document belongs to another student.",
-        "line": 614,
+        "line": 859,
         "origins": 1
       }
     },
@@ -51457,7 +51461,7 @@
         "Invalid school collection."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:638",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:704",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -51467,7 +51471,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:638 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:704 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -51495,7 +51499,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Invalid school collection.",
-        "line": 638,
+        "line": 704,
         "origins": 1
       }
     },
@@ -51513,7 +51517,7 @@
         "School profile changed during queued write."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:1112",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:1119",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -51523,7 +51527,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:1112 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:1119 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -51551,7 +51555,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School profile changed during queued write.",
-        "line": 1112,
+        "line": 1119,
         "origins": 1
       }
     },
@@ -52073,7 +52077,7 @@
         "School changed before document save."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:648",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:893",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -52083,7 +52087,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:648 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:893 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -52111,7 +52115,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed before document save.",
-        "line": 648,
+        "line": 893,
         "origins": 1
       }
     },
@@ -52297,7 +52301,7 @@
         "Firebase login response invalid hai."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:833",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:899",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -52307,7 +52311,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:833 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:899 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Use the existing authenticated account/licence interface to review validity and permissions. Preserve credentials and school binding; never grant privileges or bypass the guard automatically.",
       "level": "C",
       "playbook": "",
@@ -52335,7 +52339,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase login response invalid hai.",
-        "line": 833,
+        "line": 899,
         "origins": 1
       }
     },
@@ -52353,7 +52357,7 @@
         "Restore coordination pending; original deletion and snapshot retained."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:1125",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:1132",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -52363,7 +52367,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:1125 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:1132 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -52391,7 +52395,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "Restore coordination pending; original deletion and snapshot retained.",
-        "line": 1125,
+        "line": 1132,
         "origins": 1
       }
     },
@@ -53137,7 +53141,7 @@
         "Firebase token response invalid hai."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_firebase_sync.dart:881",
+        "Constant StateError throw operand in lib/windows_firebase_sync.dart:947",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -53147,7 +53151,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_firebase_sync.dart:881 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_firebase_sync.dart:947 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Use the existing authenticated account/licence interface to review validity and permissions. Preserve credentials and school binding; never grant privileges or bypass the guard automatically.",
       "level": "C",
       "playbook": "",
@@ -53175,7 +53179,7 @@
         "path": "lib/windows_firebase_sync.dart",
         "kind": "StateError",
         "literal": "Firebase token response invalid hai.",
-        "line": 881,
+        "line": 947,
         "origins": 1
       }
     },
@@ -53193,7 +53197,7 @@
         "Same school context required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:1353",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:1360",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -53203,7 +53207,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:1353 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:1360 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -53231,7 +53235,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "Same school context required.",
-        "line": 1353,
+        "line": 1360,
         "origins": 1
       }
     },
@@ -53697,7 +53701,7 @@
         "Current school durable storage is unavailable."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:673",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:918",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -53707,7 +53711,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:673 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:918 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -53735,7 +53739,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Current school durable storage is unavailable.",
-        "line": 673,
+        "line": 918,
         "origins": 1
       }
     },
@@ -53865,7 +53869,7 @@
         "School changed during restore."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:1356",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:1363",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -53875,7 +53879,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:1356 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:1363 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -53903,7 +53907,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School changed during restore.",
-        "line": 1356,
+        "line": 1363,
         "origins": 1
       }
     },
@@ -54145,7 +54149,7 @@
         "Duplicate Sheet record; operator review required"
       ],
       "evidence": [
-        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:176",
+        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:205",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -54155,7 +54159,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:176 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:205 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -54183,7 +54187,7 @@
         "path": "school-backend/managed/SaarthiManagedAdapter.gs",
         "kind": "Error",
         "literal": "Duplicate Sheet record; operator review required",
-        "line": 176,
+        "line": 205,
         "origins": 2
       }
     },
@@ -54425,7 +54429,7 @@
         "Google health-check response JSON map nahi hai."
       ],
       "evidence": [
-        "Constant FormatException throw operand in lib/windows_backend_bridge.dart:1179",
+        "Constant FormatException throw operand in lib/windows_backend_bridge.dart:1450",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -54435,7 +54439,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1179 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1450 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -54463,7 +54467,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "FormatException",
         "literal": "Google health-check response JSON map nahi hai.",
-        "line": 1179,
+        "line": 1450,
         "origins": 1
       }
     },
@@ -54649,7 +54653,7 @@
         "Verified same-school deletion evidence required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:1362",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:1369",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -54659,7 +54663,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:1362 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:1369 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -54687,7 +54691,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "Verified same-school deletion evidence required.",
-        "line": 1362,
+        "line": 1369,
         "origins": 1
       }
     },
@@ -54929,7 +54933,7 @@
         "Sheet identity mismatch"
       ],
       "evidence": [
-        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:179",
+        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:208",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -54939,7 +54943,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:179 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:208 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -54967,7 +54971,7 @@
         "path": "school-backend/managed/SaarthiManagedAdapter.gs",
         "kind": "Error",
         "literal": "Sheet identity mismatch",
-        "line": 179,
+        "line": 208,
         "origins": 2
       }
     },
@@ -55041,7 +55045,7 @@
         "Request body JSON map nahi hai."
       ],
       "evidence": [
-        "Constant FormatException throw operand in lib/windows_backend_bridge.dart:1271",
+        "Constant FormatException throw operand in lib/windows_backend_bridge.dart:1542",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55051,7 +55055,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1271 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1542 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -55079,7 +55083,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "FormatException",
         "literal": "Request body JSON map nahi hai.",
-        "line": 1271,
+        "line": 1542,
         "origins": 1
       }
     },
@@ -55209,7 +55213,7 @@
         "School record required."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:1365",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:1372",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55219,7 +55223,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:1365 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:1372 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -55247,7 +55251,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "School record required.",
-        "line": 1365,
+        "line": 1372,
         "origins": 1
       }
     },
@@ -55489,7 +55493,7 @@
         "Foreign school record"
       ],
       "evidence": [
-        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:183",
+        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:212",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55499,7 +55503,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:183 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:212 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -55527,7 +55531,7 @@
         "path": "school-backend/managed/SaarthiManagedAdapter.gs",
         "kind": "Error",
         "literal": "Foreign school record",
-        "line": 183,
+        "line": 212,
         "origins": 2
       }
     },
@@ -55657,7 +55661,7 @@
         "Document school mismatch."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:1280",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:1551",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55667,7 +55671,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1280 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1551 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -55695,7 +55699,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Document school mismatch.",
-        "line": 1280,
+        "line": 1551,
         "origins": 1
       }
     },
@@ -55769,7 +55773,7 @@
         "Mixed school snapshot."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_local_firestore.dart:1367",
+        "Constant StateError throw operand in lib/windows_local_firestore.dart:1374",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55779,7 +55783,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_local_firestore.dart:1367 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_local_firestore.dart:1374 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -55807,7 +55811,7 @@
         "path": "lib/windows_local_firestore.dart",
         "kind": "StateError",
         "literal": "Mixed school snapshot.",
-        "line": 1367,
+        "line": 1374,
         "origins": 1
       }
     },

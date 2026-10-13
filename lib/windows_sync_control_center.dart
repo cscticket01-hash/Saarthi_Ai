@@ -1,6 +1,7 @@
 import 'sync_recovery_policy.dart' as failure_policy;
 import 'health/health_panel.dart';
 import 'health/windows_healing_monitor.dart';
+
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
@@ -9,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart' as files;
 
 import 'windows_sync_engine.dart';
+import 'windows_student_sync_audit.dart';
+import 'windows_sync_comparison.dart';
 import 'windows_sync_recovery.dart';
 import 'windows_recycle_bin.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -77,6 +80,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   String cloudHealth = 'Not checked in this session';
   Map<String, dynamic>? cloudEvidence;
   Map<String, int>? categoryCounts;
+  Map<String, dynamic>? studentAudit;
   Map<String, dynamic>? storageEvidence;
   final diskStorage = WindowsDiskStorage();
   Map<String, dynamic>? diskEvidence;
@@ -134,6 +138,65 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           setState(() => binaryEvidence = summary);
       }
     }
+  }
+
+  Future<void> _verifyStudentRecords() async {
+    if (mounted) setState(() => studentAudit = null);
+    final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+    void guard() {
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != school)
+        throw StateError('School changed. Reopen Sync details.');
+    }
+
+    guard();
+    final local = {
+      for (final row in (await db.collection('students_directory').get()).docs)
+        row.id: row.data(),
+    };
+    final before = syncPayloadHash(local);
+    final pending = {
+      for (final row
+          in (await db.collection('_windows_firebase_outbox').get()).docs)
+        if (row.data()['collection'] == 'students_directory' &&
+            row.data()['schoolId'] == school)
+          row.data()['documentId'].toString(),
+    };
+    final reply = await ManagedSchoolSession.callForSchool(
+      school,
+      'managed/records',
+      {
+        'operation': 'read',
+        'collection': 'students_directory',
+        'syncProtocol': 2,
+      },
+    ).timeout(const Duration(seconds: 60));
+    guard();
+    if (reply['schoolId'] != school ||
+        reply['syncProtocol'] != 2 ||
+        reply['records'] is! Map ||
+        reply['unchanged'] == true)
+      throw StateError('Full authenticated student snapshot required.');
+    final after = {
+      for (final row in (await db.collection('students_directory').get()).docs)
+        row.id: row.data(),
+    };
+    guard();
+    if (syncPayloadHash(after) != before)
+      throw StateError('Students changed during verification. Run again.');
+    final result = compareStudentSyncSnapshot(
+      school: school,
+      local: local,
+      cloud: Map<String, dynamic>.from(reply['records'] as Map),
+      pendingIds: pending,
+    );
+    if (mounted)
+      setState(
+        () => studentAudit = {
+          ...result,
+          'measuredAt': DateTime.now().toIso8601String(),
+        },
+      );
   }
 
   Future<void> _storageDetails() async {
@@ -202,16 +265,25 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         result['measuredAt'] is! int ||
         (result['measuredAt'] as int) <= 0)
       throw StateError('Storage usage unverified');
-    final quota = await WindowsDriveQuota.measure(authorizedRead: () async {
-      final response = widget.quotaProbe != null
-          ? await widget.quotaProbe!(school)
-          : await ManagedSchoolSession.callForSchool(school, 'managed/storage/quota', {});
-      if (response['success'] != true || response['schoolId'] != school || response['driveQuotaVersion'] != 1) {
-        throw StateError('School quota response unverified');
-      }
-      return response;
-    });
-    if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school) {
+    final quota = await WindowsDriveQuota.measure(
+      authorizedRead: () async {
+        final response = widget.quotaProbe != null
+            ? await widget.quotaProbe!(school)
+            : await ManagedSchoolSession.callForSchool(
+                school,
+                'managed/storage/quota',
+                {},
+              );
+        if (response['success'] != true ||
+            response['schoolId'] != school ||
+            response['driveQuotaVersion'] != 1) {
+          throw StateError('School quota response unverified');
+        }
+        return response;
+      },
+    );
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school) {
       throw StateError('School changed during quota read');
     }
     if (mounted) setState(() { storageEvidence = result; quotaEvidence = quota; });
@@ -911,6 +983,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         child: const Text('Check Cloud Health'),
       ),
       OutlinedButton(
+        onPressed: active ? null : () => _tool(_verifyStudentRecords),
+        child: const Text('Verify student cloud records'),
+      ),
+      OutlinedButton(
         onPressed: active ? null : () => _tool(_storageDetails),
         child: const Text('Local Storage Details'),
       ),
@@ -1532,6 +1608,28 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 ),
                               ),
                             const Divider(height: 32),
+                            if (studentAudit != null) ...[
+                              const Text(
+                                'Student cloud snapshot — current school',
+                                style: TextStyle(fontSize: 20),
+                              ),
+                              Text(
+                                'Local: ${studentAudit!['localCount']} • Cloud: ${studentAudit!['cloudCount']} • Matching: ${(studentAudit!['matched'] as List).length}',
+                              ),
+                              for (final key in [
+                                'missingCloud',
+                                'different',
+                                'cloudOnly',
+                                'pendingIds',
+                              ])
+                                SelectableText(
+                                  '$key (${(studentAudit![key] as List).length}): ${(studentAudit![key] as List).take(100).join(', ')}',
+                                ),
+                              Text(
+                                'Measured: ${studentAudit!['measuredAt']}. Metadata snapshot only; lists show up to 100 IDs. No records changed.',
+                              ),
+                              const Divider(height: 32),
+                            ],
                             if (categoryCounts != null) ...[
                               const Text(
                                 'Local records by category — current school',
@@ -1634,8 +1732,23 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             ],
                           ],
                         ],
-                        ListTile(leading: const Icon(Icons.health_and_safety_outlined), title: const Text('Self-Healing Monitor'), subtitle: const Text('Health, diagnostics and authorized recovery'), trailing: const Icon(Icons.chevron_right), onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WindowsHealingMonitor()))),
-                        const ExpansionTile(title: Text('Universal Self-Healing 2.0'), children: [UniversalHealthPanel()]),
+                        ListTile(
+                          leading: const Icon(Icons.health_and_safety_outlined),
+                          title: const Text('Self-Healing Monitor'),
+                          subtitle: const Text(
+                            'Health, diagnostics and authorized recovery',
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const WindowsHealingMonitor(),
+                            ),
+                          ),
+                        ),
+                        const ExpansionTile(
+                          title: Text('Universal Self-Healing 2.0'),
+                          children: [UniversalHealthPanel()],
+                        ),
                       ],
                     ],
                   );
@@ -1650,6 +1763,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
 }
 
 String syncFailureReason(Map item) {
-  final kind = failure_policy.SyncFailureKind.values.where((kind) => kind.name == item['failureCategory']);
-  return failure_policy.SyncRecoveryDecision(kind.isEmpty ? failure_policy.SyncFailureKind.unknown : kind.first).message;
+  final kind = failure_policy.SyncFailureKind.values.where(
+    (kind) => kind.name == item['failureCategory'],
+  );
+  return failure_policy.SyncRecoveryDecision(
+    kind.isEmpty ? failure_policy.SyncFailureKind.unknown : kind.first,
+  ).message;
 }

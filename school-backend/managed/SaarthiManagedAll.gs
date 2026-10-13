@@ -6611,7 +6611,7 @@ function VS_legacySheet(collection,readContext) {
   let sheet=book.getSheetByName(collection);
   if(!sheet&&p.getProperty('VS_SHEET_MIGRATED_'+collection)==='1')throw new Error('Verified school tab is missing; operator recovery required');
   if(!sheet){sheet=book.insertSheet(collection);if(sheet.getMaxColumns()<33)sheet.insertColumnsAfter(sheet.getMaxColumns(),33-sheet.getMaxColumns());sheet.getRange(1,1,1,33).setValues([['Record Key','School ID','Revision','Deleted','Operation ID','Display Name'].concat(Array.from({length:27},(_,n)=>'Data '+(n+1)))]);sheet.setFrozenRows(1);}
-  const store={sheet:sheet,school:school};
+  const store={sheet:sheet,school:school,collection:collection};
   if(p.getProperty('VS_SHEET_MIGRATED_'+collection)!=='1'){
     const files=legacy.getFiles();let bytes=0,copied=0;const seen={};
     while(files.hasNext()){
@@ -6629,6 +6629,35 @@ function VS_legacySheet(collection,readContext) {
   }
   return store;
 }
+function VS_refreshStudentReadable(store,item,row) {
+  if(store.collection!=='students_directory')return;
+  const p=PropertiesService.getScriptProperties();
+  try{if(item)VS_studentReadable(store,item,row);else {const remaining=VS_studentReadableBackfill(store);
+      p.setProperty('VS_STUDENT_READABLE_STATUS',remaining?'backfill pending: '+remaining+' rows':'available');return;}
+    if(!(p.getProperty('VS_STUDENT_READABLE_STATUS')||'').startsWith('backfill pending'))p.setProperty('VS_STUDENT_READABLE_STATUS','available');
+  }catch(_){
+    // A derived display failure must never change canonical ACK/record ownership.
+    p.setProperty('VS_STUDENT_READABLE_STATUS','blocked: readable columns require owner review; canonical records retained');
+  }
+}
+function VS_studentReadableBackfill(store) {
+  if(store.collection!=='students_directory')return;
+  const p=PropertiesService.getScriptProperties();let remaining=0;
+  (store.partitions||[store]).forEach(part=>{
+    const key='VS_STUDENT_VIEW_ROW_'+part.sheet.getName()+':'+(part.bookId||'legacy');
+    const last=part.sheet.getLastRow(),start=Math.max(2,Number(p.getProperty(key)||2));
+    const end=Math.min(last,start+99);
+    if(last>=2)VS_studentReadableHeader(part.sheet);
+    if(start<=end){
+      const rows=part.sheet.getRange(start,1,end-start+1,33).getValues();
+      const previous=part.sheet.getRange(start,34,rows.length,14).getValues();
+      const values=rows.map((v,n)=>v[0]?VS_studentReadableValues(VS_sheetDecode(part,v)):previous[n]);
+      part.sheet.getRange(start,34,values.length,14).setValues(values);SpreadsheetApp.flush();
+      VS_verifyStudentReadable(values,part.sheet.getRange(start,34,values.length,14).getValues());
+    }
+    p.setProperty(key,String(end+1));remaining+=Math.max(0,last-end);
+  });return remaining;
+}
 function VS_sheetItem(store,id) {
   if(store.partitions)return VS_layoutItem(store,id);
   const key=Utilities.base64EncodeWebSafe(id),last=store.sheet.getLastRow();
@@ -6643,6 +6672,32 @@ function VS_sheetDecode(store,values) {
   const item=JSON.parse(values.slice(6).filter(v=>v!=='').map(v=>JSON.parse(v)).join(''));
   if(!item||item.schoolId!==store.school||!item.data||item.data.schoolId!==store.school||Utilities.base64EncodeWebSafe(item.id)!==values[0]||values[1]!==store.school)throw new Error('Foreign school record');
   return item;
+}
+// Readable fields are derived from the same verified authoritative JSON row.
+// They never feed edits back into Sync or create a second school database.
+const VS_STUDENT_VIEW_HEADERS=['Name','Parent Name','Class','Roll No','Contact','Photo URL','Hostel Facility','Address','District','State','PIN Code','Joining Date','Date of Birth','Timestamp'];
+function VS_studentReadableHeader(sheet) {
+  const start=34,width=VS_STUDENT_VIEW_HEADERS.length;
+  if(sheet.getMaxColumns()<start+width-1)sheet.insertColumnsAfter(sheet.getMaxColumns(),start+width-1-sheet.getMaxColumns());
+  const headers=sheet.getRange(1,start,1,width).getValues()[0];
+  if(headers.some((v,n)=>v!==''&&v!==VS_STUDENT_VIEW_HEADERS[n]))throw new Error('Student readable columns contain owner data; review required');
+  if(headers.some(v=>v===''))sheet.getRange(1,start,1,width).setValues([VS_STUDENT_VIEW_HEADERS]);
+  if(sheet.hideColumns)sheet.hideColumns(1,33);
+}
+function VS_studentReadableValues(item) {
+  const d=item.data,field=(...keys)=>{for(const key of keys)if(d[key]!==undefined&&d[key]!==null)return d[key];return '';};
+  const raw=item.layoutRedirect||d._syncDeleted?Array(14).fill(''):[field('name','studentName'),field('parentName','fatherName'),field('class','studentClass'),field('rollNo','roll'),field('contact','contactNo','mobile'),field('photoUrl','photoURL'),field('hostelFacility','hostel'),field('address'),field('district'),field('state'),field('pinCode','pincode'),field('joiningDate'),field('dateOfBirth','dob'),field('timestamp','createdAt')];
+  return raw.map(v=>{const text=typeof v==='object'?JSON.stringify(v):String(v);return /^[=+\-@]/.test(text)?"'"+text:text;});
+}
+function VS_verifyStudentReadable(expected,actual) {
+  if(actual.some((row,n)=>row.some((v,k)=>String(v)!==expected[n][k]&&String(v)!==expected[n][k].replace(/^'/,''))))throw new Error('Student readable projection verification failed');
+}
+function VS_studentReadable(store,item,row) {
+  if(store.collection!=='students_directory')return;
+  VS_studentReadableHeader(store.sheet);
+  const values=[VS_studentReadableValues(item)];
+  store.sheet.getRange(row,34,1,14).setValues(values);SpreadsheetApp.flush();
+  VS_verifyStudentReadable(values,store.sheet.getRange(row,34,1,14).getValues());
 }
 function VS_sheetPut(store,item) {
   if(store.partitions)return VS_layoutPut(store,item);
@@ -6660,6 +6715,7 @@ function VS_sheetPut(store,item) {
   store.sheet.getRange(row,1,1,33).setValues([values]);SpreadsheetApp.flush();
   const saved=VS_sheetItem(store,item.id);
   if(!saved||JSON.stringify(saved.data)!==JSON.stringify(data))throw new Error('School record verification failed');
+  VS_refreshStudentReadable(store,item,row);
 }
 function VS_sheetRecords(store) {
   if(store.partitions)return VS_layoutRecords(store);
@@ -6866,6 +6922,7 @@ function VS_managedRecordUnlocked(b) {
   const store=VS_managedSheet(b.collection), school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
   if(b.operation==='read') {
     VS_recoverMissingBackupRows(b.collection,store);
+    VS_refreshStudentReadable(store);
     const revision=PropertiesService.getScriptProperties().getProperty('VS_RECORD_REV_'+b.collection)||'legacy';
     if(b.syncProtocol===2 && b.knownRevision===revision)return {records:{},unchanged:true,collectionRevision:revision,syncProtocol:2};
     const all=VS_sheetRecords(store),records=Object.create(null);Object.keys(all).forEach(id=>{if(b.syncProtocol===2||!all[id]._syncDeleted)records[id]=all[id];});
@@ -7220,7 +7277,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:1,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,scriptBundleVersion:'2026-10-11.4',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',scriptBundleVersion:'2026-10-14.1',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
@@ -7401,7 +7458,7 @@ function VS_layoutStore(state,readContext) {
     else{const f=VS_managedFile(target.id);if(f.getDescription()!=='VIDYA_LAYOUT:'+school+':'+target.name)throw new Error('Organized workbook identity mismatch');book=SpreadsheetApp.openById(target.id);if(readContext){if(!readContext.layoutBooks)readContext.layoutBooks=Object.create(null);readContext.layoutBooks[key]=book;}}
     let sheet=book.getSheetByName(state.collection);
     if(!sheet){if(['active','rollingBack'].indexOf(state.phase)>=0)throw new Error('Active organized tab missing');sheet=book.insertSheet(state.collection);if(sheet.getMaxColumns()<33)sheet.insertColumnsAfter(sheet.getMaxColumns(),33-sheet.getMaxColumns());sheet.getRange(1,1,1,33).setValues([['Record Key','School ID','Revision','Deleted','Operation ID','Display Name'].concat(Array.from({length:27},(_,n)=>'Data '+(n+1)))]);sheet.setFrozenRows(1);}
-    return {sheet:sheet,school:school};
+    return {sheet:sheet,school:school,collection:state.collection,bookId:target.id};
   })};
 }
 function VS_layoutEntries(store) {
