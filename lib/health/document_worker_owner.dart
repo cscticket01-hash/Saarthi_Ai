@@ -228,8 +228,8 @@ class DocumentWorkerOwner {
           ),
         )
         .toString();
-    if (_requests.containsKey(key)) return _requests[key]!;
-    if (_active.containsKey(key)) return _active[key]!;
+    if (_requests.containsKey(key)) return _requests[key]!.then(_copy);
+    if (_active.containsKey(key)) return _active[key]!.then(_copy);
     if (_cacheKey == key && _cache != null && _scopeMatches(scope))
       return Future.value(_copy(_cache!));
     if (_requests.length >= 8 ||
@@ -252,7 +252,7 @@ class DocumentWorkerOwner {
         },
       ),
     );
-    return future;
+    return future.then(_copy);
   }
 
   Future<Map<String, dynamic>> _run(_ImageTask task, {RecoveryLease? lease}) {
@@ -363,8 +363,10 @@ class DocumentWorkerOwner {
           HealthState.needsAttention,
           failure: _failed!.failure,
         );
-      final scopedPending=_activeScopes.values.where((c)=>c?.same(scope)==true).length;
-      if (scopedPending>0)
+      final scopedPending = _activeScopes.values
+          .where((c) => c?.same(scope) == true)
+          .length;
+      if (scopedPending > 0)
         return HealthObservation(
           HealthState.monitoring,
           metrics: {'pending': scopedPending},

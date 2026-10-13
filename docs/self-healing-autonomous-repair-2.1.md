@@ -44,3 +44,33 @@ PR #44 was reviewed. Its conflict verification progress/error placement and widg
 See the PR's exact-source CI links for final test counts/results. Dedicated fault fixtures cover real isolate output, automatic same-request recovery, crashes/timeouts, exit quarantine, wrong source/output, stale school results, pause/cross-school denial, coalescing, original/cache preservation, timer deadlines, failed verification, restart budgets and learning. No real-school destructive injection is used.
 
 Original-school 502/slow-sync root cause lacks matched live request/stage evidence. Native/PDF hangs, broken storage/permissions, unsupported owner interfaces and business conflicts remain manual. Physical Windows/Android/five-PC acceptance, representative load and continuous 24h soak are not certified by hosted CI. No main merge, production server/Script/Firebase change, billing enablement or Windows/Android publication is performed.
+
+## Resume verification correction
+
+The first expanded-source CI stopped at a Dart initializer error: a class type
+was used instead of its constructor tear-off. The `.new` fix is committed. Its
+next guardian run passed 1,217 regressions, 27 dedicated fault tests, both
+100,000-observation benchmarks and backend checks; these are prior-source
+evidence for the follow-up changes below, not final acceptance.
+
+Checkpoint restoration now also accepts an elapsed **already captured**
+deadline. It restores one immediate owner dispatch without invoking `syncNow`,
+advancing retry budgets or modifying a queue. Stop clears the anchor. A
+deterministic fixture checks the elapsed deadline, duplicate recovery,
+reconciliation preservation and one dispatch.
+
+Coalesced image requests share one worker but receive independent result maps
+and byte arrays. One consumer can no longer corrupt another consumer's result.
+The private derived cache and original input remain protected.
+
+Coverage verification now reads completed Flutter machine test events from the
+current checkout, including the owner policy and durable admission suites. A
+success banner, unrelated tests, a skipped/failed/incomplete case, missing suite
+or old source cannot certify a repair. Each action needs its named fault and
+negative fixtures. `refresh-sync-view` remains implemented but lacks a dedicated
+owner fault fixture; its catalog case stays pending, even if other tests pass.
+The CSV includes every case's source pointer/error, root-cause uncertainty,
+execution permissions, preconditions, timeout, cooldown, attempts and containment.
+It preserves the 1,000 existing IDs and never treats source matching as a proven
+runtime root cause. No additional automatic catalog coverage is claimed for
+these contract fixes. Final verified numbers come from the new CI artifact.

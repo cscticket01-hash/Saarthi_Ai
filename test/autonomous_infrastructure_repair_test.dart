@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../lib/health/universal_health.dart';
 import '../lib/health/owner_timer_provider.dart';
 import '../lib/health/health_reporter.dart';
+import '../lib/health/health_runtime.dart';
 import '../lib/windows_sync_schedule.dart';
 import '../lib/windows_sync_engine.dart';
 
@@ -45,6 +46,29 @@ class ControlledTimer implements Timer {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const scope = HealthContext('school-A', 'profile-A');
+  test(
+    'restart-monitor-timer: real heartbeat owner recovery and pause denial',
+    () async {
+      final now = DateTime.utc(2026, 10, 13);
+      final engine = UniversalHealth(store: RepairHistory(), now: () => now);
+      engine.register(HealthRuntime.monitorProvider(engine));
+      await engine.bind(scope);
+      try {
+        await engine.check('monitor-worker');
+        expect(engine.lastHeartbeat, isNull);
+        expect(await engine.recover('monitor-worker'), true);
+        expect(engine.lastHeartbeat, now);
+        expect(engine.monitoringActive, true);
+        expect(engine.history.last.stage, 'verified');
+        engine.pause();
+        engine.lastHeartbeat = now.subtract(const Duration(minutes: 3));
+        expect(await engine.recover('monitor-worker'), false);
+        expect(engine.monitoringActive, false);
+      } finally {
+        await engine.dispose();
+      }
+    },
+  );
   for (final entry in {
     'sync-retry-dispatch': 'restore-admitted-dispatch',
     'sync-checkpoint-timer': 'restore-checkpoint-deadline',
@@ -221,6 +245,39 @@ void main() {
       expect(schedule.checkpointExpected, false);
     },
   );
+  test('elapsed captured checkpoint restores once through owner dispatch', () {
+    var now = DateTime.utc(2026, 10, 13), requests = 0;
+    final timers = <ControlledTimer>[], delays = <Duration>[];
+    final schedule = WindowsSyncSchedule(
+      (_) => requests++,
+      now: () => now,
+      once: (delay, callback) {
+        delays.add(delay);
+        final timer = ControlledTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    );
+    schedule.start(const Duration(minutes: 4));
+    final reconciliation = schedule.reconciliation;
+    schedule.armCheckpoint(now.subtract(const Duration(minutes: 59)));
+    timers.single.cancel();
+    now = now.add(const Duration(minutes: 2));
+    expect(schedule.checkpointExpected, true);
+    schedule.repairCheckpoint();
+    schedule.repairCheckpoint();
+    expect(delays.last, Duration.zero);
+    expect(timers.length, 2);
+    expect(requests, 0);
+    expect(identical(schedule.reconciliation, reconciliation), true);
+    timers.last.fire();
+    expect(requests, 1);
+    expect(schedule.checkpointExpected, false);
+    schedule.repairCheckpoint();
+    expect(timers.length, 2);
+    schedule.stop();
+    expect(schedule.checkpointExpected, false);
+  });
   test(
     'Sync owner rejects repair before school activation without admitting work',
     () {

@@ -382,12 +382,19 @@ void main() {
           );
       try {
         final first = owner.process(input), second = owner.process(input);
-        expect(identical(first, second), true);
+        expect(identical(first, second), false);
         await Future<void>.delayed(Duration.zero);
         expect(calls, 1);
         h.succeed(verified());
-        await first;
-        await second;
+        final a = await first;
+        (a['optimized'] as Uint8List).fillRange(0, 12, 0);
+        a['mimeType'] = 'broken';
+        final b = await second;
+        expect(image.decodeImage(b['optimized'] as Uint8List), isNotNull);
+        expect(b['mimeType'], isNot('broken'));
+        final cached = await owner.process(input);
+        expect(image.decodeImage(cached['optimized'] as Uint8List), isNotNull);
+        expect(calls, 1);
       } finally {
         await engine.dispose();
       }
