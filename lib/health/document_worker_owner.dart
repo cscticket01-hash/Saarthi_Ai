@@ -116,7 +116,7 @@ class DocumentWorkerOwner {
     this.deadline = const Duration(seconds: 20),
     this.exitDeadline = const Duration(seconds: 2),
     this.autoRecover = false,
-  }) : spawn = spawn ?? _IsolatedImageHandle {
+  }) : spawn = spawn ?? _IsolatedImageHandle.new {
     if (deadline <= Duration.zero ||
         deadline > const Duration(seconds: 20) ||
         exitDeadline <= Duration.zero ||
