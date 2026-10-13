@@ -21,6 +21,18 @@ class WindowsHealthAdapter {
   final guardian=UniversalHealth.instance;
   late final reporter=HealthReporter(guardian,platform:'windows',version:const String.fromEnvironment('APP_VERSION',defaultValue:'1.0.0'),send:(bound,report)async {try {final r=await ManagedSchoolSession.callForSchool(bound.school,'managed/health/report',{'report':report},observationOnly:true);return r['accepted']==true?HealthSendResult.accepted:HealthSendResult.retryable;}on CentralCloudException catch(e){return {429,502,503,504}.contains(e.status)?HealthSendResult.retryable:HealthSendResult.attention;}on TimeoutException{return HealthSendResult.retryable;}catch(error){return healthTransportFailure(error);}});
   HealthContext current()=>HealthContext(FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'',FirebaseFirestore.instance.activeProfileId);
+  /// Existing derived-display recovery, exposed for owner fault verification.
+  /// Reads only the current school's local queue/receipt projection.
+  /// Smart Sync keeps exclusive queue, retry and acknowledgement authority.
+  /// Does not initialize the Sync owner or start any cloud connection.
+  /// The same provider is registered by the production adapter below.
+  /// Scope and lease are rechecked at execution and result verification.
+  /// Catalog text and learned history cannot replace this reviewed callback.
+  HealthProvider syncViewProvider() => HealthProvider(id:'sync-view',version:'2.0',check:(context) async {
+      if(!current().same(context))return const HealthObservation(HealthState.unknown);
+      final data=WindowsSyncEngine.instance.details.value;
+      return data.isEmpty ? const HealthObservation(HealthState.degraded,failure:HealthFailure.worker) : HealthObservation(HealthState.monitoring,metrics:{'pending':(data['pending'] as num?)??0});
+    },playbooks:[RecoveryPlaybook(id:'refresh-sync-view',kind:RecoveryKind.derivedView,failures:{HealthFailure.worker},precondition:(lease)async=>lease.valid&&current().same(lease.context)&&!WindowsSyncEngine.instance.isSyncing,execute:(lease)async {lease.check();if(!current().same(lease.context))throw StateError('School changed');await WindowsSyncEngine.instance.refreshDetails();lease.check();},verify:(lease)async=>lease.valid&&current().same(lease.context)&&WindowsSyncEngine.instance.details.value.isNotEmpty)]);
   Future<void> initialize() async {
     if(_started)return;
     _started=true;
@@ -28,11 +40,7 @@ class WindowsHealthAdapter {
     guardian.store=FileHealthHistory(() async => WindowsLocalStorage.controlDirectory);
     // Approved repair changes the sync DISPLAY projection only. The Smart
     // Sync owner retains queue, IDs, schedule, retries and ACK authority.
-    guardian.register(HealthProvider(id:'sync-view',version:'2.0',check:(context) async {
-      if(!current().same(context))return const HealthObservation(HealthState.unknown);
-      final data=WindowsSyncEngine.instance.details.value;
-      return data.isEmpty ? const HealthObservation(HealthState.degraded,failure:HealthFailure.worker) : HealthObservation(HealthState.monitoring,metrics:{'pending':(data['pending'] as num?)??0});
-    },playbooks:[RecoveryPlaybook(id:'refresh-sync-view',kind:RecoveryKind.derivedView,failures:{HealthFailure.worker},precondition:(lease)async=>lease.valid&&current().same(lease.context)&&!WindowsSyncEngine.instance.isSyncing,execute:(lease)async {lease.check();if(!current().same(lease.context))throw StateError('School changed');await WindowsSyncEngine.instance.refreshDetails();lease.check();},verify:(lease)async=>lease.valid&&current().same(lease.context)&&WindowsSyncEngine.instance.details.value.isNotEmpty)]));
+    guardian.register(syncViewProvider());
     for(final id in HealthRuntime.components.where((id)=>id!='sync-view')) {
       if(id=='monitor-worker'){guardian.register(HealthRuntime.monitorProvider(guardian));continue;}
       guardian.register(HealthProvider(id:id,version:'2.0',check:(_)async=>guardian.observations[id]??const HealthObservation(HealthState.unknown)));

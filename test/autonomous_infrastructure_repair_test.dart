@@ -3,6 +3,11 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import '../lib/windows_local_firestore.dart';
+import '../lib/windows_runtime_flags.dart';
+import '../lib/health/windows_health_adapter.dart';
 
 import '../lib/health/universal_health.dart';
 import '../lib/health/owner_timer_provider.dart';
@@ -47,17 +52,99 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test('dispatch restoration respects withdrawn admission and current retry floors', () {
     final due = DateTime.utc(2026, 10, 13);
-    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: due), isTrue);
-    expect(canRestoreOwnerDispatch(retryAllowed: false, admittedAt: due), isFalse);
-    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: null), isFalse);
-    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: due,
-        nextRetry: due.add(const Duration(seconds: 1))), isFalse);
-    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: due,
-        quotaRetry: due.add(const Duration(seconds: 1))), isFalse);
-    expect(canRestoreOwnerDispatch(retryAllowed: true, admittedAt: due,
-        nextRetry: due, quotaRetry: due.subtract(const Duration(seconds: 1))), isTrue);
+    expect(
+      canRestoreOwnerDispatch(retryAllowed: true, admittedAt: due),
+      isTrue,
+    );
+    expect(
+      canRestoreOwnerDispatch(retryAllowed: false, admittedAt: due),
+      isFalse,
+    );
+    expect(
+      canRestoreOwnerDispatch(retryAllowed: true, admittedAt: null),
+      isFalse,
+    );
+    expect(
+      canRestoreOwnerDispatch(
+        retryAllowed: true,
+        admittedAt: due,
+        nextRetry: due.add(const Duration(seconds: 1)),
+      ),
+      isFalse,
+    );
+    expect(
+      canRestoreOwnerDispatch(
+        retryAllowed: true,
+        admittedAt: due,
+        quotaRetry: due.add(const Duration(seconds: 1)),
+      ),
+      isFalse,
+    );
+    expect(
+      canRestoreOwnerDispatch(
+        retryAllowed: true,
+        admittedAt: due,
+        nextRetry: due,
+        quotaRetry: due.subtract(const Duration(seconds: 1)),
+      ),
+      isTrue,
+    );
   });
   const scope = HealthContext('school-A', 'profile-A');
+  test('refresh-sync-view: real owner projection repair preserves queue and denies stale scope', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    final db = FirebaseFirestore.instance;
+    const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    await db.switchProfile(
+      'healing-view-fixture',
+      identity: {'schoolSyncId': school},
+    );
+    await db.collection('teachers_directory').doc('fixture').set({
+      'name': 'TEST',
+    });
+    final adapter = WindowsHealthAdapter.instance;
+    final owner = WindowsSyncEngine.instance;
+    final engine = UniversalHealth(store: RepairHistory());
+    engine.register(adapter.syncViewProvider());
+    await engine.bind(adapter.current());
+    final before = jsonEncode(
+      (await db.collection('_windows_firebase_outbox').get()).docs
+          .map((row) => {'id': row.id, 'value': row.data()})
+          .toList(),
+    );
+    try {
+      // Owner stays uninitialized: no cloud connection or report is admitted.
+      owner.details.value = {};
+      await engine.check('sync-view');
+      expect(await engine.recover('sync-view'), true);
+      expect(owner.details.value['pending'], 1);
+      expect(owner.details.value['verifiedReceiptCount'], 0);
+      expect(engine.history.last.stage, 'verified');
+      final after = jsonEncode(
+        (await db.collection('_windows_firebase_outbox').get()).docs
+            .map((row) => {'id': row.id, 'value': row.data()})
+            .toList(),
+      );
+      expect(after, before);
+      expect(await engine.recover('sync-view'), false);
+      await engine.bind(const HealthContext('school-other', 'profile-other'));
+      owner.details.value = {};
+      engine.observe(
+        'sync-view',
+        const HealthObservation(
+          HealthState.degraded,
+          failure: HealthFailure.worker,
+        ),
+      );
+      expect(await engine.recover('sync-view'), false);
+      expect(owner.details.value, isEmpty);
+      engine.pause();
+      expect(await engine.recover('sync-view'), false);
+    } finally {
+      await engine.dispose();
+    }
+  });
   test(
     'restart-monitor-timer: real heartbeat owner recovery and pause denial',
     () async {

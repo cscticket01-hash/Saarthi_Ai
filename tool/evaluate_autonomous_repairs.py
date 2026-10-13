@@ -13,8 +13,8 @@ from build_health_knowledge import validate, CATALOG
 
 ROOT = Path(__file__).resolve().parents[1]
 CAPABILITIES = {
- 'refresh-sync-view': ('lib/health/windows_health_adapter.dart','test/universal_health_test.dart','Windows; derived display only'),
- 'restart-monitor-timer': ('lib/health/health_runtime.dart','test/universal_health_test.dart','Windows/Android; heartbeat only'),
+ 'refresh-sync-view': ('lib/health/windows_health_adapter.dart','test/autonomous_infrastructure_repair_test.dart','Windows; derived display only'),
+ 'restart-monitor-timer': ('lib/health/health_runtime.dart','test/autonomous_infrastructure_repair_test.dart','Windows/Android; heartbeat only'),
  'restore-owner-timer': ('lib/health/owner_timer_provider.dart','test/universal_health_test.dart','Expected missing reconciliation/report timer'),
  'restore-admitted-dispatch': ('lib/windows_sync_engine.dart','test/autonomous_infrastructure_repair_test.dart','Captured owner deadline, enabled, idle, same school/profile; never new retry admission'),
  'restore-checkpoint-deadline': ('lib/windows_sync_engine.dart','test/autonomous_infrastructure_repair_test.dart','Existing future verified-checkpoint anchor; no checkpoint write'),

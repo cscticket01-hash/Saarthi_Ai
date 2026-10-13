@@ -86,6 +86,10 @@ def verified_actions(passed):
             'failed owner restoration cannot become Healthy',
         )):
             result.add(action)
+    if 'restore-admitted-dispatch' in result and not has_test(
+        passed, owner, 'dispatch restoration respects withdrawn admission and current retry floors'
+    ):
+        result.remove('restore-admitted-dispatch')
     if 'restore-checkpoint-deadline' in result and not has_test(
         passed, owner, 'elapsed captured checkpoint restores once through owner dispatch'
     ):
@@ -105,6 +109,6 @@ def verified_actions(passed):
         'coalesced processing returns one worker and retains protected source',
     )):
         result.add('restart-owned-image-worker')
-    # refresh-sync-view has source registration but no dedicated owner fault
-    # fixture in this evidence run. Keep it pending instead of borrowing proof.
+    if has_test(passed, owner, 'refresh-sync-view: real owner projection repair preserves queue and denies stale scope'):
+        result.add('refresh-sync-view')
     return result

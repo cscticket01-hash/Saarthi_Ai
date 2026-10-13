@@ -67,8 +67,9 @@ Coverage verification now reads completed Flutter machine test events from the
 current checkout, including the owner policy and durable admission suites. A
 success banner, unrelated tests, a skipped/failed/incomplete case, missing suite
 or old source cannot certify a repair. Each action needs its named fault and
-negative fixtures. `refresh-sync-view` remains implemented but lacks a dedicated
-owner fault fixture; its catalog case stays pending, even if other tests pass.
+negative fixtures. `refresh-sync-view` now has a dedicated production-provider fixture that
+rebuilds the real local projection while preserving the synthetic queue,
+refuses stale scope/pause and does not initialize cloud transport.
 The CSV includes every case's source pointer/error, root-cause uncertainty,
 execution permissions, preconditions, timeout, cooldown, attempts and containment.
 It preserves the 1,000 existing IDs and never treats source matching as a proven
