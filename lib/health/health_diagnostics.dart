@@ -32,7 +32,9 @@ class HealthDiagnostics {
     HealthFailure.server ||
     HealthFailure.quota => (
       'The owner observed a transport/server/quota failure; the provider-side cause or exact code line is unconfirmed.',
-      'Existing Sync Engine retries the same operation with bounded backoff and verified ACK. Keep the queue. If repeated, export diagnostics and correlate the request reference with Render and owner Apps Script logs; quota waits must not be bypassed.',
+      component == 'smart-sync'
+          ? 'Existing Sync Engine retries the same operation with bounded backoff and verified ACK. Keep the queue. If repeated, export diagnostics and correlate the request reference with Render and owner Apps Script logs; quota waits must not be bypassed.'
+          : 'Keep the original input and owner operation. Automatic business retry is not registered by this guardian for this component. Collect owner diagnostics; respect quota/backoff and do not launch duplicate work.',
     ),
     HealthFailure.authorization || HealthFailure.identity => (
       'Authorization or school identity verification failed.',
@@ -50,7 +52,14 @@ class HealthDiagnostics {
     ),
     HealthFailure.worker => (
       'A registered worker/timer or derived view did not meet its owner check.',
-      'Reviewed timer/view repairs run automatically within persisted cooldown limits. If still unresolved, inspect repair history for blocked, unverified, timeout or circuit-open evidence and the owner source below.',
+      const {
+            'sync-scheduler',
+            'health-report-timer',
+            'monitor-worker',
+            'sync-view',
+          }.contains(component)
+          ? 'Reviewed timer/view repairs run automatically within persisted cooldown limits. If still unresolved, inspect repair history for blocked, unverified, timeout or circuit-open evidence and the owner source below.'
+          : 'No reviewed worker restart is registered for this component. Preserve its in-flight work and inspect the component owner diagnostics before adding a safe recovery interface.',
     ),
     HealthFailure.decoding || HealthFailure.rendering => (
       'The owner observed a decoding/rendering failure; exact failing input or line is unconfirmed.',
@@ -67,7 +76,7 @@ class HealthDiagnostics {
   };
   static String source(String component, HealthFailure failure) {
     if (component == 'sync-scheduler')
-      return 'lib/windows_sync_engine.dart → repairAutomaticSchedule; lib/windows_sync_schedule.dart → WindowsSyncSchedule.start';
+      return 'lib/windows_sync_engine.dart → repairAutomaticSchedule; lib/windows_sync_schedule.dart → repairReconciliationTimer';
     if (component == 'health-report-timer')
       return 'lib/health/health_reporter.dart → repairTimer / report';
     if (component == 'monitor-worker')

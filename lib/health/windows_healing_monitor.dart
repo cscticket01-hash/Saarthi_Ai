@@ -80,6 +80,14 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            engine.paused
+                ? 'Automatic repair is paused.'
+                : engine.admissionHistoryVerified
+                ? 'Repair admission history verified; ${engine.reviewedPlaybookCount} reviewed playbooks available. Owner checks, cooldown and circuit limits still apply.'
+                : 'Automatic repair is off: durable admission history is unavailable or unverified. History and school data are retained.',
+          ),
+          const SizedBox(height: 12),
           if (report.isEmpty)
             const Text(
               'No actionable failure category was observed. Unknown components still require owner evidence.',
