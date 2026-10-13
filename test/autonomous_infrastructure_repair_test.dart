@@ -108,12 +108,15 @@ void main() {
     final engine = UniversalHealth(store: RepairHistory());
     engine.register(adapter.syncViewProvider());
     await engine.bind(adapter.current());
-    final before = jsonEncode(
+    Future<String> queueSnapshot() async => jsonEncode(
       (await db.collection('_windows_firebase_outbox').get()).docs
           .map((row) => {'id': row.id, 'value': row.data()})
           .toList(),
-      toEncodable: (value) => (value as dynamic).toDate().toUtc().toIso8601String(),
+      toEncodable: (value) => value is Timestamp
+          ? {'timestamp': value.millisecondsSinceEpoch}
+          : {'datetime': (value as DateTime).toUtc().millisecondsSinceEpoch},
     );
+    final before = await queueSnapshot();
     try {
       // Owner stays uninitialized: no cloud connection or report is admitted.
       owner.details.value = {};
@@ -122,12 +125,7 @@ void main() {
       expect(owner.details.value['pending'], 1);
       expect(owner.details.value['verifiedReceiptCount'], 0);
       expect(engine.history.last.stage, 'verified');
-      final after = jsonEncode(
-        (await db.collection('_windows_firebase_outbox').get()).docs
-            .map((row) => {'id': row.id, 'value': row.data()})
-            .toList(),
-        toEncodable: (value) => (value as dynamic).toDate().toUtc().toIso8601String(),
-      );
+      final after = await queueSnapshot();
       expect(after, before);
       expect(await engine.recover('sync-view'), false);
       await engine.bind(const HealthContext('school-other', 'profile-other'));

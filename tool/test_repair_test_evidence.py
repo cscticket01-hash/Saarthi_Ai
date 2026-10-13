@@ -1,6 +1,6 @@
 import json
 import unittest
-from repair_test_evidence import REQUIRED_SUITES, passed_tests, verified_actions
+from repair_test_evidence import REQUIRED_SUITES, passed_tests, verified_actions, verified_sync_policy_cases
 
 
 def fixture():
@@ -61,6 +61,9 @@ class EvidenceTests(unittest.TestCase):
             'restart-monitor-timer: real heartbeat owner recovery and pause denial')}
         self.assertEqual(verified_actions(passed), {'restart-monitor-timer'})
         self.assertNotIn('refresh-sync-view', verified_actions(passed))
+
+    def test_unrelated_policy_suites_cannot_claim_a_transport_repair(self):
+        self.assertEqual(verified_sync_policy_cases(passed_tests(encode(fixture()))), set())
 
     def test_empty_completed_run_cannot_be_verified(self):
         with self.assertRaises(ValueError):

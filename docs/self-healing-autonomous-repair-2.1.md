@@ -75,3 +75,9 @@ execution permissions, preconditions, timeout, cooldown, attempts and containmen
 It preserves the 1,000 existing IDs and never treats source matching as a proven
 runtime root cause. No additional automatic catalog coverage is claimed for
 these contract fixes. Final verified numbers come from the new CI artifact.
+
+The final report separates six direct Self-Healing catalog recovery cases from
+four existing Smart Sync transport policy cases. Passing owner policy and
+dispatch tests does **not** prove an outage was repaired or a cloud ACK received.
+Those four are reported as policy regressions, excluded from the count of
+catalog cases with fault-injected, verified Self-Healing recovery.

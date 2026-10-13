@@ -7,7 +7,7 @@ import argparse
 import csv
 import json
 import subprocess
-from repair_test_evidence import passed_tests, verified_actions
+from repair_test_evidence import passed_tests, verified_actions, verified_sync_policy_cases
 from pathlib import Path
 from build_health_knowledge import validate, CATALOG
 
@@ -40,7 +40,7 @@ def evaluate(data, verified=False, evidence=None):
     if verified and evidence is None:
         raise ValueError('Verified coverage requires per-test machine evidence')
     actions = verified_actions(evidence) if verified else set()
-    sync_verified = verified and 'restore-admitted-dispatch' in actions
+    sync_policy = verified_sync_policy_cases(evidence) if verified else set()
     validate(data)
     for key,(source,test,_) in CAPABILITIES.items():
         if not (ROOT/source).is_file() or not (ROOT/test).is_file():
@@ -78,7 +78,7 @@ def evaluate(data, verified=False, evidence=None):
             row.update(automatic_eligibility='Smart Sync owner-mediated recovery only',
                 actual_playbook_or_owner_capability='Existing Smart Sync retry/receipt protocol; restore-admitted-dispatch only if its captured timer is missing',
                 required_root_cause_evidence='Sync owner typed recoverable category, durable identity, quota/backoff and current scope. Guardian observes or restores an already-admitted dispatch; it never admits a business retry.',
-                verification_status='Owner policy/identity/queue regressions and dispatch fault suite PASS; live cause unconfirmed' if sync_verified else 'Existing owner fixtures plus dispatch fault suite; final CI gate pending',
+                verification_status='Owner policy/identity/queue regressions and dispatch fault suite PASS; live cause unconfirmed' if rule['id'] in sync_policy else 'Existing owner fixtures plus dispatch fault suite; final CI gate pending',
                 verification_test='test/sync_recovery_policy_test.dart,test/windows_sync_durable_admission_test.dart,test/autonomous_infrastructure_repair_test.dart',
                 reason_if_unsafe_or_unavailable='A scheduled retry is not repaired connectivity, a verified cloud revision or ACK; block if owner busy/paused/review/quota does not admit it')
         elif rule['level']=='C':
@@ -105,7 +105,8 @@ if __name__=='__main__':
     totals={'evaluated':len(rows),'directInfrastructurePatterns':len(DIRECT),'smartSyncOwnerPatterns':len(SYNC),
             'automaticConditionalUnion':len(DIRECT)+len(SYNC),'uniqueExecutablePlaybooks':len(CAPABILITIES),
             'newExecutablePlaybooks':5,'manualOrUnavailable':len(rows)-len(DIRECT)-len(SYNC),
-            'verifiedCatalogCases':sum('PASS' in r['verification_status'] for r in rows),
+            'verifiedCatalogCases':sum(r['error_id'] in DIRECT and 'PASS' in r['verification_status'] for r in rows),
+            'verifiedOwnerMediatedPolicyCases':len(verified_sync_policy_cases(evidence)) if evidence is not None else 0,
             'verifiedExecutableActions':len(verified_actions(evidence)) if evidence is not None else 0,
             'sourceCommit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
             'verification':'Per-test machine evidence; synthetic only' if args.verified else 'awaiting exact-source CI'}

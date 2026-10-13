@@ -112,3 +112,23 @@ def verified_actions(passed):
     if has_test(passed, owner, 'refresh-sync-view: real owner projection repair preserves queue and denies stale scope'):
         result.add('refresh-sync-view')
     return result
+
+
+def verified_sync_policy_cases(passed):
+    """Policy regressions are separate from a successfully repaired outage."""
+    if 'restore-admitted-dispatch' not in verified_actions(passed):
+        return set()
+    durable = 'windows_sync_durable_admission_test.dart'
+    if not all(has_test(passed, durable, name) for name in (
+        'foreign legacy queue cannot be rebound or sent and remains unchanged',
+        'migration compare-and-set cannot overwrite a newer durable local edit',
+        'failed send cannot mark an edit captured during the request',
+    )):
+        return set()
+    policy = 'sync_recovery_policy_test.dart'
+    result = set()
+    if has_test(passed, policy, 'server outage and timeout are distinct from a failed network path'):
+        result.update({'sh-smart-sync-networkpath', 'sh-smart-sync-timeout', 'sh-smart-sync-server'})
+    if has_test(passed, policy, 'retry jitter stays bounded and quota recovery waits longer'):
+        result.add('sh-smart-sync-quota')
+    return result
