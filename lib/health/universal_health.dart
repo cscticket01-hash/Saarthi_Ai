@@ -115,6 +115,11 @@ class UniversalHealth {
   Future<void> _sampleLoad = Future.value();
   Future<void> get sampleHistoryLoaded => _sampleLoad;
   Future<void> _sampleWrite = Future.value();
+  bool _writingSamples = false;
+  // One pending snapshot: slow storage must not retain a seven-day list for
+  // every minute indefinitely. A school switch drains the old scope first.
+  List<HealthSample>? _pendingSamples;
+  HealthContext? _pendingSampleContext;
   List<HealthSample> get samples => List.unmodifiable(_samples);
   int get reviewedPlaybookCount => _providers.values.fold(0, (n, p) => n + p.playbooks.length);
   int? get measuredScore {
@@ -134,7 +139,10 @@ class UniversalHealth {
   }
   Future<void> _loadSamples(HealthContext bound, int epoch) async {
     try {
-      final loaded = await (sampleStore?.loadSamples(bound) ?? Future.value(<HealthSample>[]))
+      final loaded = await (() async {
+        await _sampleWrite;
+        return await (sampleStore?.loadSamples(bound) ?? Future.value(<HealthSample>[]));
+      })()
           .timeout(const Duration(seconds:2));
       if (_disposed || epoch != _sampleEpoch || _context?.same(bound) != true) return;
       final at = now();
@@ -151,9 +159,22 @@ class UniversalHealth {
     _samples.add(HealthSample(at, measuredScore));
     if (_samples.length > 10080) _samples.removeAt(0);
     final snapshot = List<HealthSample>.of(_samples);
-    _sampleWrite = _sampleWrite.catchError((_) {}).then((_) async {
-      if (sampleStore != null) await sampleStore!.saveSamples(bound, snapshot);
-    }).catchError((_) {});
+    if (sampleStore == null) return;
+    _pendingSamples = snapshot;
+    _pendingSampleContext = bound;
+    if (_writingSamples) return;
+    _writingSamples = true;
+    _sampleWrite = () async {
+      try {
+        while (_pendingSamples != null) {
+          final samples = _pendingSamples!, scope = _pendingSampleContext!;
+          _pendingSamples = null;
+          try { await sampleStore!.saveSamples(scope, samples); } catch (_) {
+            // Trend gaps never authorize a repair or change school records.
+          }
+        }
+      } finally { _writingSamples = false; }
+    }();
   }
 
   final int maxProviders, maxHistory, maxConcurrentChecks;
@@ -171,6 +192,7 @@ class UniversalHealth {
   HealthContext? _context;
   int _generation = 0;
   bool _paused = false, _disposed = false;
+  bool _restartOnResume = false;
   bool _historyReady=false;
   Timer? _timer;
   Timer? _watchdog;
@@ -224,7 +246,12 @@ class UniversalHealth {
       if(_loadGate?.isCompleted==false)_loadGate!.complete([]);
       final gate=Completer<List<HealthEvent>>();_loadGate=gate;
       _loadTimer=Timer(const Duration(seconds:2),(){if(!gate.isCompleted)gate.complete([]);});
-      final source=store?.load(context)??Future.value(<HealthEvent>[]);
+      // A -> B -> A must not reload A before A's durable admission settles.
+      // The existing load deadline fails closed when that write is stalled.
+      final source=() async {
+        await _write;
+        return await (store?.load(context)??Future.value(<HealthEvent>[]));
+      }();
       var loaded=false;
       unawaited(source.then<void>((events){if(!gate.isCompleted){loaded=true;gate.complete(events);}},onError:(Object _,StackTrace __){if(!gate.isCompleted)gate.complete([]);}));
       final events=await gate.future;
@@ -255,6 +282,7 @@ class UniversalHealth {
   }
   void start() {
     if (_disposed || _timer != null) return;
+    if (_paused) { _restartOnResume = true; return; }
     _timer = Timer.periodic(const Duration(seconds: 30), (_) { if (!_paused) { lastHeartbeat=now();unawaited(checkAll()); } });
     Timer.run(() {if(!_disposed&&!_paused&&_timer!=null)lastHeartbeat=now();});
     _watchdog??=Timer.periodic(const Duration(seconds:90),(_){if(!_paused&&!_disposed&&lastHeartbeat!=null&&now().difference(lastHeartbeat!)>=const Duration(seconds:90))unawaited(check('monitor-worker').then((_)=>recover('monitor-worker')));});
@@ -263,9 +291,19 @@ class UniversalHealth {
     lease.check();_timer?.cancel();_timer=null;start();
     final proof=Completer<void>();Timer.run(()=>proof.complete());await proof.future;lease.check();
   }
-  void pause() { _paused = true; ++_generation; _notify(); }
-  void resume() { if (_disposed) return; _paused = false; _notify(); unawaited(checkAll()); }
-  Future<void> stop() async { _timer?.cancel(); _timer = null; _watchdog?.cancel();_watchdog=null;_loadTimer?.cancel();_loadTimer=null;if(_loadGate?.isCompleted==false)_loadGate!.complete([]);pause(); await flushHistory(); }
+  void pause() {
+    _restartOnResume = _restartOnResume || _timer != null;
+    _timer?.cancel(); _timer = null;
+    _watchdog?.cancel(); _watchdog = null;
+    _paused = true; ++_generation; _notify();
+  }
+  void resume() {
+    if (_disposed) return;
+    _paused = false;
+    if (_restartOnResume) { _restartOnResume = false; start(); }
+    _notify(); unawaited(checkAll());
+  }
+  Future<void> stop() async { pause(); _restartOnResume=false; _loadTimer?.cancel();_loadTimer=null;if(_loadGate?.isCompleted==false)_loadGate!.complete([]);await flushHistory(); }
   Future<void> flushHistory() async { await _write.catchError((_) {}); await _sampleWrite.catchError((_) {}); }
   void _notify() { if (!_disposed) { _captureSample(); _changes.add(null); } }
   bool _pinnedQuarantine(HealthEvent event) => _restartQuarantine[event.component]?.at == event.at && _restartQuarantine[event.component]?.stage == event.stage;
