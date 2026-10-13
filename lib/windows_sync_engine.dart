@@ -1315,7 +1315,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       FirebaseFirestore.instance.activeProfileId == _activeProfileId;
   bool get automaticScheduleRunning => _schedule.reconciliation?.isActive == true;
   bool get retryDispatchExpected => automaticScheduleExpected && !_syncing &&
-      _activating == 0 && _dispatch.expected;
+      _activating == 0 && canRestoreOwnerDispatch(retryAllowed: recoveryDecision?.retry != false, admittedAt: _dispatch.scheduledAt, nextRetry: _nextRetry, quotaRetry: _quotaRetryAt);
   bool get retryDispatchRunning => _dispatch.running;
   bool get checkpointTimerExpected => automaticScheduleExpected && !_syncing &&
       _schedule.checkpointExpected;
