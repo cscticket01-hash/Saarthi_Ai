@@ -13,6 +13,8 @@ enum SyncFailureKind {
   unknown,
 }
 
+enum SyncTimeoutStage { unknown, responseHeaders, responseBody }
+
 bool syncCheckpointDue(DateTime? lastVerified, DateTime now) =>
     lastVerified == null ||
     lastVerified.isAfter(now) ||
@@ -25,9 +27,12 @@ class SyncRecoveryDecision {
     this.retry = false,
     this.review = false,
     this.independentRecords = false,
+    this.timeoutStage = SyncTimeoutStage.unknown,
   });
   final SyncFailureKind kind;
   final bool retry, review, independentRecords;
+  // Fixed local diagnostic metadata; never changes retry/ACK authority.
+  final SyncTimeoutStage timeoutStage;
   String get message => switch (kind) {
     SyncFailureKind.networkPath =>
       'Cannot reach the school server. Local data remains available.',

@@ -57,6 +57,13 @@ SyncRecoveryDecision windowsSyncRecovery(Object error) {
       status: error.status,
       code: error.code,
     );
+  if (error is CentralRequestTimeout) {
+    return SyncRecoveryDecision(SyncFailureKind.timeout, retry: true,
+        timeoutStage: switch (error.stage) {
+          CentralTimeoutStage.responseHeaders => SyncTimeoutStage.responseHeaders,
+          CentralTimeoutStage.responseBody => SyncTimeoutStage.responseBody,
+        });
+  }
   if (error is TimeoutException)
     return SyncRecoveryDecision.classify(timedOut: true);
   if (error is SocketException || error is HttpException || error is http.ClientException)

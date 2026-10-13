@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'universal_health.dart';
 import 'health_diagnostics.dart';
+import 'health_knowledge.dart';
 
 /// Equal-weight component availability score. Every registered provider must
 /// have a conclusive state; missing, stale, monitoring or paused evidence hides
@@ -38,6 +41,26 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
   final List<HealthPoint> points = [];
   Duration window = const Duration(hours: 24);
   bool diagnosing = false;
+  Widget knowledgeBrowser() => _KnowledgeBrowser();
+  void exportDiagnostics() {
+    final report = const JsonEncoder.withIndent('  ').convert({
+      'schema': 2,
+      'knowledgeVersion': HealthKnowledge.version,
+      'actualPatterns': HealthKnowledge.instance.rules.length,
+      'state': engine.overall.name,
+      'measuredAt': engine.now().toUtc().toIso8601String(),
+      'diagnosis': HealthDiagnostics.report(engine),
+      'history': engine.history.map((event) => event.toJson()).toList(),
+    });
+    details('Sanitized diagnostics export', Column(children: [
+      SelectableText(report),
+      TextButton(onPressed: () async {
+        await Clipboard.setData(ClipboardData(text: report));
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sanitized diagnostics copied')));
+      }, child: const Text('Copy report')),
+    ]));
+  }
   static const cyan = Color(0xff20dbed);
   static const muted = Color(0xffa4bbcf);
   @override
@@ -188,7 +211,8 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
             'timeout' ||
             'checkFailed' ||
             'persistenceFailed' => 'Failed',
-            _ => 'Detection Only',
+            'blocked' || 'circuitOpen' => 'Repair blocked',
+            _ => 'Observed',
           }, style: const TextStyle(fontSize: 12)),
         ),
     ],
@@ -346,7 +370,7 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
             () => details(
               'Authorized recovery',
               label(
-                '${engine.activeRepairs} executing · ${engine.unsettledRepairs} quarantined. Only existing Engine 2.0 playbooks may run.',
+                '${engine.activeRepairs} executing · ${engine.unsettledRepairs} quarantined. Only registered reviewed capabilities may run.',
               ),
             ),
           ),
@@ -493,6 +517,16 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                         ),
                         icon: const Icon(Icons.troubleshoot),
                         label: const Text('Problem diagnosis'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => details('Error knowledge 2.1', knowledgeBrowser()),
+                        icon: const Icon(Icons.search),
+                        label: const Text('View Error Knowledge'),
+                      ),
+                      TextButton.icon(
+                        onPressed: exportDiagnostics,
+                        icon: const Icon(Icons.file_download_outlined),
+                        label: const Text('Export Sanitized Diagnostics'),
                       ),
                       TextButton.icon(
                         onPressed: engine.paused ? engine.resume : engine.pause,
@@ -676,4 +710,24 @@ class _Trend extends CustomPainter {
 
   @override
   bool shouldRepaint(_Trend old) => true;
+}
+
+class _KnowledgeBrowser extends StatefulWidget {
+  @override
+  State<_KnowledgeBrowser> createState() => _KnowledgeBrowserState();
+}
+class _KnowledgeBrowserState extends State<_KnowledgeBrowser> {
+  String query = '';
+  @override
+  Widget build(BuildContext context) {
+    final knowledge = HealthKnowledge.instance;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('${knowledge.rules.length} source-backed diagnostic cases / 1000 target. A: safe infrastructure; B: owner guidance; C: escalation. Catalog entries grant no repair permission.'),
+      TextField(maxLength: 120, decoration: const InputDecoration(labelText: 'Search error, component or solution'),
+        onChanged: (value) => setState(() => query = value)),
+      for (final rule in knowledge.search(query))
+        ExpansionTile(title: Text('${rule.id} · Level ${rule.level}'), subtitle: Text(rule.name),
+          children: [ListTile(title: Text(rule.solution), subtitle: Text('Verify: ${rule.verification}\nSource: ${(rule.data['source'] as List).join(', ')}\nEvidence: ${rule.data['evidenceType']}'))]),
+    ]);
+  }
 }

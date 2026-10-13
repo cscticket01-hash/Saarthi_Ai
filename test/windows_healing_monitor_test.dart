@@ -12,6 +12,29 @@ import '../lib/health/universal_health.dart';
 import '../lib/health/windows_healing_monitor.dart';
 
 void main() {
+  testWidgets('knowledge search and sanitized export perform real work', (tester) async {
+    final engine = UniversalHealth();
+    engine.register(HealthProvider(id: 'smart-sync', version: '2.0',
+      check: (_) async => const HealthObservation(HealthState.unknown)));
+    await engine.bind(const HealthContext('private-school', 'private-profile'));
+    engine.observe('smart-sync', const HealthObservation(HealthState.degraded,
+      failure: HealthFailure.quota, ownerCategory: 'quota', operation: 'private-record',
+      metrics: {'pending': 3, 'studentName': 42}));
+    await tester.pumpWidget(MaterialApp(home: WindowsHealingMonitor(engine: engine)));
+    await tester.tap(find.text('View Error Knowledge')); await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'quota'); await tester.pumpAndSettle();
+    expect(find.text('sh-smart-sync-quota · Level B'), findsOneWidget);
+    await tester.tap(find.text('Close')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Export Sanitized Diagnostics')); await tester.pumpAndSettle();
+    final report = tester.widget<SelectableText>(find.byType(SelectableText)).data!;
+    expect(report, contains('sh-smart-sync-quota'));
+    for (final secret in ['private-school', 'private-profile', 'private-record', 'studentName']) {
+      expect(report, isNot(contains(secret)));
+    }
+    expect(find.text('Copy report'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox()); await engine.dispose();
+  });
   testWidgets('problem diagnosis provides real counters, next action and reviewed source', (tester) async {
     final engine=UniversalHealth();
     engine.register(HealthProvider(id:'smart-sync',version:'2.0',check:(_)async=>const HealthObservation(HealthState.unknown)));

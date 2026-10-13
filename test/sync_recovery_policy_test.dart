@@ -1,7 +1,23 @@
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/sync_recovery_policy.dart';
+import '../lib/windows_sync_recovery.dart';
+import '../lib/windows_connect/central_school_cloud.dart';
+import 'dart:async';
 
 void main() {
+  test('fixed timeout stages survive owner diagnosis without changing retry authority', () {
+    for (final stage in CentralTimeoutStage.values) {
+      final decision = windowsSyncRecovery(CentralRequestTimeout(stage));
+      expect(decision.kind, SyncFailureKind.timeout);
+      expect(decision.retry, true);
+      expect(decision.review, false);
+      expect(decision.timeoutStage.name, stage.name);
+      expect(decision.delay(1, jitter: 0), const Duration(seconds: 5));
+    }
+    expect(windowsSyncRecovery(TimeoutException('private owner details')).timeoutStage,
+        SyncTimeoutStage.unknown);
+    expect(SyncRecoveryDecision.classify(status: 504).timeoutStage, SyncTimeoutStage.unknown);
+  });
   test('hourly checkpoint becomes due on missed sleep interval and clock rollback', () {
     final start = DateTime.utc(2026, 10, 9, 10);
     expect(syncCheckpointDue(null, start), true);

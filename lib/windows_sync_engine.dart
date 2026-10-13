@@ -1314,6 +1314,26 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       !_syncBlocked && !_resetPaused && !isPaused && _activeSchoolSyncId.isNotEmpty &&
       FirebaseFirestore.instance.activeProfileId == _activeProfileId;
   bool get automaticScheduleRunning => _schedule.reconciliation?.isActive == true;
+  bool get retryDispatchExpected => automaticScheduleExpected && !_syncing &&
+      _activating == 0 && canRestoreOwnerDispatch(retryAllowed: recoveryDecision?.retry != false, admittedAt: _dispatch.scheduledAt, nextRetry: _nextRetry, quotaRetry: _quotaRetryAt);
+  bool get retryDispatchRunning => _dispatch.running;
+  bool get checkpointTimerExpected => automaticScheduleExpected && !_syncing &&
+      _schedule.checkpointExpected;
+  bool get checkpointTimerRunning => _schedule.checkpointRunning;
+  void repairRetryDispatch({required String school, required String profile}) {
+    if (!retryDispatchExpected || school != _activeSchoolSyncId || profile != _activeProfileId) {
+      throw StateError('Owner dispatch repair is not admitted.');
+    }
+    // Restores the captured deadline only. It does not call syncNow, reset
+    // backoff, select a queue item or authorize a business retry.
+    _dispatch.repair();
+  }
+  void repairCheckpointTimer({required String school, required String profile}) {
+    if (!checkpointTimerExpected || school != _activeSchoolSyncId || profile != _activeProfileId) {
+      throw StateError('Owner checkpoint timer repair is not admitted.');
+    }
+    _schedule.repairCheckpoint();
+  }
   void repairAutomaticSchedule({required String school, required String profile}) {
     if (!automaticScheduleExpected || school != _activeSchoolSyncId || profile != _activeProfileId) {
       throw StateError('Automatic scheduling is paused or the school changed.');
