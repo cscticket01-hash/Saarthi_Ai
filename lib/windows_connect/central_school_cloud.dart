@@ -281,9 +281,10 @@ class CentralSchoolCloud {
           accountUid:identity['uid'],endpoint:endpoint));
       }
     }
-    final response = await http.Response.fromStream(
-      await client.send(r).timeout(const Duration(seconds: 45)),
-    );
+    // Bound headers and body: a stalled body must not block owner review.
+    final response = await (() async => http.Response.fromStream(
+      await client.send(r),
+    ))().timeout(const Duration(seconds: 45));
     check();
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final stage = _stage(method, uri);
