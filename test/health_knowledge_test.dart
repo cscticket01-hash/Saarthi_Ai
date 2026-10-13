@@ -83,7 +83,9 @@ void main() {
       final source = rule.data['sourceCase'] as Map;
       groups.putIfAbsent(jsonEncode([rule.component, source['kind'], source['literal']]), () => []).add(rule);
     }
-    final ambiguous = groups.values.where((g) => g.length > 1).first;
+    final ambiguous = groups.values.firstWhere((g) =>
+        (g.first.data['sourceCase'] as Map)['origins'] > 1);
+    expect(ambiguous.length, 1); // Other real origins are outside this catalog.
     final rule = ambiguous.first, source = ambiguous.first.data['sourceCase'] as Map;
     expect(knowledge.matchSourceCase(rule.component, source['kind'] as String, source['literal'] as String), isNull);
     expect(knowledge.matchSourceCase(rule.component, source['kind'] as String,

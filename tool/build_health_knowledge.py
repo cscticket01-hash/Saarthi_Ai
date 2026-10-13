@@ -27,7 +27,7 @@ def validate(data, root=ROOT):
         raise ValueError('Unsupported knowledge schema/version')
     if data.get('target') != 1000 or not isinstance(data.get('rules'), list) or len(data['rules']) != 1000:
         raise ValueError('Invalid catalog budget/target')
-    ids, signatures = set(), set()
+    ids, signatures, source_messages = set(), set(), set()
     actual_cases = {(c['path'], c['kind'], c['literal']): c for c in source_cases(root)}
     failures = {'offline', 'timeout', 'server', 'quota', 'authorization', 'identity',
                 'configuration', 'conflict', 'databaseLocked', 'storage', 'corrupt',
@@ -61,13 +61,16 @@ def validate(data, root=ROOT):
         ids.add(rule['id']); signatures.add(signature)
         if contextual:
             case = rule['sourceCase']
-            if not isinstance(case, dict) or set(case) != {'path', 'kind', 'literal', 'line'}:
+            if not isinstance(case, dict) or set(case) != {'path', 'kind', 'literal', 'line', 'origins'}:
                 raise ValueError('Invalid source case schema')
-            if any(not isinstance(case[k], str) for k in ('path', 'kind', 'literal')) or type(case['line']) is not int:
+            if any(not isinstance(case[k], str) for k in ('path', 'kind', 'literal')) or type(case['line']) is not int or type(case['origins']) is not int or case['origins'] < 1:
                 raise ValueError('Invalid source case types')
             actual = actual_cases.get((case['path'], case['kind'], case['literal']))
             if actual != case or rule['source'] != [case['path']]:
                 raise ValueError('Source guard is missing or changed; review and regenerate')
+            if case['literal'] in source_messages:
+                raise ValueError('Repeated source message cannot inflate coverage')
+            source_messages.add(case['literal'])
             expected = make_rule(case, rule)
             if any(rule[k] != expected[k] for k in ('id', 'component', 'signature', 'name', 'level', 'solution', 'verification')):
                 raise ValueError('Source context/signature/guidance parity failed')

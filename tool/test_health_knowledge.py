@@ -51,6 +51,7 @@ class CatalogValidationTests(unittest.TestCase):
 // throw StateError('Comment is not a case');
 /* throw StateError('Block comment is not a case'); */
 final text = "throw StateError('Text is not a case')";
+final template = `throw new Error('Template text is not a case')`;
 throw StateError('User $privateName');
 throw StateError('Prefix' + privateValue);
 throw StateError('Prefix' 'Suffix');
@@ -64,10 +65,27 @@ throw new Error('Actual backend guard');
             cases = source_cases(root)
             self.assertEqual([c['literal'] for c in cases],
                              ['Real constant guard', 'Actual multiline guard', 'Actual backend guard'])
+            self.assertTrue(all(c['origins'] == 1 for c in cases))
+
+    def test_ambiguity_in_an_unselected_source_must_be_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'lib').mkdir()
+            for name in ('id_card_first.dart', 'id_card_second.dart'):
+                (root / 'lib' / name).write_text("throw const FormatException('Same actual guard');")
+            cases = source_cases(root)
+            self.assertEqual(len(cases), 2)
+            self.assertEqual([c['origins'] for c in cases], [2, 2])
+
+    def test_forged_unique_origin_count_is_rejected(self):
+        rule = next(r for r in self.data['rules'] if r.get('sourceCase', {}).get('origins', 0) > 1)
+        rule['sourceCase']['origins'] = 1
+        with self.assertRaises(ValueError): validate(self.data)
 
     def test_all_contextual_solutions_are_deterministic_owner_guidance(self):
         cases = [r for r in self.data['rules'] if 'sourceCase' in r]
         self.assertEqual(len(cases), 974)
+        self.assertEqual(len({r['name'] for r in cases}), 974)
         for rule in cases:
             self.assertEqual(rule, make_rule(rule['sourceCase'], rule))
             self.assertEqual((rule['playbook'], rule['attemptLimit'], rule['timeoutSeconds']), ('', 0, 0))
@@ -75,7 +93,7 @@ throw new Error('Actual backend guard');
     def test_duplicate_and_contradictory_signature(self):
         duplicate = copy.deepcopy(self.data['rules'][0])
         duplicate['id'] = 'different-id'
-        self.data['rules'].append(duplicate)
+        self.data['rules'][-1] = duplicate
         with self.assertRaises(ValueError): validate(self.data)
 
     def test_missing_solution(self):

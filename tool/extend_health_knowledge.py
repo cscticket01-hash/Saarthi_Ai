@@ -15,7 +15,7 @@ KINDS = {'StateError', 'FormatException', 'Exception', 'ArgumentError',
          'SchoolQrException', 'Error', 'UnsupportedError', 'TimeoutException',
          'HttpException', 'FileSystemException'}
 # Strings/comments are atomic so text inside them cannot invent a throw site.
-TOKENS = re.compile(r'''//[^\n]*|/\*[\s\S]*?\*/|r?(?:\"\"\"[\s\S]*?\"\"\"|\x27\x27\x27[\s\S]*?\x27\x27\x27)|r?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|[A-Za-z_$][\w$]*|[^\s]''')
+TOKENS = re.compile(r'''//[^\n]*|/\*[\s\S]*?\*/|`(?:\\.|[^`\\])*`|r?(?:\"\"\"[\s\S]*?\"\"\"|\x27\x27\x27[\s\S]*?\x27\x27\x27)|r?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|[A-Za-z_$][\w$]*|[^\s]''')
 
 
 def source_cases(root=ROOT):
@@ -44,6 +44,14 @@ def source_cases(root=ROOT):
                 key = (relative, kind, literal)
                 cases.setdefault(key, {'path': relative, 'kind': kind, 'literal': literal,
                                        'line': text.count('\n', 0, start) + 1})
+    # Ambiguity is assessed against ALL real source contexts, including cases
+    # outside the selected 1,000-rule library. A subset cannot prove uniqueness.
+    origins = {}
+    for case in cases.values():
+        key = (component(case['path']), case['kind'], case['literal'])
+        origins[key] = origins.get(key, 0) + 1
+    for case in cases.values():
+        case['origins'] = origins[(component(case['path']), case['kind'], case['literal'])]
     return list(cases.values())
 
 
@@ -116,7 +124,8 @@ def extend():
     base = [r for r in data['rules'] if not r['id'].startswith('sh-src-')]
     cases = source_cases()
     required = 1000 - len(base)
-    if len(cases) < required: raise ValueError(f'Only {len(cases)} real constant source contexts; {required} required')
+    unique = {c['literal'] for c in cases}
+    if len(unique) < required: raise ValueError(f'Only {len(unique)} distinct constant source messages; {required} required')
     # Stable source/path ordering; prioritize real owners over guardian guard errors.
     cases.sort(key=lambda c: ('/health/' in c['path'], c['path'], c['line'], c['literal']))
     # Round-robin actual files so a large early file cannot exclude the managed
@@ -124,10 +133,12 @@ def extend():
     files = {}
     for case in cases: files.setdefault(case['path'], []).append(case)
     selected = []
+    messages = set()
     depth = 0
     while len(selected) < required:
         for group in files.values():
-            if depth < len(group): selected.append(group[depth])
+            if depth < len(group) and group[depth]['literal'] not in messages:
+                selected.append(group[depth]); messages.add(group[depth]['literal'])
             if len(selected) == required: break
         depth += 1
     data['rules'] = base + [make_rule(c, base[0]) for c in selected]

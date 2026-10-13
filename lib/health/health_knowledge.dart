@@ -76,7 +76,9 @@ class HealthKnowledge {
       }
       return null;
     }
-    return candidates.length == 1 ? candidates.single : null;
+    return candidates.length == 1 &&
+        (candidates.single.data['sourceCase'] as Map)['origins'] == 1
+        ? candidates.single : null;
   }
   String codeForError(String component, Object error) {
     String kind;
