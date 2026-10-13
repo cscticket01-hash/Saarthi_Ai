@@ -1,4 +1,5 @@
 import 'universal_health.dart';
+import 'health_knowledge.dart';
 
 /// Evidence-based candidates, never authority to execute a repair.
 class HealthDiagnosis {
@@ -105,7 +106,22 @@ class HealthDiagnostics {
   static List<String> report(UniversalHealth engine) => [
     for (final d in diagnose(engine))
       '${d.component}: ${d.failure.name}\n${d.reason}\nOwner category: ${engine.observations[d.component]?.safeOwnerCategory.isNotEmpty == true ? engine.observations[d.component]!.safeOwnerCategory : "Unknown"}\nMeasured owner counters: ${engine.observations[d.component]?.safeMetrics}\nEvidence: ${d.evidence}\nRepair history: ${engine.history.where((e) => e.component == d.component && e.stage != "observed").map((e) => e.stage).toSet().join(", ")}\nNext action: ${d.nextAction}\nSource: ${d.sourceLocation}\n${d.sourceMeaning}${d.possibleSharedCause == null ? "" : "\n${d.possibleSharedCause}"}',
+    for (final entry in engine.observations.entries)
+      if (entry.value.failure != HealthFailure.none)
+        knowledgeReport(engine, entry.key, entry.value),
   ];
+  static String knowledgeReport(UniversalHealth engine, String component,
+      HealthObservation observation) {
+    final rule = HealthKnowledge.instance.match(component, observation);
+    final causes = rankHealthCauses(component, observation, engine.observations);
+    final learning = rule == null || rule.playbook.isEmpty ? null :
+        HealthRepairLearning.forPlaybook(engine.history, component, rule.playbook, engine.now());
+    return 'Knowledge: ${rule?.id ?? "Unrecognized; no matching reviewed rule"}\n'
+        '${rule == null ? "Escalation only" : "Level ${rule.level}: ${rule.solution}"}\n'
+        'Verification: ${rule?.verification ?? "Collect fresh owner evidence; no repair is authorized"}\n'
+        'Hypotheses (evidence points, not probability): ${causes.isEmpty ? "Unknown" : causes.map((c) => "${c.title}: ${c.score} (${c.basis})").join("; ")}\n'
+        '${learning == null ? "No attributed repair-learning evidence" : "Retained attributed attempts: ${learning.started}; verified: ${learning.verified}; failed: ${learning.failed}"}';
+  }
   static List<HealthDiagnosis> diagnose(UniversalHealth engine) {
     final observations = engine.observations, history = engine.history;
     final storage = observations['database'];

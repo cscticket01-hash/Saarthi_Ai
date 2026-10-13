@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'universal_health.dart';
 import 'health_diagnostics.dart';
+import 'health_knowledge.dart';
 
 /// Equal-weight component availability score. Every registered provider must
 /// have a conclusive state; missing, stale, monitoring or paused evidence hides
@@ -38,6 +39,7 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
   final List<HealthPoint> points = [];
   Duration window = const Duration(hours: 24);
   bool diagnosing = false;
+  Widget knowledgeBrowser() => _KnowledgeBrowser();
   static const cyan = Color(0xff20dbed);
   static const muted = Color(0xffa4bbcf);
   @override
@@ -495,6 +497,11 @@ class _WindowsHealingMonitorState extends State<WindowsHealingMonitor> {
                         label: const Text('Problem diagnosis'),
                       ),
                       TextButton.icon(
+                        onPressed: () => details('Error knowledge 2.1', knowledgeBrowser()),
+                        icon: const Icon(Icons.search),
+                        label: const Text('View Error Knowledge'),
+                      ),
+                      TextButton.icon(
                         onPressed: engine.paused ? engine.resume : engine.pause,
                         icon: Icon(
                           engine.paused ? Icons.play_arrow : Icons.pause,
@@ -676,4 +683,24 @@ class _Trend extends CustomPainter {
 
   @override
   bool shouldRepaint(_Trend old) => true;
+}
+
+class _KnowledgeBrowser extends StatefulWidget {
+  @override
+  State<_KnowledgeBrowser> createState() => _KnowledgeBrowserState();
+}
+class _KnowledgeBrowserState extends State<_KnowledgeBrowser> {
+  String query = '';
+  @override
+  Widget build(BuildContext context) {
+    final knowledge = HealthKnowledge.instance;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('${knowledge.rules.length} reviewed patterns / 1000 target. A: safe infrastructure; B: owner guidance; C: escalation. Catalog entries grant no repair permission.'),
+      TextField(maxLength: 120, decoration: const InputDecoration(labelText: 'Search error, component or solution'),
+        onChanged: (value) => setState(() => query = value)),
+      for (final rule in knowledge.search(query))
+        ExpansionTile(title: Text('${rule.id} · Level ${rule.level}'), subtitle: Text(rule.name),
+          children: [ListTile(title: Text(rule.solution), subtitle: Text('Verify: ${rule.verification}'))]),
+    ]);
+  }
 }

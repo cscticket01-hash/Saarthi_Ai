@@ -67,17 +67,19 @@ class HealthProvider {
 }
 
 class HealthEvent {
-  const HealthEvent(this.component, this.failure, this.stage, this.at, this.fingerprint);
-  final String component, stage, fingerprint;
+  const HealthEvent(this.component, this.failure, this.stage, this.at, this.fingerprint, {this.playbook = '', this.providerVersion = ''});
+  final String component, stage, fingerprint, playbook, providerVersion;
   final HealthFailure failure;
   final DateTime at;
-  Map<String, dynamic> toJson() => {'component': component, 'failure': failure.name, 'stage': stage, 'at': at.millisecondsSinceEpoch, 'fingerprint': fingerprint};
+  Map<String, dynamic> toJson() => {'component': component, 'failure': failure.name, 'stage': stage, 'at': at.millisecondsSinceEpoch, 'fingerprint': fingerprint, if (playbook.isNotEmpty) 'playbook': playbook, if (providerVersion.isNotEmpty) 'providerVersion': providerVersion};
   static const stages = {'observed', 'started', 'verified', 'unverified', 'blocked', 'timeout', 'checkTimeout', 'quarantineVerified', 'circuitOpen', 'checkFailed', 'persistenceFailed'};
   static HealthEvent? parse(dynamic raw) {
     if (raw is! Map || !UniversalHealth.validId(raw['component']) || !stages.contains(raw['stage']) || raw['at'] is! int || raw['at'] <= 0 || raw['fingerprint'] is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(raw['fingerprint'])) return null;
+    if (raw['playbook'] != null && !UniversalHealth.validId(raw['playbook'])) return null;
+    if (raw['providerVersion'] != null && (raw['providerVersion'] is! String || !RegExp(r'^[0-9]{1,3}\.[0-9]{1,3}(\.[0-9]{1,3})?$').hasMatch(raw['providerVersion']))) return null;
     final failure = HealthFailure.values.where((v) => v.name == raw['failure']);
     if (failure.isEmpty) return null;
-    return HealthEvent(raw['component'], failure.first, raw['stage'], DateTime.fromMillisecondsSinceEpoch(raw['at']), raw['fingerprint']);
+    return HealthEvent(raw['component'], failure.first, raw['stage'], DateTime.fromMillisecondsSinceEpoch(raw['at']), raw['fingerprint'], playbook: raw['playbook'] as String? ?? '', providerVersion: raw['providerVersion'] as String? ?? '');
   }
 }
 
@@ -316,12 +318,12 @@ class UniversalHealth {
   Future<void> flushHistory() async { await _write.catchError((_) {}); await _sampleWrite.catchError((_) {}); }
   void _notify() { if (!_disposed) { _captureSample(); _changes.add(null); } }
   bool _pinnedQuarantine(HealthEvent event) => _restartQuarantine[event.component]?.at == event.at && _restartQuarantine[event.component]?.stage == event.stage;
-  void _quarantine(String id, HealthFailure failure, String stage) {
+  void _quarantine(String id, HealthFailure failure, String stage, {String playbook = ''}) {
     final at=now(),version=_providers[id]?.version??'2.0';
-    _restartQuarantine[id]=HealthEvent(id,failure,stage,at,sha256.convert(utf8.encode('$id/$version/${failure.name}/$stage')).toString());
-    if(!_event(id,failure,stage,recordedAt:at))_historyReady=false;
+    _restartQuarantine[id]=HealthEvent(id,failure,stage,at,sha256.convert(utf8.encode('$id/$version/${failure.name}/$stage')).toString(), playbook: playbook, providerVersion: version);
+    if(!_event(id,failure,stage,recordedAt:at, playbook:playbook))_historyReady=false;
   }
-  bool _event(String component, HealthFailure failure, String stage, {DateTime? recordedAt}) {
+  bool _event(String component, HealthFailure failure, String stage, {DateTime? recordedAt, String playbook = ''}) {
     final at = recordedAt ?? now();
     final key = '$component/${failure.name}/$stage';
     if ({'observed','checkFailed'}.contains(stage) && _dedup[key] != null && at.difference(_dedup[key]!) < const Duration(seconds: 2)) { droppedEvents++; return false; }
@@ -331,10 +333,10 @@ class UniversalHealth {
     _dedup[key] = at;
     if (_history.length >= maxHistory) {
       // Keep every admission inside its circuit window, even in a fault flood.
-      final removable=_history.where((e)=>!_pinnedQuarantine(e)&&(e.stage!='started'||now().difference(e.at)>(_providers[e.component]?.playbooks.firstOrNull?.circuitWindow??const Duration(hours:1)))).firstOrNull;
+      final removable=_history.where((e)=>!_pinnedQuarantine(e)&&(e.stage!='started'||now().difference(e.at)>(_providers[e.component]?.playbooks.map((p)=>p.circuitWindow).fold<Duration>(const Duration(hours:1),(a,b)=>a>b?a:b)??const Duration(hours:1)))).firstOrNull;
       if(removable!=null)_history.remove(removable);else {droppedEvents++;return false;}
     }
-    _history.add(HealthEvent(component, failure, stage, at, fp));
+    _history.add(HealthEvent(component, failure, stage, at, fp, playbook: playbook, providerVersion: version));
     final bound = _context, events = history;
     if (bound != null && store != null && _historyReady) {
       // Coalesce persistence instead of retaining one full snapshot per event.
@@ -455,13 +457,23 @@ class UniversalHealth {
     // Policy never grants extra authority for a manual call.
     final plays = provider.playbooks.where((p) => p.failures.contains(observation.failure)).toList();
     if (plays.isEmpty || provider.dependencies.any((d) => observations[d]?.state != HealthState.healthy)) return false;
-    final p = plays.first, at = now();
-    _attempts[id]=_history.where((e)=>e.component==id&&e.stage=='started'&&at.difference(e.at)<p.circuitWindow).length;
-    if ((_attempts[id] ?? 0) >= p.maxAttempts) { _event(id, observation.failure, 'circuitOpen'); return false; }
-    final admissions = _history.where((e)=>e.component==id&&e.stage=='started'&&at.difference(e.at)<p.circuitWindow).toList();
+    final at = now();
+    // Persisted, verified outcomes rank reviewed alternatives only. Registration
+    // order breaks ties; history cannot create actions or bypass admission.
+    var p = plays.first;
+    for (final alternative in plays.skip(1)) {
+      if (HealthRepairLearning.forPlaybook(history, id, alternative.id, at, failure: observation.failure, providerVersion: provider.version).preference >
+          HealthRepairLearning.forPlaybook(history, id, p.id, at, failure: observation.failure, providerVersion: provider.version).preference) p = alternative;
+    }
+    final circuitWindow = plays.map((play) => play.circuitWindow).reduce((a,b) => a > b ? a : b);
+    final attemptLimit = plays.map((play) => play.maxAttempts).reduce((a,b) => a < b ? a : b);
+    final cooldown = plays.map((play) => play.cooldown).reduce((a,b) => a > b ? a : b);
+    _attempts[id]=_history.where((e)=>e.component==id&&e.stage=='started'&&at.difference(e.at)<circuitWindow).length;
+    if ((_attempts[id] ?? 0) >= attemptLimit) { _event(id, observation.failure, 'circuitOpen', playbook: p.id); return false; }
+    final admissions = _history.where((e)=>e.component==id&&e.stage=='started'&&at.difference(e.at)<circuitWindow).toList();
     if (admissions.isNotEmpty) {
       final last = admissions.map((e)=>e.at).reduce((a,b)=>a.isAfter(b)?a:b);
-      final persistedCooldown = last.add(p.cooldown * admissions.length);
+      final persistedCooldown = last.add(cooldown * admissions.length);
       if (persistedCooldown.isAfter(at)) return false;
     }
     if (_nextAttempt[id]?.isAfter(at) == true) return false;
@@ -472,12 +484,12 @@ class UniversalHealth {
       var admitted = false;
       try {
         lease.check();
-        if (!await p.precondition(lease)) { _event(id, observation.failure, 'blocked'); return; }
+        if (!await p.precondition(lease)) { _event(id, observation.failure, 'blocked', playbook: p.id); return; }
         lease.check();
         admitted = true;
         _attempts[id] = (_attempts[id] ?? 0) + 1;
-        _nextAttempt[id] = now().add(p.cooldown * _attempts[id]!);
-        if(!_event(id, observation.failure, 'started'))throw StateError('Recovery admission history is full');
+        _nextAttempt[id] = now().add(cooldown * _attempts[id]!);
+        if(!_event(id, observation.failure, 'started', playbook: p.id))throw StateError('Recovery admission history is full');
         // No action starts unless its crash-loop admission is durable.
         await flushHistory().timeout(const Duration(seconds: 2)); lease.check();
         if (!_durable) throw StateError('Recovery history could not be persisted');
@@ -486,19 +498,19 @@ class UniversalHealth {
         await p.execute(lease); lease.check();
         final verified = await p.verify(lease); lease.check();
         if (!verified) throw StateError('Recovery outcome unverified');
+        if (!_event(id, observation.failure, 'verified', playbook: p.id)) throw StateError('Verified outcome audit unavailable');
         verifiedThisAttempt = true;
-        _event(id, observation.failure, 'verified');
         // Do not reset the session budget: repeated successful-but-recurring
         // faults still trip the circuit. A reviewed restart history may rearm.
         _observations[id] = HealthObservation(HealthState.healthy, verifiedAt: now(), operation: observation.operation);
       } catch (_) {
-        if (generation == _generation && !_disposed) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure, operation: observation.operation); if(!_quarantinedRepairs.contains(id)) _event(id, observation.failure, admitted ? 'unverified' : 'blocked'); }
+        if (generation == _generation && !_disposed) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure, operation: observation.operation); if(!_quarantinedRepairs.contains(id)) _event(id, observation.failure, admitted ? 'unverified' : 'blocked', playbook: p.id); }
       } finally { if (generation == _generation) _notify(); }
     });
     _repairs[id] = task;
     unawaited(task.whenComplete(() { if (identical(_repairs[id], task)) {_repairs.remove(id);_quarantinedRepairs.remove(id);} }));
     try { await task.timeout(p.timeout); }
-    on TimeoutException { _quarantinedRepairs.add(id);if (generation == _generation) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure); _quarantine(id, observation.failure, 'timeout'); } return false; }
+    on TimeoutException { _quarantinedRepairs.add(id);if (generation == _generation) { _observations[id] = HealthObservation(HealthState.needsAttention, failure: observation.failure); _quarantine(id, observation.failure, 'timeout', playbook: p.id); } return false; }
     return verifiedThisAttempt && generation == _generation && _observations[id]?.state == HealthState.healthy;
   }
   List<HealthPrediction> get predictions {
@@ -528,4 +540,28 @@ class UniversalHealth {
     'components': [for (final e in observations.entries) {'id': e.key, 'state': e.value.state.name, 'failure': e.value.failure.name}],
   };
   Future<void> dispose() async { if(_disposed)return;await stop(); _disposed = true; ++_generation; await _changes.close(); }
+}
+
+class HealthRepairLearning {
+  const HealthRepairLearning(this.started, this.verified, this.failed);
+  final int started, verified, failed;
+  static HealthRepairLearning forPlaybook(Iterable<HealthEvent> history,
+      String component, String playbook, DateTime now, {HealthFailure? failure, String? providerVersion}) {
+    var starts = 0, success = 0, failures = 0;
+    HealthEvent? pending;
+    for (final event in history) {
+      if (event.component != component || event.playbook != playbook ||
+          failure != null && event.failure != failure ||
+          providerVersion != null && event.providerVersion != providerVersion ||
+          event.at.isAfter(now)) continue;
+      if (event.stage == 'started') { pending = event; starts++; }
+      if (pending != null && !event.at.isBefore(pending.at) &&
+          {'verified', 'unverified', 'timeout'}.contains(event.stage)) {
+        if (event.stage == 'verified') { success++; } else { failures++; }
+        pending = null;
+      }
+    }
+    return HealthRepairLearning(starts, success, failures);
+  }
+  int get preference => verified - failed * 2;
 }
