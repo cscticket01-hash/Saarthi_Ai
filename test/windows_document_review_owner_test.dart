@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import '../lib/windows_sync_conflict_review.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../lib/windows_document_templates.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
@@ -164,6 +165,29 @@ void main() {
   });
   tearDown(() async {
     await dir.delete(recursive: true);
+  });
+  test('local ID renderer stays usable with retained publication conflict and offline cloud', () async {
+    final person = {'mobileLinkToken':'x' * 48, 'mobileStableId':'S1',
+      'name':'Synthetic Student', 'class':'1', 'rollNo':1};
+    final qr = SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+      'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+      'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+    final cardId = WindowsBackendBridge.publishedIdCardId(qr);
+    await db.collection('students_directory').doc('S1').set(person);
+    await db.collection('school_config').doc('school_profile_cache').set({'schoolName':'Synthetic School','principalName':'Synthetic Principal','schoolContactNo':'0000000000'});
+    final queue = db.collection('_windows_document_outbox').doc(cardId);
+    await queue.set({...local,'documentId':cardId});
+    final before = (await queue.get()).data();
+    await db.collection('school_settings').doc('document_templates').set({'studentId':'manifest:school-id-v1'});
+    final printing = PrintingPlatform.instance;
+    PrintingPlatform.instance = OwnerReviewPrinting(qr);
+    try {
+      final bytes = await WindowsDocumentTemplates.selected('studentId',
+        {...person,'schoolId':school,'schoolName':'Synthetic School'},qr:qr);
+      expect(bytes, isNotNull);
+      expect(String.fromCharCodes(bytes!.take(4)), '%PDF');
+      expect((await queue.get()).data(),before);
+    } finally { PrintingPlatform.instance = printing; }
   });
   test(
     'local review creates a fresh CAS operation without upload or ACK and retains original',

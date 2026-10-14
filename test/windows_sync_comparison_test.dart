@@ -8,6 +8,12 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_sync_comparison.dart';
 
 void main() {
+  test('document differences report content and identity fields, never local file paths', () {
+    final local = {'schoolId':'s','documentRevision':'a','contentHash':'hash','localPath':'private'};
+    final cloud = {'schoolId':'s','documentRevision':'b','contentHash':'hash'};
+    expect(documentDifferenceFields(local,cloud),['documentRevision']);
+  });
+
   test('managed map-key readback verifies documents without embedded id', () {
     final payload = {
       'action': 'upload_student_document', 'documentId': 'd', 'schoolId': 's',

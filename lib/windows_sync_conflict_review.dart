@@ -81,11 +81,13 @@ String _conflictPreview(Object? original) {
 /// Operator-initiated own-school review. Opening it never sends a write.
 Future<void> showWindowsConflictReview(
   BuildContext context,
-  Map<String, dynamic> item, {Future<Map<String,dynamic>> Function(Map<String,dynamic>)? cloudReader}
-) => showDialog<void>(context: context, builder: (_) => _ConflictReview(item,cloudReader:cloudReader));
+  Map<String, dynamic> item, {Future<Map<String,dynamic>> Function(Map<String,dynamic>)? cloudReader, Duration verificationTimeout = const Duration(seconds: 60), Future<Map<String,dynamic>?> Function(String, String)? queueReader}
+) => showDialog<void>(context: context, builder: (_) => _ConflictReview(item,cloudReader:cloudReader, verificationTimeout:verificationTimeout, queueReader:queueReader));
 
 class _ConflictReview extends StatefulWidget {
-  const _ConflictReview(this.item,{this.cloudReader});
+  const _ConflictReview(this.item,{this.cloudReader, required this.verificationTimeout, this.queueReader});
+  final Duration verificationTimeout;
+  final Future<Map<String,dynamic>?> Function(String, String)? queueReader;
   final Future<Map<String,dynamic>> Function(Map<String,dynamic>)? cloudReader;
   final Map<String, dynamic> item;
   @override
@@ -100,6 +102,10 @@ class _ConflictReviewState extends State<_ConflictReview> {
   String comparison = 'not performed';
   String error = '';
   bool busy = false;
+  bool verifying = false;
+  int verificationGeneration = 0;
+  String verificationStage = '';
+  List<String> differences = [];
   final db = FirebaseFirestore.instance;
   late final origin = db.activeProfileId;
   bool get document =>
@@ -121,11 +127,13 @@ class _ConflictReviewState extends State<_ConflictReview> {
     final row =
         (reply['records'] as Map?)?[queued['documentId'] ?? widget.item['id']];
     if (db.activeProfileId != origin ||
+        reply['syncProtocol'] != 2 ||
         reply['schoolId'] != queued['schoolId'] ||
         row is! Map ||
         row['schoolId'] != queued['schoolId'] ||
         row['id'] != null &&
-            row['id'] != (queued['documentId'] ?? widget.item['id']))
+            row['id'] != (queued['documentId'] ?? widget.item['id']) ||
+        row['documentId'] != null && row['documentId'] != (queued['documentId'] ?? widget.item['id']))
       throw StateError(
         'Same-school cloud version unavailable. Both copies retained.',
       );
@@ -136,58 +144,62 @@ class _ConflictReviewState extends State<_ConflictReview> {
   }
 
   Future<void> verify() async {
+    if (busy) return;
+    final generation = ++verificationGeneration;
+    void guard() {
+      if (!mounted || generation != verificationGeneration || db.activeProfileId != origin)
+        throw StateError('Verification cancelled or school changed. Originals retained.');
+    }
+    void stage(String value) { guard(); setState(() => verificationStage = value); }
     setState(() {
-      busy = true;
-      error = '';
-      remote = null;
-      expected = null;
-      comparison = 'not performed';
-      choice = null;
-      reviewedLocalHash = null;
+      busy = true; verifying = true; error = ''; remote = null; expected = null;
+      comparison = 'not performed'; choice = null; reviewedLocalHash = null;
+      differences = []; verificationStage = 'Reading local pending record';
     });
     try {
-      final queue =
-          widget.item['_queueCollection'] ?? '_windows_firebase_outbox';
-      if (!{
-        '_windows_document_outbox',
-        '_windows_firebase_outbox',
-      }.contains(queue))
-        throw StateError('Invalid queue.');
-      final current =
-          (await db.collection(queue).doc(widget.item['id'] as String).get())
-              .data();
-      if (current == null || current['syncState'] != 'conflict')
-        throw StateError('Pending version changed. Reopen Sync details.');
-      final cloud = await readCloud(
-        current,
-      ).timeout(const Duration(seconds: 60));
-      final proof = document && queue == '_windows_document_outbox'
-          ? await WindowsBackendBridge.documentReviewPayload(
-              widget.item['id'] as String,
-              current,
-            )
-          : null;
-      final compared = proof != null
-          ? identicalDocumentPayload(proof, cloud)
-                ? 'identical'
-                : 'differs (revision order unknown)'
+      final result = await (() async {
+        final queue = widget.item['_queueCollection'] ?? '_windows_firebase_outbox';
+        if (!{'_windows_document_outbox','_windows_firebase_outbox'}.contains(queue))
+          throw StateError('Invalid queue.');
+        final id = widget.item['id'] as String;
+        final current = widget.queueReader != null
+          ? await widget.queueReader!(queue, id)
+          : (await db.collection(queue).doc(id).get()).data();
+        guard();
+        if (current == null || current['syncState'] != 'conflict')
+          throw StateError('Pending version changed. Reopen Sync details.');
+        stage('Reading authenticated cloud version');
+        final cloud = await readCloud(current);
+        guard();
+        stage('Reading local file and comparing content');
+        final proof = document && queue == '_windows_document_outbox'
+          ? await WindowsBackendBridge.documentReviewPayload(id, current) : null;
+        guard();
+        final compared = proof != null
+          ? identicalDocumentPayload(proof, cloud) ? 'identical' : 'differs (revision order unknown)'
           : compareSyncVersions(current, cloud);
-      if (mounted)
-        setState(() {
-          expected = current;
-          reviewedLocalHash = proof?['contentHash'] as String?;
-          remote = cloud;
-          comparison = compared;
-        });
+        return {'current':current, 'cloud':cloud, 'proof':proof, 'comparison':compared};
+      })().timeout(widget.verificationTimeout);
+      guard();
+      final proof = result['proof'] as Map?;
+      setState(() {
+        expected = Map<String,dynamic>.from(result['current'] as Map);
+        remote = Map<String,dynamic>.from(result['cloud'] as Map);
+        reviewedLocalHash = proof?['contentHash'] as String?;
+        comparison = result['comparison'] as String;
+        differences = proof == null ? [] : documentDifferenceFields(proof, remote!);
+      });
     } on TimeoutException {
-      if (mounted)
-        setState(
-          () => error = 'Cloud verification timed out. No data was changed. Check the school server connection and retry.',
-        );
+      if (mounted && generation == verificationGeneration)
+        setState(() => error = 'Cloud verification timed out during $verificationStage. No data was changed. Retry verification.');
     } catch (e) {
-      if (mounted) setState(() => error = e.toString());
+      if (mounted && generation == verificationGeneration)
+        setState(() => error = '$verificationStage: $e');
     } finally {
-      if (mounted) setState(() => busy = false);
+      if (mounted && generation == verificationGeneration) {
+        verificationGeneration++; // Late read completions cannot alter this review.
+        setState(() { busy = false; verifying = false; });
+      }
     }
   }
 
@@ -357,6 +369,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
 
   @override
   void dispose() {
+    verificationGeneration++;
     reason.dispose();
     super.dispose();
   }
@@ -377,7 +390,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
           if (busy) const LinearProgressIndicator(),
           Text(
             busy
-                ? 'Verifying cloud version… Originals retained.'
+                ? verifying ? '$verificationStage… Originals retained.' : 'Checking reviewed action… Originals retained.'
                 : error.isNotEmpty
                 ? 'Cloud verification failed'
                 : remote == null
@@ -386,6 +399,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
           ),
           if (error.isNotEmpty)
             SelectableText(error, style: const TextStyle(color: Colors.orange)),
+          if (differences.isNotEmpty) Text('Differing fields: ${differences.join(', ')}'),
           const SizedBox(height: 12),
           Expanded(
             child: SingleChildScrollView(
@@ -474,7 +488,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
     ),
     actions: [
       TextButton(
-        onPressed: busy ? null : () => Navigator.pop(context),
+        onPressed: busy && !verifying ? null : () => Navigator.pop(context),
         child: const Text('Close'),
       ),
       OutlinedButton(

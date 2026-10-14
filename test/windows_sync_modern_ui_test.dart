@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -54,11 +55,12 @@ void main() {
     };
   });
   tearDown(() => engine.details.value = previous);
-  WindowsSyncControlCenter page({Future<void> Function()? backup}) =>
+  WindowsSyncControlCenter page({Future<void> Function()? backup, Future<void> Function()? sync}) =>
       WindowsSyncControlCenter(
         refreshOnOpen: () async {},
         diskProbe: (_) async => {'status': 'Unknown'},
         backupRequest: backup,
+        syncRequest: sync,
       );
 
   for (final width in [480.0, 1440.0]) {
@@ -91,6 +93,25 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+  testWidgets('read-only checks remain enabled during an admitted sync while backup stays locked', (tester) async {
+    tester.view.physicalSize = const Size(1440,1100); tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
+    final pending = Completer<void>();
+    await tester.pumpWidget(MaterialApp(home:page(sync:()=>pending.future)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sync Now')); await tester.pump();
+    await tester.ensureVisible(find.text('Diagnostics and recovery tools'));
+    await tester.tap(find.text('Diagnostics and recovery tools'));
+    await tester.pump(const Duration(milliseconds:400));
+    for(final label in ['Check Cloud Health','Local Storage Details','School Drive Usage']) {
+      expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,label)).onPressed,isNotNull);
+    }
+    final backups = tester.widgetList<OutlinedButton>(find.widgetWithText(OutlinedButton,'Backup School Data'));
+    expect(backups,isNotEmpty);
+    expect(backups.every((button)=>button.onPressed==null),isTrue);
+    pending.complete(); await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('Back returns to previous route', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

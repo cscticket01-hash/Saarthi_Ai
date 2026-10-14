@@ -977,7 +977,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         child: const Text('Restore Existing School — fresh install only'),
       ),
       OutlinedButton(
-        onPressed: active ? null : () => _tool(_checkCloudHealth),
+        onPressed: busy ? null : () => _tool(_checkCloudHealth),
         child: const Text('Check Cloud Health'),
       ),
       OutlinedButton(
@@ -985,11 +985,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         child: const Text('Verify student cloud records'),
       ),
       OutlinedButton(
-        onPressed: active ? null : () => _tool(_storageDetails),
+        onPressed: busy ? null : () => _tool(_storageDetails),
         child: const Text('Local Storage Details'),
       ),
       OutlinedButton(
-        onPressed: active ? null : () => _tool(_cloudStorageDetails),
+        onPressed: busy ? null : () => _tool(_cloudStorageDetails),
         child: const Text('School Drive Usage'),
       ),
       OutlinedButton(

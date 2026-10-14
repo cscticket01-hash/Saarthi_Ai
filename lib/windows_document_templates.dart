@@ -103,7 +103,9 @@ class WindowsDocumentTemplates {
     String kind,
     Map<String, dynamic> data, {
     String qr = '',
-    bool publish = true,
+    // Preview/print/export never changes the durable publication queue.
+    // Sync Engine 3.0 publishes changed cards through publishChangedIdCards.
+    bool publish = false,
   }) async {
     qr = IdCardEngine.compactQr(qr);
     final bytes = await _selected(kind, data, qr: qr);
