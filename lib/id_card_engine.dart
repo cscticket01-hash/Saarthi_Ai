@@ -1,4 +1,3 @@
-import 'health/health_runtime.dart';
 import 'dart:convert';
 
 import 'package:image/image.dart' as img;
@@ -114,7 +113,7 @@ class IdCardEngine {
   static Future<pw.Font> loadFont() async =>
       pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
 
-  static Future<Uint8List> render(IdCardManifest template, Map<String,dynamic> data, {Map<String,Uint8List> images=const {},String qr='',Map<String,Uint8List> backgrounds=const {}}) => HealthRuntime.measure('id-card',()=>_render(template,data,images:images,qr:qr,backgrounds:backgrounds));
+  static Future<Uint8List> render(IdCardManifest template, Map<String,dynamic> data, {Map<String,Uint8List> images=const {},String qr='',Map<String,Uint8List> backgrounds=const {}}) => _render(template,data,images:images,qr:qr,backgrounds:backgrounds);
 
   static Future<Uint8List> _render(
     IdCardManifest template,

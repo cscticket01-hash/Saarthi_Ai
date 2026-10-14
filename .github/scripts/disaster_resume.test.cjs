@@ -29,8 +29,8 @@ test('failed, running, foreign or wrong-branch cloud workflows cannot certify re
  for(const bad of [{status:'in_progress'},{conclusion:'failure'},{head_branch:'main'},{head_repository:{full_name:'foreign/repo'}}])assert.throws(()=>verifyEvidence({...run,...bad},sha));
 });
 
-test('existing guardian branch retains TEST fixture and requires same-branch evidence',()=>{
- const branch='feature/universal-self-healing-2';assert.equal(fixture({...env,GITHUB_REF:'refs/heads/'+branch}).id,fixture(env).id);
- assert.equal(verifyEvidence({...run,head_branch:branch},sha,undefined,branch).sha,sha);
- assert.throws(()=>verifyEvidence(run,sha,undefined,branch));assert.throws(()=>verifyEvidence({...run,head_branch:branch},sha));
+test('retired engine branch cannot authorize TEST cloud writers',()=>{
+ const branch='feature/universal-self-healing-2';
+ assert.throws(()=>fixture({...env,GITHUB_REF:'refs/heads/'+branch}));
+ assert.throws(()=>verifyEvidence({...run,head_branch:branch},sha,undefined,branch));
 });

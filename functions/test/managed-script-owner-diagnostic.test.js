@@ -20,7 +20,7 @@ test('canonical and adapter diagnostic owner code is identical and only logs san
  assert.match(a,/Logger\.log/);
  assert.doesNotMatch(a,/JSON\.stringify\(e\)|postData|connectionSecret|privateKey|secret/);
  for(const source of files){
-  assert.match(source,/scriptBundleVersion:'2026-10-11\.4'/);
+  assert.match(source,/scriptBundleVersion:'2026-10-14\.4'/);
   assert.match(source,/if\(verified\)\s*\{\s*try\{PropertiesService\.getScriptProperties\(\)\.setProperty\('VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2',JSON\.stringify\(trace\)\)/);
   assert.doesNotMatch(source,/b\.action==='VS_readLastSyncDiagnostic'/);
  }

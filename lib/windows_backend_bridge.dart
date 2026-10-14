@@ -58,9 +58,13 @@ class WindowsBackendBridge {
   WindowsBackendBridge._();
 
   // Response's default Latin-1 encoder rejects multilingual JSON metadata.
-  static http.Response _jsonResponse(String body, int status,
-      {Map<String, String>? headers}) => http.Response.bytes(
-    utf8.encode(body), status,
+  static http.Response _jsonResponse(
+    String body,
+    int status, {
+    Map<String, String>? headers,
+  }) => http.Response.bytes(
+    utf8.encode(body),
+    status,
     headers: {...?headers, 'content-type': 'application/json; charset=utf-8'},
   );
 
@@ -93,8 +97,10 @@ class WindowsBackendBridge {
     return next;
   }
 
-  static Future<void> changeLocalStorageLocation(String path) =>
-      _documentWrite(()=>FirebaseFirestore.instance.changeLocalStorageLocation(path));
+  static Future<void> changeLocalStorageLocation(String path) => _documentWrite(
+    () => FirebaseFirestore.instance.changeLocalStorageLocation(path),
+  );
+
   /// Lazy authenticated asset restore. Stable revision/hash filename avoids
   /// repeatedly downloading unchanged files; originals on this PC remain intact.
   static final Map<String, Future<Uint8List>> _documentRestores = {};
@@ -228,39 +234,63 @@ class WindowsBackendBridge {
         uri.host != 'drive.google.com' ||
         uri.userInfo.isNotEmpty)
       return '';
-    return RegExp(r'^/file/d/([A-Za-z0-9_-]{1,200})/view$')
-            .firstMatch(uri.path)
-            ?.group(1) ??
+    return RegExp(
+          r'^/file/d/([A-Za-z0-9_-]{1,200})/view$',
+        ).firstMatch(uri.path)?.group(1) ??
         '';
   }
 
   /// Read-only proof from the owner-managed immutable local generation.
-  static Future<Map<String,dynamic>> documentReviewPayload(String id, Map<String,dynamic> record) async {
-    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
-    if (record['schoolId'] != db.activeProfileIdentity['schoolSyncId'] || record['deleted'] == true) {
-      throw StateError('Live same-school document required. Original retained.');
+  static Future<Map<String, dynamic>> documentReviewPayload(
+    String id,
+    Map<String, dynamic> record,
+  ) async {
+    final db = FirebaseFirestore.instance,
+        origin = FirebaseFirestore.instance.activeProfileId;
+    if (record['schoolId'] != db.activeProfileIdentity['schoolSyncId'] ||
+        record['deleted'] == true) {
+      throw StateError(
+        'Live same-school document required. Original retained.',
+      );
     }
     final path = (record['optimizedPath'] ?? record['localPath'])?.toString() ?? '';
     if (path.isEmpty) throw StateError('Pending document file is missing.');
     final bytes = await File(path).readAsBytes();
-    if (db.activeProfileId != origin) throw StateError('School changed. Reopen review.');
-    return {...record, 'documentId':id, 'action':'upload_student_document',
-      'contentHash':crypto.sha256.convert(bytes).toString(),
-      'fileName':record['optimizedFileName'] ?? record['fileName'],
-      'mimeType':record['optimizedMimeType'] ?? record['mimeType']};
+    if (db.activeProfileId != origin)
+      throw StateError('School changed. Reopen review.');
+    return {
+      ...record,
+      'documentId': id,
+      'action': 'upload_student_document',
+      'contentHash': crypto.sha256.convert(bytes).toString(),
+      'fileName': record['optimizedFileName'] ?? record['fileName'],
+      'mimeType': record['optimizedMimeType'] ?? record['mimeType'],
+    };
   }
 
   /// Explicit administrator readback resolution. Never uploads or changes cloud files.
-  static Future<void> recordVerifiedDocumentReview(String id, Map<String,dynamic> expected) async {
-    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+  static Future<void> recordVerifiedDocumentReview(
+    String id,
+    Map<String, dynamic> expected,
+  ) async {
+    final db = FirebaseFirestore.instance,
+        origin = FirebaseFirestore.instance.activeProfileId;
     final payload = await documentReviewPayload(id, expected);
-    final reply = await ManagedSchoolSession.callForSchool(expected['schoolId'] as String, 'managed/records', {
-      'operation':'read', 'collection':'documents', 'syncProtocol':2,
-    });
+    final reply = await ManagedSchoolSession.callForSchool(
+      expected['schoolId'] as String,
+      'managed/records',
+      {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2},
+    );
     if (reply['syncProtocol'] != 2) throw const MissingSyncAcknowledgement();
     final cloud = (reply['records'] as Map?)?[id];
-    final result = {'success':true, 'cloudVerified':true, 'schoolId':reply['schoolId'], 'document':cloud};
-    if (!verifiedDocumentAcknowledgement(payload,result)) throw const MissingSyncAcknowledgement();
+    final result = {
+      'success': true,
+      'cloudVerified': true,
+      'schoolId': reply['schoolId'],
+      'document': cloud,
+    };
+    if (!verifiedDocumentAcknowledgement(payload, result))
+      throw const MissingSyncAcknowledgement();
     await _documentWrite(() async {
       if (db.activeProfileId != origin) throw StateError('School changed. Reopen review.');
       final queueRef = db.collection('_windows_document_outbox').doc(id);
@@ -278,17 +308,216 @@ class WindowsBackendBridge {
       final key = 'document-$id-${expected['documentRevision']}';
       final batch = db.batch();
       batch.set(db.collection('_windows_sync_conflict_history').doc(key), {
-        ...expected, 'verifiedCloud':cloud, 'resolution':'identical authenticated readback'});
+        ...expected,
+        'verifiedCloud': cloud,
+        'resolution': 'identical authenticated readback',
+      });
       batch.set(db.collection('_windows_sync_receipts').doc(key), {
-        'schoolId':expected['schoolId'], 'operationId':expected['documentRevision'],
-        'documentId':id, 'collection':'documents', 'recordRevision':cloud['_syncRevision'],
-        'contentHash':freshPayload['contentHash'], 'verification':'authenticated readback',
-        'acknowledgedAt':DateTime.now().millisecondsSinceEpoch});
-      batch.set(localRef, {'syncState':'Synced','cloudFileUrl':cloud['fileUrl'],
-        'cloudRevision':cloud['documentRevision'], 'cloudUploadedAt':cloud['uploadedAt']}, SetOptions(merge:true));
-      batch.delete(queueRef); // Exact owner-locked acknowledged row only; original file retained.
+        'schoolId': expected['schoolId'],
+        'operationId': expected['documentRevision'],
+        'documentId': id,
+        'collection': 'documents',
+        'recordRevision': cloud['_syncRevision'],
+        'contentHash': freshPayload['contentHash'],
+        'verification': 'authenticated readback',
+        'acknowledgedAt': DateTime.now().millisecondsSinceEpoch,
+      });
+      batch.set(localRef, {
+        'syncState': 'Synced',
+        'cloudFileUrl': cloud['fileUrl'],
+        'cloudRevision': cloud['documentRevision'],
+        'cloudUploadedAt': cloud['uploadedAt'],
+      }, SetOptions(merge: true));
+      batch.delete(
+        queueRef,
+      ); // Exact owner-locked acknowledged row only; original file retained.
       await batch.commit();
     });
+  }
+
+  /// Explicit same-school owner decision. No cloud write occurs here; local
+  /// choice only queues a new immutable operation through the existing owner.
+  static Future<void> resolveReviewedDocument({
+    required String id,
+    required Map<String, dynamic> expected,
+    required Map<String, dynamic> reviewedCloud,
+    required String choice,
+    required String reason,
+    required String reviewedLocalHash,
+    Future<Map<String, dynamic>> Function()? readCloud,
+    Future<Uint8List> Function(Map<String, dynamic>)? fetchBytes,
+  }) async {
+    final db = FirebaseFirestore.instance,
+        origin = FirebaseFirestore.instance.activeProfileId;
+    void guard() {
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != expected['schoolId'] ||
+          db.activeProfileIdentity['blocked'] == true) {
+        throw StateError('School changed or blocked. Reopen review.');
+      }
+    }
+
+    guard();
+    if (!{'local', 'cloud'}.contains(choice) ||
+        reason.trim().isEmpty ||
+        reason.length > 1000 ||
+        expected['syncState'] != 'conflict' ||
+        expected['deleted'] == true ||
+        !await db.localPersistenceEnabled()) {
+      throw StateError('Explicit live document conflict review required.');
+    }
+    final localProof = await documentReviewPayload(id, expected);
+    if (localProof['contentHash'] != reviewedLocalHash)
+      throw StateError('Local bytes changed since review. Verify again.');
+    Future<Map<String, dynamic>> currentCloud() async {
+      guard();
+      final reply =
+          await (readCloud?.call() ??
+              ManagedSchoolSession.callForSchool(
+                expected['schoolId'] as String,
+                'managed/records',
+                {
+                  'operation': 'read',
+                  'collection': 'documents',
+                  'syncProtocol': 2,
+                },
+              ));
+      guard();
+      final row = (reply['records'] as Map?)?[id];
+      if (reply['syncProtocol'] != 2 ||
+          reply['schoolId'] != expected['schoolId'] ||
+          row is! Map) {
+        throw StateError('Authenticated same-school cloud readback required.');
+      }
+      final cloud = {...Map<String, dynamic>.from(row), 'id': id};
+      if (row['id'] != null && row['id'] != id ||
+          cloud['schoolId'] != expected['schoolId'] ||
+          cloud['_syncDeleted'] == true ||
+          cloud['studentId'] != expected['studentId'] ||
+          cloud['documentKind'] != expected['documentKind'] ||
+          cloud['ownerRole'] != expected['ownerRole'] ||
+          cloud['personId'] != expected['personId'] ||
+          cloud['documentRevision'] is! String ||
+          cloud['documentRevision'].isEmpty ||
+          cloud['_syncRevision'] is! String ||
+          cloud['_syncRevision'].isEmpty ||
+          cloud['contentHash'] is! String ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(cloud['contentHash']) ||
+          jsonEncode(cloud) != jsonEncode(reviewedCloud)) {
+        throw StateError(
+          'Cloud version or document ownership changed. Verify again.',
+        );
+      }
+      return cloud;
+    }
+
+    final cloud = await currentCloud();
+    Uint8List? bytes;
+    if (choice == 'cloud') {
+      // Remote paths are untrusted metadata, never a local read capability.
+      final source = {...cloud}
+        ..remove('localPath')
+        ..remove('originalPath');
+      bytes = await (fetchBytes?.call(source) ?? documentBytes(source));
+      guard();
+      if (bytes.isEmpty ||
+          bytes.length > 20 * 1024 * 1024 ||
+          crypto.sha256.convert(bytes).toString() != cloud['contentHash']) {
+        throw StateError(
+          'Selected cloud bytes failed verification. Original retained.',
+        );
+      }
+      await currentCloud();
+    }
+    await _documentWrite(() async {
+      guard();
+      final queueRef = db.collection('_windows_document_outbox').doc(id);
+      final localRef = db.collection('_local_student_documents').doc(id);
+      final current = (await queueRef.get()).data(),
+          local = (await localRef.get()).data();
+      if (current == null ||
+          syncPayloadHash(current) != syncPayloadHash(expected) ||
+          local?['documentRevision'] != expected['documentRevision'] ||
+          local?['localPath'] != expected['localPath']) {
+        throw StateError('Pending generation changed. Verify again.');
+      }
+      final freshProof = await documentReviewPayload(id, current);
+      if (freshProof['contentHash'] != localProof['contentHash']) {
+        throw StateError('Local bytes changed. Verify again.');
+      }
+      final historyKey = 'document-$id-${expected['documentRevision']}';
+      late Map<String, dynamic> replacement;
+      if (choice == 'local') {
+        // New operation identity prevents uncertain old attempts from being
+        // replayed with a changed CAS baseline. Both generations remain archived.
+        replacement =
+            {
+                ...current,
+                'documentRevision': secureSetupToken(24),
+                'baseCloudRevision': cloud['documentRevision'],
+                'baseCloudUploadedAt': cloud['uploadedAt'],
+                'syncState': 'Pending',
+                'retryCount': 0,
+                'retryAtMillis': 0,
+                'uploadedAt': DateTime.now().millisecondsSinceEpoch,
+                'reviewedRecordRevision': cloud['_syncRevision'],
+                'reviewHistoryId': historyKey,
+              }
+              ..remove('lastError')
+              ..remove('failureCategory');
+      } else {
+        final root = await WindowsLocalStorage.localFilesDirectory();
+        final directory = Directory(
+          '${root.path}/${_safeFileName(origin)}/reviewed_documents',
+        );
+        await directory.create(recursive: true);
+        guard();
+        final extension=switch(cloud['mimeType']){'application/pdf'=>'pdf','image/png'=>'png','image/jpeg'=>'jpg',_=>'bin'};
+        final file = File('${directory.path}/${secureSetupToken(24)}.$extension');
+        await file.writeAsBytes(bytes!, flush: true);
+        guard();
+        final diskHash=await crypto.sha256.bind(file.openRead()).first;
+        if(await file.length()!=bytes!.length || diskHash.toString()!=cloud['contentHash'])throw StateError('Retained cloud copy failed independent disk verification. Originals retained.');
+        guard();
+        // A chosen cloud copy is a readback, never an ACK of the rejected local upload.
+        replacement = {
+          ...cloud,
+          'documentId': id,
+          'localPath': file.path,
+          'originalPath': file.path,
+          'optimizedPath': file.path,
+          'processedPath': file.path,
+          'optimizedFileName': cloud['fileName'],
+          'optimizedMimeType': cloud['mimeType'],
+          'fileUrl': Uri.file(file.path).toString(),
+          'cloudFileUrl': cloud['fileUrl'],
+          'cloudRevision': cloud['documentRevision'],
+          'cloudUploadedAt': cloud['uploadedAt'],
+          'baseCloudRevision': cloud['documentRevision'],
+          'baseCloudUploadedAt': cloud['uploadedAt'],
+          'syncState': 'Synced',
+          'deleted': false,
+          if (expected['inputRevision'] is String)
+            'ownerCloudChoiceInputRevision': expected['inputRevision'],
+          'reviewHistoryId': historyKey,
+          'retainedPaths': [
+            ...(local?['retainedPaths'] as List? ?? []),
+            expected['localPath'],
+          ],
+        };
+      }
+      guard();
+      await db.commitReviewedDocument(
+        id: id,
+        expected: expected,
+        remote: cloud,
+        selected: replacement,
+        choice: choice,
+        reason: reason,
+        localHash: reviewedLocalHash,
+      );
+    });
+    onLocalDocumentCommitted?.call();
   }
 
   static Future<void> flushDocumentPending({
@@ -315,14 +544,23 @@ class WindowsBackendBridge {
         if (admitRow?.call(queued.id, record) == false) continue;
         if (respectBackoff && admitRow == null && (record['retryAtMillis'] as num? ?? 0) > DateTime.now().millisecondsSinceEpoch) continue;
         void report(String stage, {String? category, DateTime? retryAt}) {
-          try { onActivity?.call({'queueCollection':'_windows_document_outbox',
-            'queueId':queued.id,'operationId':record['documentRevision'],
-            'schoolId':record['schoolId'],'stage':stage,
-            'at':DateTime.now().millisecondsSinceEpoch,
-            'isRetryable':stage=='retry' && {'networkPath','timeout','server'}.contains(category),
-            if(category!=null)'failureCategory':category,
-            if(retryAt!=null)'retryAt':retryAt.millisecondsSinceEpoch}); } catch (_) {}
+          try {
+            onActivity?.call({
+              'queueCollection': '_windows_document_outbox',
+              'queueId': queued.id,
+              'operationId': record['documentRevision'],
+              'schoolId': record['schoolId'],
+              'stage': stage,
+              'at': DateTime.now().millisecondsSinceEpoch,
+              'isRetryable':
+                  stage == 'retry' &&
+                  {'networkPath', 'timeout', 'server'}.contains(category),
+              if (category != null) 'failureCategory': category,
+              if (retryAt != null) 'retryAt': retryAt.millisecondsSinceEpoch,
+            });
+          } catch (_) {}
         }
+
         if (record['syncState'] == 'conflict' ||
             record['syncState'] == 'needsAttention')
           continue;
@@ -375,6 +613,8 @@ class WindowsBackendBridge {
             'targetMet': record['targetMet'],
             'baseCloudRevision': record['baseCloudRevision'] ?? '',
             'baseCloudUploadedAt': record['baseCloudUploadedAt'],
+            if (record['reviewedRecordRevision'] is String)
+              'reviewedRecordRevision': record['reviewedRecordRevision'],
             'fileBase64': base64Encode(bytes),
           };
           // A pause can arrive while preparing file bytes. Finish an admitted
@@ -451,12 +691,21 @@ class WindowsBackendBridge {
           report('verified');
         } catch (error, stack) {
           final decision = windowsSyncRecovery(error);
-          final attempts = (record['retryCount'] as num? ?? 0).toInt()+1;
-          final retryAt = decision.retry ? DateTime.now().add(decision.delay(attempts)) : null;
-          report(decision.kind == SyncFailureKind.conflict ? 'conflict'
-            : decision.kind == SyncFailureKind.authorization ? 'unauthorized'
-            : decision.retry ? 'retry' : 'needsAttention',
-            category:decision.kind.name,retryAt:retryAt);
+          final attempts = (record['retryCount'] as num? ?? 0).toInt() + 1;
+          final retryAt = decision.retry
+              ? DateTime.now().add(decision.delay(attempts))
+              : null;
+          report(
+            decision.kind == SyncFailureKind.conflict
+                ? 'conflict'
+                : decision.kind == SyncFailureKind.authorization
+                ? 'unauthorized'
+                : decision.retry
+                ? 'retry'
+                : 'needsAttention',
+            category: decision.kind.name,
+            retryAt: retryAt,
+          );
           if (FirebaseFirestore.instance.activeProfileId == origin)
             await _documentWrite(() async {
               final current = (await queued.reference.get()).data();
@@ -865,7 +1114,8 @@ class WindowsBackendBridge {
   static Future<int> flushPending({bool Function()? canAdmit, bool respectBackoff = false,
     void Function(Map<String, dynamic>)? onActivity,
     Future<String> Function()? readActiveUrl,
-    Future<http.Response> Function(Uri, Map<String,String>, String)? send}) async {
+    Future<http.Response> Function(Uri, Map<String, String>, String)? send,
+  }) async {
     final snapshot = await FirebaseFirestore.instance
         .collection('_windows_google_outbox')
         .get();
@@ -890,11 +1140,18 @@ class WindowsBackendBridge {
       final urlText = data['url']?.toString().trim() ?? '';
       final bodyData = data['body'];
       void report(String stage, {String? category}) {
-        try { onActivity?.call({'queueCollection':'_windows_google_outbox',
-          'queueId':queued.id,'operationId':bodyData is Map ? bodyData['operationId'] : null,
-          'schoolId':bodyData is Map ? bodyData['schoolId'] : null,
-          'stage':stage,'at':DateTime.now().millisecondsSinceEpoch,
-          'isRetryable':false,if(category!=null)'failureCategory':category}); } catch (_) {}
+        try {
+          onActivity?.call({
+            'queueCollection': '_windows_google_outbox',
+            'queueId': queued.id,
+            'operationId': bodyData is Map ? bodyData['operationId'] : null,
+            'schoolId': bodyData is Map ? bodyData['schoolId'] : null,
+            'stage': stage,
+            'at': DateTime.now().millisecondsSinceEpoch,
+            'isRetryable': false,
+            if (category != null) 'failureCategory': category,
+          });
+        } catch (_) {}
       }
 
       if (urlText.isEmpty || bodyData is! Map) {
@@ -926,18 +1183,30 @@ class WindowsBackendBridge {
       try {
         if (canAdmit?.call() == false) break;
         report('cloudRequest');
-        final requestHeaders=headers.isEmpty ? const {'Content-Type':'text/plain;charset=utf-8'} : headers;
-        final requestBody=jsonEncode(Map<String,dynamic>.from(bodyData));
-        final pendingResponse=(send!=null
-          ? send(Uri.parse(urlText),requestHeaders,requestBody)
-          : _postFollowingAppsScriptRedirects(Uri.parse(urlText),headers:requestHeaders,body:requestBody)
-        ).timeout(const Duration(seconds:30));
+        final requestHeaders = headers.isEmpty
+            ? const {'Content-Type': 'text/plain;charset=utf-8'}
+            : headers;
+        final requestBody = jsonEncode(Map<String, dynamic>.from(bodyData));
+        final pendingResponse =
+            (send != null
+                    ? send(Uri.parse(urlText), requestHeaders, requestBody)
+                    : _postFollowingAppsScriptRedirects(
+                        Uri.parse(urlText),
+                        headers: requestHeaders,
+                        body: requestBody,
+                      ))
+                .timeout(const Duration(seconds: 30));
         report('waitingForAck');
         final response = await pendingResponse;
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          final decision=SyncRecoveryDecision.classify(status:response.statusCode);
-          report(decision.retry ? 'retry' : 'needsAttention',category:decision.kind.name);
+          final decision = SyncRecoveryDecision.classify(
+            status: response.statusCode,
+          );
+          report(
+            decision.retry ? 'retry' : 'needsAttention',
+            category: decision.kind.name,
+          );
           break;
         }
 
@@ -952,9 +1221,12 @@ class WindowsBackendBridge {
         final action = data['action']?.toString() ?? '';
 
         if (!_replayApplied(action, result)) {
-          await queued.reference.update({'syncState':'needsAttention',
-            'lastError':'Legacy response did not verify the original mutation. Administrator review required.'});
-          report('needsAttention',category:'unknown');
+          await queued.reference.update({
+            'syncState': 'needsAttention',
+            'lastError':
+                'Legacy response did not verify the original mutation. Administrator review required.',
+          });
+          report('needsAttention', category: 'unknown');
           break;
         }
         final current=(await queued.reference.get()).data();
@@ -967,8 +1239,11 @@ class WindowsBackendBridge {
         completed++;
         report('verified');
       } catch (error) {
-        final decision=windowsSyncRecovery(error);
-        report(decision.retry ? 'retry' : 'needsAttention',category:decision.kind.name);
+        final decision = windowsSyncRecovery(error);
+        report(
+          decision.retry ? 'retry' : 'needsAttention',
+          category: decision.kind.name,
+        );
         break;
       }
     }
@@ -1314,27 +1589,41 @@ class WindowsBackendBridge {
           idToken: token,
           collection: collection,
         );
-    Future<Map<String,dynamic>> documentReceipt(String id, Map payload) async {
-      if (connection['managed'] != true) throw const MissingSyncAcknowledgement();
-      final reply = await ManagedSchoolSession.callForSchool(school, 'managed/records', {
-        'operation':'read', 'collection':'documents', 'syncProtocol':2,
-      });
+    Future<Map<String, dynamic>> documentReceipt(String id, Map payload) async {
+      if (connection['managed'] != true)
+        throw const MissingSyncAcknowledgement();
+      final reply = await ManagedSchoolSession.callForSchool(
+        school,
+        'managed/records',
+        {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2},
+      );
       await ensureSchool();
       final row = (reply['records'] as Map?)?[id];
-      final receipt = <String,dynamic>{'success':true, 'cloudVerified':true,
-        'schoolId':reply['schoolId'], 'documentId':id,
-        'document':row, 'fileUrl':row is Map ? row['fileUrl'] : null};
-      if (!verifiedDocumentAcknowledgement({...payload, 'schoolId':school, 'documentId':id}, receipt)) {
+      final receipt = <String, dynamic>{
+        'success': true,
+        'cloudVerified': true,
+        'schoolId': reply['schoolId'],
+        'documentId': id,
+        'document': row,
+        'fileUrl': row is Map ? row['fileUrl'] : null,
+      };
+      if (!verifiedDocumentAcknowledgement({
+        ...payload,
+        'schoolId': school,
+        'documentId': id,
+      }, receipt)) {
         throw const MissingSyncAcknowledgement();
       }
       return receipt;
     }
+
     Future<void> save(
       String collection,
       String id,
       Map<String, dynamic> data, {
       String? expectedRevision,
       num? expectedUploadedAt,
+      String? recordRevision,
     }) async {
       if ((await CentralSchoolCloud.saved())['schoolId'] != school ||
           FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] !=
@@ -1348,6 +1637,7 @@ class WindowsBackendBridge {
         data: data,
         expectedRevision: expectedRevision,
         expectedUploadedAt: expectedUploadedAt,
+        reviewedRecordRevision: recordRevision,
       );
       await ensureSchool();
       await FirebaseFirestore.instance.applySyncedDocument(
@@ -1376,7 +1666,10 @@ class WindowsBackendBridge {
         final existing =
             (await read('school_config'))['school_profile_cache'] ?? {};
         requireSchoolProfile(data);
-        final profile = mergeSchoolProfileSafely(Map<String,dynamic>.from(existing), data);
+        final profile = mergeSchoolProfileSafely(
+          Map<String, dynamic>.from(existing),
+          data,
+        );
         for (final prefix in ['logo', 'seal', 'principalSignature']) {
           final raw = data['${prefix}Base64']?.toString() ?? '';
           if (raw.isNotEmpty) {
@@ -1466,6 +1759,10 @@ class WindowsBackendBridge {
           id,
           document,
           expectedRevision: base,
+          recordRevision:
+              data['reviewedRecordRevision'] as String? ??
+              old?['_syncRevision'] as String? ??
+              '',
           expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );
         return await documentReceipt(id, data);
@@ -1485,6 +1782,8 @@ class WindowsBackendBridge {
           collection: 'documents',
           documentId: id,
           expectedRevision: data['baseCloudRevision']?.toString() ?? '',
+          operationId:crypto.sha256.convert(utf8.encode('$id:${data['baseCloudRevision']??''}:delete')).toString(),
+          expectedRecordRevision:old?['_syncRevision'] as String? ?? '',
           expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );
         await ensureSchool();
@@ -1503,8 +1802,9 @@ class WindowsBackendBridge {
       };
       if (lists.containsKey(action)) {
         final pair = lists[action]!;
-        final rows = (await read(pair.$1)).entries
-            .map((e) => {'documentId': e.key, ...e.value});
+        final rows = (await read(
+          pair.$1,
+        )).entries.map((e) => {'documentId': e.key, ...e.value});
         return {
           'success': true,
           pair.$2: rows
@@ -1580,9 +1880,9 @@ class WindowsBackendBridge {
       if (action == 'list_exam_center')
         return {
           'success': true,
-          'exams': (await read('exams')).entries
-              .map((e) => {'examId': e.key, ...e.value})
-              .toList(),
+          'exams': (await read(
+            'exams',
+          )).entries.map((e) => {'examId': e.key, ...e.value}).toList(),
           'results': (await read('exam_center_results')).values.toList(),
         };
       if (action == 'mark_teacher_attendance' ||
@@ -1675,8 +1975,15 @@ class WindowsBackendBridge {
         final legacyResults = await FirebaseFirestore.instance.collection('_local_exam_center_results').get();
         return {
           'success': true,
-          'exams': {for (final d in legacyExams.docs) d.id: {'examId': d.id, ...d.data()}, for (final d in exams.docs) d.id: {'examId': d.id, ...d.data()}}.values.toList(),
-          'results': {for (final d in legacyResults.docs) d.id: d.data(), for (final d in results.docs) d.id: d.data()}.values.toList(),
+          'exams': {
+            for (final d in legacyExams.docs)
+              d.id: {'examId': d.id, ...d.data()},
+            for (final d in exams.docs) d.id: {'examId': d.id, ...d.data()},
+          }.values.toList(),
+          'results': {
+            for (final d in legacyResults.docs) d.id: d.data(),
+            for (final d in results.docs) d.id: d.data(),
+          }.values.toList(),
         };
 
       case 'save_exam':
@@ -1852,6 +2159,7 @@ class WindowsBackendBridge {
     required String kind,
     required Map<String, dynamic> person,
     required String inputRevision,
+    Future<Map<String, dynamic>> Function()? readPublished,
   }) async {
     final link = SchoolLink.parse(qr), db = FirebaseFirestore.instance;
     if (!link.managed ||
@@ -1860,15 +2168,103 @@ class WindowsBackendBridge {
       throw StateError('Verified school ID owner required.');
     if (!await db.localPersistenceEnabled())
       throw StateError('Durable local school context required.');
-    final id = publishedIdCardId(qr);
+    final id = publishedIdCardId(qr), origin = db.activeProfileId;
+    final captured =
+        (await db.collection('_local_student_documents').doc(id).get()).data();
+    final pendingBeforeRead=(await db.collection('_windows_document_outbox').doc(id).get()).data();
+    if(pendingBeforeRead!=null && (captured==null || {'conflict','needsAttention'}.contains(pendingBeforeRead['syncState'])))throw StateError('Existing ID generation requires owner review. Original queue retained.');
+    Map<String, dynamic>? existingCloud;
+    if (captured == null) {
+      Map<String, dynamic>? reply;
+      try {
+        reply =
+            await (readPublished?.call() ??
+                ManagedSchoolSession.callForSchool(
+                  link.schoolId,
+                  'managed/records',
+                  {
+                    'operation': 'read',
+                    'collection': 'documents',
+                    'syncProtocol': 2,
+                  },
+                ));
+      } on TimeoutException {
+        /* Offline generation remains safely queued; CAS still required. */
+      } on SocketException {
+        /* No cloud evidence; never grant a replacement baseline. */
+      } on CentralCloudException catch(error) {
+        if(!{429,502,503,504}.contains(error.status))rethrow;
+        // A retryable inventory outage cannot block durable offline generation.
+        // The existing owner CAS must still prove absence before cloud creation.
+      }
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != link.schoolId) {
+        throw StateError('School changed during ID publication.');
+      }
+      if (reply != null) {
+        if (reply['schoolId'] != link.schoolId ||
+            reply['syncProtocol'] != 2 ||
+            reply['records'] is! Map ||
+            reply['unchanged'] == true) {
+          throw StateError(
+            'Published ID inventory not verified. Local originals retained.',
+          );
+        }
+        final row = (reply['records'] as Map)[id];
+        if (row != null) {
+          if (row is! Map ||
+              row['schoolId'] != link.schoolId ||
+              row['studentId'] != link.personId ||
+              row['ownerRole'] != link.role ||
+              row['personId'] != (person['mobileStableId'] ?? link.personId) ||
+              row['documentKind'] != 'idCard' ||
+              row['_syncDeleted'] == true ||
+              row['documentRevision'] is! String || row['documentRevision'].isEmpty ||
+              row['_syncRevision'] is! String || row['_syncRevision'].isEmpty ||
+              row['contentHash'] is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['contentHash'])) {
+            throw StateError('Existing cloud ID requires owner review.');
+          }
+          existingCloud = Map<String, dynamic>.from(row);
+        }
+      }
+    }
+    // Cloud waits happen outside the local document writer, so another offline
+    // document save can complete while this bounded inventory read is pending.
     await _documentWrite(() async {
+      if (db.activeProfileId != origin)
+        throw StateError('School changed during ID publication.');
       final old =
           (await db.collection('_local_student_documents').doc(id).get())
               .data();
-      if (old?['inputRevision'] == inputRevision && old?['deleted'] != true)
+      final retainedQueue =
+          (await db.collection('_windows_document_outbox').doc(id).get())
+              .data();
+      if (retainedQueue != null &&
+          (old == null ||
+              {
+                'conflict',
+                'needsAttention',
+              }.contains(retainedQueue['syncState']))) {
+        throw StateError(
+          'Existing ID generation requires owner review. Original queue retained.',
+        );
+      }
+      if ((old?['inputRevision'] == inputRevision ||
+              old?['ownerCloudChoiceInputRevision'] == inputRevision) &&
+          old?['deleted'] != true)
         return;
+      if (old == null && existingCloud?['inputRevision'] == inputRevision) {
+        // Same inputs already published: metadata restore is not a byte ACK.
+        await db.applySyncedDocument(
+          db.collection('documents').doc(id),
+          existingCloud!,
+        );
+        return;
+      }
       await _saveLocalStudentDocument({
         '_queueCloud': true,
+        if (old == null && existingCloud != null)
+          '_cloudGenerationConflict': existingCloud,
         'replaceDocumentId': id,
         'studentId': link.personId,
         'studentName': person['name'],
@@ -2050,7 +2446,23 @@ class WindowsBackendBridge {
       'optimizationReason': processing['optimizationReason'],
       'sourceRetained': processing['sourceRetained'] == true,
       'deleted': false,
-      'syncState': body['_queueCloud'] == true ? 'Pending' : 'Local',
+      'syncState': body['_cloudGenerationConflict'] != null
+          ? 'conflict'
+          : body['_queueCloud'] == true
+          ? 'Pending'
+          : 'Local',
+      if (body['_cloudGenerationConflict'] is Map) ...{
+        'observedCloud': body['_cloudGenerationConflict'],
+        'failureCategory': 'conflict',
+        'lastError':
+            'Existing published ID has different inputs; review both originals before upload.',
+        'diagnosticId': 'ID_CLOUD_GENERATION_REVIEW_REQUIRED',
+        'suspectedCause':
+            'Missing local generation with an existing different cloud ID; revision order unknown.',
+        'sourceFile': 'lib/windows_backend_bridge.dart',
+        'requiredOwnerAction':
+            'Sync details → Review → Verify cloud version → inspect PDFs and explicitly choose.',
+      },
       'localPath': file.path,
       'originalPath': file.path,
       'retainedPaths': [

@@ -1,4 +1,3 @@
-import 'health/health_runtime.dart';
 import 'school_qr_link.dart';
 
 /// Shared identity boundary. A QR identifies a person; it never grants a new
@@ -11,7 +10,7 @@ class QrAuthenticationEngine {
   static String encode(Map<String, dynamic> fields) =>
       SchoolLink.encode(fields);
   static SchoolLink decode(String raw, {String? expectedSchool}) {
-    final link = HealthRuntime.measureSync('qr', () => SchoolLink.parse(raw));
+    final link = SchoolLink.parse(raw);
     if (expectedSchool != null && link.projectId != expectedSchool) {
       throw StateError('This ID belongs to another school.');
     }

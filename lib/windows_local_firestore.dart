@@ -249,6 +249,13 @@ class FirebaseFirestore {
     required String choice, required String reason}) =>
       _database.enqueueReviewedConflict(queueId, expected, remote, choice, reason);
 
+  /// Dedicated owner review transition; ordinary writes still cannot unblock
+  /// a retained document conflict. Rechecks the exact queue inside disk commit.
+  Future<void> commitReviewedDocument({required String id,
+    required Map<String,dynamic> expected,required Map<String,dynamic> remote,
+    required Map<String,dynamic> selected,required String choice,required String reason,
+    required String localHash}) => _database.commitReviewedDocument(id,expected,remote,selected,choice,reason,localHash);
+
   /// Cached verified managed-session authorization supports offline admin review;
   /// the server reauthorizes the school before the protected cloud restore.
   Future<void> requestLocalRestore(String deletionOperationId, {required bool approved}) async {
@@ -1609,6 +1616,60 @@ class _LocalSchoolDatabase {
         docs[id]=_encodeMap(selected);
         _storeCollections(root,collections);await _writeRoot(root);
         for(final name in [collection,'_windows_firebase_outbox']){final signal=_signals[name];if(signal!=null&&!signal.isClosed)signal.add(null);}
+        completer.complete();
+      }catch(error,stack){completer.completeError(error,stack);}
+    });
+    return completer.future;
+  }
+
+  Future<void> commitReviewedDocument(String id,Map<String,dynamic> expected,
+      Map<String,dynamic> remote,Map<String,dynamic> selected,String choice,String reason,String localHash) {
+    final origin=_activeProfileId,school=_activeIdentity['schoolSyncId'];
+    final completer=Completer<void>();
+    _writeTail=_writeTail.then((_)async{
+      try{
+        if(_activeProfileId!=origin || school is! String || school.isEmpty || _activeIdentity['blocked']==true ||
+            expected['schoolId']!=school || remote['schoolId']!=school || selected['schoolId']!=school ||
+            remote['id']!=id || selected['documentId']!=id || expected['syncState']!='conflict' || expected['deleted']==true ||
+            remote['_syncDeleted']==true || !{'local','cloud'}.contains(choice) || reason.trim().isEmpty || reason.length>1000 ||
+            remote['_syncRevision'] is! String || remote['_syncRevision'].isEmpty || remote['documentRevision'] is! String || remote['documentRevision'].isEmpty ||
+            !RegExp(r'^[a-f0-9]{64}$').hasMatch(localHash))throw StateError('Explicit verified school document review required.');
+        final historyKey='document-$id-${expected['documentRevision']}';
+        final root=await _readRoot(collections:{'_windows_document_outbox','_local_student_documents','_windows_sync_conflict_history','_windows_sync_receipts'},
+          recordScope:{'_windows_document_outbox':[id],'_local_student_documents':[id],'_windows_sync_conflict_history':[historyKey],
+            '_windows_sync_receipts':['cloud-choice-$historyKey']});
+        if(_activeProfileId!=origin)throw StateError('School changed during document review commit.');
+        final collections=_collections(root),queue=collections['_windows_document_outbox'];
+        final current=queue is Map?queue[id]:null,local=(collections['_local_student_documents'] as Map?)?[id];
+        if(current is! Map || local is! Map || _jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(_encodeMap(expected)) ||
+            local['documentRevision']!=expected['documentRevision'] || local['localPath']!=expected['localPath']) {
+          throw StateError('Pending generation changed during review commit.');
+        }
+        for(final key in ['studentId','documentKind','ownerRole','personId']){
+          if(expected[key]!=remote[key] || selected[key]!=remote[key])throw StateError('Document review ownership mismatch.');
+        }
+        if(choice=='local' && (selected['syncState']!='Pending' || selected['documentRevision']==expected['documentRevision'] ||
+            selected['baseCloudRevision']!=remote['documentRevision'] || selected['reviewedRecordRevision']!=remote['_syncRevision'] ||
+            selected['localPath']!=expected['localPath']))throw StateError('Reviewed local CAS generation required.');
+        if(choice=='cloud' && (selected['syncState']!='Synced' || selected['documentRevision']!=remote['documentRevision'] ||
+            selected['contentHash']!=remote['contentHash'] || selected['localPath']==expected['localPath']))throw StateError('Verified retained cloud copy required.');
+        final key='document-$id-${expected['documentRevision']}';
+        final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+        history.putIfAbsent(key,()=>_encodeMap({...expected,'verifiedCloud':remote,'resolution':'owner selected $choice',
+          'reason':reason.trim(),'reviewedAt':DateTime.now().millisecondsSinceEpoch,'localContentHash':localHash}));
+        if(choice=='local')queue![id]=_encodeMap(selected);
+        else{
+          final receipts=collections.putIfAbsent('_windows_sync_receipts',()=> <String,dynamic>{}) as Map;
+          receipts['cloud-choice-$key']=_encodeMap({'schoolId':school,'documentId':id,'collection':'documents',
+            'operationId':remote['documentRevision'],'recordRevision':remote['_syncRevision'],'contentHash':remote['contentHash'],
+            'verification':'owner selected authenticated cloud bytes','rejectedLocalRevision':expected['documentRevision']});
+          queue!.remove(id); // This exact reviewed generation only; original remains in history/files.
+        }
+        (collections['_local_student_documents'] as Map)[id]=_encodeMap(selected);
+        _storeCollections(root,collections);await _writeRoot(root);
+        for(final name in ['_windows_document_outbox','_local_student_documents','_windows_sync_conflict_history','_windows_sync_receipts']){
+          final signal=_signals[name];if(signal!=null&&!signal.isClosed)signal.add(null);
+        }
         completer.complete();
       }catch(error,stack){completer.completeError(error,stack);}
     });

@@ -6,6 +6,7 @@ import 'school_qr_link.dart';
 import 'windows_school_identity.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'id_card_catalog.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
@@ -70,8 +71,9 @@ class WindowsDocumentTemplates {
     final u = Uri.tryParse(raw?.toString() ?? '');
     if (u == null || u.scheme != 'https') return null;
     try {
-      return await schoolImageBytes(u.toString())
-          .timeout(const Duration(milliseconds: 600), onTimeout: () => null);
+      return await schoolImageBytes(
+        u.toString(),
+      ).timeout(const Duration(milliseconds: 600), onTimeout: () => null);
     } catch (_) {}
     return null;
   }
@@ -200,11 +202,25 @@ class WindowsDocumentTemplates {
             .data() ??
         {};
     final templates = await selections();
-    final fileQueue=(await db.collection('_windows_document_outbox').get()).docs;
-    final recordQueue=(await db.collection('_windows_firebase_outbox').get()).docs;
-    final conflictedIds={
-      for(final q in fileQueue)if({'conflict','needsAttention'}.contains(q.data()['syncState']))q.id,
-      for(final q in recordQueue)if(q.data()['collection']=='documents' && {'conflict','needsAttention'}.contains(q.data()['syncState']))q.data()['documentId'],
+    Future<Map<String, dynamic>>? publishedInventory;
+    Future<Map<String, dynamic>> readPublished() =>
+        publishedInventory ??= ManagedSchoolSession.callForSchool(
+          identity['schoolId'] as String,
+          'managed/records',
+          {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2},
+        );
+    final fileQueue =
+        (await db.collection('_windows_document_outbox').get()).docs;
+    final recordQueue =
+        (await db.collection('_windows_firebase_outbox').get()).docs;
+    final conflictedIds = {
+      for (final q in fileQueue)
+        if ({'conflict', 'needsAttention'}.contains(q.data()['syncState']))
+          q.id,
+      for (final q in recordQueue)
+        if (q.data()['collection'] == 'documents' &&
+            {'conflict', 'needsAttention'}.contains(q.data()['syncState']))
+          q.data()['documentId'],
     };
     for (final kind in ['studentId', 'teacherId']) {
       final collection = kind == 'studentId'
@@ -216,8 +232,11 @@ class WindowsDocumentTemplates {
           throw StateError('School changed during ID publication.');
         // Retained file/metadata conflicts must be explicitly reviewed before
         // automatic ID regeneration can change their queue or local originals.
-        final ownerId=WindowsBackendBridge.publishedIdCardOwnerId(kind=='studentId'?'student':'teacher',doc.id);
-        if(conflictedIds.contains(ownerId))continue;
+        final ownerId = WindowsBackendBridge.publishedIdCardOwnerId(
+          kind == 'studentId' ? 'student' : 'teacher',
+          doc.id,
+        );
+        if (conflictedIds.contains(ownerId)) continue;
         final person = await SchoolPersonIdentity.ensure(collection, doc.id);
         final qr = SchoolLink.encodeCompact({
           'app': 'VIDYA_SAARTHI',
@@ -235,9 +254,22 @@ class WindowsDocumentTemplates {
         final existing =
             (await db.collection('_local_student_documents').doc(id).get())
                 .data();
-        if (existing?['inputRevision'] == revision &&
+        if ((existing?['inputRevision'] == revision ||
+                existing?['ownerCloudChoiceInputRevision'] == revision) &&
             existing?['deleted'] != true)
           continue;
+        if (existing == null) {
+          final cached = (await db.collection('documents').doc(id).get())
+              .data();
+          if (db.activeProfileId != origin)
+            throw StateError('School changed during ID publication.');
+          if (cached?['schoolId'] == identity['schoolId'] &&
+              cached?['studentId']==doc.id && cached?['personId']==(person['mobileStableId']??doc.id) &&
+              cached?['ownerRole']==(kind=='studentId'?'student':'teacher') && cached?['documentKind']=='idCard' &&
+              cached?['inputRevision'] == revision &&
+              cached?['_syncDeleted'] != true)
+            continue;
+        }
         final address = [
           person['address'],
           person['district'],
@@ -261,6 +293,7 @@ class WindowsDocumentTemplates {
           kind: kind,
           person: person,
           inputRevision: revision,
+          readPublished: readPublished,
         );
       }
     }
@@ -294,10 +327,20 @@ class WindowsDocumentTemplates {
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
-    if ((v is String && (v.startsWith('manifest:') || v.startsWith('reviewed:'))) || kind == 'otherStaffId') {
-      final reviewed = kind=='studentId' && v is String && v.startsWith('reviewed:')
-          ? await WindowsIdCardDesignerEntry.reviewed(v,FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'local:$origin') : null;
-      if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed during reviewed preview');
+    if ((v is String &&
+            (v.startsWith('manifest:') || v.startsWith('reviewed:'))) ||
+        kind == 'otherStaffId') {
+      final reviewed =
+          kind == 'studentId' && v is String && v.startsWith('reviewed:')
+          ? await WindowsIdCardDesignerEntry.reviewed(
+              v,
+              FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+                      ?.toString() ??
+                  'local:$origin',
+            )
+          : null;
+      if (FirebaseFirestore.instance.activeProfileId != origin)
+        throw StateError('School changed during reviewed preview');
       return manifestId(
         {
           ...profile,
@@ -622,12 +665,27 @@ class _SchoolDocumentTemplatesScreenState
     if(_openingDesigner)return;
     setState(()=>_openingDesigner=true);
     try {
-      final value=_selected['studentId'];
-      final id=value is String && value.startsWith('manifest:')?value.substring(9):value is String&&value.startsWith('reviewed:')?value.split(':')[1]:'school-id-v1';
-      final entry=await IdCardCatalog.find(id);
-      if(mounted)await WindowsIdCardDesignerEntry.openBulk(context,entry:entry,selection:value is String?value:null);
-    } catch(e) {if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Bulk ID unavailable: $e')));}
-    finally{if(mounted)setState(()=>_openingDesigner=false);}
+      final value = _selected['studentId'];
+      final id = value is String && value.startsWith('manifest:')
+          ? value.substring(9)
+          : value is String && value.startsWith('reviewed:')
+          ? value.split(':')[1]
+          : 'school-id-v1';
+      final entry = await IdCardCatalog.find(id);
+      if (mounted)
+        await WindowsIdCardDesignerEntry.openBulk(
+          context,
+          entry: entry,
+          selection: value is String ? value : null,
+        );
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Bulk ID unavailable: $e')));
+    } finally {
+      if (mounted) setState(() => _openingDesigner = false);
+    }
   }
 
   Future<void> _preview(int index) async {
@@ -698,7 +756,15 @@ class _SchoolDocumentTemplatesScreenState
           ),
           const SizedBox(height: 20),
           if (_kind == 'studentId') ...[
-            if(WindowsIdCardDesignerEntry.enabled) Align(alignment:Alignment.centerLeft,child:OutlinedButton.icon(onPressed:_loading||_openingDesigner?null:_openBulk,icon:const Icon(Icons.print),label:const Text('Class bulk front/back PDF'))),
+            if (WindowsIdCardDesignerEntry.enabled)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _loading || _openingDesigner ? null : _openBulk,
+                  icon: const Icon(Icons.print),
+                  label: const Text('Class bulk front/back PDF'),
+                ),
+              ),
             const SizedBox(height: 10),
           ],
           if (_loading) const LinearProgressIndicator(),

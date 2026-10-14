@@ -4,6 +4,9 @@ import 'school_profile_policy.dart';
 
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
+
+import 'package:printing/printing.dart';
 
 import 'package:flutter/material.dart';
 
@@ -64,8 +67,9 @@ String _conflictPreview(Object? original) {
   }
 
   try {
-    final text = const JsonEncoder.withIndent('  ')
-        .convert(normalize(original, 0));
+    final text = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(normalize(original, 0));
     return text.length <= 10000
         ? text
         : '${text.substring(0, 10000)}\n[Preview shortened; original preserved]';
@@ -77,11 +81,12 @@ String _conflictPreview(Object? original) {
 /// Operator-initiated own-school review. Opening it never sends a write.
 Future<void> showWindowsConflictReview(
   BuildContext context,
-  Map<String, dynamic> item,
-) => showDialog<void>(context: context, builder: (_) => _ConflictReview(item));
+  Map<String, dynamic> item, {Future<Map<String,dynamic>> Function(Map<String,dynamic>)? cloudReader}
+) => showDialog<void>(context: context, builder: (_) => _ConflictReview(item,cloudReader:cloudReader));
 
 class _ConflictReview extends StatefulWidget {
-  const _ConflictReview(this.item);
+  const _ConflictReview(this.item,{this.cloudReader});
+  final Future<Map<String,dynamic>> Function(Map<String,dynamic>)? cloudReader;
   final Map<String, dynamic> item;
   @override
   State<_ConflictReview> createState() => _ConflictReviewState();
@@ -91,6 +96,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
   final reason = TextEditingController();
   Map<String, dynamic>? remote, expected;
   String? choice;
+  String? reviewedLocalHash;
   String comparison = 'not performed';
   String error = '';
   bool busy = false;
@@ -103,7 +109,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
     if (db.activeProfileId != origin ||
         queued['schoolId'] != db.activeProfileIdentity['schoolSyncId'])
       throw StateError('School changed. Reopen review.');
-    final reply = await ManagedSchoolSession.callForSchool(
+    final reply = await (widget.cloudReader?.call(queued) ?? ManagedSchoolSession.callForSchool(
       queued['schoolId'] as String,
       'managed/records',
       {
@@ -111,7 +117,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
         'collection': queued['collection'] ?? 'documents',
         'syncProtocol': 2,
       },
-    );
+    ));
     final row =
         (reply['records'] as Map?)?[queued['documentId'] ?? widget.item['id']];
     if (db.activeProfileId != origin ||
@@ -137,6 +143,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
       expected = null;
       comparison = 'not performed';
       choice = null;
+      reviewedLocalHash = null;
     });
     try {
       final queue =
@@ -151,22 +158,24 @@ class _ConflictReviewState extends State<_ConflictReview> {
               .data();
       if (current == null || current['syncState'] != 'conflict')
         throw StateError('Pending version changed. Reopen Sync details.');
-      final cloud = await readCloud(current)
-          .timeout(const Duration(seconds: 60));
-      final compared = document && queue == '_windows_document_outbox'
-          ? identicalDocumentPayload(
-                  await WindowsBackendBridge.documentReviewPayload(
-                    widget.item['id'] as String,
-                    current,
-                  ),
-                  cloud,
-                )
+      final cloud = await readCloud(
+        current,
+      ).timeout(const Duration(seconds: 60));
+      final proof = document && queue == '_windows_document_outbox'
+          ? await WindowsBackendBridge.documentReviewPayload(
+              widget.item['id'] as String,
+              current,
+            )
+          : null;
+      final compared = proof != null
+          ? identicalDocumentPayload(proof, cloud)
                 ? 'identical'
                 : 'differs (revision order unknown)'
           : compareSyncVersions(current, cloud);
       if (mounted)
         setState(() {
           expected = current;
+          reviewedLocalHash = proof?['contentHash'] as String?;
           remote = cloud;
           comparison = compared;
         });
@@ -234,13 +243,67 @@ class _ConflictReviewState extends State<_ConflictReview> {
     }
   }
 
+  Future<void> previewDocument(bool cloud) async {
+    setState(() => busy = true);
+    try {
+      final source = cloud
+          ? ({...remote!}
+              ..remove('localPath')
+              ..remove('originalPath'))
+          : expected!;
+      final bytes = cloud
+          ? await WindowsBackendBridge.documentBytes(source)
+          : await File(
+              (source['optimizedPath'] ?? source['localPath']) as String,
+            ).readAsBytes();
+      if (db.activeProfileId != origin)
+        throw StateError('School changed. Reopen review.');
+      if (bytes.length > 20 * 1024 * 1024 ||
+          source['mimeType'] != 'application/pdf') {
+        throw StateError(
+          'Inline review supports PDF files up to 20 MB. Originals retained.',
+        );
+      }
+      if (mounted)
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(cloud ? 'Cloud PDF' : 'Local PDF'),
+            content: SizedBox(
+              width: 700,
+              height: 550,
+              child: PdfPreview(
+                build: (_) => bytes,
+                allowPrinting: false,
+                allowSharing: false,
+                canChangeOrientation: false,
+                canChangePageFormat: false,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+        );
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   Future<void> commit() async {
     final accepted = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Confirm reviewed version'),
         content: Text(
-          'You selected the $choice version. A new revision-checked operation will be queued. The original conflict and both versions are retained. This is not a cloud acknowledgment.',
+          document && choice == 'cloud'
+              ? 'Keep the verified cloud version on this PC and archive this exact local conflict. Both originals remain retained; no upload will occur.'
+              : 'You selected the $choice version. A new revision-checked operation will be queued. The original conflict and both versions are retained. This is not a cloud acknowledgment.',
         ),
         actions: [
           TextButton(
@@ -249,7 +312,11 @@ class _ConflictReviewState extends State<_ConflictReview> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Queue reviewed version'),
+            child: Text(
+              document && choice == 'cloud'
+                  ? 'Keep verified cloud copy'
+                  : 'Queue reviewed version',
+            ),
           ),
         ],
       ),
@@ -260,13 +327,26 @@ class _ConflictReviewState extends State<_ConflictReview> {
       final fresh = await readCloud(expected!);
       if (jsonEncode(fresh) != jsonEncode(remote))
         throw StateError('Cloud version changed. Verify both versions again.');
-      await db.enqueueReviewedConflict(
-        queueId: widget.item['id'] as String,
-        expected: expected!,
-        remote: fresh,
-        choice: choice!,
-        reason: reason.text,
-      );
+      if (document) {
+        if (widget.item['_queueCollection'] != '_windows_document_outbox') {
+          throw StateError('Document owner queue required.');
+        }
+        await WindowsBackendBridge.resolveReviewedDocument(
+          id: widget.item['id'] as String,
+          expected: expected!,
+          reviewedCloud: fresh,
+          choice: choice!,
+          reason: reason.text,
+          reviewedLocalHash: reviewedLocalHash!,
+        );
+      } else
+        await db.enqueueReviewedConflict(
+          queueId: widget.item['id'] as String,
+          expected: expected!,
+          remote: fresh,
+          choice: choice!,
+          reason: reason.text,
+        );
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
@@ -338,10 +418,27 @@ class _ConflictReviewState extends State<_ConflictReview> {
                   ],
                   if (document)
                     const Text(
-                      'Document comparison verifies the original local bytes and metadata. Only an identical authenticated cloud readback can be marked already synced; differing files remain for review.',
+                      'Local choice queues a new revision-checked upload. Cloud choice verifies and retains cloud bytes locally. Both originals and the review history are retained.',
+                    ),
+                  if (document && remote != null)
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        OutlinedButton(
+                          onPressed: busy ? null : () => previewDocument(false),
+                          child: const Text('Preview local PDF'),
+                        ),
+                        OutlinedButton(
+                          onPressed: busy ? null : () => previewDocument(true),
+                          child: const Text('Preview cloud PDF'),
+                        ),
+                      ],
                     ),
                   if (remote != null &&
-                      !document &&
+                      (!document ||
+                          widget.item['_queueCollection'] ==
+                              '_windows_document_outbox') &&
+                      expected?['deleted'] != true &&
                       expected?['operation'] != 'delete') ...[
                     RadioListTile<String>(
                       title: const Text('Use local version'),
@@ -391,7 +488,9 @@ class _ConflictReviewState extends State<_ConflictReview> {
           onPressed: busy ? null : alreadySynced,
           child: const Text('Record already synced'),
         ),
-      if (!document)
+      if (!document ||
+          widget.item['_queueCollection'] == '_windows_document_outbox' &&
+              expected?['deleted'] != true)
         FilledButton(
           onPressed:
               busy ||
