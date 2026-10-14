@@ -119,3 +119,12 @@ bool verifiedDocumentAcknowledgement(Map payload, Map result) {
   }
   return identicalDocumentPayload(payload, cloud);
 }
+
+/// Explain content differences without assuming UUIDs or clocks establish order.
+List<String> documentDifferenceFields(Map local, Map cloud) => [
+  for (final key in const ['schoolId','documentRevision','contentHash','studentId',
+    'studentName','studentClass','rollNo','documentName','fileName','mimeType',
+    'uploadedBy','documentKind','ownerRole','personId','inputRevision'])
+    if (local[key] != cloud[key]) key,
+  if (cloud['_syncDeleted'] == true) '_syncDeleted',
+];
