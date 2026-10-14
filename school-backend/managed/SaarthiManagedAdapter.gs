@@ -261,6 +261,7 @@ function VS_sheetPut(store,item) {
   store.sheet.getRange(row,1,1,33).setValues([values]);SpreadsheetApp.flush();
   const saved=VS_sheetItem(store,item.id);
   if(!saved||JSON.stringify(saved.data)!==JSON.stringify(data))throw new Error('School record verification failed');
+  VS_recordJsonBackup(store,saved);
   VS_refreshStudentReadable(store,item,row);
   VS_refreshRecordReadable(store,item,row);
 }
@@ -479,7 +480,7 @@ function VS_managedRecordUnlocked(b) {
   }
   if(!/^[^/]{1,200}$/.test(b.id||'')||b.id==='.'||b.id==='..')throw new Error('Invalid record ID');
   const existing=VS_sheetItem(store,b.id),file=existing;
-  if(existing&&b.createOnly===true)return {skipped:true};
+  if(existing&&b.createOnly===true){VS_recordJsonBackup(store,existing);return {skipped:true};}
   if(existing&&(existing.schoolId!==school||existing.id!==b.id))throw new Error('Foreign school record');
   if(b.operation==='write' && b.collection==='school_config' && b.id==='school_profile_cache') {
     const core=['schoolName','principalName','schoolContactNo'];
@@ -495,7 +496,7 @@ function VS_managedRecordUnlocked(b) {
       b.data && b.data.schoolId===school && typeof b.data.documentRevision==='string' &&
       b.data.documentRevision.length>0 && b.data.documentRevision===existing.data.documentRevision &&
       VS_layoutHash(VS_syncRequestShape(b))===VS_layoutHash(VS_syncRequestShape({operation:'write',data:existing.data}))) {
-    return {recordRevision:existing.data._syncRevision,syncProtocol:2};
+    VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2};
   }
   if(b.syncProtocol!==2 && existing&&existing.data._syncOperationId)throw new Error('Record revision conflict');
   if(b.syncProtocol===2){
@@ -504,7 +505,7 @@ function VS_managedRecordUnlocked(b) {
       const digest=VS_layoutHash(VS_syncRequestShape(b));
       const original=existing.data._syncRequestHash||VS_layoutHash(VS_syncRequestShape({operation:existing.data._syncDeleted?'delete':'write',data:existing.data}));
       if(digest!==original)throw new Error('Sync operation ID conflict');
-      return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:existing.data._syncDeleted?VS_managedDeletedFile(store,b.id,existing.data):undefined};
+      VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:existing.data._syncDeleted?VS_managedDeletedFile(store,b.id,existing.data):undefined};
     }
     if((existing&&existing.data._syncRevision||'')!==b.expectedRecordRevision)throw new Error('Record revision conflict');
   }
@@ -521,7 +522,7 @@ function VS_managedRecordUnlocked(b) {
   if(b.operation==='write' && existing && existing.data._syncDeleted)throw new Error('Record revision conflict');
   if(b.operation==='delete'){
     if(VS_recycleEnabled()&&b.syncProtocol!==2)throw new Error('Invalid sync operation');
-    if(existing&&existing.data._syncDeleted)return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};
+    if(existing&&existing.data._syncDeleted){VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};}
     {
       const revision=Utilities.getUuid(),data={schoolId:school,_syncDeleted:true,_syncRevision:revision};
       if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=VS_layoutHash(VS_syncRequestShape(b));}
@@ -833,9 +834,9 @@ function VS_managedHandle(e) {
           if(part.sheet.getRange(1,1,1,1).getValues()[0][0]!=='Record Key')throw new Error('School tab identity requires review');
         });sheetsVerified=true;}
       }
-      result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
+      result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',scriptBundleVersion:'2026-10-14.3',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',scriptBundleVersion:'2026-10-14.4',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
@@ -1339,4 +1340,42 @@ function VS_refreshRecordReadable(store,item,row){
     if(store.sheet.hideColumns&&Number(p.getProperty(key+'_cursor')||2)>last)store.sheet.hideColumns(1,33);
     p.setProperty('VS_RECORD_READABLE_STATUS_'+store.collection,'available; existing rows may require bounded backfill');
   }catch(_){p.setProperty('VS_RECORD_READABLE_STATUS_'+store.collection,'blocked: owner columns or display limits require review; canonical records retained');}
+}
+
+// Immutable, category-scoped JSON backups of verified Sheet records. Sheets
+// remain authoritative. Sync receives no write ACK until this file readback
+// succeeds; a committed Sheet write with a failed backup retries the same op.
+function VS_recordJsonBackup(store,item){
+  if(store.json||PropertiesService.getScriptProperties().getProperty('VS_RECORD_JSON_BACKUPS')==='off')return null;
+  VS_validateManagedCollection(store.collection);
+  if(!item||item.schoolId!==store.school||!item.data||item.data.schoolId!==store.school||typeof item.id!=='string')throw new Error('Foreign school record');
+  const value={schemaVersion:1,backupKind:'sheet_record_revision',schoolId:store.school,collection:store.collection,id:item.id,recordRevision:item.data._syncRevision||'',data:item.data};
+  const text=JSON.stringify(value,null,2);if(Utilities.base64Decode(Utilities.base64Encode(text)).length>1024*1024)throw new Error('Record JSON backup exceeds safe limit');
+  const hash=VS_layoutHash(value),root=VS_managedRoot(),folder=VS_managedFolder(VS_managedFolder(VS_managedFolder(root,'Backups'),'Record_JSON'),store.collection);
+  const name=VS_layoutHash(item.id)+'_'+hash+'.json',marker='VIDYA_RECORD_JSON:'+store.school+':'+store.collection+':'+hash;
+  const matches=folder.getFilesByName(name);let file;
+  if(matches.hasNext()){file=matches.next();if(matches.hasNext())throw new Error('Record JSON backup collision; retained for review');if(file.getDescription()!==marker){if(file.getDescription()||VS_layoutHash(JSON.parse(VS_managedFile(file.getId()).getBlob().getDataAsString()))!==hash)throw new Error('Record JSON backup collision; retained for review');file.setDescription(marker);}}
+  else {file=folder.createFile(name,text,'application/json');file.setDescription(marker);}
+  const verified=VS_managedFile(file.getId()),blob=verified.getBlob();
+  if(blob.getBytes().length>1024*1024||VS_layoutHash(JSON.parse(blob.getDataAsString()))!==hash)throw new Error('Record JSON backup readback failed');
+  return {fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view',sha256:hash,recordRevision:value.recordRevision};
+}
+// Owner-editor export of existing managed Sheet rows; five records per call,
+// no scheduler, queue changes, restore or second synchronization engine.
+function VS_exportExistingRecordJsonBackups(){
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try{
+    VS_managedRoot();if(VS_jsonEnabled())throw new Error('Sheet JSON export requires Sheet authority');
+    if(PropertiesService.getScriptProperties().getProperty('VS_RECORD_JSON_BACKUPS')==='off')throw new Error('Record JSON export is disabled');
+    const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID'),key='VS_RECORD_JSON_EXPORT',raw=p.getProperty(key);
+    const job=raw?JSON.parse(raw):{schemaVersion:1,schoolId:school,collectionIndex:0,lastId:''};
+    if(job.schemaVersion!==1||job.schoolId!==school||!Number.isInteger(job.collectionIndex)||job.collectionIndex<0||job.collectionIndex>VS_LAYOUT_COLLECTIONS.length||typeof job.lastId!=='string')throw new Error('JSON export identity mismatch');
+    let exported=0;
+    while(job.collectionIndex<VS_LAYOUT_COLLECTIONS.length&&exported<5){
+      const collection=VS_LAYOUT_COLLECTIONS[job.collectionIndex],records=VS_jsonLegacyRecords(collection,school),ids=Object.keys(records).sort().filter(id=>id>job.lastId);
+      for(const id of ids){if(exported>=5)break;VS_recordJsonBackup({collection:collection,school:school},{id:id,schoolId:school,data:records[id]});job.lastId=id;exported++;p.setProperty(key,JSON.stringify(job));}
+      if(!ids.length||job.lastId===ids[ids.length-1]){job.collectionIndex++;job.lastId='';p.setProperty(key,JSON.stringify(job));}
+    }
+    return {schoolId:school,exported:exported,complete:job.collectionIndex===VS_LAYOUT_COLLECTIONS.length,sourceSheetsChanged:false};
+  }finally{lock.releaseLock();}
 }

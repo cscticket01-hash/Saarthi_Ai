@@ -1,8 +1,8 @@
 # Corrected Google Sheets Apps Script
 
-Latest user choice supersedes the earlier JSON default: text/records stay in readable Google Sheets, while photos/PDFs remain original-format Drive files with their URLs in the same Sheet record. Self-Healing remains removed. Based on PR #51 head `9881eca7ed76fbc8ee6d747ba1afdd0c97390ba9`.
+Latest user choice supersedes the earlier JSON default: text/records stay in readable Google Sheets and each accepted record revision also has a verified immutable JSON backup in Drive. Photos/PDFs remain original-format Drive files with their URLs in the same Sheet record and JSON backup. Self-Healing remains removed. Based on PR #51 head `9881eca7ed76fbc8ee6d747ba1afdd0c97390ba9`.
 
-Use the **whole** generated `school-backend/managed/SaarthiManagedAll.gs` bundle, version `2026-10-14.3`. The uploaded legacy-only script has add_student/add_teacher actions but lacks the signed managed_records/managed_upload/managed_health protocol required by current managed Windows clients. Do not paste only the adapter or edit generated fragments.
+Use the **whole** generated `school-backend/managed/SaarthiManagedAll.gs` bundle, version `2026-10-14.4`. The earlier legacy-only attachment lacks the signed managed APIs; the later 2026-10-11.4 attachment already contains them. This upgrade adds readable projections and verified JSON backups to the complete managed bundle. Do not paste only the adapter or edit generated fragments.
 
 Default managed record storage is now Google Sheets. Explicit existing JSON storage remains available only for compatibility: deployments that already have JSON heads continue using JSON so new edits cannot be silently replaced by stale Sheets. An explicit switch to Sheets after JSON cutover is rejected and requires a reviewed migration. No existing Sheet, JSON generation, media or queue is deleted.
 
@@ -19,3 +19,11 @@ Windows save hooks already notify Sync Engine 3.0 after durable local commit. Th
 5. After publication approval, verify signed storage/check and a synthetic own-school record/photo readback, then test a real Windows save. No production deployment or original-school writes occurred during these tests.
 
 This corrects API compatibility and the selected Sheet storage behavior in source. It does not prove which code, project properties or deployment URL the user's live school currently runs.
+
+## JSON backups and existing records
+
+New Sheet-backed writes, edits and delete tombstones create immutable pretty-printed JSON under the verified school root at Backups/Record_JSON/<collection>/. Each envelope contains schemaVersion, schoolId, collection, unique record ID, record revision and saved data. Media remains URLs. Old versions are retained. Sheet writes and JSON readback must both succeed before the API returns success; an interrupted backup is repaired by the same durable operation replay without a new record revision or duplicate Sheet row. The combined operation is recoverable, not a cross-service transaction.
+
+Existing historical Sheet rows are exported without source changes by the owner-only editor function VS_exportExistingRecordJsonBackups(). Run it repeatedly until complete is true. Each call exports at most five records and persists a same-school cursor only after verified backup, allowing restart. Deploying alone does not export all old records. Existing JSON-primary schools keep their immutable JSON generations rather than creating a second backup format.
+
+Validation: 415 backend tests passed, including full-bundle defaults, media references, lost-response replay, retained edit history, tombstone deletion, backup failure/restart recovery, corrupt-file rejection, interrupted marker recovery, bounded historical export and school isolation. Original school data was not used for destructive tests. Live Apps Script publication and device ACK verification still require access to the actual school deployment.
