@@ -1306,6 +1306,7 @@ function VS_recordReadableText(value){
   if(text.length>40000)throw new Error('Readable field exceeds Sheet display limit; canonical record retained');
   return /^[=+\-@]/.test(text)?"'"+text:text;
 }
+function VS_recordReadableHeader(key){return /^[=+\-@]/.test(key)?'Field: '+key:key;}
 function VS_recordViewHeaders(sheet,start,width){
   const available=Math.max(0,Math.min(width,sheet.getMaxColumns()-start+1));
   return (available?sheet.getRange(1,start,1,available).getValues()[0]:[]).concat(Array(width-available).fill(''));
@@ -1321,11 +1322,11 @@ function VS_refreshRecordReadable(store,item,row){
     const last=store.sheet.getLastRow(),entries=item?[{item:item,row:row}]:[];let nextCursor=null;
     if(!raw&&store.sheet.getMaxColumns()>33&&last>0&&store.sheet.getRange(1,34,last,store.sheet.getMaxColumns()-33).getValues().some(r=>r.some(v=>v!=='')))throw new Error('Readable columns contain owner data; review required');
     if(!item&&last>=2){const start=Math.max(2,Number(p.getProperty(key+'_cursor')||2)),end=Math.min(last,start+99);if(start<=end){store.sheet.getRange(start,1,end-start+1,33).getValues().forEach((v,n)=>{if(v[0])entries.push({item:VS_sheetDecode(store,v),row:start+n});});nextCursor=end+1;}}
-    const oldHeaders=['Record ID'].concat(fields),existing=VS_recordViewHeaders(store.sheet,34,oldHeaders.length);
+    const oldHeaders=['Record ID'].concat(fields.map(VS_recordReadableHeader)),existing=VS_recordViewHeaders(store.sheet,34,oldHeaders.length);
     if(raw?existing.some((v,n)=>v!==oldHeaders[n]):existing.some(v=>v!==''))throw new Error('Readable columns contain owner data; review required');
     const added=[];entries.forEach(e=>Object.keys(e.item.data).sort().forEach(k=>{if(k.indexOf('_sync')!==0&&fields.indexOf(k)<0){fields.push(k);added.push(k);}}));
     if(fields.length>128)throw new Error('Readable view field capacity exceeded');
-    const headers=['Record ID'].concat(fields);
+    const headers=['Record ID'].concat(fields.map(VS_recordReadableHeader));
     const nextStart=34+oldHeaders.length,available=Math.max(0,Math.min(added.length,store.sheet.getMaxColumns()-nextStart+1));
     if(available&&store.sheet.getRange(1,nextStart,Math.max(last,1),available).getValues().some(r=>r.some(v=>v!=='')))throw new Error('Readable columns contain owner data; review required');
     if(store.sheet.getMaxColumns()<33+headers.length)store.sheet.insertColumnsAfter(store.sheet.getMaxColumns(),33+headers.length-store.sheet.getMaxColumns());
