@@ -86,7 +86,8 @@ String compareSyncVersions(Map queued, Map cloud) {
 /// Never replace an explicitly contradictory ID or weaken content verification.
 Map<String, dynamic> documentAcknowledgementFromReadback(Map payload, Map reply) {
   final id = payload['documentId'];
-  final row = id is String ? (reply['records'] as Map?)?[id] : null;
+  final records = reply['records'];
+  final row = id is String && records is Map ? records[id] : null;
   final identityMatches = row is Map &&
       (row['id'] == null || row['id'] == id) &&
       (row['documentId'] == null || row['documentId'] == id);
