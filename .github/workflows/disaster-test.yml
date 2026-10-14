@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   disaster-live:
-    if: github.ref == 'refs/heads/feature/smart-sync-3' || github.ref == 'refs/heads/feature/universal-self-healing-2'
+    if: github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:

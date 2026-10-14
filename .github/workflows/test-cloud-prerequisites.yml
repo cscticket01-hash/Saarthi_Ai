@@ -2,7 +2,7 @@ name: Isolated TEST cloud prerequisites
 on:
   workflow_dispatch:
   push:
-    branches: [windows/easy-connect-draft, feature/smart-sync-3, feature/universal-self-healing-2]
+    branches: [windows/easy-connect-draft, feature/smart-sync-3]
     paths:
       - .github/scripts/test_cloud_readiness.cjs
       - .github/scripts/reviewed_script_version.cjs
@@ -52,7 +52,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   windows-live-prerequisites:
-    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3' || github.ref == 'refs/heads/feature/universal-self-healing-2'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -81,7 +81,7 @@ jobs:
           path: build/cloud-prerequisites
   actual-engines-live:
     needs: windows-live-prerequisites
-    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3' || github.ref == 'refs/heads/feature/universal-self-healing-2'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -105,7 +105,7 @@ jobs:
 
   website-ui-live:
     needs: actual-engines-live
-    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3' || github.ref == 'refs/heads/feature/universal-self-healing-2'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -139,7 +139,7 @@ jobs:
           build/sync-review-web
   android-os-live:
     needs: website-ui-live
-    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3' || github.ref == 'refs/heads/feature/universal-self-healing-2'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -242,7 +242,7 @@ jobs:
 
   native-android-windows-readback:
     needs: android-os-live
-    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3' || github.ref == 'refs/heads/feature/universal-self-healing-2'
+    if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:

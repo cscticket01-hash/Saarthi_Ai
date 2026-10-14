@@ -6,7 +6,7 @@ const reviewOnly=new Set(['lib/windows_disaster_rehearsal.dart','test/windows_sy
  '.github/scripts/disaster_resume.test.cjs','.github/workflows/disaster-test.yml',
  '.github/workflows/recycle-test.yml']);
 function fixture(env){
- assert.equal(env.GITHUB_REPOSITORY,repo);assert.ok(['refs/heads/feature/smart-sync-3','refs/heads/feature/universal-self-healing-2'].includes(env.GITHUB_REF));
+ assert.equal(env.GITHUB_REPOSITORY,repo);assert.ok(['refs/heads/feature/smart-sync-3'].includes(env.GITHUB_REF));
  const resumed=Boolean(env.VS_TEST_DISASTER_FIXTURE_RUN_ID||env.VS_TEST_DISASTER_FIXTURE_ATTEMPT);
  const run=resumed?env.VS_TEST_DISASTER_FIXTURE_RUN_ID:env.GITHUB_RUN_ID;
  const attempt=resumed?env.VS_TEST_DISASTER_FIXTURE_ATTEMPT:env.GITHUB_RUN_ATTEMPT;
@@ -14,7 +14,7 @@ function fixture(env){
  return {id:'disaster-rehearsal-'+run+'-'+attempt,resumed};
 }
 function verifyEvidence(run,currentSha,comparison,branch='feature/smart-sync-3'){
- assert.ok(['feature/smart-sync-3','feature/universal-self-healing-2'].includes(branch));
+ assert.ok(['feature/smart-sync-3'].includes(branch));
  assert.equal(run.name,'Isolated TEST cloud prerequisites');assert.equal(run.status,'completed');assert.equal(run.conclusion,'success');
  assert.equal(run.head_branch,branch);assert.equal(run.head_repository.full_name,repo);
  assert.match(run.head_sha,/^[a-f0-9]{40}$/);assert.match(currentSha,/^[a-f0-9]{40}$/);

@@ -1,4 +1,3 @@
-import 'health/windows_health_adapter.dart';
 import 'windows_device_management.dart';
 import 'windows_student_import.dart';
 import 'windows_clean_install_entry.dart';
@@ -46,7 +45,6 @@ Future<void> main() async {
   windows_html.setSchoolStorageNamespace('local');
   unawaited(WindowsPlatformClient.instance.initialize().catchError((Object e) {debugPrint('Platform startup verification deferred.');}));
   runApp(const VidyaSaarthiWindowsApp());
-  unawaited(WindowsHealthAdapter.instance.initialize().catchError((Object _) {}));
 
 }
 

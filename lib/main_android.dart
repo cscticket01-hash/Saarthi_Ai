@@ -1,4 +1,3 @@
-import 'health/mobile_health_adapter.dart';
 import 'qr_authentication_engine.dart';
 
 import 'dart:async';
@@ -52,15 +51,14 @@ Future<void> _registerManagedNotifications() async {
 }
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(MobileHealthLifetime(child:MobileStartupGate(
+  runApp(MobileStartupGate(
     restore: SchoolSession.instance.restore,
     readyBuilder: (_) => const SaarthiMobileApp(),
     onReady: () {
-      unawaited(MobileHealthAdapter.instance.initialize().catchError((Object _) {}));
       unawaited(initializeAttendanceBackground());
       unawaited(_initializeMobileNotifications().catchError((_) {}));
     },
-  )));
+  ));
 }
 
 Future<void> _initializeMobileNotifications() async {
