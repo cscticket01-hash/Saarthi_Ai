@@ -41829,7 +41829,7 @@
         "School changed during document sync."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:538",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:542",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -41839,7 +41839,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:538 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:542 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -41867,7 +41867,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed during document sync.",
-        "line": 538,
+        "line": 542,
         "origins": 1
       }
     },
@@ -43341,7 +43341,7 @@
         "Pending document belongs to another school."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:567",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:571",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -43351,7 +43351,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:567 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:571 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -43379,7 +43379,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Pending document belongs to another school.",
-        "line": 567,
+        "line": 571,
         "origins": 1
       }
     },
@@ -44629,7 +44629,7 @@
         "School changed before upload."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:579",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:583",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -44639,7 +44639,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:579 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:583 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -44667,7 +44667,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed before upload.",
-        "line": 579,
+        "line": 583,
         "origins": 2
       }
     },
@@ -46869,7 +46869,7 @@
         "School changed while loading documents."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:790",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:794",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -46879,7 +46879,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:790 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:794 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -46907,7 +46907,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed while loading documents.",
-        "line": 790,
+        "line": 794,
         "origins": 2
       }
     },
@@ -48045,7 +48045,7 @@
         "Current school durable document storage is unavailable."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:837",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:841",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -48055,7 +48055,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:837 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:841 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -48083,7 +48083,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Current school durable document storage is unavailable.",
-        "line": 837,
+        "line": 841,
         "origins": 1
       }
     },
@@ -49165,7 +49165,7 @@
         "School changed before document removal."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:843",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:847",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -49175,7 +49175,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:843 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:847 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -49203,7 +49203,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed before document removal.",
-        "line": 843,
+        "line": 847,
         "origins": 1
       }
     },
@@ -50229,7 +50229,7 @@
         "Invalid document ID."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:846",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:850",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -50239,7 +50239,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:846 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:850 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -50267,7 +50267,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Invalid document ID.",
-        "line": 846,
+        "line": 850,
         "origins": 1
       }
     },
@@ -51237,7 +51237,7 @@
         "Document belongs to another student."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:859",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:863",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -51247,7 +51247,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:859 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:863 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Preserve inputs and in-flight work. Inspect the exact source guard and bounded owner evidence; this message alone does not establish the underlying cause or authorize an automatic repair.",
       "level": "C",
       "playbook": "",
@@ -51275,7 +51275,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Document belongs to another student.",
-        "line": 859,
+        "line": 863,
         "origins": 1
       }
     },
@@ -52077,7 +52077,7 @@
         "School changed before document save."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:893",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:897",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -52087,7 +52087,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:893 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:897 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -52115,7 +52115,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "School changed before document save.",
-        "line": 893,
+        "line": 897,
         "origins": 1
       }
     },
@@ -53701,7 +53701,7 @@
         "Current school durable storage is unavailable."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:918",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:922",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -53711,7 +53711,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:918 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:922 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Keep the durable operation ID, queue and both revisions. Smart Sync alone reads the owner receipt/revision and admits retries or conflict review; do not infer success from transport completion.",
       "level": "B",
       "playbook": "",
@@ -53739,7 +53739,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Current school durable storage is unavailable.",
-        "line": 918,
+        "line": 922,
         "origins": 1
       }
     },
@@ -54429,7 +54429,7 @@
         "Google health-check response JSON map nahi hai."
       ],
       "evidence": [
-        "Constant FormatException throw operand in lib/windows_backend_bridge.dart:1450",
+        "Constant FormatException throw operand in lib/windows_backend_bridge.dart:1454",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -54439,7 +54439,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1450 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1454 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -54467,7 +54467,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "FormatException",
         "literal": "Google health-check response JSON map nahi hai.",
-        "line": 1450,
+        "line": 1454,
         "origins": 1
       }
     },
@@ -55045,7 +55045,7 @@
         "Request body JSON map nahi hai."
       ],
       "evidence": [
-        "Constant FormatException throw operand in lib/windows_backend_bridge.dart:1542",
+        "Constant FormatException throw operand in lib/windows_backend_bridge.dart:1546",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55055,7 +55055,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1542 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1546 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -55083,7 +55083,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "FormatException",
         "literal": "Request body JSON map nahi hai.",
-        "line": 1542,
+        "line": 1546,
         "origins": 1
       }
     },
@@ -55661,7 +55661,7 @@
         "Document school mismatch."
       ],
       "evidence": [
-        "Constant StateError throw operand in lib/windows_backend_bridge.dart:1551",
+        "Constant StateError throw operand in lib/windows_backend_bridge.dart:1555",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55671,7 +55671,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1551 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect lib/windows_backend_bridge.dart:1555 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -55699,7 +55699,7 @@
         "path": "lib/windows_backend_bridge.dart",
         "kind": "StateError",
         "literal": "Document school mismatch.",
-        "line": 1551,
+        "line": 1555,
         "origins": 1
       }
     },

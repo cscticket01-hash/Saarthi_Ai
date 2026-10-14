@@ -219,6 +219,7 @@ void main() {
           (await db.collection('_local_student_documents').doc(id).get())
               .data()!;
       expect(selected['documentRevision'], cloud['documentRevision']);
+      expect(selected['localPath'],endsWith('.pdf'));
       expect(selected['ownerCloudChoiceInputRevision'], 'local-input');
       expect(await File(selected['localPath'] as String).readAsBytes(), [
         4,

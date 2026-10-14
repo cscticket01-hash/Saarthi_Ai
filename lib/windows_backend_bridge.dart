@@ -472,8 +472,12 @@ class WindowsBackendBridge {
         );
         await directory.create(recursive: true);
         guard();
-        final file = File('${directory.path}/${secureSetupToken(24)}.verified');
+        final extension=switch(cloud['mimeType']){'application/pdf'=>'pdf','image/png'=>'png','image/jpeg'=>'jpg',_=>'bin'};
+        final file = File('${directory.path}/${secureSetupToken(24)}.$extension');
         await file.writeAsBytes(bytes!, flush: true);
+        guard();
+        final diskHash=await crypto.sha256.bind(file.openRead()).first;
+        if(await file.length()!=bytes!.length || diskHash.toString()!=cloud['contentHash'])throw StateError('Retained cloud copy failed independent disk verification. Originals retained.');
         guard();
         // A chosen cloud copy is a readback, never an ACK of the rejected local upload.
         replacement = {

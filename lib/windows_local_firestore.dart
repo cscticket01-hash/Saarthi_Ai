@@ -1634,7 +1634,10 @@ class _LocalSchoolDatabase {
             remote['_syncDeleted']==true || !{'local','cloud'}.contains(choice) || reason.trim().isEmpty || reason.length>1000 ||
             remote['_syncRevision'] is! String || remote['_syncRevision'].isEmpty || remote['documentRevision'] is! String || remote['documentRevision'].isEmpty ||
             !RegExp(r'^[a-f0-9]{64}$').hasMatch(localHash))throw StateError('Explicit verified school document review required.');
-        final root=await _readRoot();
+        final historyKey='document-$id-${expected['documentRevision']}';
+        final root=await _readRoot(collections:{'_windows_document_outbox','_local_student_documents','_windows_sync_conflict_history','_windows_sync_receipts'},
+          recordScope:{'_windows_document_outbox':[id],'_local_student_documents':[id],'_windows_sync_conflict_history':[historyKey],
+            '_windows_sync_receipts':['cloud-choice-$historyKey']});
         if(_activeProfileId!=origin)throw StateError('School changed during document review commit.');
         final collections=_collections(root),queue=collections['_windows_document_outbox'];
         final current=queue is Map?queue[id]:null,local=(collections['_local_student_documents'] as Map?)?[id];
