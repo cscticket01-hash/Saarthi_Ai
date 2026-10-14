@@ -7,6 +7,9 @@ name: Document conflict and student Sheet review
     branches: [fix/verified-document-review-student-view]
 permissions:
   contents: read
+env:
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  DASH__SUPPRESS_ANALYTICS: 'true'
 concurrency:
   group: document-student-review-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
@@ -30,3 +33,7 @@ jobs:
         env:
           APPDATA: ${{ runner.temp }}/document-student-review
         run: flutter test --concurrency=1 --timeout 90s test/windows_document_review_owner_test.dart test/windows_student_sync_audit_test.dart test/windows_document_queue_test.dart test/windows_sync_revision_test.dart test/windows_sync_comparison_test.dart test/windows_sync_durable_admission_test.dart test/windows_sync_modern_ui_test.dart test/windows_healing_monitor_test.dart
+      - name: Real SQLite atomic owner transitions and crash/reopen evidence
+        env:
+          APPDATA: ${{ runner.temp }}/document-student-sqlite-review
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 90s test/windows_sqlite_api_test.dart test/windows_document_review_owner_test.dart

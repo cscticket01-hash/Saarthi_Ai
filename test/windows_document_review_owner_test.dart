@@ -4,7 +4,14 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:image/image.dart' as img;
+import 'package:qr/qr.dart' as qr_pixels;
+import 'package:printing/printing.dart';
+import 'package:printing/src/interface.dart';
+import 'package:printing/src/method_channel.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
+import '../lib/windows_sync_conflict_review.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../lib/windows_backend_bridge.dart';
@@ -13,6 +20,61 @@ import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/platform/platform_config.dart';
 import '../lib/school_qr_link.dart';
+import '../lib/id_card_engine.dart';
+import '../lib/id_card_manifest.dart';
+
+// Simulated OS raster boundary for owner-state tests. Production QR decoding
+// still runs; actual composed PDF pixels are separately checked by the existing
+// 13-sample final-raster acceptance suite. This is not native printer proof.
+class OwnerReviewRaster extends PdfRaster {
+  OwnerReviewRaster(img.Image image)
+    : png = Uint8List.fromList(img.encodePng(image)),
+      super(
+        image.width,
+        image.height,
+        image.getBytes(order: img.ChannelOrder.rgba),
+      );
+  final Uint8List png;
+  @override
+  Future<Uint8List> toPng() async => png;
+}
+
+class OwnerReviewPrinting extends MethodChannelPrinting {
+  OwnerReviewPrinting(this.qr);
+  final String qr;
+  @override
+  Stream<PdfRaster> raster(
+    Uint8List document,
+    List<int>? pages,
+    double dpi,
+  ) async* {
+    final code = qr_pixels.QrImage(
+      qr_pixels.QrCode.fromData(
+        data: qr,
+        errorCorrectLevel: qr_pixels.QrErrorCorrectLevel.M,
+      ),
+    );
+    const scale = 6, quiet = 4;
+    final image = img.Image(
+      width: (code.moduleCount + quiet * 2) * scale,
+      height: (code.moduleCount + quiet * 2) * scale,
+      numChannels: 4,
+    );
+    img.fill(image, color: img.ColorRgba8(255, 255, 255, 255));
+    for (var y = 0; y < code.moduleCount; y++)
+      for (var x = 0; x < code.moduleCount; x++)
+        if (code.isDark(y, x))
+          img.fillRect(
+            image,
+            x1: (x + quiet) * scale,
+            y1: (y + quiet) * scale,
+            x2: (x + quiet + 1) * scale - 1,
+            y2: (y + quiet + 1) * scale - 1,
+            color: img.ColorRgba8(0, 0, 0, 255),
+          );
+    yield OwnerReviewRaster(image);
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -336,6 +398,234 @@ void main() {
       expect(
         (await db.collection('_windows_sync_receipts').get()).docs,
         isEmpty,
+      );
+    },
+  );
+  testWidgets(
+    'differing PDF verification exposes owner choices and preview controls',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showWindowsConflictReview(context, {
+                  'id': id,
+                  ...local,
+                  '_queueCollection': '_windows_document_outbox',
+                }, cloudReader: (_) => read()),
+                child: const Text('Review'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Review'));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Verify cloud version'));
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Use local version'), findsOneWidget);
+      expect(find.text('Use cloud version'), findsOneWidget);
+      expect(find.text('Preview local PDF'), findsOneWidget);
+      expect(find.text('Preview cloud PDF'), findsOneWidget);
+      await tester.runAsync(()async{
+      expect(
+        (await db.collection('_windows_document_outbox').doc(id).get()).data(),
+        local,
+      );
+      expect(
+        (await db.collection('_windows_sync_receipts').get()).docs,
+        isEmpty,
+      );
+      });
+      await tester.tap(find.text('Close'));await tester.pumpAndSettle();
+    },
+  );
+  test(
+    'different restored ID inputs retain both versions for review without uploading',
+    () async {
+      final person = {
+        'mobileLinkToken': 'x' * 48,
+        'mobileStableId': 'S1',
+        'name': 'Student',
+        'class': '1',
+        'rollNo': 1,
+      };
+      final qr = SchoolLink.encodeCompact({
+        'app': 'VIDYA_SAARTHI',
+        'v': 2,
+        'managed': true,
+        'schoolId': school,
+        'centralEndpoint':
+            'https://saarthi-oauth-staging.onrender.com/school-cloud',
+        'type': 'student',
+        'personId': 'S1',
+        'linkToken': person['mobileLinkToken'],
+      });
+      final cardId = WindowsBackendBridge.publishedIdCardId(qr);
+      final template = IdCardManifest.fromJson(
+        Map<String, dynamic>.from(
+          jsonDecode(
+            File('assets/school_id_manifest_v1.json').readAsStringSync(),
+          ),
+        ),
+      );
+      final bytes = await IdCardEngine.render(template, {
+        ...person,
+        'schoolName': 'Synthetic School',
+      }, qr: qr);
+      final printing = PrintingPlatform.instance;
+      PrintingPlatform.instance = OwnerReviewPrinting(qr);
+      try {
+        await WindowsBackendBridge.publishIdCard(
+          bytes: bytes,
+          qr: qr,
+          kind: 'studentId',
+          person: person,
+          inputRevision: 'new-input',
+          readPublished: () async => {
+            'schoolId': school,
+            'syncProtocol': 2,
+            'records': {
+              cardId: {...cloud, 'id': cardId},
+            },
+          },
+        );
+      } finally {
+        PrintingPlatform.instance = printing;
+      }
+      final retained =
+          (await db.collection('_windows_document_outbox').doc(cardId).get())
+              .data()!;
+      expect(retained['syncState'], 'conflict');
+      expect(retained['diagnosticId'], 'ID_CLOUD_GENERATION_REVIEW_REQUIRED');
+      expect(
+        retained['observedCloud']['documentRevision'],
+        cloud['documentRevision'],
+      );
+      expect(await File(retained['localPath'] as String).readAsBytes(), bytes);
+      expect(
+        (await db.collection('_windows_sync_receipts').get()).docs,
+        isEmpty,
+      );
+      await WindowsBackendBridge.flushDocumentPending(
+        send: (_) async => fail('Conflicted generation cannot upload'),
+      );
+    },
+  );
+  test(
+    'retryable cloud inventory outage permits offline ID save but authorization denial does not',
+    () async {
+      final person = {
+        'mobileLinkToken': 'x' * 48,
+        'mobileStableId': 'S1',
+        'name': 'Student',
+        'class': '1',
+        'rollNo': 1,
+      };
+      final qr = SchoolLink.encodeCompact({
+        'app': 'VIDYA_SAARTHI',
+        'v': 2,
+        'managed': true,
+        'schoolId': school,
+        'centralEndpoint':
+            'https://saarthi-oauth-staging.onrender.com/school-cloud',
+        'type': 'student',
+        'personId': 'S1',
+        'linkToken': person['mobileLinkToken'],
+      });
+      final cardId = WindowsBackendBridge.publishedIdCardId(qr);
+      await expectLater(
+        WindowsBackendBridge.publishIdCard(
+          bytes: Uint8List(0),
+          qr: qr,
+          kind: 'studentId',
+          person: person,
+          inputRevision: 'new-input',
+          readPublished: () async =>
+              throw CentralCloudException(403, 'school_cloud', 'denied'),
+        ),
+        throwsA(isA<CentralCloudException>()),
+      );
+      expect(
+        (await db.collection('_windows_document_outbox').doc(cardId).get())
+            .exists,
+        false,
+      );
+      final template = IdCardManifest.fromJson(
+        Map<String, dynamic>.from(
+          jsonDecode(
+            File('assets/school_id_manifest_v1.json').readAsStringSync(),
+          ),
+        ),
+      );
+      final bytes = await IdCardEngine.render(template, {
+        ...person,
+        'schoolName': 'Synthetic School',
+      }, qr: qr);
+      final printing = PrintingPlatform.instance;
+      PrintingPlatform.instance = OwnerReviewPrinting(qr);
+      try {
+        await WindowsBackendBridge.publishIdCard(
+          bytes: bytes,
+          qr: qr,
+          kind: 'studentId',
+          person: person,
+          inputRevision: 'new-input',
+          readPublished: () async =>
+              throw CentralCloudException(503, 'school_cloud', 'offline'),
+        );
+      } finally {
+        PrintingPlatform.instance = printing;
+      }
+      final queued =
+          (await db.collection('_windows_document_outbox').doc(cardId).get())
+              .data()!;
+      expect(queued['syncState'], 'Pending');
+      expect(queued['baseCloudRevision'], '');
+      expect(await File(queued['localPath'] as String).readAsBytes(), bytes);
+      expect(
+        (await db.collection('_windows_sync_receipts').get()).docs,
+        isEmpty,
+      );
+    },
+  );
+  test(
+    'protected pending ID is rejected before cloud lookup or regeneration',
+    () async {
+      final person = {'mobileLinkToken': 'x' * 48, 'mobileStableId': 'S1'};
+      final qr = SchoolLink.encodeCompact({
+        'app': 'VIDYA_SAARTHI',
+        'v': 2,
+        'managed': true,
+        'schoolId': school,
+        'centralEndpoint':
+            'https://saarthi-oauth-staging.onrender.com/school-cloud',
+        'type': 'student',
+        'personId': 'S1',
+        'linkToken': person['mobileLinkToken'],
+      });
+      final cardId = WindowsBackendBridge.publishedIdCardId(qr);
+      await db.collection('_windows_document_outbox').doc(cardId).set(local);
+      await expectLater(
+        WindowsBackendBridge.publishIdCard(
+          bytes: Uint8List(0),
+          qr: qr,
+          kind: 'studentId',
+          person: person,
+          inputRevision: 'new-input',
+          readPublished: () async =>
+              fail('Protected queue must not trigger a cloud lookup'),
+        ),
+        throwsStateError,
+      );
+      expect(
+        (await db.collection('_windows_document_outbox').doc(cardId).get())
+            .data(),
+        local,
       );
     },
   );

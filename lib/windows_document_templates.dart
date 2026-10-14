@@ -264,6 +264,8 @@ class WindowsDocumentTemplates {
           if (db.activeProfileId != origin)
             throw StateError('School changed during ID publication.');
           if (cached?['schoolId'] == identity['schoolId'] &&
+              cached?['studentId']==doc.id && cached?['personId']==(person['mobileStableId']??doc.id) &&
+              cached?['ownerRole']==(kind=='studentId'?'student':'teacher') && cached?['documentKind']=='idCard' &&
               cached?['inputRevision'] == revision &&
               cached?['_syncDeleted'] != true)
             continue;

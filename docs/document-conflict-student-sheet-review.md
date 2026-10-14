@@ -16,3 +16,14 @@ Continues published main `16b9b6e8afe586aee9e9e702402dd523808114f5`. No existing
 Dedicated tests cover owner decisions, retained bytes, restart, duplicate recovery, changing local/cloud versions, school switching, corrupt download, timeout after possible commit and same-input restored ID suppression. Existing queue, UI, receipt, revision and monitor regressions are included in a Windows/Linux review workflow; the existing platform workflow checks Windows, Android, Web, backend and school security on the Draft PR.
 
 This change does not deploy, release, run school setup, bind a new school or operate on real school records. The Apps Script source bundle is generated from its reviewed sources. An existing-school upgrade must preserve Script Properties, deployment identity, school/root/secret and `/exec` URL. Do not rerun setup. New binaries and an existing-school Script upgrade are required after review approval. Original-school cloud readback, physical Windows/Android and printer acceptance are not certified by synthetic tests.
+
+### Local verification evidence
+
+- Backend: 385 deterministic tests after dependency installation, including four new readable-row/CAS fixtures.
+- Dedicated owner/audit suite: 16 tests, with the PDF OS raster boundary explicitly simulated for state-transition fixtures. The actual 13 composed PDF raster/QR checks also pass independently.
+- Real SQLite: existing atomic API tests plus the new owner suite pass with `SAARTHI_WINDOWS_SQLITE=true`. JSON remains separately covered.
+- Broad default Flutter discovery: 1,734 passed, two skipped, 25 configuration-dependent failures. All 19 legacy provisioning failures pass with the existing TEST_ONLY define; all five SQLite failures pass with SQLite enabled; the raster test passes after the required PDF raster prerequisite. This is not an unconditional all-tests-pass claim for the default invocation.
+- Catalog validation: 1,000 IDs retained; 19 catalog, three coverage and 11 evidence-validator tests.
+- Existing synthetic benchmark: 100,000 observations in 144,540 microseconds, 99,999 deduplicated, three retained history events. Indexed matcher independently matches all 1,000 rules over 100,000 observations (86,156 microseconds versus 3,345,295 for the linear reference). Hosted VM figures are not device guarantees.
+
+Registered executable actions remain eight. Direct conditional automatic catalog recovery remains six cases, with four existing owner-mediated transport-policy cases; the other 990 remain unavailable for automatic repair. PDF version choice is explicitly reviewed owner work and is not counted as another automatic action or another automatically healed catalog case.

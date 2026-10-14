@@ -630,12 +630,17 @@ class WindowsFirebaseRemote {
     required String documentId,
     String? expectedRevision,
     num? expectedUploadedAt,
+    String? operationId,
+    String? expectedRecordRevision,
   }) async {
     if ((await CentralSchoolCloud.saved())['managed'] == true) {
       await _managedRecords(idToken, {
         'operation': 'delete',
         'collection': collection,
         'id': documentId,
+        if(operationId!=null && expectedRecordRevision!=null)...{
+          'syncProtocol':2,'operationId':operationId,'expectedRecordRevision':expectedRecordRevision,
+        },
         if (expectedRevision != null) 'expectedRevision': expectedRevision,
         if (expectedUploadedAt != null)
           'expectedUploadedAt': expectedUploadedAt,

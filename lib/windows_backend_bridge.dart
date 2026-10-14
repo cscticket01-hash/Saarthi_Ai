@@ -1778,6 +1778,8 @@ class WindowsBackendBridge {
           collection: 'documents',
           documentId: id,
           expectedRevision: data['baseCloudRevision']?.toString() ?? '',
+          operationId:crypto.sha256.convert(utf8.encode('$id:${data['baseCloudRevision']??''}:delete')).toString(),
+          expectedRecordRevision:old?['_syncRevision'] as String? ?? '',
           expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );
         await ensureSchool();
@@ -2165,6 +2167,8 @@ class WindowsBackendBridge {
     final id = publishedIdCardId(qr), origin = db.activeProfileId;
     final captured =
         (await db.collection('_local_student_documents').doc(id).get()).data();
+    final pendingBeforeRead=(await db.collection('_windows_document_outbox').doc(id).get()).data();
+    if(pendingBeforeRead!=null && (captured==null || {'conflict','needsAttention'}.contains(pendingBeforeRead['syncState'])))throw StateError('Existing ID generation requires owner review. Original queue retained.');
     Map<String, dynamic>? existingCloud;
     if (captured == null) {
       Map<String, dynamic>? reply;
@@ -2184,6 +2188,10 @@ class WindowsBackendBridge {
         /* Offline generation remains safely queued; CAS still required. */
       } on SocketException {
         /* No cloud evidence; never grant a replacement baseline. */
+      } on CentralCloudException catch(error) {
+        if(!{429,502,503,504}.contains(error.status))rethrow;
+        // A retryable inventory outage cannot block durable offline generation.
+        // The existing owner CAS must still prove absence before cloud creation.
       }
       if (db.activeProfileId != origin ||
           db.activeProfileIdentity['schoolSyncId'] != link.schoolId) {
@@ -2206,7 +2214,10 @@ class WindowsBackendBridge {
               row['ownerRole'] != link.role ||
               row['personId'] != (person['mobileStableId'] ?? link.personId) ||
               row['documentKind'] != 'idCard' ||
-              row['_syncDeleted'] == true) {
+              row['_syncDeleted'] == true ||
+              row['documentRevision'] is! String || row['documentRevision'].isEmpty ||
+              row['_syncRevision'] is! String || row['_syncRevision'].isEmpty ||
+              row['contentHash'] is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['contentHash'])) {
             throw StateError('Existing cloud ID requires owner review.');
           }
           existingCloud = Map<String, dynamic>.from(row);

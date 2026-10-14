@@ -81,11 +81,12 @@ String _conflictPreview(Object? original) {
 /// Operator-initiated own-school review. Opening it never sends a write.
 Future<void> showWindowsConflictReview(
   BuildContext context,
-  Map<String, dynamic> item,
-) => showDialog<void>(context: context, builder: (_) => _ConflictReview(item));
+  Map<String, dynamic> item, {Future<Map<String,dynamic>> Function(Map<String,dynamic>)? cloudReader}
+) => showDialog<void>(context: context, builder: (_) => _ConflictReview(item,cloudReader:cloudReader));
 
 class _ConflictReview extends StatefulWidget {
-  const _ConflictReview(this.item);
+  const _ConflictReview(this.item,{this.cloudReader});
+  final Future<Map<String,dynamic>> Function(Map<String,dynamic>)? cloudReader;
   final Map<String, dynamic> item;
   @override
   State<_ConflictReview> createState() => _ConflictReviewState();
@@ -108,7 +109,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
     if (db.activeProfileId != origin ||
         queued['schoolId'] != db.activeProfileIdentity['schoolSyncId'])
       throw StateError('School changed. Reopen review.');
-    final reply = await ManagedSchoolSession.callForSchool(
+    final reply = await (widget.cloudReader?.call(queued) ?? ManagedSchoolSession.callForSchool(
       queued['schoolId'] as String,
       'managed/records',
       {
@@ -116,7 +117,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
         'collection': queued['collection'] ?? 'documents',
         'syncProtocol': 2,
       },
-    );
+    ));
     final row =
         (reply['records'] as Map?)?[queued['documentId'] ?? widget.item['id']];
     if (db.activeProfileId != origin ||

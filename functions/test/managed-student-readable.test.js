@@ -15,3 +15,20 @@ test('reads backfill existing rows; view collisions preserve owner cells and do 
  const t=tab(s);assert.equal(t.getRange(2,34,1,1).getValues()[0][0],'');const read=s.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2});assert.equal(read.records.old._syncRevision,a.recordRevision);assert.equal(t.getRange(2,34,1,1).getValues()[0][0],'Old');
  t.getRange(1,34,1,1).setValues([['Owner Notes']]);t.getRange(2,34,1,1).setValues([['Keep me']]);const b=write(s,'old',{name:'New',class:'1',rollNo:1},a.recordRevision,'student-view-operation02');assert.equal(b.success,true);assert.equal(t.getRange(2,34,1,1).getValues()[0][0],'Keep me');assert.match(s.props.get('VS_STUDENT_READABLE_STATUS'),/blocked/);assert.equal(s.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2}).records.old.name,'New');
 });
+test('existing rows backfill in batches of 100 with explicit partial status and stable canonical revisions',()=>{
+ const s=storage(),project=s.context.VS_studentReadable;s.context.VS_studentReadable=()=>{};
+ for(let n=0;n<101;n++)assert.equal(write(s,'S'+n,{name:'Student '+n},'',('row-operation'+n).padEnd(20,'x')).success,true);
+ s.context.VS_studentReadable=project;const t=tab(s),read=()=>s.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2});
+ const before=s.context.VS_sheetRecords(s.context.VS_managedSheet('students_directory'));
+ assert.equal(read().success,true);assert.equal(t.getRange(101,34,1,1).getValues()[0][0],'Student 99');assert.equal(t.getRange(102,34,1,1).getValues()[0][0],'');assert.match(s.props.get('VS_STUDENT_READABLE_STATUS'),/backfill pending: 1/);
+ const after=read();assert.equal(t.getRange(102,34,1,1).getValues()[0][0],'Student 100');assert.equal(s.props.get('VS_STUDENT_READABLE_STATUS'),'available');assert.deepEqual(JSON.parse(JSON.stringify(after.records)),JSON.parse(JSON.stringify(before)));
+});
+test('reviewed version-2 document writes support later owner updates and stable delete replay',()=>{
+ const s=storage();const write=(generation,base,record,operation)=>s.call({action:'managed_records',operation:'write',collection:'documents',id:'D1',syncProtocol:2,operationId:operation,expectedRecordRevision:record,expectedRevision:base,data:{schoolId:A,studentId:'S1',documentRevision:generation}});
+ const first=write('generation-1','','','document-write-operation1');assert.equal(first.success,true);
+ const second=write('generation-2','generation-1',first.recordRevision,'document-write-operation2');assert.equal(second.success,true);
+ assert.equal(write('stale','generation-1',first.recordRevision,'document-write-operation3').success,false);
+ const request={action:'managed_records',operation:'delete',collection:'documents',id:'D1',syncProtocol:2,operationId:'document-delete-operation1',expectedRecordRevision:second.recordRevision,expectedRevision:'generation-2'};
+ const deleted=s.call(request);assert.equal(deleted.success,true);assert.equal(s.call(request).recordRevision,deleted.recordRevision);
+ assert.equal(s.call({action:'managed_records',operation:'read',collection:'documents',syncProtocol:2}).records.D1._syncDeleted,true);
+});
