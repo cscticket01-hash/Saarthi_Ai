@@ -1243,7 +1243,8 @@ function VS_jsonCommit(store,records){
   file.setDescription('VIDYA_JSON:'+store.school+':'+store.collection+':'+hash);
   if(VS_layoutHash(VS_jsonValidate(store,JSON.parse(file.getBlob().getDataAsString())))!==hash)throw new Error('JSON readback verification failed');
   if((p.getProperty(key)||null)!==previous)throw new Error('JSON head changed; retry Sync');
-  p.setProperty(key,JSON.stringify({schemaVersion:1,schoolId:store.school,fileId:file.getId(),hash:hash}));
+  p.setProperty(key,JSON.stringify({schemaVersion:1,schoolId:store.school,fileId:file.getId(),hash:hash,collectionRevision:Utilities.getUuid()}));
+  p.setProperty('VS_RECORD_REV_'+store.collection,JSON.parse(p.getProperty(key)).collectionRevision);
   VS_jsonRead(store); // No ACK before independently reading the committed head.
 }
 function VS_jsonLegacyRecords(collection,school){
@@ -1276,8 +1277,10 @@ function VS_jsonStore(collection){
     if(VS_layoutHash(records)!==VS_layoutHash(VS_jsonRead(store).records))throw new Error('JSON migration verification failed');
     // Invalidate delta cursors only once after verified cutover. Original Sheets
     // are never modified; all metadata, revisions and tombstones are copied.
-    p.setProperty('VS_RECORD_REV_'+collection,Utilities.getUuid());
   }else VS_jsonRead(store);
+  const committedHead=JSON.parse(p.getProperty('VS_JSON_HEAD_'+collection));
+  if(typeof committedHead.collectionRevision!=='string'||!committedHead.collectionRevision)throw new Error('JSON category identity mismatch');
+  p.setProperty('VS_RECORD_REV_'+collection,committedHead.collectionRevision);
   p.setProperty('VS_JSON_CUTOVER_'+collection,'1');
   return store;
 }
