@@ -390,7 +390,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
           if (busy) const LinearProgressIndicator(),
           Text(
             busy
-                ? '$verificationStage… Originals retained.'
+                ? verifying ? '$verificationStage… Originals retained.' : 'Checking reviewed action… Originals retained.'
                 : error.isNotEmpty
                 ? 'Cloud verification failed'
                 : remote == null

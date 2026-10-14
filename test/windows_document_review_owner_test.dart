@@ -174,6 +174,7 @@ void main() {
       'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
     final cardId = WindowsBackendBridge.publishedIdCardId(qr);
     await db.collection('students_directory').doc('S1').set(person);
+    await db.collection('school_config').doc('school_profile_cache').set({'schoolName':'Synthetic School','principalName':'Synthetic Principal','schoolContactNo':'0000000000'});
     final queue = db.collection('_windows_document_outbox').doc(cardId);
     await queue.set({...local,'documentId':cardId});
     final before = (await queue.get()).data();
