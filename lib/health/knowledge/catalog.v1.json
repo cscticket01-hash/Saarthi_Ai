@@ -54149,7 +54149,7 @@
         "Duplicate Sheet record; operator review required"
       ],
       "evidence": [
-        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:205",
+        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:207",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -54159,7 +54159,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:205 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:207 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Inspect the rejected input and its owner contract. Correct supported format/required fields through that owner while retaining the original; do not upload partial or blank replacements.",
       "level": "B",
       "playbook": "",
@@ -54187,7 +54187,7 @@
         "path": "school-backend/managed/SaarthiManagedAdapter.gs",
         "kind": "Error",
         "literal": "Duplicate Sheet record; operator review required",
-        "line": 205,
+        "line": 207,
         "origins": 2
       }
     },
@@ -54933,7 +54933,7 @@
         "Sheet identity mismatch"
       ],
       "evidence": [
-        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:208",
+        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:210",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -54943,7 +54943,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:208 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:210 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -54971,7 +54971,7 @@
         "path": "school-backend/managed/SaarthiManagedAdapter.gs",
         "kind": "Error",
         "literal": "Sheet identity mismatch",
-        "line": 208,
+        "line": 210,
         "origins": 2
       }
     },
@@ -55493,7 +55493,7 @@
         "Foreign school record"
       ],
       "evidence": [
-        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:212",
+        "Constant Error throw operand in school-backend/managed/SaarthiManagedAdapter.gs:214",
         "Exact source-guard context only; no production incident or root cause is asserted"
       ],
       "possibleCauses": [
@@ -55503,7 +55503,7 @@
       "severity": "attention",
       "dataLossRisk": "Business records must be preserved",
       "dependencies": [],
-      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:212 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
+      "diagnostic": "Inspect school-backend/managed/SaarthiManagedAdapter.gs:214 and its enclosing guard. Match exact kind/literal/source; reject ambiguous or interpolated messages.",
       "solution": "Retain both scopes and stop cross-school admission. Reopen the intended authenticated school/profile; the owner must revalidate identity before further work.",
       "level": "C",
       "playbook": "",
@@ -55531,7 +55531,7 @@
         "path": "school-backend/managed/SaarthiManagedAdapter.gs",
         "kind": "Error",
         "literal": "Foreign school record",
-        "line": 212,
+        "line": 214,
         "origins": 2
       }
     },

@@ -6634,10 +6634,11 @@ function VS_refreshStudentReadable(store,item,row) {
   const p=PropertiesService.getScriptProperties();
   try{if(item)VS_studentReadable(store,item,row);else {const remaining=VS_studentReadableBackfill(store);
       p.setProperty('VS_STUDENT_READABLE_STATUS',remaining?'backfill pending: '+remaining+' rows':'available');return;}
-    if(!(p.getProperty('VS_STUDENT_READABLE_STATUS')||'').startsWith('backfill pending'))p.setProperty('VS_STUDENT_READABLE_STATUS','available');
+    p.setProperty('VS_STUDENT_READABLE_STATUS','row updated; full projection not yet measured');
   }catch(_){
     // A derived display failure must never change canonical ACK/record ownership.
     p.setProperty('VS_STUDENT_READABLE_STATUS','blocked: readable columns require owner review; canonical records retained');
+    if(item){const key='VS_STUDENT_VIEW_ROW_'+store.sheet.getName()+':'+(store.bookId||'legacy');p.setProperty(key,String(Math.min(row,Math.max(2,Number(p.getProperty(key)||2)))));}
   }
 }
 function VS_studentReadableBackfill(store) {
@@ -6656,6 +6657,7 @@ function VS_studentReadableBackfill(store) {
       VS_verifyStudentReadable(values,part.sheet.getRange(start,34,values.length,14).getValues());
     }
     p.setProperty(key,String(end+1));remaining+=Math.max(0,last-end);
+    if(end>=last&&last>=2&&part.sheet.hideColumns)part.sheet.hideColumns(1,33);
   });return remaining;
 }
 function VS_sheetItem(store,id) {
@@ -6682,7 +6684,6 @@ function VS_studentReadableHeader(sheet) {
   const headers=sheet.getRange(1,start,1,width).getValues()[0];
   if(headers.some((v,n)=>v!==''&&v!==VS_STUDENT_VIEW_HEADERS[n]))throw new Error('Student readable columns contain owner data; review required');
   if(headers.some(v=>v===''))sheet.getRange(1,start,1,width).setValues([VS_STUDENT_VIEW_HEADERS]);
-  if(sheet.hideColumns)sheet.hideColumns(1,33);
 }
 function VS_studentReadableValues(item) {
   const d=item.data,field=(...keys)=>{for(const key of keys)if(d[key]!==undefined&&d[key]!==null)return d[key];return '';};
@@ -6698,6 +6699,9 @@ function VS_studentReadable(store,item,row) {
   const values=[VS_studentReadableValues(item)];
   store.sheet.getRange(row,34,1,14).setValues(values);SpreadsheetApp.flush();
   VS_verifyStudentReadable(values,store.sheet.getRange(row,34,1,14).getValues());
+  const p=PropertiesService.getScriptProperties(),key='VS_STUDENT_VIEW_ROW_'+store.sheet.getName()+':'+(store.bookId||'legacy');
+  const cursor=Math.max(2,Number(p.getProperty(key)||2));
+  if(cursor>=row){p.setProperty(key,String(Math.max(cursor,row+1)));if(cursor>=store.sheet.getLastRow()&&store.sheet.hideColumns)store.sheet.hideColumns(1,33);}
 }
 function VS_sheetPut(store,item) {
   if(store.partitions)return VS_layoutPut(store,item);
@@ -7649,7 +7653,7 @@ function VS_managedDelta(b) {
     let recoveryBackup=null;if(VS_testBackupRecoveryEnabled()&&p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP')){
       try{recoveryBackup=VS_verifiedRecordBackup(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP'));}catch(_){p.setProperty('VS_LAST_RECORD_RECOVERY',JSON.stringify({at:Date.now(),verified:false,needsReview:true,code:'BACKUP_INTEGRITY_UNVERIFIED'}));}
     }
-    b.collections.forEach(col=>{if(recoveryBackup&&recoveryBackup.records[col])VS_recoverMissingBackupRows(col,VS_managedSheet(col),recoveryBackup);const revision=p.getProperty('VS_RECORD_REV_'+col)||'legacy';changes[col]=b.knownRevisions&&b.knownRevisions[col]===revision?{records:{},unchanged:true,collectionRevision:revision,syncProtocol:2}:VS_managedRecordUnlocked({operation:'read',collection:col,syncProtocol:2});});
+    b.collections.forEach(col=>{if(recoveryBackup&&recoveryBackup.records[col])VS_recoverMissingBackupRows(col,VS_managedSheet(col),recoveryBackup);const revision=p.getProperty('VS_RECORD_REV_'+col)||'legacy';if(col==='students_directory'&&b.knownRevisions&&b.knownRevisions[col]===revision)VS_refreshStudentReadable(VS_managedSheet(col));changes[col]=b.knownRevisions&&b.knownRevisions[col]===revision?{records:{},unchanged:true,collectionRevision:revision,syncProtocol:2}:VS_managedRecordUnlocked({operation:'read',collection:col,syncProtocol:2});});
     if(JSON.stringify(changes).length>20*1024*1024)throw new Error('Delta export exceeds safe limit');return {syncProtocol:2,changes:changes};
   }finally{lock.releaseLock();}
 }

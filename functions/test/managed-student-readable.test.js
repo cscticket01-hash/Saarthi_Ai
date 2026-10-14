@@ -19,8 +19,10 @@ test('existing rows backfill in batches of 100 with explicit partial status and 
  const s=storage(),project=s.context.VS_studentReadable;s.context.VS_studentReadable=()=>{};
  for(let n=0;n<101;n++)assert.equal(write(s,'S'+n,{name:'Student '+n},'',('row-operation'+n).padEnd(20,'x')).success,true);
  s.context.VS_studentReadable=project;const t=tab(s),read=()=>s.call({action:'managed_records',operation:'read',collection:'students_directory',syncProtocol:2});
+ let hidden=0;t.hideColumns=()=>hidden++;
  const before=s.context.VS_sheetRecords(s.context.VS_managedSheet('students_directory'));
- assert.equal(read().success,true);assert.equal(t.getRange(101,34,1,1).getValues()[0][0],'Student 99');assert.equal(t.getRange(102,34,1,1).getValues()[0][0],'');assert.match(s.props.get('VS_STUDENT_READABLE_STATUS'),/backfill pending: 1/);
+ assert.equal(read().success,true);assert.equal(t.getRange(101,34,1,1).getValues()[0][0],'Student 99');assert.equal(t.getRange(102,34,1,1).getValues()[0][0],'');assert.match(s.props.get('VS_STUDENT_READABLE_STATUS'),/backfill pending: 1/);assert.equal(hidden,0,'Canonical data must stay visible while projection is partial');
+ const delta=s.call({action:'managed_delta',collections:['students_directory'],knownRevisions:{students_directory:s.props.get('VS_RECORD_REV_students_directory')}});assert.equal(delta.changes.students_directory.unchanged,true);assert.equal(hidden,1);
  const after=read();assert.equal(t.getRange(102,34,1,1).getValues()[0][0],'Student 100');assert.equal(s.props.get('VS_STUDENT_READABLE_STATUS'),'available');assert.deepEqual(JSON.parse(JSON.stringify(after.records)),JSON.parse(JSON.stringify(before)));
 });
 test('reviewed version-2 document writes support later owner updates and stable delete replay',()=>{
