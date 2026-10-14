@@ -82,6 +82,24 @@ String compareSyncVersions(Map queued, Map cloud) {
   return 'differs (revision order unknown)';
 }
 
+/// Bind identity to the key selected from an authenticated managed readback.
+/// Never replace an explicitly contradictory ID or weaken content verification.
+Map<String, dynamic> documentAcknowledgementFromReadback(Map payload, Map reply) {
+  final id = payload['documentId'];
+  final row = id is String ? (reply['records'] as Map?)?[id] : null;
+  final identityMatches = row is Map &&
+      (row['id'] == null || row['id'] == id) &&
+      (row['documentId'] == null || row['documentId'] == id);
+  return {
+    'success': reply['success'] != false,
+    'cloudVerified': reply['syncProtocol'] == 2 && identityMatches,
+    'schoolId': reply['schoolId'],
+    'documentId': id,
+    'document': identityMatches ? {...row, 'id': id} : row,
+    'fileUrl': row is Map ? row['fileUrl'] : null,
+  };
+}
+
 /// A bool success is transport feedback, never a verified cloud receipt.
 bool verifiedDocumentAcknowledgement(Map payload, Map result) {
   final cloud = result['document'];

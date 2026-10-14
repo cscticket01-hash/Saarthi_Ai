@@ -283,12 +283,7 @@ class WindowsBackendBridge {
     );
     if (reply['syncProtocol'] != 2) throw const MissingSyncAcknowledgement();
     final cloud = (reply['records'] as Map?)?[id];
-    final result = {
-      'success': true,
-      'cloudVerified': true,
-      'schoolId': reply['schoolId'],
-      'document': cloud,
-    };
+    final result = documentAcknowledgementFromReadback(payload, reply);
     if (!verifiedDocumentAcknowledgement(payload, result))
       throw const MissingSyncAcknowledgement();
     await _documentWrite(() async {
@@ -1598,15 +1593,9 @@ class WindowsBackendBridge {
         {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2},
       );
       await ensureSchool();
-      final row = (reply['records'] as Map?)?[id];
-      final receipt = <String, dynamic>{
-        'success': true,
-        'cloudVerified': true,
-        'schoolId': reply['schoolId'],
-        'documentId': id,
-        'document': row,
-        'fileUrl': row is Map ? row['fileUrl'] : null,
-      };
+      final receipt = documentAcknowledgementFromReadback(
+        {...payload, 'schoolId': school, 'documentId': id}, reply,
+      );
       if (!verifiedDocumentAcknowledgement({
         ...payload,
         'schoolId': school,
