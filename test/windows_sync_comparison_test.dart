@@ -8,6 +8,38 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_sync_comparison.dart';
 
 void main() {
+  test('managed map-key readback verifies documents without embedded id', () {
+    final payload = {
+      'action': 'upload_student_document', 'documentId': 'd', 'schoolId': 's',
+      'documentRevision': 'op', 'contentHash': 'a' * 64,
+    };
+    final row = {...payload, '_syncRevision': 'receipt'};
+    final reply = {'success': true, 'schoolId': 's', 'syncProtocol': 2,
+      'records': {'d': row}};
+    Map receipt(Map response) => documentAcknowledgementFromReadback(payload, response);
+    expect(verifiedDocumentAcknowledgement(payload, receipt(reply)), isTrue);
+    expect(row.containsKey('id'), isFalse); // Never mutate readback/source data.
+    for (final bad in [
+      {...reply, 'schoolId': 'other'},
+      {...reply, 'success': false},
+      {...reply, 'syncProtocol': 1},
+      {...reply, 'records': {'other': row}},
+      for (final change in [
+        {'id': 'other'}, {'documentId': 'other'}, {'schoolId': 'other'},
+        {'_syncRevision': ''}, {'contentHash': 'b' * 64},
+        {'documentRevision': 'other'}, {'studentId': 'other'},
+      ]) {...reply, 'records': {'d': {...row, ...change}}},
+    ]) {
+      expect(verifiedDocumentAcknowledgement(payload, receipt(bad)), isFalse);
+    }
+    final deletion = {...payload, 'action': 'delete_student_document',
+      'baseCloudRevision': 'op'};
+    final tombstone = {'schoolId': 's', '_syncDeleted': true,
+      '_syncRevision': 'deleted-receipt', 'documentRevision': 'op'};
+    expect(verifiedDocumentAcknowledgement(deletion,
+      documentAcknowledgementFromReadback(deletion,
+        {...reply, 'records': {'d': tombstone}})), isTrue);
+  });
   test(
     'only same-school durable readback may update document ACK evidence',
     () {
