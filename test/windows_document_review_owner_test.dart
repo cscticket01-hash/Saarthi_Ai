@@ -166,6 +166,35 @@ void main() {
   tearDown(() async {
     await dir.delete(recursive: true);
   });
+  for(final source in ['local-deletion','pending-deletion','cloud-tombstone','deletion-during-read']) {
+    test('automatic ID decision retains $source without a replacement upload', () async {
+      final person={'mobileLinkToken':'x'*48,'mobileStableId':'S1','name':'Synthetic Student','class':'1','rollNo':1};
+      final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+        'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+        'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+      final cardId=WindowsBackendBridge.publishedIdCardId(qr);
+      final deletion={...local,'documentId':cardId,'deleted':true,'syncState':'Synced'};
+      if(source=='local-deletion')await db.collection('_local_student_documents').doc(cardId).set(deletion);
+      if(source=='pending-deletion')await db.collection('_windows_document_outbox').doc(cardId).set({...deletion,'syncState':'Pending'});
+      final originalQueue=(await db.collection('_windows_document_outbox').get()).docs.map((r)=>r.id).toList();
+      var reads=0;
+      await WindowsBackendBridge.publishIdCard(bytes:Uint8List.fromList([1]),qr:qr,kind:'studentId',
+        person:person,inputRevision:'new-input',automatic:true,readPublished:()async{
+          reads++;
+          if(source=='deletion-during-read')await db.collection('_local_student_documents').doc(cardId).set(deletion);
+          return {'schoolId':school,'syncProtocol':2,'records':{
+            if(source=='cloud-tombstone')cardId:{'schoolId':school,'_syncDeleted':true,'_syncRevision':'verified-delete'},
+          }};
+        });
+      expect(reads,source=='local-deletion'||source=='pending-deletion'?0:1);
+      expect((await db.collection('_windows_document_outbox').get()).docs.map((r)=>r.id).toList(),originalQueue);
+      final retained=(await db.collection('_local_student_documents').doc(cardId).get()).data();
+      if(source=='local-deletion'||source=='deletion-during-read')expect(retained,deletion);
+      else expect(retained,isNull);
+      expect(await File(local['localPath'] as String).exists(),true);
+      expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    });
+  }
   test('local ID renderer stays usable with retained publication conflict and offline cloud', () async {
     final person = {'mobileLinkToken':'x' * 48, 'mobileStableId':'S1',
       'name':'Synthetic Student', 'class':'1', 'rollNo':1};

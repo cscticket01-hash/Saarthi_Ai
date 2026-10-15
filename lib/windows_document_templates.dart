@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'windows_sync_projection.dart';
 
 import 'package:crypto/crypto.dart';
 
@@ -256,6 +257,10 @@ class WindowsDocumentTemplates {
         final existing =
             (await db.collection('_local_student_documents').doc(id).get())
                 .data();
+        final pending=(await db.collection('_windows_document_outbox').doc(id).get()).data();
+        final cached=(await db.collection('documents').doc(id).get()).data();
+        if(db.activeProfileId!=origin)throw StateError('School changed during ID publication.');
+        if(holdAutomaticIdCard(existing,pending,cached,identity['schoolId'] as String))continue;
         if ((existing?['inputRevision'] == revision ||
                 existing?['ownerCloudChoiceInputRevision'] == revision) &&
             existing?['deleted'] != true)
@@ -296,6 +301,7 @@ class WindowsDocumentTemplates {
           person: person,
           inputRevision: revision,
           readPublished: readPublished,
+          automatic:true,
         );
       }
     }

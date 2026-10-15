@@ -1356,13 +1356,16 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                   final item = Map<String, dynamic>.from(
                                     raw as Map,
                                   );
+                                  final decision=smartSyncDecision(item,
+                                    school:db.activeProfileIdentity['schoolSyncId']?.toString()??'',
+                                    nowMillis:DateTime.now().millisecondsSinceEpoch);
                                   return Card(
                                     child: ListTile(
                                       title: Text(
                                         '${item['collection'] ?? item['_queueCollection'] ?? 'documents'} • ${item['documentId'] ?? item['id']}',
                                       ),
                                       subtitle: Text(
-                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}${item['lastError'] == null ? '' : '\n${syncFailureReason(item)}'}${item['retryAtMillis'] is num ? '\nNext retry: ${stamp(item['retryAtMillis'])}' : ''}',
+                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}${item['lastError'] == null ? '' : '\n${syncFailureReason(item)}'}${item['retryAtMillis'] is num ? '\nNext retry: ${stamp(item['retryAtMillis'])}' : ''}\nNext step: ${decision['action']}\n${decision['reason']}',
                                       ),
                                       trailing:
                                           (item['syncState'] ??
