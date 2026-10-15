@@ -136,7 +136,9 @@ void main() {
   );
   final contradicted = root();
   contradicted['_local_student_documents'] = {
-    'card': {...contradicted['_windows_document_outbox']['card']},
+    'card': Map<String, dynamic>.from(
+      contradicted['_windows_document_outbox']['card'] as Map,
+    ),
   };
   contradicted['_windows_document_outbox']['card']['schoolId'] = 'school-b';
   retireDeletedOwnerDocuments(contradicted, school);
