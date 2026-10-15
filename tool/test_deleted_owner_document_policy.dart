@@ -130,6 +130,16 @@ void main() {
     retireDeletedOwnerDocuments(stale, school),
     'Old local delete with live conflict still requires retirement',
   );
+  final contradicted = root();
+  contradicted['_local_student_documents'] = {
+    'card': {...contradicted['_windows_document_outbox']['card']},
+  };
+  contradicted['_windows_document_outbox']['card']['schoolId'] = 'school-b';
+  retireDeletedOwnerDocuments(contradicted, school);
+  check(
+    contradicted['_windows_document_outbox']['card']['schoolId'] == 'school-b',
+    'Contradictory foreign queued generation must remain untouched',
+  );
   final stable = root();
   stable['_windows_local_deletions']['delete-s1']['snapshot']['mobileStableId'] =
       'stable-person-id';

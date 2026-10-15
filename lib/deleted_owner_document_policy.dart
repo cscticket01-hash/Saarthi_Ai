@@ -71,6 +71,12 @@ bool retireDeletedOwnerDocuments(
           (row['personId'] != null && row['personId'] != stableId))
         continue;
       final oldQueue = queue[id];
+      if (oldQueue is Map &&
+          (oldQueue['schoolId'] != school ||
+              oldQueue['studentId'] != row['studentId'] ||
+              oldQueue['personId'] != row['personId'] ||
+              oldQueue['ownerRole'] != row['ownerRole']))
+        continue;
       history.putIfAbsent(
         'owner-delete-$id-${deletion['operationId']}',
         () => {
