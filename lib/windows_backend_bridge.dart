@@ -545,12 +545,14 @@ class WindowsBackendBridge {
       throw const MissingSyncAcknowledgement();
     final remote = (reply['records'] as Map)[id];
     final role = record['parentCollection'] == 'students_directory' ? 'student' : 'teacher';
+    final tombstone = remote is Map && remote['_syncDeleted'] == true;
     if (remote != null && (remote is! Map || remote['schoolId'] != record['schoolId'] ||
         (remote['id'] != null && remote['id'] != id) || (remote['documentId'] != null && remote['documentId'] != id) ||
-        remote['studentId'] != record['studentId'] || remote['personId'] != record['personId'] ||
-        (remote['ownerRole'] ?? (remote['studentId'] != null ? 'student' : null)) != role ||
+        (!tombstone && (remote['studentId'] != record['studentId'] || remote['personId'] != record['personId'] ||
+        (remote['ownerRole'] ?? (remote['studentId'] != null ? 'student' : null)) != role)) ||
         remote['_syncRevision'] is! String || (remote['_syncRevision'] as String).isEmpty ||
-        remote['documentRevision'] is! String || (remote['documentRevision'] as String).isEmpty))
+        (tombstone && remote['documentRevision'] != null && remote['documentRevision'] is! String) ||
+        (!tombstone && (remote['documentRevision'] is! String || (remote['documentRevision'] as String).isEmpty))))
       throw StateError('Cloud document ownership changed. Review required.');
     return _documentWrite(() async {
       if (await evidence() == null) return false;
@@ -558,7 +560,7 @@ class WindowsBackendBridge {
       final current = (await ref.get()).data();
       if (current == null || syncPayloadHash(current) != syncPayloadHash(record) || db.activeProfileId != origin) return false;
       final baseline = <String,dynamic>{
-        'baseCloudRevision':remote is Map ? remote['documentRevision'] : '',
+        'baseCloudRevision':remote is Map ? remote['documentRevision'] ?? '' : '',
         'baseCloudUploadedAt':remote is Map ? remote['uploadedAt'] : null,
         'reviewedRecordRevision':remote is Map ? remote['_syncRevision'] : '',
         'ownerDeleteBaselineVerified':true,
@@ -664,6 +666,7 @@ class WindowsBackendBridge {
             'fileName': record['optimizedFileName'] ?? record['fileName'],
             'mimeType': record['optimizedMimeType'] ?? record['mimeType'],
             'documentId': queued.id,
+            if (record['deleted'] == true) 'deleteOperationId':documentDeleteOperationId(queued.id, record),
             'schoolId': record['schoolId'],
             'documentRevision': record['documentRevision'],
             if (record['uploadedAt'] is num && record['uploadedAt'] > 0) 'uploadedAt':record['uploadedAt'],
@@ -780,7 +783,7 @@ class WindowsBackendBridge {
                   if(retryAt!=null)'retryAtMillis':retryAt.millisecondsSinceEpoch,
                   'retryCount':
                       (current['retryCount'] as num? ?? 0).toInt() + 1,
-                  'lastError': decision.message,
+                  'lastError': error is MissingSyncAcknowledgement ? error.toString() : decision.message,
                 }, SetOptions(merge: true));
               }
             });
@@ -1650,7 +1653,7 @@ class WindowsBackendBridge {
           idToken: token,
           collection: collection,
         );
-    Future<Map<String, dynamic>> documentReceipt(String id, Map payload) async {
+    Future<Map<String, dynamic>> documentReceipt(String id, Map payload, {Map? deleteAcknowledgement}) async {
       if (connection['managed'] != true)
         throw const MissingSyncAcknowledgement();
       final reply = await ManagedSchoolSession.callForSchool(
@@ -1660,7 +1663,7 @@ class WindowsBackendBridge {
       );
       await ensureSchool();
       final receipt = documentAcknowledgementFromReadback(
-        {...payload, 'schoolId': school, 'documentId': id}, reply,
+        {...payload, 'schoolId': school, 'documentId': id}, reply, deleteAcknowledgement:deleteAcknowledgement,
       );
       if (!verifiedDocumentAcknowledgement({
         ...payload,
@@ -1831,13 +1834,16 @@ class WindowsBackendBridge {
           throw StateError('Document belongs to another student.');
         // The adapter writes a durable tombstone and removes only a verified,
         // exclusively owned immutable document upload. Shared/legacy files remain safe.
+        final operationId = documentDeleteOperationId(id, data);
+        Map<String,dynamic>? deleteAck;
         await WindowsFirebaseRemote.deleteDocument(
           projectId: connection['projectId'],
           idToken: token,
           collection: 'documents',
           documentId: id,
           expectedRevision: data['baseCloudRevision']?.toString() ?? '',
-          operationId:documentDeleteOperationId(id, data),
+          operationId:operationId,
+          onManagedAcknowledgement:(ack) => deleteAck = ack,
           expectedRecordRevision:data['reviewedRecordRevision'] as String? ?? old?['_syncRevision'] as String? ?? '',
           expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );
@@ -1848,7 +1854,7 @@ class WindowsBackendBridge {
               .doc(data['documentId']),
           null,
         );
-        return await documentReceipt(id, data);
+        return await documentReceipt(id, {...data,'deleteOperationId':operationId}, deleteAcknowledgement:deleteAck);
       }
       final lists = {
         'list_student_documents': ('documents', 'documents'),

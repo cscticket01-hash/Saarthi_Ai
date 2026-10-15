@@ -1,0 +1,102 @@
+[
+  {
+    "name": "absent",
+    "payload": {
+      "action": "delete_student_document",
+      "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "documentId": "contract-absent",
+      "documentRevision": "local-delete-absent",
+      "baseCloudRevision": "",
+      "deleteOperationId": "ed6a1e3246558d176d0103bf085c6e6abef3643a01daff2fe5eda4f772e8b280"
+    },
+    "deleteResponse": {
+      "success": true,
+      "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "recordRevision": "server-delete-revision",
+      "syncProtocol": 2,
+      "fileCleanup": "none"
+    },
+    "readback": {
+      "success": true,
+      "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "records": {
+        "contract-absent": {
+          "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "_syncDeleted": true,
+          "_syncRevision": "server-delete-revision",
+          "_syncOperationId": "ed6a1e3246558d176d0103bf085c6e6abef3643a01daff2fe5eda4f772e8b280",
+          "_syncRequestHash": "opaque-request-hash"
+        }
+      },
+      "collectionRevision": "server-collection-revision",
+      "syncProtocol": 2
+    }
+  },
+  {
+    "name": "existing",
+    "payload": {
+      "action": "delete_student_document",
+      "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "documentId": "contract-existing",
+      "documentRevision": "local-delete-existing",
+      "baseCloudRevision": "original-generation",
+      "deleteOperationId": "801061a04677571bde5fcf9fc781f7f7c3619e137983b770341b01e06e8f3e27"
+    },
+    "deleteResponse": {
+      "success": true,
+      "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "recordRevision": "server-delete-revision",
+      "syncProtocol": 2,
+      "fileCleanup": "none"
+    },
+    "readback": {
+      "success": true,
+      "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "records": {
+        "contract-existing": {
+          "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "_syncDeleted": true,
+          "_syncRevision": "server-delete-revision",
+          "_syncOperationId": "801061a04677571bde5fcf9fc781f7f7c3619e137983b770341b01e06e8f3e27",
+          "_syncRequestHash": "opaque-request-hash",
+          "documentRevision": "original-generation"
+        }
+      },
+      "collectionRevision": "server-collection-revision",
+      "syncProtocol": 2
+    }
+  },
+  {
+    "name": "replay",
+    "payload": {
+      "action": "delete_student_document",
+      "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "documentId": "contract-replay",
+      "documentRevision": "local-delete-replay",
+      "baseCloudRevision": "",
+      "deleteOperationId": "600bc7937f8bb7fbd515fef075c0e86cec44bd70a16f4d253fa329e58118c316"
+    },
+    "deleteResponse": {
+      "success": true,
+      "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "recordRevision": "server-delete-revision",
+      "syncProtocol": 2,
+      "fileCleanup": "none"
+    },
+    "readback": {
+      "success": true,
+      "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "records": {
+        "contract-replay": {
+          "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "_syncDeleted": true,
+          "_syncRevision": "server-delete-revision",
+          "_syncOperationId": "600bc7937f8bb7fbd515fef075c0e86cec44bd70a16f4d253fa329e58118c316",
+          "_syncRequestHash": "opaque-request-hash"
+        }
+      },
+      "collectionRevision": "server-collection-revision",
+      "syncProtocol": 2
+    }
+  }
+]

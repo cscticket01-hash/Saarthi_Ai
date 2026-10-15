@@ -84,7 +84,7 @@ String compareSyncVersions(Map queued, Map cloud) {
 
 /// Bind identity to the key selected from an authenticated managed readback.
 /// Never replace an explicitly contradictory ID or weaken content verification.
-Map<String, dynamic> documentAcknowledgementFromReadback(Map payload, Map reply) {
+Map<String, dynamic> documentAcknowledgementFromReadback(Map payload, Map reply, {Map? deleteAcknowledgement}) {
   final id = payload['documentId'];
   final records = reply['records'];
   final row = id is String && records is Map ? records[id] : null;
@@ -98,6 +98,7 @@ Map<String, dynamic> documentAcknowledgementFromReadback(Map payload, Map reply)
     'documentId': id,
     'document': identityMatches ? {...row, 'id': id} : row,
     'fileUrl': row is Map ? row['fileUrl'] : null,
+    if (deleteAcknowledgement != null) 'deleteAcknowledgement':deleteAcknowledgement,
   };
 }
 
@@ -114,8 +115,20 @@ bool verifiedDocumentAcknowledgement(Map payload, Map result) {
       (cloud['_syncRevision'] as String).isEmpty)
     return false;
   if (payload['action'] == 'delete_student_document') {
-    return cloud['_syncDeleted'] == true &&
-        cloud['documentRevision'] == payload['baseCloudRevision'];
+    final ack = result['deleteAcknowledgement'];
+    final base = payload['baseCloudRevision'];
+    // Absent-record tombstones deliberately omit documentRevision. Accept this
+    // shape only with the exact authenticated delete response AND readback.
+    return base is String && cloud['_syncDeleted'] == true &&
+        (cloud['documentRevision'] == base ||
+          (base.isEmpty && cloud['documentRevision'] == null)) &&
+        ack is Map && ack['success'] == true && ack['syncProtocol'] == 2 &&
+        ack['schoolId'] == payload['schoolId'] && ack['collection'] == 'documents' &&
+        ack['documentId'] == payload['documentId'] &&
+        payload['deleteOperationId'] is String &&
+        RegExp(r'^[a-f0-9]{64}$').hasMatch(payload['deleteOperationId']) &&
+        ack['operationId'] == payload['deleteOperationId'] &&
+        ack['recordRevision'] == cloud['_syncRevision'];
   }
   return identicalDocumentPayload(payload, cloud);
 }

@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:http/http.dart' as http;
 
 import '../lib/windows_backend_bridge.dart';
+import '../lib/windows_sync_comparison.dart';
 import '../lib/storage/windows_sqlite_store.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_local_firestore.dart';
@@ -19,6 +20,9 @@ import '../lib/platform/platform_config.dart';
 // Isolated signed-readback fixture. A legacy success bool is intentionally insufficient.
 Map<String,dynamic> documentAckFixture(Map<String,dynamic> payload, int at, {String? url}) => {
   'success':true, 'cloudVerified':true, 'schoolId':payload['schoolId'], 'fileUrl':url,
+  if(payload['action']=='delete_student_document') 'deleteAcknowledgement':{
+    'success':true,'syncProtocol':2,'schoolId':payload['schoolId'],'collection':'documents',
+    'documentId':payload['documentId'],'operationId':payload['deleteOperationId'],'recordRevision':'fixture-record-$at'},
   'document':{...payload, 'id':payload['documentId'], 'schoolId':payload['schoolId'],
     '_syncRevision':'fixture-record-$at', 'uploadedAt':at,
     if(payload['action']=='delete_student_document') '_syncDeleted':true,
@@ -65,6 +69,23 @@ void main() {
       'documents-${DateTime.now().microsecondsSinceEpoch}',
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
+  });
+  test('actual bundle absent, existing and replay tombstones settle only matching queued deletions', () async {
+    final cases=jsonDecode(File('test/fixtures/managed_document_delete_contract.json').readAsStringSync()) as List;
+    for(final c in cases){
+      final payload=Map<String,dynamic>.from(c['payload'] as Map), id=c['payload']['documentId'] as String;
+      final row={...payload,'deleted':true,'syncState':'retry','localPath':''};
+      await db.collection('_local_student_documents').doc(id).set(row);
+      await db.collection('_windows_document_outbox').doc(id).set(row);
+      await WindowsBackendBridge.flushDocumentPending(send:(sent)async {
+        expect(sent['deleteOperationId'],payload['deleteOperationId']);
+        final ack={...Map<String,dynamic>.from(c['deleteResponse'] as Map),
+          'collection':'documents','documentId':id,'operationId':sent['deleteOperationId']};
+        return documentAcknowledgementFromReadback(sent,c['readback'] as Map,deleteAcknowledgement:ack);
+      });
+      expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,false,reason:c['name']);
+      expect((await db.collection('_local_student_documents').doc(id).get()).data()?['syncState'],'Synced');
+    }
   });
   test('document delete retries keep identity, while a later owner deletion gets a new identity', () {
     final first={'documentRevision':'delete-first','baseCloudRevision':'same-original-generation'};

@@ -632,9 +632,10 @@ class WindowsFirebaseRemote {
     num? expectedUploadedAt,
     String? operationId,
     String? expectedRecordRevision,
+    void Function(Map<String,dynamic>)? onManagedAcknowledgement,
   }) async {
     if ((await CentralSchoolCloud.saved())['managed'] == true) {
-      await _managedRecords(idToken, {
+      final result = await _managedRecords(idToken, {
         'operation': 'delete',
         'collection': collection,
         'id': documentId,
@@ -645,6 +646,8 @@ class WindowsFirebaseRemote {
         if (expectedUploadedAt != null)
           'expectedUploadedAt': expectedUploadedAt,
       });
+      onManagedAcknowledgement?.call({...result, 'collection':collection,
+        'documentId':documentId, 'operationId':operationId});
       return;
     }
     final remoteCollection = await _remoteCollection(projectId, collection);
