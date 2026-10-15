@@ -8,19 +8,19 @@ bool retireDeletedOwnerDocuments(
   if (school.isEmpty) return false;
   final evidence = collections['_windows_local_deletions'];
   if (evidence is! Map) return false;
-  final queue = collections.putIfAbsent(
-    '_windows_document_outbox',
-    () => <String, dynamic>{},
-  ) as Map;
-  final local = collections.putIfAbsent(
-    '_local_student_documents',
-    () => <String, dynamic>{},
-  ) as Map;
+  final queue = Map<String, dynamic>.from(
+    collections['_windows_document_outbox'] as Map? ?? {},
+  );
+  final local = Map<String, dynamic>.from(
+    collections['_local_student_documents'] as Map? ?? {},
+  );
+  final history = Map<String, dynamic>.from(
+    collections['_windows_sync_conflict_history'] as Map? ?? {},
+  );
+  collections['_windows_document_outbox'] = queue;
+  collections['_local_student_documents'] = local;
+  collections['_windows_sync_conflict_history'] = history;
   final cached = collections['documents'];
-  final history = collections.putIfAbsent(
-    '_windows_sync_conflict_history',
-    () => <String, dynamic>{},
-  ) as Map;
   var changed = false;
   final latest = <String, Map>{};
   for (final deletion in evidence.values) {

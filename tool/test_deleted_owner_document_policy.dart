@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../lib/deleted_owner_document_policy.dart';
 
 void check(bool value, String message) {
@@ -10,52 +12,54 @@ void main() {
     String evidenceSchool = school,
     bool restored = false,
     bool proof = true,
-  }) => {
-    'students_directory': {
-      if (restored) 's1': {'name': 'Restored'},
-    },
-    '_windows_local_deletions': {
-      if (proof)
-        'delete-s1': {
-          'version': 1,
-          'schoolId': evidenceSchool,
-          'collection': 'students_directory',
-          'documentId': 's1',
-          'operationId': 'delete-s1',
-          'snapshot': {'name': 'Original'},
+  }) => jsonDecode(
+    jsonEncode({
+      'students_directory': {
+        if (restored) 's1': {'name': 'Restored'},
+      },
+      '_windows_local_deletions': {
+        if (proof)
+          'delete-s1': {
+            'version': 1,
+            'schoolId': evidenceSchool,
+            'collection': 'students_directory',
+            'documentId': 's1',
+            'operationId': 'delete-s1',
+            'snapshot': {'name': 'Original'},
+          },
+      },
+      '_windows_document_outbox': {
+        'card': {
+          'schoolId': school,
+          'studentId': 's1',
+          'personId': 's1',
+          'ownerRole': 'student',
+          'documentRevision': 'upload-1',
+          'syncState': 'conflict',
+          'localPath': '/retained/original.pdf',
         },
-    },
-    '_windows_document_outbox': {
-      'card': {
-        'schoolId': school,
-        'studentId': 's1',
-        'personId': 's1',
-        'ownerRole': 'student',
-        'documentRevision': 'upload-1',
-        'syncState': 'conflict',
-        'localPath': '/retained/original.pdf',
+        'foreign': {
+          'schoolId': 'school-b',
+          'studentId': 's1',
+          'documentRevision': 'foreign',
+          'syncState': 'conflict',
+        },
+        'other-owner': {
+          'schoolId': school,
+          'studentId': 's2',
+          'documentRevision': 'other',
+          'syncState': 'Pending',
+        },
+        'teacher': {
+          'schoolId': school,
+          'personId': 's1',
+          'ownerRole': 'teacher',
+          'documentRevision': 'teacher',
+          'syncState': 'conflict',
+        },
       },
-      'foreign': {
-        'schoolId': 'school-b',
-        'studentId': 's1',
-        'documentRevision': 'foreign',
-        'syncState': 'conflict',
-      },
-      'other-owner': {
-        'schoolId': school,
-        'studentId': 's2',
-        'documentRevision': 'other',
-        'syncState': 'Pending',
-      },
-      'teacher': {
-        'schoolId': school,
-        'personId': 's1',
-        'ownerRole': 'teacher',
-        'documentRevision': 'teacher',
-        'syncState': 'conflict',
-      },
-    },
-  };
+    }),
+  ) as Map<String, dynamic>;
   for (final fixture in [
     root(proof: false),
     root(evidenceSchool: 'school-b'),
