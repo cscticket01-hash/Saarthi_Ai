@@ -57,7 +57,12 @@ bool retireDeletedOwnerDocuments(
       if (row is! Map ||
           row['schoolId'] != school ||
           (row['deleted'] == true &&
-              (queue[id] is! Map || queue[id]['deleted'] == true)))
+              (queue[id] is! Map ||
+                  (queue[id]['deleted'] == true &&
+                      queue[id]['parentDeletionOperationId'] ==
+                          deletion['operationId'] &&
+                      row['parentDeletionOperationId'] ==
+                          deletion['operationId']))))
         continue;
       final ownerRole =
           row['ownerRole'] ?? (row['studentId'] != null ? 'student' : null);

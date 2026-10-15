@@ -134,6 +134,21 @@ void main() {
     retireDeletedOwnerDocuments(stale, school),
     'Old local delete with live conflict still requires retirement',
   );
+  final stuckDelete = root();
+  stuckDelete['_windows_document_outbox']['card']['deleted'] = true;
+  check(
+    retireDeletedOwnerDocuments(stuckDelete, school),
+    'A legacy conflicted delete also needs parent deletion authority',
+  );
+  check(
+    stuckDelete['_windows_document_outbox']['card']['parentDeletionOperationId'] ==
+        'delete-s1',
+    'Legacy delete replaced by archived, authorized owner tombstone',
+  );
+  check(
+    !retireDeletedOwnerDocuments(stuckDelete, school),
+    'Authorized tombstone must remain idempotent',
+  );
   final contradicted = root();
   contradicted['_local_student_documents'] = {
     'card': Map<String, dynamic>.from(
