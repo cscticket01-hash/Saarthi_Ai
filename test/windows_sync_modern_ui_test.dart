@@ -86,6 +86,10 @@ void main() {
       expect(find.text('Needs Attention'), findsOneWidget);
       expect(find.text('Idle'), findsNothing);
       expect(find.text('Verified sync'), findsNothing);
+      expect(find.text('School records'),findsOneWidget);
+      expect(find.text('Documents & ID cards'),findsOneWidget);
+      expect(find.text('Photos & file downloads'),findsOneWidget);
+      expect(find.text('Inventory not yet verified'),findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('Smart Repair History'));
       await tester.pumpAndSettle();
@@ -100,7 +104,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(home:page(sync:()=>pending.future)));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sync Now')); await tester.pump();
-    await tester.ensureVisible(find.text('Diagnostics and recovery tools'));
+    await tester.scrollUntilVisible(find.text('Diagnostics and recovery tools'),250,
+      scrollable:find.byType(Scrollable).first);
+    await Scrollable.ensureVisible(tester.element(find.text('Diagnostics and recovery tools')),alignment:0.5);
+    await tester.pump(const Duration(milliseconds:400));
     await tester.tap(find.text('Diagnostics and recovery tools'));
     await tester.pump(const Duration(milliseconds:400));
     for(final label in ['Check Cloud Health','Local Storage Details','School Drive Usage']) {

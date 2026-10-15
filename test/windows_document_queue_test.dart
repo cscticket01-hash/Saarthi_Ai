@@ -187,6 +187,40 @@ void main() {
       expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
     } finally {await dir.delete(recursive:true);}
   });
+  for(final mode in ['missing-file','unverified-ack']) {
+    test('$mode retains failed document and allows an independent document ACK', () async {
+      final dir=await Directory.systemTemp.createTemp('independent-documents-');
+      try {
+        for(final id in ['a-failed','z-valid']) {
+          final path='${dir.path}/$id';
+          if(id!='a-failed'||mode!='missing-file')await File(path).writeAsBytes([1,2,3]);
+          final row={'schoolId':school,'studentId':'S1','documentRevision':'revision-$id',
+            'localPath':path,'syncState':'Pending','baseCloudRevision':'','deleted':false};
+          await db.collection('_local_student_documents').doc(id).set(row);
+          await db.collection('_windows_document_outbox').doc(id).set(row);
+        }
+        final sent=<String>[];
+        await expectLater(WindowsBackendBridge.flushDocumentPending(send:(payload)async{
+          final id=payload['documentId'] as String;sent.add(id);
+          return id=='a-failed'?{'success':true}:documentAckFixture(payload,42);
+        }),throwsA(anything));
+        expect(sent,contains('z-valid'));
+        expect((await db.collection('_windows_document_outbox').doc('z-valid').get()).exists,false);
+        final retained=(await db.collection('_windows_document_outbox').doc('a-failed').get()).data()!;
+        expect(retained['documentRevision'],'revision-a-failed');
+        expect(retained['failureCode'],mode=='missing-file'?'fileMissing':'ACK_UNVERIFIED');
+        expect(retained['failureStage'],mode=='missing-file'?'readLocalFile':'verifyAcknowledgement');
+        expect((await db.collection('_windows_sync_receipts').get()).docs.length,1);
+        if(mode=='unverified-ack') {
+          expect(await File('${dir.path}/a-failed').exists(),true);
+          var retried=false;
+          await WindowsBackendBridge.flushDocumentPending(respectBackoff:true,
+            send:(_)async{retried=true;return {};});
+          expect(retried,false);
+        }
+      }finally{await dir.delete(recursive:true);}
+    });
+  }
   test('document revision conflict retains original and allows independent ACK', () async {
     final dir = await Directory.systemTemp.createTemp('document-conflict-');
     try {

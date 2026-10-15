@@ -589,8 +589,8 @@ class WindowsBackendBridge {
     if (_documentDraining) return;
     _documentDraining = true;
     final origin = FirebaseFirestore.instance.activeProfileId;
-    Object? firstConflict;
-    StackTrace? conflictStack;
+    Object? firstDocumentFailure;
+    StackTrace? documentFailureStack;
     try {
       await FirebaseFirestore.instance.reconcileDeletedOwnerDocuments();
       final queue = await FirebaseFirestore.instance
@@ -624,6 +624,7 @@ class WindowsBackendBridge {
         if (record['syncState'] == 'conflict' ||
             record['syncState'] == 'needsAttention')
           continue;
+        var failureStage = 'prepare';
         try {
           final identity = await CentralSchoolCloud.saved();
           if (record['schoolId'] != identity['schoolId'] ||
@@ -632,6 +633,7 @@ class WindowsBackendBridge {
           if (record['parentDeletionOperationId'] is String) {
             if (!await _prepareOwnerDocumentDeletion(queued.id, record, readCloud:readDeletionCloud)) continue;
           }
+          failureStage = 'readLocalFile';
           final path =
               record['optimizedPath']?.toString() ??
               record['localPath']?.toString() ??
@@ -686,11 +688,14 @@ class WindowsBackendBridge {
           if (canAdmit?.call() == false) break;
           if (admitRow?.call(queued.id, record) == false) continue;
           report('cloudRequest');
+          failureStage = 'requestAndReadback';
           final response = (send ?? _handleCentral)(payload);
           report('waitingForAck');
           final result = await response;
+          failureStage = 'verifyAcknowledgement';
           if (!verifiedDocumentAcknowledgement(payload, result))
             throw const MissingSyncAcknowledgement();
+          failureStage = 'commitLocalReceipt';
           await _documentWrite(() async {
             if (FirebaseFirestore.instance.activeProfileId != origin)
               throw StateError('School changed during document sync.');
@@ -780,6 +785,7 @@ class WindowsBackendBridge {
                 await queued.reference.set({
                   'syncState': conflict ? 'conflict' : decision.retry ? 'retry' : 'needsAttention',
                   'failureCategory':decision.kind.name,
+                  ...documentFailureDiagnostic(error, failureStage),
                   if(retryAt!=null)'retryAtMillis':retryAt.millisecondsSinceEpoch,
                   'retryCount':
                       (current['retryCount'] as num? ?? 0).toInt() + 1,
@@ -787,15 +793,16 @@ class WindowsBackendBridge {
                 }, SetOptions(merge: true));
               }
             });
-          if (decision.kind == SyncFailureKind.conflict) {
-            firstConflict ??= error;
-            conflictStack ??= stack;
-            continue; // Independent documents may still sync; retain this conflicting row.
+          final isolatedFileFailure=failureStage=='readLocalFile' && decision.kind==SyncFailureKind.fileMissing;
+          if (isolatedFileFailure || failureStage!='commitLocalReceipt' && independentDocumentFailure(error)) {
+            firstDocumentFailure ??= isolatedFileFailure ? const PendingDocumentFileFailure() : error;
+            documentFailureStack ??= stack;
+            continue; // Retain the failed row; independent documents may still sync.
           }
           rethrow;
         }
       }
-      if (firstConflict != null) Error.throwWithStackTrace(firstConflict, conflictStack!);
+      if (firstDocumentFailure != null) Error.throwWithStackTrace(firstDocumentFailure, documentFailureStack!);
     } finally {
       _documentDraining = false;
     }

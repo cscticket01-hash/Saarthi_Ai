@@ -7,8 +7,52 @@ import '../lib/sync_recovery_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/windows_sync_comparison.dart';
+import '../lib/windows_sync_projection.dart';
+import '../lib/windows_connect/central_school_cloud.dart';
 
 void main() {
+  test('record-scoped document failure permits download but never becomes success', () async {
+    for(final failure in <Object>[const MissingSyncAcknowledgement(),
+      const PendingDocumentFileFailure(),
+      CentralCloudException(409,'school_cloud','private message',diagnosticCode:'RECORD_REVISION_CONFLICT')]) {
+      var downloaded=false;
+      await expectLater(runDocumentAndDownloadStages(documents:()async=>throw failure,
+        download:()async{downloaded=true;}),throwsA(same(failure)));
+      expect(downloaded,true);
+    }
+    for(final failure in <Object>[CentralCloudException(401,'school_cloud','private'),
+      CentralCloudException(429,'school_cloud','private'),
+      const SocketException('private network'),FileSystemException('database storage failed'),
+      StateError('unknown failure')]) {
+      var downloaded=false;
+      await expectLater(runDocumentAndDownloadStages(documents:()async=>throw failure,
+        download:()async{downloaded=true;}),throwsA(same(failure)));
+      expect(downloaded,false);
+    }
+    final downloadFailure=StateError('download failed');
+    await expectLater(runDocumentAndDownloadStages(documents:()async=>throw const MissingSyncAcknowledgement(),
+      download:()async=>throw downloadFailure),throwsA(same(downloadFailure)));
+  });
+  test('lane projection preserves unknown media and separates document metadata from records', () {
+    final lanes=windowsSyncLanes([
+      {'_queueCollection':'_windows_firebase_outbox','collection':'students_directory'},
+      {'_queueCollection':'_windows_firebase_outbox','collection':'documents','syncState':'conflict'},
+      {'_queueCollection':'_windows_document_outbox','syncState':'retry','retryAtMillis':200},
+      {'_queueCollection':'_windows_google_outbox'},
+    ],100);
+    expect(lanes['records']!['pending'],1);
+    expect(lanes['documents']!['pending'],2);
+    expect(lanes['documents']!['retry'],1);
+    expect(lanes['documents']!['review'],1);
+    expect(lanes['documents']!['nextRetryMillis'],200);
+    expect(lanes['other']!['pending'],1);
+    final diagnostic=documentFailureDiagnostic(CentralCloudException(502,'school_cloud',
+      'secret response with private-url',diagnosticCode:'SCRIPT_HTTP_ERROR'),'requestAndReadback');
+    expect(documentFailureExplanation(diagnostic),contains('HTTP 502'));
+    expect(documentFailureExplanation(diagnostic),contains('Server request / cloud readback'));
+    expect(jsonEncode(diagnostic),isNot(contains('private-url')));
+    expect(documentFailureExplanation({'lastError':'private response'}),'');
+  });
   test('actual Apps Script deletion shapes verify exact mutation ACK plus readback', () {
     final cases = jsonDecode(File('test/fixtures/managed_document_delete_contract.json').readAsStringSync()) as List;
     for(final c in cases) {

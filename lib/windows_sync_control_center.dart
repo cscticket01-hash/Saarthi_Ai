@@ -11,6 +11,7 @@ import 'windows_sync_engine.dart';
 import 'windows_student_sync_audit.dart';
 import 'windows_sync_comparison.dart';
 import 'windows_sync_recovery.dart';
+import 'windows_sync_projection.dart';
 import 'windows_recycle_bin.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_sync_conflict_review.dart';
@@ -704,6 +705,16 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   }
 
   Widget _hero(Map<String, dynamic> details, List<dynamic> items, bool active) {
+    final laneRows=details['liveQueue'] is List
+      ? (details['liveQueue'] as List).whereType<Map>().map((r)=>Map<String,dynamic>.from(r)).toList()
+      : <Map<String,dynamic>>[];
+    final lanes=details['lanes'] is Map ? details['lanes'] as Map
+      : windowsSyncLanes(laneRows,DateTime.now().millisecondsSinceEpoch);
+    String laneText(String key) {
+      if(details['liveQueue'] is! List) return 'Not yet measured';
+      final lane=lanes[key] as Map;
+      return '${lane['pending']} outstanding · ${lane['retry']} retry · ${lane['review']} need review';
+    }
     final syncing = engine.isSyncing;
     final phase =
         details['displayState']?.toString() ??
@@ -753,6 +764,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             metric('Last local backup', stamp(lastBackupAt)),
           ],
         ),
+        const SizedBox(height: 14),
+        Wrap(spacing:14,runSpacing:14,children:[
+          metric('School records', '${laneText('records')}\nLast verified cloud ACK: ${stamp(details['lastRecordAckMillis'])}'),
+          metric('Documents & ID cards', '${laneText('documents')}\nLast verified cloud ACK: ${stamp(details['lastDocumentAckMillis'])}'),
+          if((lanes['other'] as Map?)?['pending'] is num && lanes['other']['pending']>0)
+            metric('Restore & legacy work',laneText('other')),
+          metric('Photos & file downloads', details['mediaPending'] is num
+            ? '${details['mediaPending']} outstanding · ${details['mediaInventoryState'] ?? 'Unknown inventory'}'
+            : 'Inventory not yet verified'),
+          metric('Cloud record check',stamp(details['lastRecordCheckMillis'])),
+        ]),
         const SizedBox(height: 22),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -1340,7 +1362,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         '${item['collection'] ?? item['_queueCollection'] ?? 'documents'} • ${item['documentId'] ?? item['id']}',
                                       ),
                                       subtitle: Text(
-                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}${item['lastError'] == null ? '' : '\n${syncFailureReason(item)}'}',
+                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}${item['lastError'] == null ? '' : '\n${syncFailureReason(item)}'}${item['retryAtMillis'] is num ? '\nNext retry: ${stamp(item['retryAtMillis'])}' : ''}',
                                       ),
                                       trailing:
                                           (item['syncState'] ??
@@ -1744,6 +1766,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
 }
 
 String syncFailureReason(Map item) {
+  final specific=documentFailureExplanation(item);
+  if(specific.isNotEmpty)return specific;
   final kind = failure_policy.SyncFailureKind.values.where(
     (kind) => kind.name == item['failureCategory'],
   );
