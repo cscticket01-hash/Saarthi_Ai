@@ -58,6 +58,9 @@ Future<void> openSyncTool(WidgetTester tester, String label) async {
       scrollable: find.byType(Scrollable).first,
     );
     // Controls only exist while the expander is open.
+    await tester.pumpAndSettle();
+    await Scrollable.ensureVisible(tester.element(expander),alignment:0.5);
+    await tester.pumpAndSettle();
     if (find.text(label).evaluate().isEmpty) {
       await tester.tap(expander);
       await tester.pumpAndSettle();
