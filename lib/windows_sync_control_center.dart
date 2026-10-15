@@ -766,8 +766,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ),
         const SizedBox(height: 14),
         Wrap(spacing:14,runSpacing:14,children:[
-          metric('School records', '${laneText('records')}\nLast verified upload: ${stamp(details['lastRecordUploadMillis'])}'),
-          metric('Documents & ID cards', '${laneText('documents')}\nLast verified upload: ${stamp(details['lastDocumentUploadMillis'])}'),
+          metric('School records', '${laneText('records')}\nLast verified cloud ACK: ${stamp(details['lastRecordAckMillis'])}'),
+          metric('Documents & ID cards', '${laneText('documents')}\nLast verified cloud ACK: ${stamp(details['lastDocumentAckMillis'])}'),
           if((lanes['other'] as Map?)?['pending'] is num && lanes['other']['pending']>0)
             metric('Restore & legacy work',laneText('other')),
           metric('Photos & file downloads', details['mediaPending'] is num

@@ -246,9 +246,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     details.value = {
       'lanes': windowsSyncLanes(liveQueue, nowMillis),
       'lastRecordCheckMillis':downloadCheckpoint?['verifiedAt'],
-      'lastRecordUploadMillis':receipts.docs.where((d)=>d.data()['collection']!='documents').fold<int>(0,
+      'lastRecordAckMillis':receipts.docs.where((d)=>d.data()['collection'] is String && d.data()['collection']!='documents').fold<int>(0,
         (latest,d) { final at=d.data()['acknowledgedAt'];return at is num&&at>latest?at.toInt():latest; }),
-      'lastDocumentUploadMillis':receipts.docs.where((d)=>d.data()['collection']=='documents').fold<int>(0,
+      'lastDocumentAckMillis':receipts.docs.where((d)=>d.data()['collection']=='documents').fold<int>(0,
         (latest,d) { final at=d.data()['acknowledgedAt'];return at is num&&at>latest?at.toInt():latest; }),
       'liveQueue': liveQueue,
       'displayState': projectWindowsSyncState(liveQueue, nowMillis:nowMillis,
