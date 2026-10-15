@@ -515,6 +515,11 @@ class WindowsBackendBridge {
     onLocalDocumentCommitted?.call();
   }
 
+  // Retries reuse one durable deletion identity; later deletes after restore do not.
+  static String documentDeleteOperationId(String id, Map data) => crypto.sha256
+      .convert(utf8.encode('$id:${data['documentRevision'] ?? data['baseCloudRevision'] ?? ''}:delete'))
+      .toString();
+
   static Future<bool> _prepareOwnerDocumentDeletion(String id, Map<String,dynamic> record, {Future<Map<String,dynamic>> Function(String)? readCloud}) async {
     final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
     Future<Map<String,dynamic>?> evidence() async {
@@ -1832,7 +1837,7 @@ class WindowsBackendBridge {
           collection: 'documents',
           documentId: id,
           expectedRevision: data['baseCloudRevision']?.toString() ?? '',
-          operationId:crypto.sha256.convert(utf8.encode('$id:${data['baseCloudRevision']??''}:delete')).toString(),
+          operationId:documentDeleteOperationId(id, data),
           expectedRecordRevision:data['reviewedRecordRevision'] as String? ?? old?['_syncRevision'] as String? ?? '',
           expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );

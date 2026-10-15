@@ -66,6 +66,14 @@ void main() {
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
   });
+  test('document delete retries keep identity, while a later owner deletion gets a new identity', () {
+    final first={'documentRevision':'delete-first','baseCloudRevision':'same-original-generation'};
+    final later={...first,'documentRevision':'delete-after-restoration'};
+    expect(WindowsBackendBridge.documentDeleteOperationId('card',first),
+      WindowsBackendBridge.documentDeleteOperationId('card',Map.from(first)));
+    expect(WindowsBackendBridge.documentDeleteOperationId('card',first),
+      isNot(WindowsBackendBridge.documentDeleteOperationId('card',later)));
+  });
   test('owner deletion atomically retires conflicted upload, retains originals and waits for parent ACK', () async {
     final dir = await Directory.systemTemp.createTemp('deleted-owner');
     try {
