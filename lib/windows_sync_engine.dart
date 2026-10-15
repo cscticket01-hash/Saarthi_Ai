@@ -216,6 +216,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final receipts = await db.collection('_windows_sync_receipts').get();
     final backup = await db.collection('_windows_sync_status').doc('backup').get();
     final downloads = await db.collection('_windows_sync_downloads').get();
+    final downloadCheckpoint = (await db.collection('_windows_sync_status').doc('record-download').get()).data();
     final binary=(await db.collection('_windows_binary_status').doc('current').get()).data();
     final restoreInventory = await db.collection('_windows_recycle_requests').get();
     final restores=restoreInventory.docs.where((d)=>d.data()['localRestore']==true && d.data()['schoolId']==db.activeProfileIdentity['schoolSyncId'] && d.data()['state']!='verified').toList();
@@ -243,6 +244,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       for(final d in restores) {'id':d.id,...d.data(),'_queueCollection':'_windows_recycle_requests'},
     ];
     details.value = {
+      'lanes': windowsSyncLanes(liveQueue, nowMillis),
+      'lastRecordCheckMillis':downloadCheckpoint?['verifiedAt'],
+      'lastRecordUploadMillis':receipts.docs.where((d)=>d.data()['collection']!='documents').fold<int>(0,
+        (latest,d) { final at=d.data()['acknowledgedAt'];return at is num&&at>latest?at.toInt():latest; }),
+      'lastDocumentUploadMillis':receipts.docs.where((d)=>d.data()['collection']=='documents').fold<int>(0,
+        (latest,d) { final at=d.data()['acknowledgedAt'];return at is num&&at>latest?at.toInt():latest; }),
       'liveQueue': liveQueue,
       'displayState': projectWindowsSyncState(liveQueue, nowMillis:nowMillis,
         syncing:_syncing, paused:isPaused, blocked:_syncBlocked,
@@ -1168,12 +1175,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         try { _admitBatch();
         await _pushManagedOutbox(); }
         catch (e) { if (!isRecordSyncConflict(e)) rethrow; }
-        try {
+        await runDocumentAndDownloadStages(documents: () async {
           _admitBatch();
           await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
-        } catch (e) {
-          if (!e.toString().toLowerCase().contains('conflict')) rethrow;
-        }
+        }, download: () async {
         if (_lastPull == null ||
             DateTime.now().difference(_lastPull!) >=
                 reconciliationInterval ||
@@ -1181,11 +1186,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _admitBatch();
           final inventoryAudit = _manualSync || _checkpointDue;
           await _pullManagedChanges(verifyInventory: inventoryAudit);
+          if(FirebaseFirestore.instance.activeProfileId!=syncOrigin)
+            throw StateError('School changed after record download.');
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+            FirebaseFirestore.instance.collection('_windows_sync_status').doc('record-download')
+              .set({'verifiedAt':DateTime.now().millisecondsSinceEpoch}));
           _lastPull = DateTime.now();
           // A lightweight 4-minute delta poll must not postpone the durable
           // elapsed-hour inventory audit.
           completedReconciliation = inventoryAudit;
         }
+        });
         _admitBatch();
         await refreshDetails();
         if ((details.value['needsAttention'] as num? ?? 0) > 0)

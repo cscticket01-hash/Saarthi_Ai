@@ -17,6 +17,50 @@ class MissingSyncAcknowledgement implements Exception {
 }
 
 const automaticRecordRetryLimit = 5;
+
+class PendingDocumentFileFailure extends FileSystemException {
+  const PendingDocumentFileFailure() : super('Pending document file could not be read.');
+}
+
+/// Only a record-scoped failure may be deferred. Shared authentication,
+/// identity, transport and quota failures still stop admission immediately.
+bool independentDocumentFailure(Object error) =>
+    error is MissingSyncAcknowledgement ||
+    error is PendingDocumentFileFailure ||
+    error is! FileSystemException &&
+    windowsSyncRecovery(error).independentRecords;
+
+Future<void> runDocumentAndDownloadStages({
+  required Future<void> Function() documents,
+  required Future<void> Function() download,
+}) async {
+  Object? retained;
+  StackTrace? trace;
+  try { await documents(); }
+  catch (error, stack) {
+    if (!independentDocumentFailure(error)) rethrow;
+    retained = error; trace = stack;
+  }
+  await download();
+  if (retained != null) Error.throwWithStackTrace(retained, trace!);
+}
+
+Map<String,dynamic> documentFailureDiagnostic(Object error, String stage) {
+  final decision = windowsSyncRecovery(error);
+  return {
+    'failureStage':stage,
+    'failureCode':error is MissingSyncAcknowledgement ? 'ACK_UNVERIFIED' :
+      error is CentralCloudException && const {
+        'SCRIPT_DOCUMENT_REVISION_CONFLICT','RECORD_REVISION_CONFLICT',
+        'OPERATION_ID_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED',
+        'SCRIPT_TIMEOUT','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH',
+        'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED',
+        'SCHOOL_STORAGE_NOT_CONNECTED','SCRIPT_TRANSPORT_ERROR',
+        'SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED',
+      }.contains(error.diagnosticCode) ? error.diagnosticCode : decision.kind.name,
+    'failureHttpStatus':error is CentralCloudException ? error.status : null,
+  };
+}
 const recoverablePendingCategories = {
   'networkPath',
   'timeout',
