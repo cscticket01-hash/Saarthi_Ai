@@ -103,7 +103,7 @@ Map<String, dynamic> documentAcknowledgementFromReadback(Map payload, Map reply,
 }
 
 /// A bool success is transport feedback, never a verified cloud receipt.
-bool verifiedDocumentAcknowledgement(Map payload, Map result) {
+bool verifiedDocumentAcknowledgement(Map payload, Map result, {String? action}) {
   final cloud = result['document'];
   if (result['success'] != true ||
       result['cloudVerified'] != true ||
@@ -114,7 +114,7 @@ bool verifiedDocumentAcknowledgement(Map payload, Map result) {
       cloud['_syncRevision'] is! String ||
       (cloud['_syncRevision'] as String).isEmpty)
     return false;
-  if (payload['action'] == 'delete_student_document') {
+  if ((action ?? payload['action']) == 'delete_student_document') {
     final ack = result['deleteAcknowledgement'];
     final base = payload['baseCloudRevision'];
     // Absent-record tombstones deliberately omit documentRevision. Accept this

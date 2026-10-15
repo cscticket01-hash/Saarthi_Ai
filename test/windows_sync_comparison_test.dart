@@ -18,6 +18,17 @@ void main() {
         'collection':'documents','documentId':payload['documentId'],'operationId':payload['deleteOperationId']};
       Map receipt(Map response, Map? proof) => documentAcknowledgementFromReadback(payload,response,deleteAcknowledgement:proof);
       expect(verifiedDocumentAcknowledgement(payload,receipt(reply,ack)),true,reason:c['name']);
+      // _handleCentral removes action before dispatch. Its receipt verifier
+      // must use the captured action, just as the outer queue still does.
+      final dispatched = Map<String,dynamic>.from(payload)..remove('action');
+      expect(verifiedDocumentAcknowledgement(dispatched,receipt(reply,ack)),false);
+      expect(verifiedDocumentAcknowledgement(dispatched,receipt(reply,ack),
+        action:'delete_student_document'),true,reason:'dispatch ${c['name']}');
+      expect(verifiedDocumentAcknowledgement(dispatched,receipt(reply,null),
+        action:'delete_student_document'),false);
+      expect(verifiedDocumentAcknowledgement(dispatched,
+        receipt(reply,{...ack,'recordRevision':'wrong'}),
+        action:'delete_student_document'),false);
       expect(verifiedDocumentAcknowledgement(payload,receipt(reply,null)),false);
       for(final change in [
         {'success':false},{'syncProtocol':1},{'schoolId':'foreign'},{'collection':'students_directory'},

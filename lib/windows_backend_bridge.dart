@@ -1669,7 +1669,7 @@ class WindowsBackendBridge {
         ...payload,
         'schoolId': school,
         'documentId': id,
-      }, receipt)) {
+      }, receipt, action:action)) {
         throw const MissingSyncAcknowledgement();
       }
       return receipt;
