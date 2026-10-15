@@ -86,6 +86,11 @@ void main() {
       final proofRef = db.collection('_windows_local_deletions').doc(retired['parentDeletionOperationId']);
       await proofRef.set({'cloudDeletionVerified':true,'deletedRevision':'parent-tombstone'},SetOptions(merge:true));
       final cloud = {...row,'documentRevision':'uploaded-cloud','_syncRevision':'record-cloud','uploadedAt':12};
+      await expectLater(WindowsBackendBridge.flushDocumentPending(readDeletionCloud:(_)async=>{
+        'success':true,'schoolId':school,'syncProtocol':2,'records':{'orphan':cloud}},
+        send:(_)async=>{'success':true}), throwsA(predicate((e)=>e.toString().contains('acknowledgement missing'))));
+      expect((await db.collection('_windows_document_outbox').doc('orphan').get()).exists,true);
+      expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
       await WindowsBackendBridge.flushDocumentPending(readDeletionCloud:(_)async=>{
         'success':true,'schoolId':school,'syncProtocol':2,'records':{'orphan':cloud}},
         send:(payload)async {
@@ -122,6 +127,24 @@ void main() {
     await db.collection('_windows_local_deletions').doc('proof').set({'cloudDeletionVerified':true,'deletedRevision':'r'},SetOptions(merge:true));
     await WindowsBackendBridge.flushDocumentPending(send:(_)async=>fail('Restored parent must block delete'));
     expect((await db.collection('_windows_document_outbox').doc('unknown').get()).exists,true);
+  });
+  test('foreign cloud ownership cannot authorize a retired document delete', () async {
+    const id='foreign-cloud-owner';
+    final row={'schoolId':school,'studentId':'deleted-owner','ownerRole':'student',
+      'personId':'stable-owner','documentRevision':'upload','syncState':'conflict'};
+    await db.collection('_windows_document_outbox').doc(id).set(row);
+    await db.collection('_windows_local_deletions').doc('deleted-owner-proof').set({
+      'version':1,'schoolId':school,'collection':'students_directory','documentId':'deleted-owner',
+      'operationId':'deleted-owner-proof','snapshot':{'mobileStableId':'stable-owner'},
+      'cloudDeletionVerified':true,'deletedRevision':'parent-delete'});
+    var sent=false;
+    await expectLater(WindowsBackendBridge.flushDocumentPending(readDeletionCloud:(_)async=>{
+      'success':true,'schoolId':school,'syncProtocol':2,'records':{id:{...row,
+        'personId':'different-owner','_syncRevision':'cloud-record'}}},
+      send:(_)async {sent=true; return {}; }),throwsStateError);
+    expect(sent,false);
+    expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,true);
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
   });
   test('document review measures retained bytes and rejects foreign-school files', () async {
     final dir=await Directory.systemTemp.createTemp('document-review-proof');
