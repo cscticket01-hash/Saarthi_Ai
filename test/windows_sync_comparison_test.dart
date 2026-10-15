@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import '../lib/windows_sync_recovery.dart';
 import '../lib/sync_recovery_policy.dart';
@@ -8,6 +9,31 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_sync_comparison.dart';
 
 void main() {
+  test('actual Apps Script deletion shapes verify exact mutation ACK plus readback', () {
+    final cases = jsonDecode(File('test/fixtures/managed_document_delete_contract.json').readAsStringSync()) as List;
+    for(final c in cases) {
+      final payload = Map<String,dynamic>.from(c['payload'] as Map);
+      final reply = Map<String,dynamic>.from(c['readback'] as Map);
+      final ack = <String,dynamic>{...Map<String,dynamic>.from(c['deleteResponse'] as Map),
+        'collection':'documents','documentId':payload['documentId'],'operationId':payload['deleteOperationId']};
+      Map receipt(Map response, Map? proof) => documentAcknowledgementFromReadback(payload,response,deleteAcknowledgement:proof);
+      expect(verifiedDocumentAcknowledgement(payload,receipt(reply,ack)),true,reason:c['name']);
+      expect(verifiedDocumentAcknowledgement(payload,receipt(reply,null)),false);
+      for(final change in [
+        {'success':false},{'syncProtocol':1},{'schoolId':'foreign'},{'collection':'students_directory'},
+        {'documentId':'other'},{'operationId':'b'*64},{'recordRevision':'different'},
+      ]) expect(verifiedDocumentAcknowledgement(payload,receipt(reply,{...ack,...change})),false);
+      final row = Map<String,dynamic>.from((reply['records'] as Map)[payload['documentId']] as Map);
+      for(final change in [{'_syncDeleted':false},{'_syncRevision':'different'},{'schoolId':'foreign'},
+        {'documentRevision':'unrelated-generation'},{'documentId':'other'}]) {
+        expect(verifiedDocumentAcknowledgement(payload,receipt({...reply,'records':{payload['documentId']:{...row,...change}}},ack)),false);
+      }
+      if(c['name']!='existing') {
+        expect(row.containsKey('documentRevision'),false);
+        expect(verifiedDocumentAcknowledgement({...payload,'baseCloudRevision':'unverified-nonempty'},receipt(reply,ack)),false);
+      }
+    }
+  });
   test('document differences report content and identity fields, never local file paths', () {
     final local = {'schoolId':'s','documentRevision':'a','contentHash':'hash','localPath':'private'};
     final cloud = {'schoolId':'s','documentRevision':'b','contentHash':'hash'};
@@ -39,12 +65,14 @@ void main() {
       expect(verifiedDocumentAcknowledgement(payload, receipt(bad)), isFalse);
     }
     final deletion = {...payload, 'action': 'delete_student_document',
-      'baseCloudRevision': 'op'};
+      'baseCloudRevision': 'op', 'deleteOperationId':'a'*64};
     final tombstone = {'schoolId': 's', '_syncDeleted': true,
       '_syncRevision': 'deleted-receipt', 'documentRevision': 'op'};
     expect(verifiedDocumentAcknowledgement(deletion,
       documentAcknowledgementFromReadback(deletion,
-        {...reply, 'records': {'d': tombstone}})), isTrue);
+        {...reply, 'records': {'d': tombstone}}, deleteAcknowledgement:{
+          'success':true,'syncProtocol':2,'schoolId':'s','collection':'documents','documentId':'d',
+          'operationId':'a'*64,'recordRevision':'deleted-receipt'})), isTrue);
   });
   test(
     'only same-school durable readback may update document ACK evidence',
