@@ -66,6 +66,63 @@ void main() {
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
   });
+  test('owner deletion atomically retires conflicted upload, retains originals and waits for parent ACK', () async {
+    final dir = await Directory.systemTemp.createTemp('deleted-owner');
+    try {
+      final path = '${dir.path}/original.pdf'; await File(path).writeAsBytes([1,2,3]);
+      await db.collection('students_directory').doc('S1').set({'name':'Original'});
+      final row = {'schoolId':school,'studentId':'S1','personId':'S1','ownerRole':'student',
+        'documentRevision':'original-upload','localPath':path,'syncState':'conflict','baseCloudRevision':''};
+      await db.collection('_local_student_documents').doc('orphan').set(row);
+      await db.collection('_windows_document_outbox').doc('orphan').set(row);
+      await db.collection('students_directory').doc('S1').delete();
+      final retired = (await db.collection('_windows_document_outbox').doc('orphan').get()).data()!;
+      expect(retired['deleted'],true); expect(retired['syncState'],'Pending');
+      expect(retired['documentRevision'],isNot('original-upload'));
+      expect(retired['parentDeletionOperationId'],isA<String>());
+      await WindowsBackendBridge.flushDocumentPending(send:(_)async=>fail('Parent deletion not acknowledged'));
+      expect((await db.collection('_windows_document_outbox').doc('orphan').get()).exists,true);
+      expect(await File(path).readAsBytes(),[1,2,3]);
+      final proofRef = db.collection('_windows_local_deletions').doc(retired['parentDeletionOperationId']);
+      await proofRef.set({'cloudDeletionVerified':true,'deletedRevision':'parent-tombstone'},SetOptions(merge:true));
+      final cloud = {...row,'documentRevision':'uploaded-cloud','_syncRevision':'record-cloud','uploadedAt':12};
+      await WindowsBackendBridge.flushDocumentPending(readDeletionCloud:(_)async=>{
+        'success':true,'schoolId':school,'syncProtocol':2,'records':{'orphan':cloud}},
+        send:(payload)async {
+          expect(payload['action'],'delete_student_document');
+          expect(payload['baseCloudRevision'],'uploaded-cloud');
+          expect(payload['reviewedRecordRevision'],'record-cloud');
+          return documentAckFixture(payload,12);
+        });
+      expect((await db.collection('_windows_document_outbox').doc('orphan').get()).exists,false);
+      expect((await db.collection('_local_student_documents').doc('orphan').get()).data()?['deleted'],true);
+      expect(await File(path).readAsBytes(),[1,2,3]);
+      final history = (await db.collection('_windows_sync_conflict_history').get()).docs;
+      expect(history.any((d)=> (d.data()['pending'] as Map?)?['documentRevision']=='original-upload'),true);
+      expect(history.any((d)=> (d.data()['verifiedCloud'] as Map?)?['documentRevision']=='uploaded-cloud'),true);
+    } finally { await dir.delete(recursive:true); }
+  });
+  test('reconcile uses explicit deletion evidence, never missing parents or foreign school', () async {
+    final row = {'schoolId':school,'studentId':'missing','documentRevision':'live','syncState':'conflict'};
+    await db.collection('_windows_document_outbox').doc('unknown').set(row);
+    await db.reconcileDeletedOwnerDocuments();
+    expect((await db.collection('_windows_document_outbox').doc('unknown').get()).data(),row);
+    await db.collection('_windows_local_deletions').doc('proof').set({
+      'version':1,'schoolId':'other-school','collection':'students_directory','documentId':'missing',
+      'operationId':'proof','snapshot':{'name':'Other'}});
+    await db.reconcileDeletedOwnerDocuments();
+    expect((await db.collection('_windows_document_outbox').doc('unknown').get()).data(),row);
+    await db.collection('_windows_local_deletions').doc('proof').set({'schoolId':school},SetOptions(merge:true));
+    await db.reconcileDeletedOwnerDocuments();
+    final retired = (await db.collection('_windows_document_outbox').doc('unknown').get()).data()!;
+    expect(retired['deleted'],true);
+    await db.reconcileDeletedOwnerDocuments();
+    expect((await db.collection('_windows_document_outbox').doc('unknown').get()).data(),retired);
+    await db.collection('students_directory').doc('missing').set({'name':'Restored'});
+    await db.collection('_windows_local_deletions').doc('proof').set({'cloudDeletionVerified':true,'deletedRevision':'r'},SetOptions(merge:true));
+    await WindowsBackendBridge.flushDocumentPending(send:(_)async=>fail('Restored parent must block delete'));
+    expect((await db.collection('_windows_document_outbox').doc('unknown').get()).exists,true);
+  });
   test('document review measures retained bytes and rejects foreign-school files', () async {
     final dir=await Directory.systemTemp.createTemp('document-review-proof');
     try {

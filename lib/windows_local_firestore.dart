@@ -1,3 +1,4 @@
+import 'deleted_owner_document_policy.dart';
 import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
 export 'school_timestamp.dart' show Timestamp;
@@ -110,6 +111,7 @@ class FirebaseFirestore {
   /// the startup gate; this validates its saved identity against the live store.
   String? _persistenceBinding;
   Future<void> changeLocalStorageLocation(String path) => _database.changeStorageLocation(path);
+  Future<void> reconcileDeletedOwnerDocuments() => _database.reconcileDeletedOwnerDocuments();
   Future<int>? _persistenceResolution;
 
   Future<bool> localPersistenceEnabled() async {
@@ -1110,12 +1112,16 @@ class _LocalSchoolDatabase {
     _writeTail = _writeTail.then((_) async {
       try {
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed before queued write.');
+        final retiringOwner = WindowsLocalFirestoreSyncControl.trackingEnabled && operations.any((o) =>
+          o.type == _WriteType.delete && {'students_directory','teachers_directory'}.contains(o.collection));
         final root = await _readRoot(collections:{
           ...operations.map((operation)=>operation.collection),
           '_windows_firebase_outbox','_windows_sync_baselines','_windows_sync_receipts',
           '_windows_sync_conflict_history','_windows_sync_resolution_history',
           '_windows_local_deletions','_windows_recycle_requests',
-        },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_')).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
+          if (retiringOwner) ...{'_windows_document_outbox','_local_student_documents','documents',
+          'students_directory','teachers_directory'},
+        },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !(retiringOwner && {'documents','_local_student_documents','students_directory','teachers_directory'}.contains(n))).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
         final touched = <String>{};
@@ -1312,6 +1318,10 @@ class _LocalSchoolDatabase {
           }
         }
 
+        if (retiringOwner && _retireDeletedOwnerDocuments(collections)) {
+          touched.addAll({'_windows_document_outbox','_local_student_documents','_windows_sync_conflict_history'});
+          trackedMutation = true;
+        }
         _storeCollections(
           root,
           collections,
@@ -1347,6 +1357,31 @@ class _LocalSchoolDatabase {
       }
     });
 
+    return completer.future;
+  }
+
+  bool _retireDeletedOwnerDocuments(Map<String,dynamic> collections) =>
+      retireDeletedOwnerDocuments(collections, _activeIdentity['schoolSyncId']?.toString() ?? '');
+
+  Future<void> reconcileDeletedOwnerDocuments() {
+    final origin = _activeProfileId, completer = Completer<void>();
+    _writeTail = _writeTail.then((_) async {
+      try {
+        if (_activeProfileId != origin) throw StateError('School changed before deletion reconciliation.');
+        final root = await _readRoot(collections:{'_windows_local_deletions',
+          '_windows_document_outbox','_local_student_documents','documents',
+          'students_directory','teachers_directory','_windows_sync_conflict_history'});
+        if (_activeProfileId != origin) throw StateError('School changed during deletion reconciliation.');
+        final collections = _collections(root);
+        if (_retireDeletedOwnerDocuments(collections)) {
+          _storeCollections(root, collections); await _writeRoot(root);
+          for (final name in ['_windows_document_outbox','_local_student_documents','_windows_sync_conflict_history']) {
+            final signal = _signals[name]; if(signal != null && !signal.isClosed) signal.add(null);
+          }
+        }
+        completer.complete();
+      } catch(error, stack) { completer.completeError(error, stack); }
+    });
     return completer.future;
   }
 

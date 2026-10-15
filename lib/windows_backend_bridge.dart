@@ -515,7 +515,64 @@ class WindowsBackendBridge {
     onLocalDocumentCommitted?.call();
   }
 
+  static Future<bool> _prepareOwnerDocumentDeletion(String id, Map<String,dynamic> record, {Future<Map<String,dynamic>> Function(String)? readCloud}) async {
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    Future<Map<String,dynamic>?> evidence() async {
+      final proof = (await db.collection('_windows_local_deletions').doc(record['parentDeletionOperationId']).get()).data();
+      if (db.activeProfileId != origin || proof?['schoolId'] != record['schoolId'] ||
+          proof?['operationId'] != record['parentDeletionOperationId'] ||
+          proof?['collection'] != record['parentCollection'] || proof?['documentId'] != record['parentPersonId'] ||
+          proof?['cloudDeletionVerified'] != true || proof?['deletedRevision'] is! String ||
+          (proof!['deletedRevision'] as String).isEmpty ||
+          (await db.collection(record['parentCollection']).doc(record['parentPersonId']).get()).exists) return null;
+      return proof;
+    }
+    if (await evidence() == null) return false; // Wait for the parent's verified tombstone.
+    // A separately admitted metadata operation must settle before the file owner deletes.
+    final metadataQueue = await db.collection('_windows_firebase_outbox').get();
+    if (metadataQueue.docs.any((d) => d.data()['collection'] == 'documents' &&
+        d.data()['documentId'] == id)) return false;
+    if (record['ownerDeleteBaselineVerified'] == true) return true;
+    final reply = await (readCloud?.call(record['schoolId'] as String) ?? ManagedSchoolSession.callForSchool(record['schoolId'] as String,
+      'managed/records', {'operation':'read','collection':'documents','syncProtocol':2}));
+    if (db.activeProfileId != origin || reply['success'] != true || reply['syncProtocol'] != 2 ||
+        reply['schoolId'] != record['schoolId'] || reply['records'] is! Map)
+      throw const MissingSyncAcknowledgement();
+    final remote = (reply['records'] as Map)[id];
+    final role = record['parentCollection'] == 'students_directory' ? 'student' : 'teacher';
+    if (remote != null && (remote is! Map || remote['schoolId'] != record['schoolId'] ||
+        (remote['id'] != null && remote['id'] != id) || (remote['documentId'] != null && remote['documentId'] != id) ||
+        (remote['personId'] ?? remote['studentId']) != record['parentPersonId'] ||
+        (remote['ownerRole'] ?? (remote['studentId'] != null ? 'student' : null)) != role ||
+        remote['_syncRevision'] is! String || (remote['_syncRevision'] as String).isEmpty ||
+        remote['documentRevision'] is! String || (remote['documentRevision'] as String).isEmpty))
+      throw StateError('Cloud document ownership changed. Review required.');
+    return _documentWrite(() async {
+      if (await evidence() == null) return false;
+      final ref = db.collection('_windows_document_outbox').doc(id);
+      final current = (await ref.get()).data();
+      if (current == null || syncPayloadHash(current) != syncPayloadHash(record) || db.activeProfileId != origin) return false;
+      final baseline = <String,dynamic>{
+        'baseCloudRevision':remote is Map ? remote['documentRevision'] : '',
+        'baseCloudUploadedAt':remote is Map ? remote['uploadedAt'] : null,
+        'reviewedRecordRevision':remote is Map ? remote['_syncRevision'] : '',
+        'ownerDeleteBaselineVerified':true,
+      };
+      final batch = db.batch();
+      batch.set(db.collection('_windows_sync_conflict_history').doc('owner-delete-cloud-$id-${record['documentRevision']}'), {
+        'schoolId':record['schoolId'],'parentDeletionOperationId':record['parentDeletionOperationId'],
+        'verifiedCloud':remote, 'resolution':'verified parent deletion; document tombstone queued',
+      });
+      batch.set(ref, baseline, SetOptions(merge:true));
+      batch.set(db.collection('_local_student_documents').doc(id), baseline, SetOptions(merge:true));
+      await batch.commit();
+      record.addAll(baseline);
+      return true;
+    });
+  }
+
   static Future<void> flushDocumentPending({
+    Future<Map<String,dynamic>> Function(String)? readDeletionCloud,
     Future<Map<String, dynamic>> Function(Map<String, dynamic>)? send,
     bool Function()? canAdmit,
     bool respectBackoff = false,
@@ -528,6 +585,7 @@ class WindowsBackendBridge {
     Object? firstConflict;
     StackTrace? conflictStack;
     try {
+      await FirebaseFirestore.instance.reconcileDeletedOwnerDocuments();
       final queue = await FirebaseFirestore.instance
           .collection('_windows_document_outbox')
           .get();
@@ -564,6 +622,9 @@ class WindowsBackendBridge {
           if (record['schoolId'] != identity['schoolId'] ||
               FirebaseFirestore.instance.activeProfileId != origin)
             throw StateError('Pending document belongs to another school.');
+          if (record['parentDeletionOperationId'] is String) {
+            if (!await _prepareOwnerDocumentDeletion(queued.id, record, readCloud:readDeletionCloud)) continue;
+          }
           final path =
               record['optimizedPath']?.toString() ??
               record['localPath']?.toString() ??
@@ -1772,7 +1833,7 @@ class WindowsBackendBridge {
           documentId: id,
           expectedRevision: data['baseCloudRevision']?.toString() ?? '',
           operationId:crypto.sha256.convert(utf8.encode('$id:${data['baseCloudRevision']??''}:delete')).toString(),
-          expectedRecordRevision:old?['_syncRevision'] as String? ?? '',
+          expectedRecordRevision:data['reviewedRecordRevision'] as String? ?? old?['_syncRevision'] as String? ?? '',
           expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );
         await ensureSchool();
