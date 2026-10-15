@@ -29,6 +29,8 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_backend_bridge.dart lib/windows_firebase_sync.dart lib/windows_sync_conflict_review.dart lib/windows_sync_control_center.dart lib/windows_document_templates.dart lib/windows_student_sync_audit.dart test/windows_document_review_owner_test.dart test/windows_student_sync_audit_test.dart
+      - name: Explicit deletion authority and isolation policy
+        run: dart tool/test_deleted_owner_document_policy.dart
       - name: Actual owner recovery and existing queue regressions
         env:
           APPDATA: ${{ runner.temp }}/document-student-review
@@ -36,4 +38,4 @@ jobs:
       - name: Real SQLite atomic owner transitions and crash/reopen evidence
         env:
           APPDATA: ${{ runner.temp }}/document-student-sqlite-review
-        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 90s test/windows_sqlite_api_test.dart test/windows_document_review_owner_test.dart
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 90s test/windows_sqlite_api_test.dart test/windows_document_review_owner_test.dart test/windows_document_queue_test.dart

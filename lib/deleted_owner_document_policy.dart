@@ -22,6 +22,7 @@ bool retireDeletedOwnerDocuments(
     () => <String, dynamic>{},
   ) as Map;
   var changed = false;
+  final latest = <String, Map>{};
   for (final deletion in evidence.values) {
     if (deletion is! Map ||
         deletion['version'] != 1 ||
@@ -33,6 +34,14 @@ bool retireDeletedOwnerDocuments(
           'teachers_directory',
         }.contains(deletion['collection']))
       continue;
+    final key = '${deletion['collection']}/${deletion['documentId']}';
+    final prior = latest[key];
+    if (prior == null ||
+        (deletion['deletedAt'] as num? ?? 0) >=
+            (prior['deletedAt'] as num? ?? 0))
+      latest[key] = deletion;
+  }
+  for (final deletion in latest.values) {
     final collection = deletion['collection'], person = deletion['documentId'];
     if (person is! String ||
         person.isEmpty ||
@@ -83,6 +92,8 @@ bool retireDeletedOwnerDocuments(
               'baseCloudUploadedAt':
                   row['cloudUploadedAt'] ?? row['baseCloudUploadedAt'],
             }
+            ..remove('ownerDeleteBaselineVerified')
+            ..remove('reviewedRecordRevision')
             ..remove('lastError')
             ..remove('failureCategory');
       queue[id] = replacement;

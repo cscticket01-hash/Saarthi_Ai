@@ -130,6 +130,19 @@ void main() {
     retireDeletedOwnerDocuments(stale, school),
     'Old local delete with live conflict still requires retirement',
   );
+  final repeated = root();
+  repeated['_windows_local_deletions']['delete-s1']['deletedAt'] = 1;
+  repeated['_windows_local_deletions']['delete-s1-again'] = {
+    ...repeated['_windows_local_deletions']['delete-s1'],
+    'deletedAt': 2,
+    'operationId': 'delete-s1-again',
+  };
+  retireDeletedOwnerDocuments(repeated, school);
+  check(
+    repeated['_windows_document_outbox']['card']['parentDeletionOperationId'] ==
+        'delete-s1-again',
+    'Re-added and deleted owner requires latest deletion, never old verified proof',
+  );
   print(
     'PASS: deletion evidence, foreign-school/owner/role isolation, restored-parent protection, archive/original retention, idempotency, legacy stuck delete',
   );
