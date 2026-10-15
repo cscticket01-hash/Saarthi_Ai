@@ -542,7 +542,7 @@ class WindowsBackendBridge {
     final role = record['parentCollection'] == 'students_directory' ? 'student' : 'teacher';
     if (remote != null && (remote is! Map || remote['schoolId'] != record['schoolId'] ||
         (remote['id'] != null && remote['id'] != id) || (remote['documentId'] != null && remote['documentId'] != id) ||
-        (remote['personId'] ?? remote['studentId']) != record['parentPersonId'] ||
+        remote['studentId'] != record['studentId'] || remote['personId'] != record['personId'] ||
         (remote['ownerRole'] ?? (remote['studentId'] != null ? 'student' : null)) != role ||
         remote['_syncRevision'] is! String || (remote['_syncRevision'] as String).isEmpty ||
         remote['documentRevision'] is! String || (remote['documentRevision'] as String).isEmpty))

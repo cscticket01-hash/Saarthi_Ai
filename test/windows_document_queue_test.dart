@@ -70,8 +70,8 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('deleted-owner');
     try {
       final path = '${dir.path}/original.pdf'; await File(path).writeAsBytes([1,2,3]);
-      await db.collection('students_directory').doc('S1').set({'name':'Original'});
-      final row = {'schoolId':school,'studentId':'S1','personId':'S1','ownerRole':'student',
+      await db.collection('students_directory').doc('S1').set({'name':'Original','mobileStableId':'stable-S1'});
+      final row = {'schoolId':school,'studentId':'S1','personId':'stable-S1','ownerRole':'student',
         'documentRevision':'original-upload','localPath':path,'syncState':'conflict','baseCloudRevision':''};
       await db.collection('_local_student_documents').doc('orphan').set(row);
       await db.collection('_windows_document_outbox').doc('orphan').set(row);

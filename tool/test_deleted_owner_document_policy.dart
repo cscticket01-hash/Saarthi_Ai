@@ -130,6 +130,18 @@ void main() {
     retireDeletedOwnerDocuments(stale, school),
     'Old local delete with live conflict still requires retirement',
   );
+  final stable = root();
+  stable['_windows_local_deletions']['delete-s1']['snapshot']['mobileStableId'] =
+      'stable-person-id';
+  stable['_windows_document_outbox']['card']['personId'] = 'stable-person-id';
+  check(
+    retireDeletedOwnerDocuments(stable, school),
+    'Stable person ID differs from directory document ID',
+  );
+  check(
+    stable['_windows_document_outbox']['card']['deleted'] == true,
+    'Actual ID-card owner shape retired',
+  );
   final repeated = root();
   repeated['_windows_local_deletions']['delete-s1']['deletedAt'] = 1;
   repeated['_windows_local_deletions']['delete-s1-again'] = {

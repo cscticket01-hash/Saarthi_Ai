@@ -61,8 +61,15 @@ bool retireDeletedOwnerDocuments(
         continue;
       final ownerRole =
           row['ownerRole'] ?? (row['studentId'] != null ? 'student' : null);
-      final ownerId = row['personId'] ?? row['studentId'];
-      if (ownerRole != role || ownerId != person) continue;
+      final stableId =
+          (deletion['snapshot'] as Map)['mobileStableId'] ?? person;
+      final directoryId = row['studentId'];
+      if (ownerRole != role ||
+          (directoryId != null
+              ? directoryId != person
+              : row['personId'] != stableId) ||
+          (row['personId'] != null && row['personId'] != stableId))
+        continue;
       final oldQueue = queue[id];
       history.putIfAbsent(
         'owner-delete-$id-${deletion['operationId']}',
