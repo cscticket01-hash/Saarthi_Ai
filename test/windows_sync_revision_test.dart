@@ -139,10 +139,10 @@ void main(){
      final timer=_TestSyncTimer();timers.add(timer);intervals.add(duration);callbacks.add(callback);return timer;
    });
    schedule.start(WindowsSyncEngine.reconciliationInterval);
-   expect(intervals,[const Duration(minutes:4),const Duration(hours:1)]);
-   callbacks[1](timers[1]);schedule.wake();schedule.reconnected();
+   expect(intervals,[const Duration(hours:1)]);
+   callbacks[0](timers[0]);schedule.wake();schedule.reconnected();
    expect(signals,[const Duration(milliseconds:250),const Duration(milliseconds:250),const Duration(seconds:2)]);
-   schedule.start(WindowsSyncEngine.reconciliationInterval);expect(timers.take(2).every((t)=>!t.isActive),true);
+   schedule.start(WindowsSyncEngine.reconciliationInterval);expect(timers.take(1).every((t)=>!t.isActive),true);
    schedule.stop();expect(timers.every((t)=>!t.isActive),true);
  });
  test('restore rehearsal preserves queue IDs and document bytes without activating or overwriting storage', () async {
@@ -498,7 +498,7 @@ void main(){
    expect(jsonEncode((await documents.get()).docs.single.data()),beforeDocuments);
  });
  test('automatic retry starts promptly and exponentially backs off without high-frequency polling', () {
-   expect(WindowsSyncEngine.reconciliationInterval, const Duration(minutes:4));
+   expect(WindowsSyncEngine.reconciliationInterval, const Duration(hours:1));
    expect(WindowsSyncEngine.retryDelayForFailure(1), const Duration(seconds:5));
    expect(WindowsSyncEngine.retryDelayForFailure(2), const Duration(seconds:10));
    expect(WindowsSyncEngine.retryDelayForFailure(100), const Duration(minutes:5));
