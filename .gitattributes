@@ -1,0 +1,2 @@
+# The paste-ready Apps Script bundle is verified byte-for-byte on both OSes.
+*.gs text eol=lf

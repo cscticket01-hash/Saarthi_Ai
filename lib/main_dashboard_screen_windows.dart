@@ -5059,6 +5059,7 @@ void _handleLoginBack(bool didPop) {
                                 .doc(docId);
 
                             await studentRef.set({
+                              'mobileStableId': SchoolPersonIdentity.newGeneration(),
                               'name': name,
                               'parentName': parent,
                               'class': selectedClass,

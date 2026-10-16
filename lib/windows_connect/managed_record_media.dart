@@ -40,6 +40,12 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
   if (data['schoolId'] != null && data['schoolId'] != school)
     throw StateError('Foreign school record blocked.');
   final result = Map<String, dynamic>.from(data);
+  if(depth==0&&result['studentId'] is String&&result['personId']==null&&result['role']!='teacher'&&result['ownerRole']!='teacher') {
+    final parent=(await FirebaseFirestore.instance.collection('students_directory').doc(result['studentId']).get()).data();
+    own();
+    if(parent?['mobileStableId'] is String)result['personId']=parent!['mobileStableId'];
+  }
+
   for (final prefix in ['photo', 'logo', 'seal', 'principalSignature']) {
     final pending = data['${prefix}Base64'];
     final raw = pending is String && pending.startsWith('data:image/')

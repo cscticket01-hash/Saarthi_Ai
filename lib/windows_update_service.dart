@@ -1,3 +1,5 @@
+import 'windows_verified_update.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -15,15 +17,20 @@ class WindowsUpdateInfo {
     required this.downloadUrl,
     required this.fileName,
     required this.releaseNotes,
+    this.sha256Digest = '',
+    this.sizeBytes = 0,
   });
 
   final String latestVersion;
   final String downloadUrl;
   final String fileName;
   final String releaseNotes;
+  final String sha256Digest;
+  final int sizeBytes;
 
   bool get updateAvailable =>
-      WindowsUpdateService.compareVersions(latestVersion, windowsAppVersion) > 0;
+      WindowsUpdateService.compareVersions(latestVersion, windowsAppVersion) >
+      0;
 }
 
 enum WindowsUpdatePhase {
@@ -83,8 +90,8 @@ class WindowsUpdateService {
   /// running download. Reopening Settings sees the same progress.
   static final ValueNotifier<WindowsUpdateRuntimeState> state =
       ValueNotifier<WindowsUpdateRuntimeState>(
-    const WindowsUpdateRuntimeState(phase: WindowsUpdatePhase.idle),
-  );
+        const WindowsUpdateRuntimeState(phase: WindowsUpdatePhase.idle),
+      );
 
   static Future<void>? _activeInstallJob;
 
@@ -93,7 +100,8 @@ class WindowsUpdateService {
       'https://api.github.com/repos/$_owner/$_repo/releases?per_page=30',
     );
 
-    final client = HttpClient();
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.getUrl(uri);
       request.headers.set(
@@ -107,7 +115,10 @@ class WindowsUpdateService {
       final response = await request.close().timeout(
         const Duration(seconds: 20),
       );
-      final body = await utf8.decoder.bind(response).join();
+      final body = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 20));
 
       if (response.statusCode != 200) {
         throw StateError(
@@ -147,6 +158,8 @@ class WindowsUpdateService {
               downloadUrl: candidate,
               fileName: name,
               releaseNotes: notes,
+              sha256Digest: item['digest']?.toString() ?? '',
+              sizeBytes: (item['size'] as num? ?? 0).toInt(),
             );
           }
         }
@@ -201,69 +214,15 @@ class WindowsUpdateService {
     WindowsUpdateInfo update, {
     void Function(double progress)? onProgress,
   }) async {
-    final uri = Uri.parse(update.downloadUrl);
-    if (uri.scheme != 'https') {
-      throw StateError('Update URL secure HTTPS nahi hai.');
-    }
-
-    final client = HttpClient();
-    IOSink? sink;
-
-    try {
-      final request = await client.getUrl(uri);
-      request.followRedirects = true;
-      request.maxRedirects = 8;
-      request.headers.set(
-        HttpHeaders.userAgentHeader,
-        'Vidya-Saarthi-Windows/$windowsAppVersion',
-      );
-      final response = await request.close().timeout(
-        const Duration(seconds: 45),
-      );
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw StateError('Update download failed: ${response.statusCode}');
-      }
-
-      final target = File(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}'
-        'Vidya_Saarthi_Update_${update.latestVersion}.exe',
-      );
-
-      if (await target.exists()) {
-        try {
-          await target.delete();
-        } catch (_) {}
-      }
-
-      sink = target.openWrite();
-      final total = response.contentLength;
-      var received = 0;
-
-      await for (final chunk in response) {
-        sink.add(chunk);
-        received += chunk.length;
-        if (total > 0 && onProgress != null) {
-          onProgress(received / total);
-        }
-      }
-
-      await sink.flush();
-      await sink.close();
-      sink = null;
-
-      if (!await target.exists() || await target.length() == 0) {
-        throw StateError('Downloaded installer empty hai.');
-      }
-
-      return target;
-    } on SocketException {
-      throw StateError('Update download ke waqt internet connection fail hua.');
-    } finally {
-      try {
-        await sink?.close();
-      } catch (_) {}
-      client.close(force: true);
-    }
+    return downloadVerifiedWindowsInstaller(
+      url: update.downloadUrl,
+      digest: update.sha256Digest,
+      sizeBytes: update.sizeBytes,
+      destination: File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}Vidya_Saarthi_Update_${update.latestVersion}.exe',
+      ),
+      onProgress: onProgress,
+    );
   }
 
   static Future<void> launchInstaller(File installer) async {
@@ -271,15 +230,11 @@ class WindowsUpdateService {
       throw StateError('Downloaded installer nahi mila.');
     }
 
-    await Process.start(
-      installer.path,
-      const <String>[
-        '/SILENT',
-        '/CLOSEAPPLICATIONS',
-        '/RESTARTAPPLICATIONS',
-      ],
-      mode: ProcessStartMode.detached,
-    );
+    await Process.start(installer.path, const <String>[
+      '/SILENT',
+      '/CLOSEAPPLICATIONS',
+      '/RESTARTAPPLICATIONS',
+    ], mode: ProcessStartMode.detached);
   }
 
   /// Starts one app-wide download/install job. Calling this again from a new
@@ -291,9 +246,7 @@ class WindowsUpdateService {
 
     final selected = update ?? state.value.update;
     if (selected == null || !selected.updateAvailable) {
-      return Future<void>.error(
-        StateError('Pehle Check for Update karein.'),
-      );
+      return Future<void>.error(StateError('Pehle Check for Update karein.'));
     }
 
     final future = _runInstall(selected);

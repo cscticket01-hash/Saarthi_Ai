@@ -1,3 +1,5 @@
+import 'windows_verified_update.dart';
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -15,6 +17,8 @@ class WindowsUpdateInfo {
     required this.downloadUrl,
     required this.releaseNotes,
     required this.forceUpdate,
+    this.sha256Digest = '',
+    this.sizeBytes = 0,
   });
 
   final String latestVersion;
@@ -22,6 +26,8 @@ class WindowsUpdateInfo {
   final String downloadUrl;
   final String releaseNotes;
   final bool forceUpdate;
+  final String sha256Digest;
+  final int sizeBytes;
 }
 
 class WindowsUpdateCheckResult {
@@ -80,7 +86,8 @@ class WindowsUpdateManager {
   }) async {
     try {
       final escapedPath = installerPath.replaceAll("'", "''");
-      final script = '''
+      final script =
+          '''
 \$ErrorActionPreference = 'SilentlyContinue'
 try { Wait-Process -Id $installerPid -ErrorAction SilentlyContinue } catch {}
 Start-Sleep -Milliseconds 900
@@ -95,20 +102,16 @@ for (\$i = 0; \$i -lt 30; \$i++) {
 }
 ''';
 
-      await Process.start(
-        'powershell.exe',
-        <String>[
-          '-NoProfile',
-          '-NonInteractive',
-          '-WindowStyle',
-          'Hidden',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-Command',
-          script,
-        ],
-        mode: ProcessStartMode.detached,
-      );
+      await Process.start('powershell.exe', <String>[
+        '-NoProfile',
+        '-NonInteractive',
+        '-WindowStyle',
+        'Hidden',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        script,
+      ], mode: ProcessStartMode.detached);
     } catch (_) {
       // Startup cleanup is the fallback if helper launch fails.
     }
@@ -119,8 +122,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
         .trim()
         .split('.')
         .map(
-          (part) =>
-              int.tryParse(RegExp(r'\d+').stringMatch(part) ?? '') ?? 0,
+          (part) => int.tryParse(RegExp(r'\d+').stringMatch(part) ?? '') ?? 0,
         )
         .toList();
   }
@@ -152,10 +154,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
       final uri = Uri.https(
         'api.github.com',
         '/repos/$_githubOwner/$_githubRepo/releases',
-        const <String, String>{
-          'per_page': '50',
-          'page': '1',
-        },
+        const <String, String>{'per_page': '50', 'page': '1'},
       );
 
       final request = await client.getUrl(uri);
@@ -167,16 +166,16 @@ for (\$i = 0; \$i -lt 30; \$i++) {
         HttpHeaders.acceptHeader,
         'application/vnd.github+json',
       );
-      request.headers.set(
-        'X-GitHub-Api-Version',
-        '2022-11-28',
-      );
+      request.headers.set('X-GitHub-Api-Version', '2022-11-28');
 
       final response = await request.close().timeout(
         const Duration(seconds: 15),
       );
 
-      final body = await utf8.decoder.bind(response).join();
+      final body = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 404) {
         throw const HttpException(
@@ -193,9 +192,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
 
       final decoded = jsonDecode(body);
       if (decoded is! List) {
-        throw const FormatException(
-          'GitHub releases response invalid hai.',
-        );
+        throw const FormatException('GitHub releases response invalid hai.');
       }
 
       for (final raw in decoded) {
@@ -204,16 +201,12 @@ for (\$i = 0; \$i -lt 30; \$i++) {
         final tag = release['tag_name']?.toString().trim() ?? '';
         final draft = release['draft'] == true;
         final prerelease = release['prerelease'] == true;
-        if (!draft &&
-            !prerelease &&
-            tag.startsWith(_windowsReleaseTagPrefix)) {
+        if (!draft && !prerelease && tag.startsWith(_windowsReleaseTagPrefix)) {
           return release;
         }
       }
 
-      throw StateError(
-        'Koi production windows-v... GitHub Release nahi mila.',
-      );
+      throw StateError('Koi production windows-v... GitHub Release nahi mila.');
     } finally {
       client?.close(force: true);
     }
@@ -242,8 +235,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
       );
     }
 
-    final latest =
-        tag.substring(_windowsReleaseTagPrefix.length).trim();
+    final latest = tag.substring(_windowsReleaseTagPrefix.length).trim();
 
     if (latest.isEmpty) {
       return const WindowsUpdateCheckResult(
@@ -254,12 +246,13 @@ for (\$i = 0; \$i -lt 30; \$i++) {
 
     if (compareVersions(latest, windowsAppVersion) <= 0) {
       return WindowsUpdateCheckResult(
-        message:
-            'App up to date hai. Installed version $windowsAppVersion.',
+        message: 'App up to date hai. Installed version $windowsAppVersion.',
       );
     }
 
     String downloadUrl = '';
+    String digest = '';
+    int sizeBytes = 0;
 
     final assets = release['assets'];
     if (assets is List) {
@@ -268,13 +261,14 @@ for (\$i = 0; \$i -lt 30; \$i++) {
 
         final asset = Map<String, dynamic>.from(rawAsset);
         final name = asset['name']?.toString().trim() ?? '';
-        final url =
-            asset['browser_download_url']?.toString().trim() ?? '';
+        final url = asset['browser_download_url']?.toString().trim() ?? '';
 
         if (name.startsWith(_windowsInstallerPrefix) &&
             name.toLowerCase().endsWith('.exe') &&
             url.isNotEmpty) {
           downloadUrl = url;
+          digest = asset['digest']?.toString() ?? '';
+          sizeBytes = (asset['size'] as num? ?? 0).toInt();
           break;
         }
       }
@@ -289,8 +283,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
       );
     }
 
-    final releaseNotes =
-        release['body']?.toString().trim() ?? '';
+    final releaseNotes = release['body']?.toString().trim() ?? '';
 
     return WindowsUpdateCheckResult(
       message: 'New Windows update available: $latest',
@@ -300,6 +293,8 @@ for (\$i = 0; \$i -lt 30; \$i++) {
         downloadUrl: downloadUrl,
         releaseNotes: releaseNotes,
         forceUpdate: false,
+        sha256Digest: digest,
+        sizeBytes: sizeBytes,
       ),
     );
   }
@@ -308,98 +303,30 @@ for (\$i = 0; \$i -lt 30; \$i++) {
     WindowsUpdateInfo update, {
     void Function(double? value)? onProgress,
   }) async {
-    HttpClient? client;
-    IOSink? sink;
-
-    try {
-      final uri = Uri.parse(update.downloadUrl);
-
-      if (uri.scheme != 'https' && uri.scheme != 'http') {
-        throw const FormatException('Update download URL invalid hai.');
-      }
-
-      client = HttpClient();
-      final request = await client.getUrl(uri);
-      request.followRedirects = true;
-      request.maxRedirects = 8;
-
-      final response = await request.close();
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException(
-          'Download failed: HTTP ${response.statusCode}',
-        );
-      }
-
-      final file = File(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}'
-        'Vidya_Saarthi_Update_${update.latestVersion}.exe',
-      );
-
-      if (await file.exists()) {
-        try {
-          await file.delete();
-        } catch (_) {}
-      }
-
-      sink = file.openWrite();
-      final total = response.contentLength;
-      var received = 0;
-
-      onProgress?.call(null);
-
-      await for (final chunk in response) {
-        sink.add(chunk);
-        received += chunk.length;
-
-        if (total > 0) {
-          onProgress?.call(received / total);
-        }
-      }
-
-      await sink.flush();
-      await sink.close();
-      sink = null;
-
-      if (!await file.exists() || await file.length() <= 0) {
-        throw const FileSystemException(
-          'Downloaded Windows installer empty hai.',
-        );
-      }
-
-      final installerProcess = await Process.start(
-        file.path,
-        const <String>[
-          '/SILENT',
-          '/CLOSEAPPLICATIONS',
-          '/RESTARTAPPLICATIONS',
-        ],
-        mode: ProcessStartMode.detached,
-      );
-
-      // Delete the downloaded update EXE after the installer exits.
-      await _scheduleInstallerCleanup(
-        installerPid: installerProcess.pid,
-        installerPath: file.path,
-      );
-
-      await Future<void>.delayed(
-        const Duration(milliseconds: 800),
-      );
-
-      exit(0);
-    } finally {
-      try {
-        await sink?.close();
-      } catch (_) {}
-
-      client?.close(force: true);
-    }
+    onProgress?.call(null);
+    final file = await downloadVerifiedWindowsInstaller(
+      url: update.downloadUrl,
+      digest: update.sha256Digest,
+      sizeBytes: update.sizeBytes,
+      destination: File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}Vidya_Saarthi_Update_${update.latestVersion}.exe',
+      ),
+      onProgress: onProgress,
+    );
+    final installerProcess = await Process.start(file.path, const [
+      '/SILENT',
+      '/CLOSEAPPLICATIONS',
+      '/RESTARTAPPLICATIONS',
+    ], mode: ProcessStartMode.detached);
+    await _scheduleInstallerCleanup(
+      installerPid: installerProcess.pid,
+      installerPath: file.path,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    exit(0);
   }
 
-  static Future<void> promptIfAvailable(
-    BuildContext context,
-  ) async {
+  static Future<void> promptIfAvailable(BuildContext context) async {
     try {
       final result = await checkForUpdate();
 
@@ -407,10 +334,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
         return;
       }
 
-      await showUpdateDialog(
-        context,
-        result.info!,
-      );
+      await showUpdateDialog(context, result.info!);
     } catch (e) {
       debugPrint('Windows update startup check skipped: $e');
     }
@@ -502,7 +426,10 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                       ),
                       if (update.releaseNotes.isNotEmpty) ...[
                         const SizedBox(height: 13),
-                        const Text('What’s New', style: TextStyle(fontWeight: FontWeight.bold)),
+                        const Text(
+                          'What’s New',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(13),
@@ -535,7 +462,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                           progress == null
                               ? 'Downloading update...'
                               : 'Downloading '
-                                  '${(progress! * 100).toStringAsFixed(0)}%',
+                                    '${(progress! * 100).toStringAsFixed(0)}%',
                           style: const TextStyle(
                             color: Colors.white54,
                             fontSize: 11,
@@ -569,13 +496,8 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                       foregroundColor: Colors.white,
                     ),
                     onPressed: downloading ? null : startInstall,
-                    icon: const Icon(
-                      Icons.download_rounded,
-                      size: 18,
-                    ),
-                    label: Text(
-                      downloading ? 'Downloading...' : 'Update Now',
-                    ),
+                    icon: const Icon(Icons.download_rounded, size: 18),
+                    label: Text(downloading ? 'Downloading...' : 'Update Now'),
                   ),
                 ],
               ),
@@ -595,8 +517,7 @@ class WindowsUpdateSettingsCard extends StatefulWidget {
       _WindowsUpdateSettingsCardState();
 }
 
-class _WindowsUpdateSettingsCardState
-    extends State<WindowsUpdateSettingsCard> {
+class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
   bool _checking = false;
   WindowsUpdateCheckResult? _result;
   String? _error;
@@ -610,9 +531,7 @@ class _WindowsUpdateSettingsCardState
     });
   }
 
-  Future<void> _check({
-    required bool showSnackBar,
-  }) async {
+  Future<void> _check({required bool showSnackBar}) async {
     if (_checking) return;
 
     setState(() {
@@ -621,8 +540,7 @@ class _WindowsUpdateSettingsCardState
     });
 
     try {
-      final result =
-          await WindowsUpdateManager.checkForUpdate();
+      final result = await WindowsUpdateManager.checkForUpdate();
 
       if (!mounted) return;
 
@@ -651,9 +569,7 @@ class _WindowsUpdateSettingsCardState
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text(
-              'Windows update check error: $e',
-            ),
+            content: Text('Windows update check error: $e'),
           ),
         );
       }
@@ -670,9 +586,7 @@ class _WindowsUpdateSettingsCardState
       decoration: BoxDecoration(
         color: const Color(0xFF172229),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: const Color(0xFF38A8FF).withOpacity(0.18),
-        ),
+        border: Border.all(color: const Color(0xFF38A8FF).withOpacity(0.18)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -708,19 +622,13 @@ class _WindowsUpdateSettingsCardState
                     SizedBox(height: 3),
                     Text(
                       'Check, download aur install new Admin software version.',
-                      style: TextStyle(
-                        color: Colors.white38,
-                        fontSize: 10.5,
-                      ),
+                      style: TextStyle(color: Colors.white38, fontSize: 10.5),
                     ),
                   ],
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 9,
-                  vertical: 5,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                 decoration: BoxDecoration(
                   color: const Color(0xFF38A8FF).withOpacity(0.09),
                   borderRadius: BorderRadius.circular(20),
@@ -743,9 +651,7 @@ class _WindowsUpdateSettingsCardState
             decoration: BoxDecoration(
               color: const Color(0xFF0F191F),
               borderRadius: BorderRadius.circular(13),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.05),
-              ),
+              border: Border.all(color: Colors.white.withOpacity(0.05)),
             ),
             child: Row(
               children: [
@@ -753,13 +659,13 @@ class _WindowsUpdateSettingsCardState
                   info != null
                       ? Icons.new_releases_rounded
                       : _error != null
-                          ? Icons.error_outline_rounded
-                          : Icons.verified_rounded,
+                      ? Icons.error_outline_rounded
+                      : Icons.verified_rounded,
                   color: info != null
                       ? Colors.orangeAccent
                       : _error != null
-                          ? Colors.redAccent
-                          : const Color(0xFF00D9A5),
+                      ? Colors.redAccent
+                      : const Color(0xFF00D9A5),
                   size: 20,
                 ),
                 const SizedBox(width: 10),
@@ -768,13 +674,10 @@ class _WindowsUpdateSettingsCardState
                     _checking
                         ? 'Checking Windows update...'
                         : _error != null
-                            ? 'Update check failed: $_error'
-                            : _result?.message ??
-                                'Update status check karein.',
+                        ? 'Update check failed: $_error'
+                        : _result?.message ?? 'Update status check karein.',
                     style: TextStyle(
-                      color: _error != null
-                          ? Colors.redAccent
-                          : Colors.white60,
+                      color: _error != null ? Colors.redAccent : Colors.white60,
                       fontSize: 11,
                       height: 1.4,
                     ),
@@ -795,7 +698,13 @@ class _WindowsUpdateSettingsCardState
             ),
             if (info.releaseNotes.isNotEmpty) ...[
               const SizedBox(height: 4),
-              const Text('What’s New', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+              const Text(
+                'What’s New',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               Text(
                 info.releaseNotes,
                 style: const TextStyle(
@@ -812,56 +721,31 @@ class _WindowsUpdateSettingsCardState
             runSpacing: 9,
             children: [
               OutlinedButton.icon(
-                onPressed: _checking
-                    ? null
-                    : () => _check(
-                          showSnackBar: true,
-                        ),
+                onPressed: _checking ? null : () => _check(showSnackBar: true),
                 icon: _checking
                     ? const SizedBox(
                         width: 15,
                         height: 15,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                        ),
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(
-                        Icons.refresh_rounded,
-                        size: 18,
-                      ),
-                label: Text(
-                  _checking
-                      ? 'Checking...'
-                      : 'Check for Update',
-                ),
+                    : const Icon(Icons.refresh_rounded, size: 18),
+                label: Text(_checking ? 'Checking...' : 'Check for Update'),
               ),
               if (info != null)
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        const Color(0xFF00A884),
+                    backgroundColor: const Color(0xFF00A884),
                     foregroundColor: Colors.white,
                   ),
                   onPressed: () async {
-                    await WindowsUpdateManager
-                        .showUpdateDialog(
-                      context,
-                      info,
-                    );
+                    await WindowsUpdateManager.showUpdateDialog(context, info);
 
                     if (mounted) {
-                      await _check(
-                        showSnackBar: false,
-                      );
+                      await _check(showSnackBar: false);
                     }
                   },
-                  icon: const Icon(
-                    Icons.download_rounded,
-                    size: 18,
-                  ),
-                  label: const Text(
-                    'Download & Install',
-                  ),
+                  icon: const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('Download & Install'),
                 ),
             ],
           ),

@@ -1,3 +1,5 @@
+import 'student_lifecycle_policy.dart';
+import 'windows_sheet_recovery.dart';
 import 'windows_document_templates.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'school_cloud_engine.dart';
@@ -1536,6 +1538,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (result['syncProtocol'] != 2 || result['collectionRevision'] is! String || result['records'] is! Map) throw StateError('Invalid authoritative recovery response.');
       if (result['unchanged'] == true) continue;
       final records = Map<String, dynamic>.from(result['records'] as Map);
+      if(result['missingRecords'] is List && batchReader==null) {
+        final restored=await recoverMissingSheetRecords(school,collection,result['missingRecords'] as List);
+        if(restored>0){_rerunRequested=true;scheduleSoon();}
+      }
       // Validate the whole response before recording any inventory or applying it.
       if (records.values.any((value) => value is! Map || value['schoolId'] != school))
         throw StateError('Foreign or invalid school inventory rejected.');
@@ -1559,6 +1565,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         if (collection == 'school_config' &&
             entry.key == 'google_drive_account')
           continue;
+        if(collection=='students_directory'&&data['_syncRevision'] is String) {
+          for(final generation in verifiedDeletedStudentGenerations(data))await db.applyVerifiedStudentDeletion(school,entry.key,generation,data['_syncRevision']);
+        }
+        if(data['_syncRevision'] is String)await cacheVerifiedSheetRecord(school,collection,entry.key,data);
         final queued = pending
             .where(
               (d) =>

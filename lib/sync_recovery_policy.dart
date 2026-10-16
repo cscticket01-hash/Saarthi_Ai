@@ -83,6 +83,8 @@ class SyncRecoveryDecision {
       );
     }
     if ({
+      'SCRIPT_SYNC_STATE_IDENTITY',
+      'SCRIPT_SYNC_STATE_UNAVAILABLE',
       'SCRIPT_IDENTITY_MISMATCH',
       'SCRIPT_WORKBOOK_IDENTITY_MISMATCH',
       'SCRIPT_TYPE_ERROR',
