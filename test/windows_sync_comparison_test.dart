@@ -11,6 +11,24 @@ import '../lib/windows_sync_projection.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 
 void main() {
+  test('smart decisions honor identity, conflicts, backoff and verified deletion dependencies', () {
+    Map decide(Map row,{bool backoff=true})=>smartSyncDecision(row,school:'school',nowMillis:100,respectBackoff:backoff);
+    expect(decide({'schoolId':'foreign'})['canAttempt'],false);
+    expect(decide({'syncState':'conflict','retryAtMillis':200})['action'],'Review versions');
+    expect(decide({'syncState':'needsAttention','failureCategory':'fileMissing'})['action'],'Restore local file');
+    expect(decide({'syncState':'needsAttention','failureCategory':'authorization'})['canAttempt'],false);
+    expect(decide({'retryAtMillis':200,'failureCode':'ACK_UNVERIFIED'})['action'],'Wait for retry');
+    expect(decide({'retryAtMillis':200,'failureCode':'ACK_UNVERIFIED'},backoff:false)['action'],'Verify receipt');
+    expect(decide({'parentDeletionOperationId':'parent'})['action'],'Verify parent deletion');
+    expect(decide({'_queueCollection':'_windows_google_outbox'})['canAttempt'],false);
+    final row={'schoolId':'school','documentRevision':'same-op','retryCount':57,'failureCode':'ACK_UNVERIFIED'};
+    final before=jsonEncode(row);expect(decide(row)['canAttempt'],true);expect(jsonEncode(row),before);
+    expect(holdAutomaticIdCard({'deleted':true},null,null,'school'),true);
+    expect(holdAutomaticIdCard(null,{'deleted':true},null,'school'),true);
+    expect(holdAutomaticIdCard(null,null,{'schoolId':'school','_syncDeleted':true},'school'),true);
+    expect(holdAutomaticIdCard(null,null,{'schoolId':'foreign','_syncDeleted':true},'school'),false);
+    expect(holdAutomaticIdCard({},null,null,'school'),false);
+  });
   test('record-scoped document failure permits download but never becomes success', () async {
     for(final failure in <Object>[const MissingSyncAcknowledgement(),
       const PendingDocumentFileFailure(),

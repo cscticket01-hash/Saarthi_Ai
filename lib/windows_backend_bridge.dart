@@ -18,6 +18,7 @@ import 'windows_connect/google_authorization.dart';
 
 import 'dart:async';
 import 'dart:convert';
+import 'windows_sync_projection.dart';
 import 'dart:io';
 import 'dart:math';
 
@@ -630,6 +631,9 @@ class WindowsBackendBridge {
           if (record['schoolId'] != identity['schoolId'] ||
               FirebaseFirestore.instance.activeProfileId != origin)
             throw StateError('Pending document belongs to another school.');
+          if(smartSyncDecision(record,school:identity['schoolId'] as String,
+              nowMillis:DateTime.now().millisecondsSinceEpoch,
+              respectBackoff:respectBackoff&&admitRow==null)['canAttempt']!=true)continue;
           if (record['parentDeletionOperationId'] is String) {
             if (!await _prepareOwnerDocumentDeletion(queued.id, record, readCloud:readDeletionCloud)) continue;
           }
@@ -2228,6 +2232,7 @@ class WindowsBackendBridge {
     required Map<String, dynamic> person,
     required String inputRevision,
     Future<Map<String, dynamic>> Function()? readPublished,
+    bool automatic=false,
   }) async {
     final link = SchoolLink.parse(qr), db = FirebaseFirestore.instance;
     if (!link.managed ||
@@ -2240,6 +2245,9 @@ class WindowsBackendBridge {
     final captured =
         (await db.collection('_local_student_documents').doc(id).get()).data();
     final pendingBeforeRead=(await db.collection('_windows_document_outbox').doc(id).get()).data();
+    final cachedBeforeRead=(await db.collection('documents').doc(id).get()).data();
+    if(db.activeProfileId!=origin)throw StateError('School changed during ID publication.');
+    if(automatic&&holdAutomaticIdCard(captured,pendingBeforeRead,cachedBeforeRead,link.schoolId))return;
     if(pendingBeforeRead!=null && (captured==null || {'conflict','needsAttention'}.contains(pendingBeforeRead['syncState'])))throw StateError('Existing ID generation requires owner review. Original queue retained.');
     Map<String, dynamic>? existingCloud;
     if (captured == null) {
@@ -2280,6 +2288,11 @@ class WindowsBackendBridge {
         }
         final row = (reply['records'] as Map)[id];
         if (row != null) {
+          if(automatic && row is Map && row['schoolId']==link.schoolId &&
+              row['_syncDeleted']==true && row['_syncRevision'] is String &&
+              (row['_syncRevision'] as String).isNotEmpty &&
+              (row['id']==null||row['id']==id) &&
+              (row['documentId']==null||row['documentId']==id))return;
           if (row is! Map ||
               row['schoolId'] != link.schoolId ||
               row['studentId'] != link.personId ||
@@ -2298,6 +2311,7 @@ class WindowsBackendBridge {
     }
     // Cloud waits happen outside the local document writer, so another offline
     // document save can complete while this bounded inventory read is pending.
+    var automaticHeld=false;
     await _documentWrite(() async {
       if (db.activeProfileId != origin)
         throw StateError('School changed during ID publication.');
@@ -2307,6 +2321,10 @@ class WindowsBackendBridge {
       final retainedQueue =
           (await db.collection('_windows_document_outbox').doc(id).get())
               .data();
+      final cached=(await db.collection('documents').doc(id).get()).data();
+      if(automatic&&holdAutomaticIdCard(old,retainedQueue,cached,link.schoolId)){
+        automaticHeld=true;return;
+      }
       if (retainedQueue != null &&
           (old == null ||
               {
@@ -2350,7 +2368,7 @@ class WindowsBackendBridge {
         'fileBase64': base64Encode(bytes),
       });
     });
-    onLocalDocumentCommitted?.call();
+    if(!automaticHeld)onLocalDocumentCommitted?.call();
   }
 
   static Future<Map<String, dynamic>> _saveLocalStudentDocument(

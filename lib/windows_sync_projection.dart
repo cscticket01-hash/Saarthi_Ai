@@ -83,3 +83,37 @@ String documentFailureExplanation(Map row) {
   if(status is int&&status>=400&&status<=599)parts.add('HTTP $status');
   return parts.join('\n');
 }
+
+/// Decisions use retained evidence; they neither grant ACK authority nor pick
+/// a winning version. The existing owner still performs every actual request.
+Map<String,dynamic> smartSyncDecision(Map row, {required String school,
+    required int nowMillis, bool respectBackoff=true}) {
+  Map<String,dynamic> decision(String action,String reason,bool attempt) =>
+    {'action':action,'reason':reason,'canAttempt':attempt};
+  if(row['schoolId']!=null && row['schoolId']!=school)
+    return decision('Blocked','School identity differs. Reopen the correct school.',false);
+  final state=row['syncState']??row['state'];
+  if(state=='conflict')return decision('Review versions','Local and cloud evidence differ. Both versions remain retained.',false);
+  if({'needsAttention','needsReview','rejected','failed'}.contains(state)) {
+    if(row['failureCategory']=='fileMissing')return decision('Restore local file','Original file must be readable before retry.',false);
+    if(row['failureCategory']=='authorization')return decision('Verify access','School authorization must be verified.',false);
+    return decision('Diagnose','Review the classified failure before another attempt.',false);
+  }
+  if(row['_queueCollection']=='_windows_google_outbox')
+    return decision('Review legacy work','This request belongs to the legacy storage path.',false);
+  final deadline=row['retryAtMillis'];
+  if(respectBackoff&&deadline is num&&deadline>nowMillis)
+    return decision('Wait for retry','Respect the saved retry deadline; avoid repeated requests.',false);
+  if(row['parentDeletionOperationId'] is String&&row['ownerDeleteBaselineVerified']!=true)
+    return decision('Verify parent deletion','Document deletion waits for verified parent-deletion evidence.',true);
+  if(row['failureCode']=='ACK_UNVERIFIED')
+    return decision('Verify receipt','Retry the same operation identity; only a matching cloud readback can complete it.',true);
+  return decision('Sync when admitted','Use the existing school-scoped queue and revision checks.',true);
+}
+
+/// Automatic publication must not undo a local or observed cloud deletion.
+/// Explicit operator publication/review retains its separate authority.
+bool holdAutomaticIdCard(Map? local,Map? pending,Map? cloud,String school) =>
+  local?['deleted']==true || pending?['deleted']==true ||
+  {'conflict','needsAttention'}.contains(pending?['syncState']) ||
+  (cloud?['schoolId']==school&&cloud?['_syncDeleted']==true);
