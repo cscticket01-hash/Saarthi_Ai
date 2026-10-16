@@ -375,6 +375,35 @@ void main() {
       expect(s.dashboard, isEmpty);
     },
   );
+  test('two mobile devices read the same school-published ID without creating a document', () async {
+    final root=await Directory.systemTemp.createTemp('vs-two-mobile-id');
+    addTearDown(()=>root.delete(recursive:true));
+    final pdf=Uint8List.fromList(utf8.encode('%PDF-1.7\nexact shared school publication\n%%EOF'));
+    final hash=sha256.convert(pdf).toString();
+    var downloads=0;
+    final transport=MockClient((request) async {
+      final body=jsonDecode(request.body)['request'] as Map;
+      if(body['action']=='mobile_login')return http.Response(jsonEncode(login()),200);
+      if(body['action']=='mobile_document'){
+        downloads++;expect(body['documentId'],'school-published-card');
+        return http.Response(jsonEncode(response({'documentRevision':'same-revision',
+          'contentHash':hash,'mime':'application/pdf','base64':base64Encode(pdf)})),200);
+      }
+      expect(body['action'],'mobile_dashboard');
+      return http.Response(jsonEncode(response({'revision':'same-dashboard',
+        'idCardPackage':{'documentId':'school-published-card','documentRevision':'same-revision','contentHash':hash},
+        'documents':[],'reportCards':[]})),200);
+    });
+    for(final device in ['one','two']){
+      final folder=Directory('${root.path}/$device');await folder.create();
+      final session=SchoolSession(client:transport,cacheDirectory:() async=>folder);
+      await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+      await session.refreshDashboard();
+      expect(await session.publishedIdCard(),pdf);
+      expect(await session.publishedIdCard(),pdf);
+    }
+    expect(downloads,2); // One verified cache download per device, zero writes.
+  });
   test('exact published ID replaces a known older version; cache survives offline restart; tombstone removes it', () async {
     final root = await Directory.systemTemp.createTemp('vs-published-id');
     addTearDown(() => root.delete(recursive: true));

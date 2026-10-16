@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:image/image.dart' as img;
+import 'package:crypto/crypto.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_school_operations.dart';
 import '../lib/windows_school_image_cache.dart';
@@ -234,6 +235,9 @@ void main() {
     expect(requests[0]['name'],isNot(requests[1]['name']));
     expect(requests[0]['uploadKey'],requests[2]['uploadKey']);
     expect(retry['photoFileId'],first['photoFileId']);
+    expect(first['photoSourceHash'],sha256.convert(originalA).toString());
+    expect(second['photoSourceHash'],sha256.convert(originalB).toString());
+    expect(retry['photoSourceHash'],first['photoSourceHash']);
     expect(await WindowsSchoolImageCache.read(school,first['photoFileId']),originalA);
     expect(await WindowsSchoolImageCache.read(school,second['photoFileId']),originalB);
   });

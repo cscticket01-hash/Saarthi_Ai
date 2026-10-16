@@ -249,6 +249,73 @@ void main() {
       expect(await file.exists(), true);
     } finally { PrintingPlatform.instance = printing; }
   });
+  test('a second PC reuses the published ID despite a different optimized photo cache', () async {
+    await CentralSchoolCloud.updateSession(school, {'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud'});
+    final original=Uint8List.fromList(img.encodePng(img.Image(width:16,height:24)));
+    final optimized=Uint8List.fromList(img.encodeJpg(img.Image(width:16,height:24)));
+    expect(original,isNot(optimized));
+    final person={'mobileLinkToken':'x'*48,'mobileStableId':'p-${'a'*64}',
+      'mobileIdentityVersion':1,'name':'Same Student','class':'1','rollNo':'1',
+      'photoUrl':WindowsSchoolImageCache.dataUrl(original)};
+    final profile={'schoolName':'Same School','principalName':'Principal'};
+    final template={'studentId':'manifest:school-id-v1'};
+    final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+      'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+      'firebaseProjectId':platformProjectId,'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+    final cardId=WindowsBackendBridge.publishedIdCardId(qr);
+    await db.collection('students_directory').doc('S1').set(person);
+    await db.collection('school_config').doc('school_profile_cache').set(profile);
+    await db.collection('school_settings').doc('document_templates').set(template);
+    final printing=PrintingPlatform.instance;
+    PrintingPlatform.instance=OwnerReviewPrinting(qr);
+    try {
+      await WindowsDocumentTemplates.publishChangedIdCards(readInventory:()async=>{'schoolId':school,'syncProtocol':2,'records':{}});
+      final first=(await db.collection('_local_student_documents').doc(cardId).get()).data()!;
+      final published={...first,'schoolId':school,'documentRevision':first['documentRevision'],
+        '_syncRevision':'verified-card','contentHash':sha256.convert(await File(first['localPath']).readAsBytes()).toString()};
+      final origin=db.activeProfileId;
+      await db.switchProfile('second-pc-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolId':school,'schoolSyncId':school});
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+        await db.collection('students_directory').doc('S1').set({...person,'schoolId':school,
+          'photoUrl':'https://drive.google.com/file/d/cloud-photo/view','photoFileId':'cloud-photo',
+          'photoSourceHash':sha256.convert(original).toString(),'_syncRevision':'verified-person'});
+        await db.collection('school_config').doc('school_profile_cache').set({...profile,'schoolId':school});
+        await db.collection('school_settings').doc('document_templates').set(template);
+        await db.applySyncedDocument(db.collection('documents').doc(cardId),published);
+      });
+      await WindowsSchoolImageCache.store(school,'cloud-photo',WindowsSchoolImageCache.dataUrl(optimized));
+      for(var attempt=0;attempt<3;attempt++) {
+        await WindowsDocumentTemplates.publishChangedIdCards(readInventory:()async=>throw StateError('Verified downloaded card must be reused'));
+        expect((await db.collection('_local_student_documents').doc(cardId).get()).exists,false);
+        expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
+        expect((await db.collection('documents').doc(cardId).get()).data()?['documentRevision'],first['documentRevision']);
+      }
+      // A changed remote photo URL cannot borrow the old file's source hash.
+      final changed=Uint8List.fromList(img.encodePng(img.Image(width:20,height:30)));
+      await WindowsSchoolImageCache.store(school,'changed-photo',WindowsSchoolImageCache.dataUrl(changed));
+      await db.collection('students_directory').doc('S1').update({'photoUrl':'https://drive.google.com/file/d/changed-photo/view'});
+      await expectLater(WindowsDocumentTemplates.publishChangedIdCards(readInventory:()async=>
+        {'schoolId':school,'syncProtocol':2,'records':{cardId:published}}),throwsStateError);
+      expect((await db.collection('_local_student_documents').doc(cardId).get()).exists,false);
+      expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
+      await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
+      expect(await File(first['localPath']).exists(),true);
+    } finally {PrintingPlatform.instance=printing;}
+  });
+  test('automatic new-device fingerprint mismatch never saves a conflicting PDF or changes queues', () async {
+    final person={'mobileLinkToken':'c'*32,'mobileStableId':'S1'};
+    final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+      'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+      'firebaseProjectId':platformProjectId,'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+    final cardId=WindowsBackendBridge.publishedIdCardId(qr);
+    final queues=(await db.collection('_windows_document_outbox').get()).docs.map((d)=>d.data()).toList();
+    await expectLater(WindowsBackendBridge.publishIdCard(bytes:Uint8List(0),qr:qr,kind:'studentId',person:person,
+      inputRevision:'different-device-input',automatic:true,
+      readPublished:()async=>{'schoolId':school,'syncProtocol':2,'records':{cardId:{...cloud,'id':cardId}}}),throwsStateError);
+    expect((await db.collection('_local_student_documents').doc(cardId).get()).exists,false);
+    expect((await db.collection('_windows_document_outbox').get()).docs.map((d)=>d.data()).toList(),queues);
+    expect(await File(local['localPath']).readAsBytes(),[1,2,3]);
+  });
   test('local ID renderer stays usable with retained publication conflict and offline cloud', () async {
     final person = {'mobileLinkToken':'x' * 48, 'mobileStableId':'S1',
       'name':'Synthetic Student', 'class':'1', 'rollNo':1};

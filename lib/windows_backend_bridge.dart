@@ -2306,6 +2306,14 @@ class WindowsBackendBridge {
             throw StateError('Existing cloud ID requires owner review.');
           }
           existingCloud = Map<String, dynamic>.from(row);
+          if (automatic && existingCloud['inputRevision'] != inputRevision) {
+            // A new device has no local generation proving that these inputs
+            // supersede the published card. Do not manufacture a conflicting
+            // PDF just because its first local fingerprint differs.
+            throw StateError('Published ID already exists with different inputs. '
+                'Review the school-published card before replacing it; no new PDF was saved.');
+          }
+
         }
       }
     }

@@ -134,13 +134,33 @@ class WindowsDocumentTemplates {
     final refs = [data['photoUrl'] ?? data['photoBase64'],
       data['schoolLogoUrl'] ?? profile['logoUrl'],
       data['principalSignatureUrl'] ?? profile['principalSignatureUrl'], profile['sealUrl']];
+    final sourceHashes = [data['photoSourceHash'],
+      data['schoolLogoUrl'] != null ? null : profile['logoSourceHash'],
+      data['principalSignatureUrl'] != null ? data['principalSignatureSourceHash'] : profile['principalSignatureSourceHash'],
+      profile['sealSourceHash']];
+    final sourceFileIds=[data['photoFileId'],
+      data['schoolLogoUrl'] != null ? null : profile['logoFileId'],
+      data['principalSignatureUrl'] != null ? data['principalSignatureFileId'] : profile['principalSignatureFileId'],
+      profile['sealFileId']];
+    bool hasSource(int i) {
+      final source=sourceHashes[i];
+      final ref=refs[i]?.toString()??'';
+      final inline=ref.startsWith('data:image/') ||
+        (i==0 && (data['photoUrl']?.toString()??'').isEmpty &&
+          (data['photoBase64']?.toString()??'').isNotEmpty);
+      return ref.isNotEmpty && !inline && source is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(source) &&
+        sourceFileIds[i] is String && schoolDriveFileId(ref)==sourceFileIds[i];
+    }
+    // Verified source identity lets a receiving PC reuse a card without first
+    // downloading every image. Inline edits always hash their current bytes.
     final images = await Future.wait<Uint8List?>([
-      _personPhoto(data), _image(refs[1]), _image(refs[2]), _image(refs[3]),
+      hasSource(0) ? Future.value(null) : _personPhoto(data),
+      for(var i=1;i<refs.length;i++) hasSource(i) ? Future.value(null) : _image(refs[i]),
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed while checking ID inputs.');
     for (var i = 0; i < refs.length; i++) {
-      if ((refs[i]?.toString().trim() ?? '').isNotEmpty && images[i] == null)
+      if ((refs[i]?.toString().trim() ?? '').isNotEmpty && images[i] == null && !hasSource(i))
         throw StateError('ID image is not available locally. Existing card and pending work retained.');
     }
     Map<String, dynamic> inputs(Map<String, dynamic> value) => {
@@ -148,7 +168,8 @@ class WindowsDocumentTemplates {
         if (!{'schoolId', 'photoUrl', 'photoBase64', 'photoFileId',
           'logoUrl', 'logoBase64', 'logoFileId', 'schoolLogoUrl',
           'principalSignatureUrl', 'principalSignatureBase64', 'principalSignatureFileId',
-          'sealUrl', 'sealBase64', 'sealFileId'}.contains(entry.key)) entry.key: entry.value,
+          'sealUrl', 'sealBase64', 'sealFileId',
+          'photoSourceHash', 'logoSourceHash', 'principalSignatureSourceHash', 'sealSourceHash'}.contains(entry.key)) entry.key: entry.value,
     };
     dynamic clean(dynamic v) {
       if (v is Timestamp) return v.millisecondsSinceEpoch;
@@ -174,9 +195,11 @@ class WindowsDocumentTemplates {
       return v;
     }
 
+    String? imageIdentity(int i) => hasSource(i) ? sourceHashes[i] as String :
+      images[i]==null?null:sha256.convert(images[i]!).toString();
     return sha256
         .convert(utf8.encode(jsonEncode(clean([inputs(data), inputs(profile), template, qr,
-          for (final bytes in images) bytes == null ? null : sha256.convert(bytes).toString()]))))
+          for (var i=0;i<images.length;i++) imageIdentity(i)]))))
         .toString();
   }
 
