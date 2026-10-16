@@ -35,7 +35,7 @@ void main() {
         return http.Response(jsonEncode(reply(fixtures.first['schoolId'])), 200);
       }));
       session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixtures.first)))
-        .then((_) => complete = true, onError: (Object e) { error = e; });
+        .then<void>((_) { complete = true; }, onError: (Object e) { error = e; });
       clock.flushMicrotasks();
       expect(requests, 1);
       clock.elapse(const Duration(seconds: 26));
@@ -54,7 +54,7 @@ void main() {
       final session = SchoolSession(persistSession: (_) async { persisted++; },
         client: MockClient((_) { requests++; return response.future; }));
       session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixtures.first)))
-        .then((_) => fail('Late login accepted'), onError: (Object e) { error = e; });
+        .then<void>((_) => fail('Late login accepted'), onError: (Object e) { error = e; });
       clock.flushMicrotasks();
       clock.elapse(const Duration(seconds: 106)); clock.flushMicrotasks();
       expect(error, isA<SchoolLoginTimeout>());
