@@ -83,6 +83,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   Map<String, dynamic>? storageEvidence;
   final diskStorage = WindowsDiskStorage();
   Map<String, dynamic>? diskEvidence;
+  String? localDataPath;
+  String? localFilesPath;
   Map<String, dynamic>? quotaEvidence;
   int? localBytes;
   bool localBytesPartial = false;
@@ -354,16 +356,24 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
 
   Future<void> _measureDisk() async {
     Map<String, dynamic> result;
+    String? dataPath;
+    String? filesPath;
     try {
       final directory = await WindowsLocalStorage.dataDirectory();
+      dataPath = directory.absolute.path;
+      filesPath = (await WindowsLocalStorage.localFilesDirectory()).absolute.path;
       result = await (widget.diskProbe != null
-          ? widget.diskProbe!(directory.path)
-          : diskStorage.measure(directory.path));
+          ? widget.diskProbe!(dataPath)
+          : diskStorage.measure(dataPath));
     } catch (_) {
       result = {'status': 'Unknown'};
     }
     if (mounted && db.activeProfileId == origin)
-      setState(() => diskEvidence = result);
+      setState(() {
+        diskEvidence = result;
+        localDataPath = dataPath;
+        localFilesPath = filesPath;
+      });
   }
 
   String get diskLabel => diskEvidence?['status'] == 'Measured'
@@ -845,6 +855,23 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               'Local PC',
                               diskLabel,
                               const Color(0xFF24DD9B),
+                              details: localDataPath == null ? null : Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const SizedBox(height: 10),
+                                  const Text('Data folder', style: TextStyle(fontSize: 12)),
+                                  SelectableText(localDataPath!, style: const TextStyle(fontSize: 12, color: Color(0xFF9AB4C9))),
+                                  const SizedBox(height: 8),
+                                  const Text('Files folder', style: TextStyle(fontSize: 12)),
+                                  SelectableText(localFilesPath!, style: const TextStyle(fontSize: 12, color: Color(0xFF9AB4C9))),
+                                  const SizedBox(height: 8),
+                                  TextButton.icon(
+                                    onPressed: busy ? null : () => _run(WindowsLocalStorage.openFolder),
+                                    icon: const Icon(Icons.folder_open, size: 18),
+                                    label: const Text('Open Folder'),
+                                  ),
+                                ],
+                              ),
                             ),
                             _connection(
                               Icons.cloud_outlined,
@@ -1124,8 +1151,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     IconData icon,
     String title,
     String status,
-    Color accent,
-  ) => Container(
+    Color accent, {
+    Widget? details,
+  }) => Container(
     margin: const EdgeInsets.only(bottom: 12),
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
@@ -1147,6 +1175,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 status,
                 style: const TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
               ),
+              if (details != null) details,
             ],
           ),
         ),
