@@ -761,6 +761,10 @@ void main() {
       });
       final cardId = WindowsBackendBridge.publishedIdCardId(qr);
       final row = {...cloud, 'id': cardId, 'inputRevision': 'same-input'};
+      final listener = WindowsBackendBridge.onLocalDocumentCommitted;
+      var notifications = 0;
+      WindowsBackendBridge.onLocalDocumentCommitted = () { notifications++; };
+      try {
       await WindowsBackendBridge.publishIdCard(
         bytes: Uint8List(0),
         qr: qr,
@@ -773,6 +777,8 @@ void main() {
           'records': {cardId: row},
         },
       );
+      } finally { WindowsBackendBridge.onLocalDocumentCommitted = listener; }
+      expect(notifications, 0);
       expect(
         (await db.collection('_local_student_documents').doc(cardId).get())
             .exists,
