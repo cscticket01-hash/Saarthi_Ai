@@ -1406,7 +1406,20 @@ class _LocalSchoolDatabase {
             if(resolved.startsWith(ownRoot+Platform.pathSeparator))await file.delete();
           }
         }
-        if(cleanup.remove(cleanupId)!=null){_storeCollections(root,collections);await _writeRoot(root);}
+        if(cleanup.containsKey(cleanupId)) {
+          // The purge commit advanced SQLite's generation. A second write of
+          // that old root is stale even though both writes share _writeTail.
+          // Read the committed state before retiring only this cleanup intent;
+          // keep the generation guard so an external writer cannot be lost.
+          final committedRoot=await _readRoot();
+          if(_activeProfileId!=origin)throw StateError('School changed during file cleanup.');
+          final committedCollections=_collections(committedRoot);
+          final committedCleanup=committedCollections['_windows_student_file_cleanup'];
+          if(committedCleanup is Map && committedCleanup.remove(cleanupId)!=null) {
+            _storeCollections(committedRoot,committedCollections);
+            await _writeRoot(committedRoot);
+          }
+        }
         for(final signal in _signals.values)if(!signal.isClosed)signal.add(null);
         completion.complete();
       }catch(error,stack){completion.completeError(error,stack);}

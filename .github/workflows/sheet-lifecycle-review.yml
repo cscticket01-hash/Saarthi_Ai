@@ -38,4 +38,4 @@ jobs:
       - name: Real SQLite lifecycle durability
         env:
           APPDATA: ${{ runner.temp }}/sheet-lifecycle-sqlite-review
-        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 90s test/windows_student_lifecycle_test.dart test/windows_sheet_recovery_test.dart test/windows_document_queue_test.dart
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 90s test/windows_student_lifecycle_test.dart test/windows_sheet_recovery_test.dart test/windows_document_queue_test.dart test/windows_sqlite_storage_test.dart test/windows_sqlite_api_test.dart

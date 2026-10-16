@@ -195,6 +195,20 @@ void main() {
       (await db.collection('_windows_student_file_cleanup').get()).docs,
       isEmpty,
     );
+    // Replay after reopening must remain idempotent on the committed SQLite
+    // generation, and must not resurrect the retired cleanup intent.
+    await db.resetVolatileSession();
+    await db.switchProfile(
+      profile,
+      identity: {'schoolSyncId': school, 'schoolId': school},
+    );
+    await db.applyVerifiedStudentDeletion(school, id, old, 'verified-delete');
+    expect(await foreign.exists(), true);
+    expect(await original.exists(), true);
+    expect(
+      (await db.collection('_windows_student_file_cleanup').get()).docs,
+      isEmpty,
+    );
     await originals.delete(recursive: true);
     await foreign.delete();
   });
