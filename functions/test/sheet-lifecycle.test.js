@@ -128,3 +128,9 @@ test('authenticated broker forwards verified recovery and generation-bound delet
  const deleted=await f.call({action:'managed/records',operation:'delete',collection:'students_directory',id:S,syncProtocol:2,operationId:'broker-delete-operation1',expectedRecordRevision:record._syncRevision,deletedStudentGeneration:G});assert.equal(deleted.record._syncDeletedOwner,G);
  await assert.rejects(f.call({action:'managed/records',schoolId:B,operation:'recover',collection:'students_directory',id:S,syncProtocol:2,operationId:'broker-foreign-operation1',expectedRecordRevision:record._syncRevision,data:record}));
 });
+test('student photo cleanup retains a file referenced by another student through a Drive URL',()=>{
+ const s=storage({lifecycle:true}),photo=s.roots[A].createFolder('Files').createFile('shared.jpg','photo','image/jpeg');
+ const a=write(s,'students_directory',S,{name:'Delete',mobileStableId:G,photoFileId:photo.id});
+ assert.equal(write(s,'students_directory','other',{name:'Keep',mobileStableId:N,photoUrl:'https://drive.google.com/file/d/'+photo.id+'/view'},'','lifecycle-other-0001').success,true);
+ const deleted=s.call({action:'managed_records',operation:'delete',collection:'students_directory',id:S,syncProtocol:2,operationId:'lifecycle-delete-0001',expectedRecordRevision:a.recordRevision});assert.equal(deleted.success,true,JSON.stringify(deleted));assert.equal(photo.isTrashed(),false);
+});

@@ -7962,7 +7962,7 @@ function VS_studentFileReferences(parentId,stable){
     const records=VS_sheetRecords(VS_managedSheet(collection));
     for(const id of Object.keys(records)){
       const row=records[id];if(row._syncDeleted||collection==='students_directory'&&id===parentId&&VS_studentGeneration(row,id)===stable)continue;
-      function collect(value){if(!value||typeof value!=='object')return;Object.keys(value).forEach(k=>{if((k==='fileId'||/FileId$/.test(k))&&typeof value[k]==='string')references.add(value[k]);else collect(value[k]);});}
+      function collect(value){if(!value||typeof value!=='object')return;Object.keys(value).forEach(k=>{if((k==='fileId'||/FileId$/.test(k))&&typeof value[k]==='string')references.add(value[k]);else if(typeof value[k]==='string'){const match=value[k].match(/^https:\/\/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)/);if(match)references.add(match[1]);}else collect(value[k]);});}
       collect(row);
     }
   }

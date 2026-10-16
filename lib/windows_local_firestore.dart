@@ -1395,12 +1395,15 @@ class _LocalSchoolDatabase {
         if(_activeProfileId!=origin)throw StateError('School changed after deletion commit.');
         // Only app-managed copies may be removed; never a picked source file.
         final folder=await WindowsLocalStorage.localFilesDirectory();
-        final prefix=folder.absolute.path+Platform.pathSeparator;
+        final safeProfile=origin.trim().replaceAll(RegExp(r'[<>:"/\\|?*]'),'_').replaceAll(RegExp(r'\s+'),' ');
+        final profileFolder=Directory('${folder.absolute.path}${Platform.pathSeparator}${safeProfile.isEmpty?'file':safeProfile}');
+        final prefix=profileFolder.absolute.path+Platform.pathSeparator;
         for(final path in paths) {
           final file=File(path);
           if(file.absolute.path.startsWith(prefix)&&await file.exists()) {
             final resolved=await file.resolveSymbolicLinks();
-            if(resolved.startsWith(prefix))await file.delete();
+            final ownRoot=await profileFolder.resolveSymbolicLinks();
+            if(resolved.startsWith(ownRoot+Platform.pathSeparator))await file.delete();
           }
         }
         if(cleanup.remove(cleanupId)!=null){_storeCollections(root,collections);await _writeRoot(root);}

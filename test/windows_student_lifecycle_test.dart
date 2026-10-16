@@ -153,4 +153,49 @@ void main() {
       throwsStateError,
     );
   });
+  test('verified cleanup deletes app copies only inside the active profile, preserving foreign profiles and picked originals', () async {
+    final root = await WindowsLocalStorage.localFilesDirectory(),
+        profile = db.activeProfileId;
+    final own = File(
+      '${root.path}${Platform.pathSeparator}$profile${Platform.pathSeparator}owned.pdf',
+    );
+    final foreign = File(
+      '${root.path}${Platform.pathSeparator}other-school${Platform.pathSeparator}foreign.pdf',
+    );
+    final originals = await Directory.systemTemp.createTemp('picked-original-');
+    final original = File(
+      '${originals.path}${Platform.pathSeparator}source.pdf',
+    );
+    for (final file in [own, foreign, original]) {
+      await file.parent.create(recursive: true);
+      await file.writeAsString('synthetic bytes');
+    }
+    await db.collection('students_directory').doc(id).set({
+      'schoolId': school,
+      'mobileStableId': old,
+      'name': 'Old',
+    });
+    for (final entry in {
+      'owned': own,
+      'foreign-path': foreign,
+      'picked': original,
+    }.entries) {
+      await db.collection('_local_student_documents').doc(entry.key).set({
+        'schoolId': school,
+        'studentId': id,
+        'personId': old,
+        'localPath': entry.value.path,
+      });
+    }
+    await db.applyVerifiedStudentDeletion(school, id, old, 'verified-delete');
+    expect(await own.exists(), false);
+    expect(await foreign.exists(), true);
+    expect(await original.exists(), true);
+    expect(
+      (await db.collection('_windows_student_file_cleanup').get()).docs,
+      isEmpty,
+    );
+    await originals.delete(recursive: true);
+    await foreign.delete();
+  });
 }
