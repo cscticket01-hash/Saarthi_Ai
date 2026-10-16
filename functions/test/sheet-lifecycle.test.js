@@ -68,3 +68,63 @@ test('legacy canonical rows receive bulk revision proofs before their first upgr
  assert.equal(read(s,'students_directory').records[S].name,before.name);erase(s,'students_directory',S);
  assert.equal(recover(s,'students_directory',S,before).success,true);
 });
+test('cloud backup copies authoritative records to a verified Sheet, including JSON-mode source, without emitting JSON files',()=>{
+ for(const json of [false,true]){
+  const s=storage({lifecycle:true,json});assert.equal(write(s,'school_notices','one',{title:'Retained'}).success,true);
+  const before=[...s.all.values()].filter(f=>f.mime==='application/json').length;
+  const result=s.call({action:'managed_backup'});assert.equal(result.success,true,JSON.stringify(result));assert.equal(result.backupFormat,'sheets');assert.equal(result.verified,true);
+  assert.equal([...s.all.values()].filter(f=>f.mime==='application/json').length,before);
+  const tab=s.books.get(result.fileId).getSheetByName('school_notices');assert.equal(s.context.VS_sheetRecords({sheet:tab,school:A}).one.title,'Retained');
+ }
+});
+test('delete prunes exact legacy per-record JSON snapshots while preserving another student backup',()=>{
+ const s=storage({recordBackups:true}),a=student(s);
+ assert.equal(write(s,'students_directory','other',{name:'Other',mobileStableId:N},'','lifecycle-other-0001').success,true);
+ const snapshots=[...s.all.values()].filter(f=>f.description?.startsWith('VIDYA_RECORD_JSON:'));
+ s.props.set('VS_SHEET_LIFECYCLE','on');
+ assert.equal(s.call({action:'managed_records',operation:'delete',collection:'students_directory',id:S,syncProtocol:2,operationId:'lifecycle-delete-0001',expectedRecordRevision:a.recordRevision}).success,true);
+ assert.equal(snapshots.find(f=>JSON.parse(f.text).id===S).isTrashed(),true);
+ assert.equal(snapshots.find(f=>JSON.parse(f.text).id==='other').isTrashed(),false);
+});
+test('existing JSON authority cuts over to verified Sheets without deleting its source or writing new JSON generations',()=>{
+ const s=storage({json:true});assert.equal(write(s,'school_notices','old',{title:'Original JSON'}).success,true);
+ const head=s.props.get('VS_JSON_HEAD_school_notices'),file=s.all.get(JSON.parse(head).fileId),bytes=file.text,count=[...s.all.values()].filter(f=>f.mime==='application/json').length;
+ s.props.set('VS_SHEET_LIFECYCLE','on');const original=read(s,'school_notices');assert.equal(original.success,true,JSON.stringify(original));
+ assert.equal(s.props.get('VS_SHEET_CUTOVER_school_notices'),'1');
+ assert.equal(write(s,'school_notices','new',{title:'New Sheet row'},'','lifecycle-next-0001').success,true);
+ assert.equal(s.props.get('VS_JSON_HEAD_school_notices'),head);assert.equal(file.text,bytes);assert.equal([...s.all.values()].filter(f=>f.mime==='application/json').length,count);
+ const backup=s.call({action:'managed_backup_snapshot',schoolId:A});assert.equal(backup.success,true);assert.equal(backup.records.school_notices.new.title,'New Sheet row');
+ s.restart();assert.equal(read(s,'school_notices').records.new.title,'New Sheet row');
+});
+test('same-slot new student can create a fresh monthly ledger without inheriting the old ledger conflict',()=>{
+ const s=storage({lifecycle:true}),a=student(s);
+ assert.equal(write(s,'fee_ledger','same-month',{studentId:S,personId:G,amount:100}).success,true);
+ const d=s.call({action:'managed_records',operation:'delete',collection:'students_directory',id:S,syncProtocol:2,operationId:'lifecycle-delete-0001',expectedRecordRevision:a.recordRevision});assert.equal(d.success,true);
+ assert.equal(write(s,'students_directory',S,{name:'New',mobileStableId:N,replacesStudentGeneration:G},d.recordRevision,'lifecycle-new-0001').success,true);
+ assert.equal(write(s,'fee_ledger','same-month',{studentId:S,personId:N,amount:200},'','lifecycle-new-ledger-0001').success,true);
+ assert.equal(read(s,'fee_ledger').records['same-month'].amount,200);
+ assert.equal(write(s,'fee_ledger','same-month',{studentId:S,personId:G,amount:100},'','lifecycle-old-ledger-0001').success,false);
+});
+test('retirement markers survive a device missing multiple occupants at the same Class/Roll',()=>{
+ const s=storage({lifecycle:true}),a=student(s),del=(revision,op)=>s.call({action:'managed_records',operation:'delete',collection:'students_directory',id:S,syncProtocol:2,operationId:op,expectedRecordRevision:revision});
+ const d=del(a.recordRevision,'lifecycle-delete-0001');const n=write(s,'students_directory',S,{name:'Next',mobileStableId:N,replacesStudentGeneration:G},d.recordRevision,'lifecycle-new-0001');
+ assert.equal(del(n.recordRevision,'lifecycle-delete-0002').success,true);
+ assert.deepEqual(read(s,'students_directory').records[S]._syncRetiredStudentGenerations.sort(),[G,N].sort());
+});
+test('JSON-to-Sheet migration resumes after bounded partial work without exposing a partial successful inventory',()=>{
+ const s=storage({json:true});
+ for(let n=0;n<101;n++)assert.equal(write(s,'school_notices','row-'+n,{title:'Synthetic '+n},'','migration-operation-'+n).success,true);
+ s.props.set('VS_SHEET_LIFECYCLE','on');const first=read(s,'school_notices');assert.equal(first.success,false);assert.equal(s.props.get('VS_SHEET_CUTOVER_school_notices'),undefined);
+ s.restart();const next=read(s,'school_notices');assert.equal(next.success,true,JSON.stringify(next));assert.equal(Object.keys(next.records).length,101);assert.equal(s.props.get('VS_SHEET_CUTOVER_school_notices'),'1');
+});
+test('authenticated broker forwards verified recovery and generation-bound delete only within the school',async()=>{
+ const {fixture,time}=require('./helpers/managed-school-broker'),s=storage({lifecycle:true});
+ class FixtureDate extends Date {static now(){return time;}}
+ s.context.Date=FixtureDate;
+ const f=fixture(async(url,opt)=>({ok:true,status:200,text:async()=>JSON.stringify(s.context.VS_managedHandle({postData:{contents:opt.body}}))}));
+ const a=await f.call({action:'managed/records',operation:'write',collection:'students_directory',id:S,syncProtocol:2,operationId:'broker-student-operation1',expectedRecordRevision:'',data:{name:'Synthetic',mobileStableId:G}});assert.equal(a.success,true);
+ const record=(await f.call({action:'managed/records',operation:'read',collection:'students_directory',syncProtocol:2})).records[S];erase(s,'students_directory',S);
+ const recovered=await f.call({action:'managed/records',operation:'recover',collection:'students_directory',id:S,syncProtocol:2,operationId:'broker-recover-operation1',expectedRecordRevision:record._syncRevision,data:record});assert.equal(recovered.recovered,true);
+ const deleted=await f.call({action:'managed/records',operation:'delete',collection:'students_directory',id:S,syncProtocol:2,operationId:'broker-delete-operation1',expectedRecordRevision:record._syncRevision,deletedStudentGeneration:G});assert.equal(deleted.record._syncDeletedOwner,G);
+ await assert.rejects(f.call({action:'managed/records',schoolId:B,operation:'recover',collection:'students_directory',id:S,syncProtocol:2,operationId:'broker-foreign-operation1',expectedRecordRevision:record._syncRevision,data:record}));
+});

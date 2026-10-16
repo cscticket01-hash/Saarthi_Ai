@@ -64,6 +64,7 @@ Set<String> purgeStudentGeneration(
   String generation,
 ) {
   final paths = <String>{};
+  final mediaIds = <String>{};
   final directory = collections['students_directory'];
   final live = directory is Map ? directory[studentId] : null;
   final newer =
@@ -108,6 +109,15 @@ Set<String> purgeStudentGeneration(
     if (rows is! Map) continue;
     rows.removeWhere((id, row) {
       if (row is! Map || !belongs(name, id.toString(), row)) return false;
+      for (final field in ['fileId', 'photoFileId'])
+        if (row[field] is String) mediaIds.add(row[field]);
+      final photo = row['photoUrl'];
+      if (photo is String) {
+        final match = RegExp(
+          r'^https://drive\.google\.com/file/d/([A-Za-z0-9_-]+)',
+        ).firstMatch(photo);
+        if (match != null) mediaIds.add(match.group(1)!);
+      }
       for (final field in ['localPath', 'highQualityLocalPath'])
         if (row[field] is String) paths.add(row[field]);
       for (final path in row['retainedLocalPaths'] as List? ?? [])
@@ -144,6 +154,28 @@ Set<String> purgeStudentGeneration(
     final rows = collections[name];
     if (rows is Map) rows.removeWhere((id, row) => nested(row));
   }
+  bool referencesMedia(dynamic value, String fileId) {
+    if (value is Map)
+      return value.entries.any(
+        (e) =>
+            (e.key == 'fileId' || e.key.toString().endsWith('FileId')) &&
+                e.value == fileId ||
+            referencesMedia(e.value, fileId),
+      );
+    return value is List && value.any((v) => referencesMedia(v, fileId));
+  }
+
+  final images = collections['_windows_school_image_cache'];
+  if (images is Map)
+    images.removeWhere(
+      (key, row) =>
+          row is Map &&
+          row['schoolId'] == school &&
+          mediaIds.contains(row['fileId']) &&
+          !collections.entries
+              .where((e) => !e.key.startsWith('_'))
+              .any((e) => referencesMedia(e.value, row['fileId'])),
+    );
   final deleted = collections['_windows_local_deletions'];
   if (deleted is Map)
     for (final row in deleted.values) {
@@ -158,4 +190,27 @@ Set<String> purgeStudentGeneration(
       }
     }
   return paths;
+}
+
+List<String> verifiedDeletedStudentGenerations(Map record) => {
+  if (record['_syncDeletedOwner'] is String)
+    record['_syncDeletedOwner'] as String,
+  ...(record['_syncRetiredStudentGenerations'] as List? ?? [])
+      .whereType<String>(),
+}.toList();
+
+bool reusesDeletedStudentRecord(Map pending, Map remote, Map? parent) {
+  final data = pending['data'];
+  if (!studentOwnedCollections.contains(pending['collection']) ||
+      pending['collection'] == 'documents' ||
+      remote['_syncDeleted'] != true ||
+      data is! Map ||
+      parent == null)
+    return false;
+  final person = data['personId'] ?? parent['mobileStableId'];
+  return person is String &&
+      person == parent['mobileStableId'] &&
+      person != remote['_syncDeletedOwner'] &&
+      (remote['_syncDeletedOwner'] is String ||
+          parent['replacesStudentGeneration'] is String);
 }

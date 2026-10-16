@@ -1,3 +1,4 @@
+import 'student_lifecycle_policy.dart';
 import 'windows_sheet_recovery.dart';
 import 'windows_document_templates.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -1565,7 +1566,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             entry.key == 'google_drive_account')
           continue;
         if(collection=='students_directory'&&data['_syncDeleted']==true&&data['_syncDeletedOwner'] is String&&data['_syncRevision'] is String) {
-          await db.applyVerifiedStudentDeletion(school,entry.key,data['_syncDeletedOwner'],data['_syncRevision']);
+          for(final generation in verifiedDeletedStudentGenerations(data))await db.applyVerifiedStudentDeletion(school,entry.key,generation,data['_syncRevision']);
         }
         if(data['_syncRevision'] is String)await cacheVerifiedSheetRecord(school,collection,entry.key,data);
         final queued = pending

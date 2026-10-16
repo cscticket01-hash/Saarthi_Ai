@@ -1386,6 +1386,11 @@ class _LocalSchoolDatabase {
         if(_activeProfileId!=origin)throw StateError('School changed during deletion.');
         final collections=_collections(root);
         final paths=purgeStudentGeneration(collections,school,id,generation);
+        final cleanup=collections.putIfAbsent('_windows_student_file_cleanup',()=> <String,dynamic>{}) as Map;
+        final cleanupId=sha256.convert(utf8.encode(jsonEncode([school,id,generation,revision]))).toString();
+        final prior=cleanup[cleanupId];
+        if(prior is Map)paths.addAll((prior['paths'] as List? ?? []).whereType<String>());
+        if(paths.isNotEmpty)cleanup[cleanupId]={'schoolId':school,'studentId':id,'generation':generation,'revision':revision,'paths':paths.toList()};
         _storeCollections(root,collections);await _writeRoot(root);
         if(_activeProfileId!=origin)throw StateError('School changed after deletion commit.');
         // Only app-managed copies may be removed; never a picked source file.
@@ -1398,6 +1403,7 @@ class _LocalSchoolDatabase {
             if(resolved.startsWith(prefix))await file.delete();
           }
         }
+        if(cleanup.remove(cleanupId)!=null){_storeCollections(root,collections);await _writeRoot(root);}
         for(final signal in _signals.values)if(!signal.isClosed)signal.add(null);
         completion.complete();
       }catch(error,stack){completion.completeError(error,stack);}
@@ -1579,12 +1585,15 @@ class _LocalSchoolDatabase {
             revision is! String || revision.isEmpty) {
           throw StateError('Original same-school operation and verified revision required.');
         }
+        final parentId=expected['data'] is Map?expected['data']['studentId']:null;
         final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
-          '_windows_sync_conflicts'},recordScope:{collection:[id]});
+          '_windows_sync_conflicts',if(parentId is String)'students_directory'},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
         final current = queue is Map ? queue[queueId] : null;
         if(current is Map && (replacesDeletedStudent(current,remote)||deletesSameStudentGeneration(current,remote))) {completer.complete(false);return;}
+        final parent=(collections['students_directory'] as Map?)?[parentId];
+        if(current is Map&&reusesDeletedStudentRecord(current,remote,parent is Map?parent:null)){completer.complete(false);return;}
         if (current is! Map || current['syncState']=='needsAttention' ||
             revision == (current['baseCloudRevision'] ?? '') ||
             _jsonStableMap(Map<String,dynamic>.from(current)) != _jsonStableMap(_encodeMap(expected))) {

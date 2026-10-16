@@ -18,7 +18,16 @@ void main() {
       id = 'Class 1_Roll_1';
   setUp(() async {
     FlutterSecureStorage.setMockInitialValues({
-      CentralSchoolCloud.key: jsonEncode({'managed': true, 'schoolId': school}),
+      CentralSchoolCloud.key: jsonEncode({
+        'managed': true,
+        'schoolId': school,
+        'uid': 'synthetic-school',
+        'projectId': 'saarthi-ai-df12b',
+        'endpoint': 'https://unreachable.example/school-cloud',
+        'folderId': 'managed',
+        'firebaseRefreshToken': 'synthetic-refresh',
+        'email': 'synthetic@example.com',
+      }),
     });
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     if (WindowsLocalStorage.sqliteEnabled)
@@ -33,6 +42,12 @@ void main() {
   test('recovery sends exact cached cloud record while a newer edit remains queued after reopen', () async {
     final original = {
       'schoolId': school,
+      'uid': 'synthetic-school',
+      'projectId': 'saarthi-ai-df12b',
+      'endpoint': 'https://unreachable.example/school-cloud',
+      'folderId': 'managed',
+      'firebaseRefreshToken': 'synthetic-refresh',
+      'email': 'synthetic@example.com',
       'name': 'Verified',
       'mobileStableId': 'p-old',
       '_syncRevision': 'cloud-revision',
@@ -66,6 +81,8 @@ void main() {
           expect(body['data'], original);
           return {
             'schoolId': school,
+            'success': true,
+            'syncProtocol': 2,
             'recovered': true,
             'recordRevision': 'cloud-revision',
           };

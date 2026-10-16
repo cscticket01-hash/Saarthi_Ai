@@ -64,6 +64,8 @@ Future<int> recoverMissingSheetRecords(
             .data();
     final local = cached?['record'];
     if (cached?['schoolId'] != school ||
+        cached?['collection'] != collection ||
+        cached?['documentId'] != id ||
         local is! Map ||
         local['_syncRevision'] != raw['revision'])
       continue;
@@ -88,6 +90,8 @@ Future<int> recoverMissingSheetRecords(
           }));
     if (db.activeProfileId != profile ||
         result['schoolId'] != school ||
+        result['success'] != true ||
+        result['syncProtocol'] != 2 ||
         result['recovered'] != true ||
         result['recordRevision'] != raw['revision'])
       throw StateError('Sheet recovery receipt did not verify.');

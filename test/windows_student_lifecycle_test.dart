@@ -18,7 +18,16 @@ void main() {
       fresh = 'p-new';
   setUp(() async {
     FlutterSecureStorage.setMockInitialValues({
-      CentralSchoolCloud.key: jsonEncode({'managed': true, 'schoolId': school}),
+      CentralSchoolCloud.key: jsonEncode({
+        'managed': true,
+        'schoolId': school,
+        'uid': 'synthetic-school',
+        'projectId': 'saarthi-ai-df12b',
+        'endpoint': 'https://unreachable.example/school-cloud',
+        'folderId': 'managed',
+        'firebaseRefreshToken': 'synthetic-refresh',
+        'email': 'synthetic@example.com',
+      }),
     });
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     if (WindowsLocalStorage.sqliteEnabled)
@@ -34,6 +43,12 @@ void main() {
     final ref = db.collection('students_directory').doc(id);
     await ref.set({
       'schoolId': school,
+      'uid': 'synthetic-school',
+      'projectId': 'saarthi-ai-df12b',
+      'endpoint': 'https://unreachable.example/school-cloud',
+      'folderId': 'managed',
+      'firebaseRefreshToken': 'synthetic-refresh',
+      'email': 'synthetic@example.com',
       'mobileStableId': old,
       'name': 'Old pupil',
       'class': 'Class 1',

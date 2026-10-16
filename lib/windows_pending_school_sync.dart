@@ -92,6 +92,7 @@ class WindowsPendingSchoolSync {
 
     int priority(Map<String, dynamic> d) {
       final collection = d['collection'];
+      if(collection=='students_directory')return -1;
       if ({
         'attendance_records',
         'attendance_logs',

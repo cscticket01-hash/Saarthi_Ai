@@ -1,3 +1,4 @@
+import 'student_lifecycle_policy.dart';
 import 'windows_sheet_recovery.dart';
 import 'school_profile_policy.dart';
 
@@ -338,10 +339,7 @@ class WindowsFirebaseRemote {
             (action, body) =>
                 ManagedSchoolSession.callForSchool(school, action, body),
           );
-    final result = await ManagedSchoolSession.callForSchool(
-      school,
-      'managed/records',
-      {
+    final requestBody=<String,dynamic>{
         'operation': item['operation'] == 'delete' ? 'delete' : 'write',
         'collection': collection,
         'id': id,
@@ -350,16 +348,25 @@ class WindowsFirebaseRemote {
         'expectedRecordRevision': item['baseCloudRevision'] ?? '',
         if(item['deletedStudentGeneration'] is String)'deletedStudentGeneration':item['deletedStudentGeneration'],
         if (data != null) 'data': migrationJsonValue(data),
-      },
-    );
+      };
+    Future<Map<String,dynamic>> sendPrepared()=>ManagedSchoolSession.callForSchool(school,'managed/records',requestBody);
+    Map<String,dynamic> result;
+    try { result=await sendPrepared(); }
+    on CentralCloudException catch(error) {
+      if(error.diagnosticCode!='SCRIPT_SHEET_RECOVERY_REQUIRED')rethrow;
+      final restored=await recoverMissingSheetRecords(school,collection,[{'id':id,'revision':item['baseCloudRevision']??''}]);
+      if(restored!=1)rethrow;
+      result=await sendPrepared();
+    }
     if (result['schoolId'] != school ||
         result['syncProtocol'] != 2 ||
         result['recordRevision'] is! String)
       throw StateError(
         'Version-safe acknowledgement missing. Pending operation retained.',
       );
-    if(collection=='students_directory'&&item['operation']=='delete'&&result['record'] is Map&&result['record']['_syncDeletedOwner'] is String) {
-      await FirebaseFirestore.instance.applyVerifiedStudentDeletion(school,id,result['record']['_syncDeletedOwner'],result['recordRevision']);
+    if(result['record'] is Map&&(result['record']['schoolId']!=school||result['record']['_syncRevision']!=result['recordRevision']))throw StateError('Canonical acknowledgement record did not verify.');
+    if(collection=='students_directory'&&item['operation']=='delete'&&result['record'] is Map&&result['record']['_syncDeleted']==true&&result['record']['_syncDeletedOwner'] is String) {
+      for(final generation in verifiedDeletedStudentGenerations(result['record']))await FirebaseFirestore.instance.applyVerifiedStudentDeletion(school,id,generation,result['recordRevision']);
     }
     if(result['record'] is Map)await cacheVerifiedSheetRecord(school,collection,id,Map<String,dynamic>.from(result['record'] as Map));
     return result;
