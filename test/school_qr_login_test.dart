@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:fake_async/fake_async.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +25,45 @@ void main() {
   });
   Map<String,dynamic> reply(String school) => {'success':true,'schoolId':school,'projectId':school,'sessionToken':'verified-session',
     'expiresAt':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch,'person':{'name':'Own person'},'schoolName':'Own school'};
+  test('managed login survives a school lock wait beyond 25 seconds without replay', () {
+    fakeAsync((clock) {
+      var requests = 0, complete = false;
+      Object? error;
+      final session = SchoolSession(client: MockClient((_) async {
+        requests++;
+        await Future<void>.delayed(const Duration(seconds: 35));
+        return http.Response(jsonEncode(reply(fixtures.first['schoolId'])), 200);
+      }));
+      session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixtures.first)))
+        .then<void>((_) { complete = true; }, onError: (Object e) { error = e; });
+      clock.flushMicrotasks();
+      expect(requests, 1);
+      clock.elapse(const Duration(seconds: 26));
+      expect(error, isNull); expect(complete, false);
+      clock.elapse(const Duration(seconds: 10));
+      clock.flushMicrotasks();
+      expect(error, isNull); expect(complete, true); expect(session.loggedIn, true);
+      expect(requests, 1);
+    });
+  });
+  test('login deadline is bounded and a late response never persists authorization', () {
+    fakeAsync((clock) {
+      var requests = 0, persisted = 0;
+      Object? error;
+      final response = Completer<http.Response>();
+      final session = SchoolSession(persistSession: (_) async { persisted++; },
+        client: MockClient((_) { requests++; return response.future; }));
+      session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixtures.first)))
+        .then<void>((_) => fail('Late login accepted'), onError: (Object e) { error = e; });
+      clock.flushMicrotasks();
+      clock.elapse(const Duration(seconds: 106)); clock.flushMicrotasks();
+      expect(error, isA<SchoolLoginTimeout>());
+      expect(session.loggedIn, false); expect(session.link, isNull);
+      response.complete(http.Response(jsonEncode(reply(fixtures.first['schoolId'])), 200));
+      clock.flushMicrotasks();
+      expect(session.loggedIn, false); expect(persisted, 0); expect(requests, 1);
+    });
+  });
   for(final fixture in fixtures) {
     test('Windows ${fixture['type']} VS3 QR uses actual Android session login and secure restore',() async {
       final raw=SchoolLink.encodeCompact(fixture);

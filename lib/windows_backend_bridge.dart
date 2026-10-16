@@ -2311,7 +2311,7 @@ class WindowsBackendBridge {
     }
     // Cloud waits happen outside the local document writer, so another offline
     // document save can complete while this bounded inventory read is pending.
-    var automaticHeld=false;
+    var publicationQueued=false;
     await _documentWrite(() async {
       if (db.activeProfileId != origin)
         throw StateError('School changed during ID publication.');
@@ -2323,7 +2323,7 @@ class WindowsBackendBridge {
               .data();
       final cached=(await db.collection('documents').doc(id).get()).data();
       if(automatic&&holdAutomaticIdCard(old,retainedQueue,cached,link.schoolId)){
-        automaticHeld=true;return;
+        return;
       }
       if (retainedQueue != null &&
           (old == null ||
@@ -2367,8 +2367,9 @@ class WindowsBackendBridge {
         'mimeType': 'application/pdf',
         'fileBase64': base64Encode(bytes),
       });
+      publicationQueued = true;
     });
-    if(!automaticHeld)onLocalDocumentCommitted?.call();
+    if(publicationQueued)onLocalDocumentCommitted?.call();
   }
 
   static Future<Map<String, dynamic>> _saveLocalStudentDocument(
@@ -2469,13 +2470,13 @@ class WindowsBackendBridge {
         : processing['mimeType'] == 'image/png'
         ? 'png'
         : 'jpg';
-    final optimizedFile = File('${file.path}.optimized.$optimizedExtension');
-    final highFile = File(
+    final optimizedFile = body['documentKind'] == 'idCard' ? file : File('${file.path}.optimized.$optimizedExtension');
+    final highFile = body['documentKind'] == 'idCard' ? file : File(
       '${file.path}.processed.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
     );
-    if (optimized != null)
+    if (optimized != null && optimizedFile.path != file.path)
       await optimizedFile.writeAsBytes(optimized, flush: true);
-    if (highQuality != null)
+    if (highQuality != null && highFile.path != file.path)
       await highFile.writeAsBytes(highQuality, flush: true);
 
     if (FirebaseFirestore.instance.activeProfileId != originProfile)

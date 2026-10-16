@@ -124,12 +124,32 @@ class WindowsDocumentTemplates {
     return bytes;
   }
 
-  static String _fingerprint(
+  static Future<String> _fingerprint(
     Map<String, dynamic> data,
     Map<String, dynamic> profile,
     dynamic template,
     String qr,
-  ) {
+  ) async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    final refs = [data['photoUrl'] ?? data['photoBase64'],
+      data['schoolLogoUrl'] ?? profile['logoUrl'],
+      data['principalSignatureUrl'] ?? profile['principalSignatureUrl'], profile['sealUrl']];
+    final images = await Future.wait<Uint8List?>([
+      _personPhoto(data), _image(refs[1]), _image(refs[2]), _image(refs[3]),
+    ]);
+    if (FirebaseFirestore.instance.activeProfileId != origin)
+      throw StateError('School changed while checking ID inputs.');
+    for (var i = 0; i < refs.length; i++) {
+      if ((refs[i]?.toString().trim() ?? '').isNotEmpty && images[i] == null)
+        throw StateError('ID image is not available locally. Existing card and pending work retained.');
+    }
+    Map<String, dynamic> inputs(Map<String, dynamic> value) => {
+      for (final entry in value.entries)
+        if (!{'schoolId', 'photoUrl', 'photoBase64', 'photoFileId',
+          'logoUrl', 'logoBase64', 'logoFileId', 'schoolLogoUrl',
+          'principalSignatureUrl', 'principalSignatureBase64', 'principalSignatureFileId',
+          'sealUrl', 'sealBase64', 'sealFileId'}.contains(entry.key)) entry.key: entry.value,
+    };
     dynamic clean(dynamic v) {
       if (v is Timestamp) return v.millisecondsSinceEpoch;
       if (v is DateTime) return v.millisecondsSinceEpoch;
@@ -155,7 +175,8 @@ class WindowsDocumentTemplates {
     }
 
     return sha256
-        .convert(utf8.encode(jsonEncode(clean([data, profile, template, qr]))))
+        .convert(utf8.encode(jsonEncode(clean([inputs(data), inputs(profile), template, qr,
+          for (final bytes in images) bytes == null ? null : sha256.convert(bytes).toString()]))))
         .toString();
   }
 
@@ -179,7 +200,7 @@ class WindowsDocumentTemplates {
         (await db.collection('school_config').doc('school_profile_cache').get())
             .data() ??
         {};
-    final revision = _fingerprint(
+    final revision = await _fingerprint(
       person,
       profile,
       (await selections())[kind],
@@ -196,7 +217,7 @@ class WindowsDocumentTemplates {
 
   /// Uses the same selected renderer and the existing durable document outbox.
   /// Only changed person/profile/template inputs create a new immutable package.
-  static Future<void> publishChangedIdCards() async {
+  static Future<void> publishChangedIdCards({Future<Map<String, dynamic>> Function()? readInventory}) async {
     final db = FirebaseFirestore.instance, origin = db.activeProfileId;
     final identity = await CentralSchoolCloud.saved();
     if (identity['managed'] != true) return;
@@ -207,7 +228,7 @@ class WindowsDocumentTemplates {
     final templates = await selections();
     Future<Map<String, dynamic>>? publishedInventory;
     Future<Map<String, dynamic>> readPublished() =>
-        publishedInventory ??= ManagedSchoolSession.callForSchool(
+        publishedInventory ??= readInventory?.call() ?? ManagedSchoolSession.callForSchool(
           identity['schoolId'] as String,
           'managed/records',
           {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2},
@@ -252,7 +273,7 @@ class WindowsDocumentTemplates {
           'personId': doc.id,
           'linkToken': person['mobileLinkToken'],
         });
-        final revision = _fingerprint(person, profile, templates[kind], qr);
+        final revision = await _fingerprint(person, profile, templates[kind], qr);
         final id = WindowsBackendBridge.publishedIdCardId(qr);
         final existing =
             (await db.collection('_local_student_documents').doc(id).get())
