@@ -1,4 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
+
+import '../lib/windows_local_storage.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -26,6 +29,9 @@ void main() {
       }),
     });
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    if (WindowsLocalStorage.sqliteEnabled) {
+      await db.changeLocalStorageLocation((await Directory.systemTemp.createTemp('smart-recovery-sql-')).path);
+    }
     await db.switchProfile(
       'recovery-${DateTime.now().microsecondsSinceEpoch}',
       identity: {'schoolSyncId': school, 'schoolId': school},
@@ -95,6 +101,31 @@ void main() {
       expect(revisions['students_directory'], 'verified-students_directory');
       return cloud(revisions);
     });
+  });
+  test('offline device reconciles retired generations from a live replacement student', () async {
+    await db.collection('students_directory').doc('pupil').set({
+      'schoolId': school, 'mobileStableId': 'old-person', 'name': 'Retired',
+    });
+    await db.collection('fee_payments').doc('old-fee').set({
+      'schoolId': school, 'studentId': 'pupil', 'personId': 'old-person', 'amount': 100,
+    });
+    await db.collection('fee_payments').doc('new-fee').set({
+      'schoolId': school, 'studentId': 'pupil', 'personId': 'new-person', 'amount': 200,
+    });
+    final retained = (await db.collection('_windows_firebase_outbox').get()).docs
+        .singleWhere((d) => d.data()['documentId'] == 'new-fee').data()['operationId'];
+    await engine.reconcileManagedCacheForTesting(school, (revisions) async {
+      final result = cloud({for (final c in revisions.keys) c: ''});
+      result['students_directory']['records']['pupil'] = {
+        'schoolId': school, 'mobileStableId': 'new-person', 'name': 'Replacement',
+        '_syncRevision': 'replacement-revision', '_syncRetiredStudentGenerations': ['old-person'],
+      };
+      return result;
+    });
+    expect((await db.collection('students_directory').doc('pupil').get()).data()?['mobileStableId'], 'new-person');
+    expect((await db.collection('fee_payments').doc('old-fee').get()).exists, false);
+    expect((await db.collection('fee_payments').doc('new-fee').get()).data()?['amount'], 200);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'], retained);
   });
   test('intentional pending delete survives recovery and never resurrects cloud copy', () async {
     await seed();

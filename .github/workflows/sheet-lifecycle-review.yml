@@ -34,8 +34,8 @@ jobs:
       - name: Lifecycle, verified installer and retained owner regressions
         env:
           APPDATA: ${{ runner.temp }}/sheet-lifecycle-review
-        run: flutter test --concurrency=1 --timeout 90s test/windows_verified_update_test.dart test/student_lifecycle_policy_test.dart test/windows_sheet_recovery_test.dart test/windows_student_lifecycle_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/windows_sync_durable_admission_test.dart test/windows_document_review_owner_test.dart test/windows_local_restore_sync_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart test/release_download_test.dart test/github_update_test.dart
+        run: flutter test --concurrency=1 --timeout 90s test/windows_verified_update_test.dart test/student_lifecycle_policy_test.dart test/windows_sheet_recovery_test.dart test/windows_smart_recovery_test.dart test/windows_student_lifecycle_test.dart test/windows_local_first_save_test.dart test/windows_sync_revision_test.dart test/windows_sync_durable_admission_test.dart test/windows_document_review_owner_test.dart test/windows_local_restore_sync_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart test/release_download_test.dart test/github_update_test.dart
       - name: Real SQLite lifecycle durability
         env:
           APPDATA: ${{ runner.temp }}/sheet-lifecycle-sqlite-review
-        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 90s test/windows_student_lifecycle_test.dart test/windows_sheet_recovery_test.dart test/windows_document_queue_test.dart test/windows_sqlite_storage_test.dart test/windows_sqlite_api_test.dart
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 90s test/windows_student_lifecycle_test.dart test/windows_sheet_recovery_test.dart test/windows_smart_recovery_test.dart test/windows_document_queue_test.dart test/windows_sqlite_storage_test.dart test/windows_sqlite_api_test.dart

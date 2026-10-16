@@ -1565,7 +1565,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         if (collection == 'school_config' &&
             entry.key == 'google_drive_account')
           continue;
-        if(collection=='students_directory'&&data['_syncDeleted']==true&&data['_syncDeletedOwner'] is String&&data['_syncRevision'] is String) {
+        if(collection=='students_directory'&&data['_syncRevision'] is String) {
           for(final generation in verifiedDeletedStudentGenerations(data))await db.applyVerifiedStudentDeletion(school,entry.key,generation,data['_syncRevision']);
         }
         if(data['_syncRevision'] is String)await cacheVerifiedSheetRecord(school,collection,entry.key,data);

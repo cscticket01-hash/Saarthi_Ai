@@ -365,7 +365,7 @@ class WindowsFirebaseRemote {
         'Version-safe acknowledgement missing. Pending operation retained.',
       );
     if(result['record'] is Map&&(result['record']['schoolId']!=school||result['record']['_syncRevision']!=result['recordRevision']))throw StateError('Canonical acknowledgement record did not verify.');
-    if(collection=='students_directory'&&item['operation']=='delete'&&result['record'] is Map&&result['record']['_syncDeleted']==true&&result['record']['_syncDeletedOwner'] is String) {
+    if(collection=='students_directory'&&result['record'] is Map) {
       for(final generation in verifiedDeletedStudentGenerations(result['record']))await FirebaseFirestore.instance.applyVerifiedStudentDeletion(school,id,generation,result['recordRevision']);
     }
     if(result['record'] is Map)await cacheVerifiedSheetRecord(school,collection,id,Map<String,dynamic>.from(result['record'] as Map));
