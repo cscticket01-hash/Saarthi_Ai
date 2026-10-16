@@ -2469,13 +2469,13 @@ class WindowsBackendBridge {
         : processing['mimeType'] == 'image/png'
         ? 'png'
         : 'jpg';
-    final optimizedFile = File('${file.path}.optimized.$optimizedExtension');
-    final highFile = File(
+    final optimizedFile = body['documentKind'] == 'idCard' ? file : File('${file.path}.optimized.$optimizedExtension');
+    final highFile = body['documentKind'] == 'idCard' ? file : File(
       '${file.path}.processed.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
     );
-    if (optimized != null)
+    if (optimized != null && optimizedFile.path != file.path)
       await optimizedFile.writeAsBytes(optimized, flush: true);
-    if (highQuality != null)
+    if (highQuality != null && highFile.path != file.path)
       await highFile.writeAsBytes(highQuality, flush: true);
 
     if (FirebaseFirestore.instance.activeProfileId != originProfile)

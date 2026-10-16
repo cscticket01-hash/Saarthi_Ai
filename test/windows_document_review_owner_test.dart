@@ -15,6 +15,7 @@ import '../lib/windows_sync_conflict_review.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../lib/windows_document_templates.dart';
+import '../lib/windows_school_image_cache.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
@@ -195,6 +196,59 @@ void main() {
       expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
     });
   }
+  test('unchanged published ID survives photo upload references, retry and restart without new files', () async {
+    await CentralSchoolCloud.updateSession(school, {'endpoint': 'https://saarthi-oauth-staging.onrender.com/school-cloud'});
+    final photo = Uint8List.fromList(img.encodePng(img.Image(width: 16, height: 24)));
+    final person = {'mobileLinkToken': 'x' * 48, 'mobileStableId': 'p-${'a' * 64}',
+      'mobileIdentityVersion': 1, 'name': 'Synthetic Student', 'class': '1', 'rollNo': '1',
+      'photoUrl': WindowsSchoolImageCache.dataUrl(photo)};
+    final qr = SchoolLink.encodeCompact({'app': 'VIDYA_SAARTHI', 'v': 2, 'managed': true,
+      'schoolId': school, 'centralEndpoint': 'https://saarthi-oauth-staging.onrender.com/school-cloud',
+      'firebaseProjectId': platformProjectId, 'type': 'student', 'personId': 'S1',
+      'linkToken': person['mobileLinkToken']});
+    final cardId = WindowsBackendBridge.publishedIdCardId(qr);
+    await db.collection('students_directory').doc('S1').set(person);
+    await db.collection('school_config').doc('school_profile_cache').set({
+      'schoolName': 'Synthetic School', 'principalName': 'Principal', 'schoolContactNo': '0000000000'});
+    await db.collection('school_settings').doc('document_templates').set({'studentId': 'manifest:school-id-v1'});
+    var reads = 0;
+    Future<Map<String, dynamic>> inventory() async { reads++; return {'schoolId': school, 'syncProtocol': 2, 'records': <String,dynamic>{}}; }
+    final printing = PrintingPlatform.instance;
+    PrintingPlatform.instance = OwnerReviewPrinting(qr);
+    try {
+      await WindowsDocumentTemplates.publishChangedIdCards(readInventory: inventory);
+      final first = (await db.collection('_local_student_documents').doc(cardId).get()).data()!;
+      final file = File(first['localPath']);
+      expect(first['optimizedPath'], file.path); expect(first['processedPath'], file.path);
+      final files = file.parent.listSync().whereType<File>().map((f) => f.path).toSet();
+      expect(files, {file.path});
+      await WindowsSchoolImageCache.store(school, 'own-photo', WindowsSchoolImageCache.dataUrl(photo));
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => db.collection('students_directory').doc('S1').set({
+        ...person, 'schoolId': school, 'photoUrl': 'https://drive.google.com/file/d/own-photo/view',
+        'photoFileId': 'own-photo', '_syncRevision': 'verified-person', 'updatedAt': Timestamp.fromDate(DateTime.now())}));
+      // Still pending: retries must retain exactly the same generation/operation.
+      await WindowsDocumentTemplates.publishChangedIdCards(readInventory: inventory);
+      expect((await db.collection('_local_student_documents').doc(cardId).get()).data()?['documentRevision'], first['documentRevision']);
+      // Simulate only the verified local receipt commit, without cloud traffic.
+      final batch = db.batch();
+      batch.set(db.collection('_local_student_documents').doc(cardId), {'syncState': 'Synced'}, const SetOptions(merge: true));
+      batch.delete(db.collection('_windows_document_outbox').doc(cardId)); await batch.commit();
+      final profile = db.activeProfileId;
+      await db.resetVolatileSession();
+      await db.switchProfile(profile, identity: {'schoolId': school, 'schoolSyncId': school});
+      for (var i = 0; i < 3; i++) await WindowsDocumentTemplates.publishChangedIdCards(readInventory: inventory);
+      expect((await db.collection('_windows_document_outbox').doc(cardId).get()).exists, false);
+      expect((await db.collection('_local_student_documents').doc(cardId).get()).data()?['documentRevision'], first['documentRevision']);
+      expect(file.parent.listSync().whereType<File>().map((f) => f.path).toSet(), files);
+      expect(reads, 1);
+      // A real visual edit still creates one new immutable generation.
+      await db.collection('students_directory').doc('S1').update({'name': 'Changed Student'});
+      await WindowsDocumentTemplates.publishChangedIdCards(readInventory: inventory);
+      expect((await db.collection('_local_student_documents').doc(cardId).get()).data()?['documentRevision'], isNot(first['documentRevision']));
+      expect(file.parent.listSync().whereType<File>().length, files.length + 1);
+      expect(await file.exists(), true);
+    } finally { PrintingPlatform.instance = printing; }
+  });
   test('local ID renderer stays usable with retained publication conflict and offline cloud', () async {
     final person = {'mobileLinkToken':'x' * 48, 'mobileStableId':'S1',
       'name':'Synthetic Student', 'class':'1', 'rollNo':1};

@@ -31,6 +31,13 @@ class SchoolCacheFailure extends StateError {
   SchoolCacheFailure() : super('School response arrived, but local cache verification failed. Previously verified cached data is retained.');
 }
 
+/// Login can wait behind a school's Script lock (up to 30s) and then its
+/// authenticated session write. Do not abandon it at the dashboard's 25s budget.
+/// No automatic login replay: a late response cannot authorize a timed-out client.
+class SchoolLoginTimeout extends TimeoutException {
+  SchoolLoginTimeout() : super('School login did not finish in time. Try again; your school data is retained.', const Duration(seconds: 105));
+}
+
 enum SchoolConnectionState { connected, syncing, cachedOffline, connectionError }
 
 class SchoolSession {
@@ -346,7 +353,8 @@ class SchoolSession {
               },
             }),
           )
-          .timeout(const Duration(seconds: 25));
+          .timeout(action == 'mobile_login' ? const Duration(seconds: 105) : const Duration(seconds: 25),
+            onTimeout: () => throw action == 'mobile_login' ? SchoolLoginTimeout() : TimeoutException('School request did not finish in time.', const Duration(seconds: 25)));
       unchanged();
       if (r.statusCode >= 500 || r.statusCode == 429) {
         Map<String, dynamic> safe = {};
