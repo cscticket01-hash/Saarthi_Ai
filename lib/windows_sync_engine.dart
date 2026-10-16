@@ -1530,12 +1530,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           : prior?['revision']?.toString() ?? '';
     }
     if (db.activeProfileId != origin) throw StateError('School changed during recovery inventory.');
-    Map<String,dynamic>? batch;
-    if (_deltaBatchSupported || batchReader != null) {
-      metrics['recordReadRequests']=metrics['recordReadRequests']!+1;
-      batch=await (batchReader != null ? batchReader(revisions) : WindowsFirebaseRemote.readManagedBatch(school,revisions));
-      if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
-    }
+    // A full-school Apps Script read holds one lock while opening every
+    // category and checking its retained heads. Bound each request instead:
+    // verified earlier categories survive a later timeout, and local mutations
+    // can drain between groups without waiting for the whole school census.
+    Map<String, dynamic>? batch;
+    final remainingCollections = revisions.keys.toList();
     for (final collection in _firebaseCollections.where(
       (c) => c != 'backups',
     )) {
@@ -1549,7 +1549,26 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       final manifest = db
           .collection('_windows_sync_manifest')
           .doc(_manifestId('managed', collection));
-      if(batch==null)metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
+      if (_deltaBatchSupported || batchReader != null) {
+        if (batch == null || !batch.containsKey(collection)) {
+          final group = <String, String>{
+            for (final name in remainingCollections.take(2))
+              name: revisions[name]!,
+          };
+          metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
+          batch = await (batchReader != null
+              ? batchReader(group)
+              : WindowsFirebaseRemote.readManagedBatch(school, group));
+          if (db.activeProfileId != origin)
+            throw StateError('School changed during reconciliation.');
+          if (batch.length != group.length ||
+              group.keys.any((name) => batch![name] is! Map))
+            throw StateError('Incomplete school delta; checkpoint retained.');
+          remainingCollections.removeRange(0, group.length);
+        }
+      } else {
+        metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
+      }
       final result = batch!=null?Map<String,dynamic>.from(batch[collection] as Map):await WindowsFirebaseRemote.readManagedChanges(
         school,collection,revisions[collection] ?? '',
       );

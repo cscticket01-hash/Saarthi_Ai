@@ -64,6 +64,46 @@ void main() {
         school,
         (revisions) async => cloud(revisions, deleted: deleted),
       );
+  test('bounded school reads finish without an oversized full-school request', () async {
+    final seen = <String>{};
+    var requests = 0;
+    await engine.reconcileManagedCacheForTesting(school, (revisions) async {
+      requests++;
+      // Model the server boundary that times out for an oversized census.
+      if (revisions.length > 2) throw const SocketException('Synthetic oversized census timeout');
+      expect(seen.intersection(revisions.keys.toSet()), isEmpty);
+      seen.addAll(revisions.keys);
+      return cloud(revisions);
+    });
+    expect(requests, greaterThan(1));
+    expect(seen, containsAll(['students_directory', 'teachers_directory', 'documents', 'exams']));
+    expect((await db.collection('students_directory').doc('pupil').get()).data()?['name'], 'Verified cloud pupil');
+    expect((await db.collection('_windows_sync_manifest').get()).docs.length, seen.length);
+  });
+  test('later read timeout retains earlier verified progress and offline pending work after reopen', () async {
+    await db.collection('school_expenses').doc('offline').set({'schoolId': school, 'amount': 17});
+    final operation = (await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'];
+    var calls = 0;
+    await expectLater(engine.reconcileManagedCacheForTesting(school, (revisions) async {
+      if (++calls == 2) {
+        expect((await db.collection('students_directory').doc('pupil').get()).data()?['name'], 'Verified cloud pupil');
+        throw const SocketException('Synthetic later read timeout');
+      }
+      return cloud(revisions);
+    }), throwsA(isA<SocketException>()));
+    final profile = db.activeProfileId;
+    await db.resetVolatileSession();
+    await db.switchProfile(profile, identity: {'schoolSyncId': school, 'schoolId': school});
+    expect((await db.collection('students_directory').doc('pupil').get()).data()?['name'], 'Verified cloud pupil');
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'], operation);
+    expect((await db.collection('_windows_sync_manifest').doc(base64Url.encode(utf8.encode('managed\nstudents_directory')).replaceAll('=', '')).get()).data()?['revision'], 'verified-students_directory');
+    await engine.reconcileManagedCacheForTesting(school, (revisions) async {
+      if (revisions.containsKey('students_directory')) expect(revisions['students_directory'], 'verified-students_directory');
+      return cloud(revisions);
+    });
+    expect((await db.collection('school_expenses').doc('offline').get()).data()?['amount'], 17);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'], operation);
+  });
   test('actual reconciliation restores accidentally missing cache despite unchanged cloud checkpoint', () async {
     await seed();
     final inventory=(await db.collection('_windows_sync_downloads').doc('students_directory').get()).data()!;
@@ -84,7 +124,7 @@ void main() {
     await db.resetVolatileSession();
     var forced = false;
     await engine.reconcileManagedCacheForTesting(school, (revisions) async {
-      forced = revisions['students_directory'] == '';
+      if (revisions.containsKey('students_directory')) forced = revisions['students_directory'] == '';
       return cloud(revisions);
     });
     expect(forced, true);
@@ -98,7 +138,7 @@ void main() {
       isEmpty,
     );
     await engine.reconcileManagedCacheForTesting(school, (revisions) async {
-      expect(revisions['students_directory'], 'verified-students_directory');
+      if (revisions.containsKey('students_directory')) expect(revisions['students_directory'], 'verified-students_directory');
       return cloud(revisions);
     });
   });
@@ -116,7 +156,7 @@ void main() {
         .singleWhere((d) => d.data()['documentId'] == 'new-fee').data()['operationId'];
     await engine.reconcileManagedCacheForTesting(school, (revisions) async {
       final result = cloud({for (final c in revisions.keys) c: ''});
-      result['students_directory']['records']['pupil'] = {
+      if (result.containsKey('students_directory')) result['students_directory']['records']['pupil'] = {
         'schoolId': school, 'mobileStableId': 'new-person', 'name': 'Replacement',
         '_syncRevision': 'replacement-revision', '_syncRetiredStudentGenerations': ['old-person'],
       };
@@ -135,7 +175,7 @@ void main() {
         .single
         .data();
     await engine.reconcileManagedCacheForTesting(school, (revisions) async {
-      expect(revisions['students_directory'], 'verified-students_directory');
+      if (revisions.containsKey('students_directory')) expect(revisions['students_directory'], 'verified-students_directory');
       return cloud(revisions);
     });
     expect(
@@ -151,7 +191,7 @@ void main() {
   test('verified tombstone is not repeatedly fetched or resurrected', () async {
     await seed(deleted: true);
     await engine.reconcileManagedCacheForTesting(school, (revisions) async {
-      expect(revisions['students_directory'], 'verified-students_directory');
+      if (revisions.containsKey('students_directory')) expect(revisions['students_directory'], 'verified-students_directory');
       return cloud(revisions, deleted: true);
     });
     expect(
