@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/windows_local_firestore.dart';
@@ -61,6 +62,55 @@ void main() {
     schedule.armCheckpoint(now.add(const Duration(hours:2)));
     expect(delays.last,Duration.zero);
     schedule.stop();expect(timers.every((t)=>!t.isActive),true);
+  });
+  test('idle admission allows startup, immediate edits and one elapsed-hour check only', () {
+    fakeAsync((clock) {
+      final start = DateTime.utc(2026, 10, 16);
+      DateTime? lastAttempt;
+      var attempts = 0, dirty = false, pending = false;
+      DateTime now() => start.add(clock.elapsed);
+      void dispatch() {
+        if (!automaticWindowsSyncDue(now: now(), lastAttempt: lastAttempt,
+            localMutation: dirty, pendingWork: pending)) return;
+        attempts++;
+        lastAttempt = now(); // An attempt is not a successful cloud ACK.
+        dirty = false;
+      }
+      final lane = WindowsSyncDispatch(dispatch, now: now);
+      final schedule = WindowsSyncSchedule((delay) => lane.request(delay), now: now);
+      schedule.start(const Duration(hours: 1));
+      dispatch(); // Every new process starts once, irrespective of saved ACK time.
+      expect(attempts, 1);
+      for (var minute = 0; minute < 59; minute++) {
+        schedule.wake(); schedule.reconnected();
+        clock.elapse(const Duration(minutes: 1));
+      }
+      expect(attempts, 1);
+      clock.elapse(const Duration(minutes: 1, seconds: 1));
+      expect(attempts, 2);
+      // An empty failed hourly check does not open a rapid retry loop.
+      for (var i = 0; i < 5; i++) {
+        lane.request(const Duration(seconds: 5));
+        clock.elapse(const Duration(seconds: 5));
+      }
+      expect(attempts, 2);
+      dirty = true;
+      lane.request(const Duration(milliseconds: 250), localMutation: true);
+      clock.elapse(const Duration(milliseconds: 250));
+      expect(attempts, 3);
+      pending = true; // Actual durable work retains bounded retry admission.
+      lane.request(const Duration(seconds: 5));
+      clock.elapse(const Duration(seconds: 5));
+      expect(attempts, 4);
+      pending = false;
+      lane.request(const Duration(seconds: 5));
+      clock.elapse(const Duration(seconds: 5));
+      expect(attempts, 4);
+      lastAttempt = null; // Full process restart, not window focus.
+      dispatch();
+      expect(attempts, 5);
+      schedule.stop(); lane.cancel();
+    });
   });
   test('measured operation activity waits for ACK and observer failures cannot change queue', () async {
     await db.collection('teachers_directory').doc('teacher').set({'name':'TEST'});

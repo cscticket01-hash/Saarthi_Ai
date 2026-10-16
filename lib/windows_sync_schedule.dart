@@ -55,10 +55,6 @@ class WindowsSyncSchedule {
       interval,
       (_) => request(const Duration(milliseconds: 250)),
     );
-    hourly = periodic(
-      const Duration(hours: 1),
-      (_) => request(const Duration(milliseconds: 250)),
-    );
   }
 
   void repairReconciliationTimer(Duration interval) {
@@ -144,3 +140,14 @@ bool canRestoreOwnerDispatch({
   return (nextRetry == null || !admittedAt.isBefore(nextRetry)) &&
       (quotaRetry == null || !admittedAt.isBefore(quotaRetry));
 }
+
+/// Idle checks are session-local: reopening the process always admits one sync.
+/// Failed empty checks also consume the idle interval, without inventing ACKs.
+bool automaticWindowsSyncDue({
+  required DateTime now,
+  required DateTime? lastAttempt,
+  required bool localMutation,
+  required bool pendingWork,
+}) => localMutation || pendingWork || lastAttempt == null ||
+    now.isBefore(lastAttempt) ||
+    !now.isBefore(lastAttempt.add(const Duration(hours: 1)));

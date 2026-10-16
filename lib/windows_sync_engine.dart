@@ -68,9 +68,23 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     'exam_center_results',
   ];
 
-  static const reconciliationInterval = Duration(minutes: 4);
+  static const reconciliationInterval = Duration(hours: 1);
   late final _schedule = WindowsSyncSchedule((delay) => scheduleSoon(delay: delay));
-  late final _dispatch = WindowsSyncDispatch(() => unawaited(syncNow()));
+  late final _dispatch = WindowsSyncDispatch(() => unawaited(_automaticSync()));
+  DateTime? _lastSyncAttempt;
+  bool _automaticMutationPending = false;
+  bool get _hasAutomaticWork => (details.value['liveQueue'] as List? ?? const []).any((raw) {
+    if (raw is! Map || raw['schoolId'] != _activeSchoolSyncId) return false;
+    if (_activeProfileId.startsWith('central_') && raw['_queueCollection'] == '_windows_google_outbox') return false;
+    if (raw['_queueCollection'] == '_windows_recycle_requests') return raw['state'] == 'pending' || raw['state'] == 'retry';
+    return {'pending', 'retry'}.contains(raw['syncState'] ?? 'pending');
+  });
+  bool get _automaticDue => automaticWindowsSyncDue(now: DateTime.now(),
+      lastAttempt: _lastSyncAttempt, localMutation: _automaticMutationPending,
+      pendingWork: _hasAutomaticWork);
+  Future<void> _automaticSync() async {
+    if (_automaticDue) await syncNow();
+  }
   bool _initialized = false;
   final _pause = WindowsSyncPause();
   String? _pauseDeviceId;
@@ -261,7 +275,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'activity': [for(final row in _activity) Map<String,dynamic>.from(row)],
       'remotePollIntervalMillis':reconciliationInterval.inMilliseconds,
       'idleReconciliationIntervalMillis':const Duration(hours:1).inMilliseconds,
-      'nextIdleReconciliationMillis':lastVerifiedCheckpoint?.add(const Duration(hours:1)).millisecondsSinceEpoch,
+      'nextIdleReconciliationMillis':_lastSyncAttempt?.add(const Duration(hours:1)).millisecondsSinceEpoch,
       'isPaused': isPaused,
       'pauseBoundaryPending': isPaused && _syncing,
       'pausedUntilMillis': pausedUntil?.millisecondsSinceEpoch,
@@ -416,7 +430,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (_resetPaused) return;
 
     _schedule.start(reconciliationInterval);
-    _schedule.armCheckpoint(lastVerifiedCheckpoint);
+    _schedule.armCheckpoint(_lastSyncAttempt ?? DateTime.now());
 
     scheduleSoon(delay: const Duration(milliseconds: 800));
   }
@@ -465,6 +479,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   void scheduleSoon({Duration delay = const Duration(milliseconds: 250), bool localMutation = false}) {
     if (!_initialized || _syncBlocked || _resetPaused || isPaused || !automaticSyncEnabled) return;
+    if (localMutation) _automaticMutationPending = true;
+    if (!_automaticDue) return;
     if (recoveryDecision != null && !recoveryDecision!.retry) {
       if (!localMutation || !recoveryDecision!.independentRecords) return;
       recoveryDecision = null;
@@ -475,7 +491,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (localMutation && recoveryDecision?.kind != SyncFailureKind.quota &&
         (_quotaRetryAt == null || !_quotaRetryAt!.isAfter(DateTime.now()))) _nextRetry = null;
     if (_syncing) {
-      _rerunRequested = true;
+      if (localMutation) _rerunRequested = true;
       return;
     }
 
@@ -815,6 +831,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }) async {
     if (_activeProfileId != profile.profileId) {
       _lastPull = null;
+      _lastSyncAttempt = null;
+      _automaticMutationPending = false;
       _failures = 0;
       _nextRetry = null;
       _quotaRetryAt = null;
@@ -882,7 +900,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         (savedStatus!['successfulAt'] as num).toInt(),
       );
     if (savedStatus?['checkpointAt'] is num) lastVerifiedCheckpoint = DateTime.fromMillisecondsSinceEpoch((savedStatus!['checkpointAt'] as num).toInt());
-    if (_initialized && !_resetPaused) _schedule.armCheckpoint(lastVerifiedCheckpoint);
+    if (_initialized && !_resetPaused) _schedule.armCheckpoint(_lastSyncAttempt ?? DateTime.now());
     await refreshDetails();
 
     if (seedGoogleConfig && profile.googleUrl.isNotEmpty) {
@@ -1120,6 +1138,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused) return;
 
     _syncing = true;
+    _lastSyncAttempt = DateTime.now();
+    _automaticMutationPending = false;
+    _schedule.armCheckpoint(_lastSyncAttempt);
     state.value = SchoolCloudState.syncing;
     final syncOrigin = _activeProfileId;
     final watch = Stopwatch()..start();
@@ -1194,8 +1215,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             FirebaseFirestore.instance.collection('_windows_sync_status').doc('record-download')
               .set({'verifiedAt':DateTime.now().millisecondsSinceEpoch}));
           _lastPull = DateTime.now();
-          // A lightweight 4-minute delta poll must not postpone the durable
-          // elapsed-hour inventory audit.
+          // Only admitted work reaches this pull; idle polling is hourly.
           completedReconciliation = inventoryAudit;
         }
         });
@@ -1232,7 +1252,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         lastSuccessfulSync = DateTime.now();
         if (completedReconciliation) {
           lastVerifiedCheckpoint = lastSuccessfulSync;
-          _schedule.armCheckpoint(lastVerifiedCheckpoint);
+          _schedule.armCheckpoint(_lastSyncAttempt ?? DateTime.now());
         }
         _failures = 0;
         _nextRetry = null;
@@ -1313,7 +1333,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _syncing = false;
       if (isPaused && _activeProfileId == syncOrigin) state.value = SchoolCloudState.syncPending;
       await refreshDetails();
-      if ((lastError != null && recoveryDecision?.retry == true && _failures <= 5) || _rerunRequested) {
+      if ((lastError != null && _hasAutomaticWork && recoveryDecision?.retry == true && _failures <= 5) || _rerunRequested) {
         final independentMutation = _rerunRequested && recoveryDecision?.independentRecords == true;
         _rerunRequested = false;
         scheduleSoon(localMutation: independentMutation, delay: lastError == null ? const Duration(milliseconds: 250) : schoolRetryDelay(_failures));
@@ -1540,7 +1560,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       final records = Map<String, dynamic>.from(result['records'] as Map);
       if(result['missingRecords'] is List && batchReader==null) {
         final restored=await recoverMissingSheetRecords(school,collection,result['missingRecords'] as List);
-        if(restored>0){_rerunRequested=true;scheduleSoon();}
+        if(restored>0){_rerunRequested=true;scheduleSoon(localMutation: true);}
       }
       // Validate the whole response before recording any inventory or applying it.
       if (records.values.any((value) => value is! Map || value['schoolId'] != school))
