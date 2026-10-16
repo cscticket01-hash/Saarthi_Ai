@@ -10,7 +10,7 @@ import 'package:image/image.dart' as img;
 class DocumentProcessingEngine {
   static const sourceLimit = 50 * 1024 * 1024;
   static const photoTarget = 80 * 1024;
-  static const portraitTarget = 30 * 1024;
+  static const portraitTarget = 40 * 1024;
   // Retain the existing eight-document aggregate measurement contract.
   static const setTarget = 8 * photoTarget;
   static Map<String, dynamic> process(Map<String, dynamic> input) {
@@ -120,8 +120,8 @@ class DocumentProcessingEngine {
       optimized = Uint8List.fromList(img.encodeJpg(image, quality: q));
       quality = q;
     }
-    // Keep at least a 1600px long edge when present in the original. Never
-    // reduce to thumbnail dimensions just to meet the storage target.
+    // Full-page documents keep their 1600px readability floor. Portraits first
+    // try 640px; the ID-only adaptive stage below may reduce them further.
     final minimumEdge = portrait ? 640 : 1600;
     if (optimized.length > target &&
         math.max(image.width, image.height) > minimumEdge) {
@@ -148,11 +148,13 @@ class DocumentProcessingEngine {
         break;
       }
     }
-    final lossless = Uint8List.fromList(
+    // Photographic portraits already have a compact JPEG candidate. A full
+    // lossless PNG encode costs time and is not the ID-photo size strategy.
+    final lossless = portrait ? null : Uint8List.fromList(
       img.encodePng(neutral ? image.convert(numChannels: 1) : image, level: 9),
     );
     var optimizedMime = 'image/jpeg';
-    if (lossless.length < optimized.length) {
+    if (lossless != null && lossless.length < optimized.length) {
       optimized = lossless;
       optimizedMime = 'image/png';
       optimizedWidth = image.width;
@@ -183,6 +185,27 @@ class DocumentProcessingEngine {
           quality = q;
         }
         if (optimized.length <= target) break;
+      }
+    }
+    // ID photos are small printed/displayed regions, unlike full-page scans.
+    // Adapt resolution to the measured encoded size while keeping JPEG q78,
+    // aspect ratio, the uncropped face and at least a 256px long edge. Resize
+    // from the processed source each time to avoid repeated-resampling blur.
+    if (portrait) {
+      var edge=math.max(optimizedWidth,optimizedHeight);
+      while(optimized.length>target && edge>256) {
+        final nextEdge=(edge*math.sqrt(target/optimized.length)*.90).floor()
+          .clamp(256,edge-1).toInt();
+        final candidateImage=img.copyResize(image,
+          width:image.width>=image.height?nextEdge:null,
+          height:image.height>image.width?nextEdge:null,
+          interpolation:img.Interpolation.average);
+        final candidate=Uint8List.fromList(img.encodeJpg(candidateImage,quality:78));
+        if(candidate.length<optimized.length) {
+          optimized=candidate;optimizedMime='image/jpeg';
+          optimizedWidth=candidateImage.width;optimizedHeight=candidateImage.height;quality=78;
+        }
+        edge=nextEdge;
       }
     }
     // A recompression must not consume more than the safe existing source.
