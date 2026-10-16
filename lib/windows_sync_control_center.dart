@@ -376,6 +376,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       });
   }
 
+  Future<void> _openLocalFolder() async {
+    if (db.activeProfileId != origin) return;
+    try {
+      await WindowsLocalStorage.openFolder();
+    } catch (_) {
+      if (mounted && db.activeProfileId == origin) {
+        setState(() => notice = 'Could not open the local data folder. Copy the path and open it in File Explorer.');
+      }
+    }
+  }
+
   String get diskLabel => diskEvidence?['status'] == 'Measured'
       ? 'Used: ${bytesLabel(diskEvidence!['usedBytes'] as int)} / Total: ${bytesLabel(diskEvidence!['totalBytes'] as int)}\nFree: ${bytesLabel(diskEvidence!['freeBytes'] as int)} • volume ${diskEvidence!['volume']}\nWhole volume; measured ${stamp(diskEvidence!['measuredAt'])}'
       : 'Unknown — local volume capacity not measured';
@@ -863,10 +874,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                   SelectableText(localDataPath!, style: const TextStyle(fontSize: 12, color: Color(0xFF9AB4C9))),
                                   const SizedBox(height: 8),
                                   const Text('Files folder', style: TextStyle(fontSize: 12)),
-                                  SelectableText(localFilesPath!, style: const TextStyle(fontSize: 12, color: Color(0xFF9AB4C9))),
+                                  SelectableText(localFilesPath ?? 'Unknown', style: const TextStyle(fontSize: 12, color: Color(0xFF9AB4C9))),
                                   const SizedBox(height: 8),
                                   TextButton.icon(
-                                    onPressed: busy ? null : () => _run(WindowsLocalStorage.openFolder),
+                                    onPressed: _openLocalFolder,
                                     icon: const Icon(Icons.folder_open, size: 18),
                                     label: const Text('Open Folder'),
                                   ),
