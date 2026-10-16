@@ -1,3 +1,4 @@
+import 'student_lifecycle_policy.dart';
 import 'deleted_owner_document_policy.dart';
 import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
@@ -200,6 +201,9 @@ class FirebaseFirestore {
     }
     return _database.migrateOutboxIdentity(ref.id,expected,schoolId);
   }
+
+  Future<void> applyVerifiedStudentDeletion(String school,String id,String generation,String revision) =>
+      _database.applyVerifiedStudentDeletion(school,id,generation,revision);
 
   /// Records a remote conflict only while the observed operation remains the
   /// exact durable current version. An administrator's newer review wins.
@@ -1120,8 +1124,8 @@ class _LocalSchoolDatabase {
           '_windows_sync_conflict_history','_windows_sync_resolution_history',
           '_windows_local_deletions','_windows_recycle_requests',
           if (retiringOwner) ...{'_windows_document_outbox','_local_student_documents','documents',
-          'students_directory','teachers_directory'},
-        },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !(retiringOwner && {'documents','_local_student_documents','students_directory','teachers_directory'}.contains(n))).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
+          'students_directory','teachers_directory',...studentOwnedCollections},
+        },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !retiringOwner).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
         final touched = <String>{};
@@ -1311,6 +1315,19 @@ class _LocalSchoolDatabase {
                 'operationId':intent['operationId'],'deletedAt':DateTime.now().millisecondsSinceEpoch,
                 'snapshot':deletedSnapshot,'cloudDeletionVerified':false,
               };
+              if(operation.collection=='students_directory') {
+                final generation=deletedSnapshot['mobileStableId']?.toString()??operation.documentId;
+                final aliases=(deletedSnapshot['previousStudentIds'] as List? ?? []).whereType<String>().toList();
+                for(final category in studentOwnedCollections.where((c)=>c!='documents')) {
+                  final related=collections[category];
+                  if(related is Map) related.removeWhere((key,value)=>value is Map&&recordBelongsToStudent(category,key.toString(),value,operation.documentId,generation,aliases:aliases));
+                }
+                // Parent deletion owns cloud cascade. Keep pending documents on
+                // their existing version-safe file-deletion owner until its ACK.
+                queue.removeWhere((key,value)=>value is Map&&studentOwnedCollections.contains(value['collection'])&&value['collection']!='documents'&&value['data'] is Map&&recordBelongsToStudent(value['collection'],value['documentId'].toString(),value['data'],operation.documentId,generation,aliases:aliases));
+                intent['deletedStudentGeneration']=generation;
+                touched.addAll(studentOwnedCollections);
+              }
               // The snapshot, hidden local row and original delete intent commit
               // together. Never expire financial evidence or delete file bytes here.
             }
@@ -1358,6 +1375,34 @@ class _LocalSchoolDatabase {
     });
 
     return completer.future;
+  }
+
+  Future<void> applyVerifiedStudentDeletion(String school,String id,String generation,String revision) {
+    final origin=_activeProfileId,completion=Completer<void>();
+    _writeTail=_writeTail.then((_)async{
+      try {
+        if(_activeProfileId!=origin||_activeIdentity['schoolSyncId']!=school||generation.isEmpty||revision.isEmpty)throw StateError('Verified school deletion required.');
+        final root=await _readRoot();
+        if(_activeProfileId!=origin)throw StateError('School changed during deletion.');
+        final collections=_collections(root);
+        final paths=purgeStudentGeneration(collections,school,id,generation);
+        _storeCollections(root,collections);await _writeRoot(root);
+        if(_activeProfileId!=origin)throw StateError('School changed after deletion commit.');
+        // Only app-managed copies may be removed; never a picked source file.
+        final folder=await WindowsLocalStorage.localFilesDirectory();
+        final prefix=folder.absolute.path+Platform.pathSeparator;
+        for(final path in paths) {
+          final file=File(path);
+          if(file.absolute.path.startsWith(prefix)&&await file.exists()) {
+            final resolved=await file.resolveSymbolicLinks();
+            if(resolved.startsWith(prefix))await file.delete();
+          }
+        }
+        for(final signal in _signals.values)if(!signal.isClosed)signal.add(null);
+        completion.complete();
+      }catch(error,stack){completion.completeError(error,stack);}
+    });
+    return completion.future;
   }
 
   bool _retireDeletedOwnerDocuments(Map<String,dynamic> collections) =>
@@ -1539,6 +1584,7 @@ class _LocalSchoolDatabase {
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
         final current = queue is Map ? queue[queueId] : null;
+        if(current is Map && (replacesDeletedStudent(current,remote)||deletesSameStudentGeneration(current,remote))) {completer.complete(false);return;}
         if (current is! Map || current['syncState']=='needsAttention' ||
             revision == (current['baseCloudRevision'] ?? '') ||
             _jsonStableMap(Map<String,dynamic>.from(current)) != _jsonStableMap(_encodeMap(expected))) {
@@ -1760,6 +1806,16 @@ class _LocalSchoolDatabase {
         operation.type == _WriteType.delete;
 
     final previous = queue[key];
+    if(operation.collection=='students_directory' && !isDelete && finalDocs[operation.documentId] is Map) {
+      final data=finalDocs[operation.documentId] as Map;
+      final deletions=collections['_windows_local_deletions'];
+      final matches=deletions is Map?deletions.values.where((d)=>d is Map&&d['schoolId']==_activeIdentity['schoolSyncId']&&d['collection']=='students_directory'&&d['documentId']==operation.documentId&&d['snapshot'] is Map).toList():[];
+      matches.sort((a,b)=>(b['deletedAt'] as num).compareTo(a['deletedAt'] as num));
+      if(matches.isNotEmpty&&data['mobileStableId']!=null) {
+        final old=(matches.first['snapshot'] as Map)['mobileStableId']??operation.documentId;
+        if(old!=data['mobileStableId']) data['replacesStudentGeneration']=old;
+      }
+    }
     if(previous is Map && {'conflict','needsAttention'}.contains(previous['syncState'])) {
       final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
       final operationId=previous['operationId'];

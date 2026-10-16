@@ -1,3 +1,4 @@
+import 'windows_sheet_recovery.dart';
 import 'school_profile_policy.dart';
 
 import 'dart:async';
@@ -347,6 +348,7 @@ class WindowsFirebaseRemote {
         'syncProtocol': 2,
         'operationId': item['operationId'],
         'expectedRecordRevision': item['baseCloudRevision'] ?? '',
+        if(item['deletedStudentGeneration'] is String)'deletedStudentGeneration':item['deletedStudentGeneration'],
         if (data != null) 'data': migrationJsonValue(data),
       },
     );
@@ -356,6 +358,10 @@ class WindowsFirebaseRemote {
       throw StateError(
         'Version-safe acknowledgement missing. Pending operation retained.',
       );
+    if(collection=='students_directory'&&item['operation']=='delete'&&result['record'] is Map&&result['record']['_syncDeletedOwner'] is String) {
+      await FirebaseFirestore.instance.applyVerifiedStudentDeletion(school,id,result['record']['_syncDeletedOwner'],result['recordRevision']);
+    }
+    if(result['record'] is Map)await cacheVerifiedSheetRecord(school,collection,id,Map<String,dynamic>.from(result['record'] as Map));
     return result;
   }
 
