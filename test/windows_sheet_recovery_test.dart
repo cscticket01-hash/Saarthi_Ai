@@ -101,6 +101,27 @@ void main() {
       pending['operationId'],
     );
   });
+  test('failed recovery or mismatched receipt retains the pending edit across restart', () async {
+    await cacheVerifiedSheetRecord(school, collection, id, {
+      'schoolId': school, '_syncRevision': 'verified-revision', 'name': 'Verified',
+    });
+    await db.collection(collection).doc(id).set({'schoolId': school, 'name': 'Offline edit'});
+    final operation = (await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'];
+    for (final mismatch in [false, true]) {
+      await expectLater(recoverMissingSheetRecords(school, collection, [
+        {'id': id, 'revision': 'verified-revision'},
+      ], request: (action, body) async {
+        if (!mismatch) throw StateError('Synthetic transport failure');
+        return {'schoolId': school, 'success': true, 'syncProtocol': 2,
+          'recovered': true, 'recordRevision': 'different-revision'};
+      }), throwsStateError);
+    }
+    final profile = db.activeProfileId;
+    await db.resetVolatileSession();
+    await db.switchProfile(profile, identity: {'schoolSyncId': school, 'schoolId': school});
+    expect((await db.collection(collection).doc(id).get()).data()?['name'], 'Offline edit');
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'], operation);
+  });
   test('unknown, stale and deleted rows are not guessed or uploaded; foreign school is rejected', () async {
     await cacheVerifiedSheetRecord(school, collection, id, {
       'schoolId': school,

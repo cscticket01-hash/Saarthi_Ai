@@ -1390,6 +1390,7 @@ class _LocalSchoolDatabase {
         final cleanupId=sha256.convert(utf8.encode(jsonEncode([school,id,generation,revision]))).toString();
         final prior=cleanup[cleanupId];
         if(prior is Map)paths.addAll((prior['paths'] as List? ?? []).whereType<String>());
+        paths.removeWhere((path)=>studentCleanupPathReferenced(collections,path));
         if(paths.isNotEmpty)cleanup[cleanupId]={'schoolId':school,'studentId':id,'generation':generation,'revision':revision,'paths':paths.toList()};
         _storeCollections(root,collections);await _writeRoot(root);
         if(_activeProfileId!=origin)throw StateError('School changed after deletion commit.');

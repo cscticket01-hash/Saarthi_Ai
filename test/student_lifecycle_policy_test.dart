@@ -82,6 +82,24 @@ void main() {
       'mobileStableId': old,
     });
   });
+  test('shared managed paths are retained for other records and pending work', () {
+    for (final retained in ['_local_student_documents', '_windows_document_outbox']) {
+      final data = <String, dynamic>{
+        'students_directory': {
+          id: {'schoolId': school, 'mobileStableId': old},
+        },
+        '_local_student_documents': {
+          'old': {'schoolId': school, 'personId': old, 'localPath': 'shared.pdf'},
+          'exclusive': {'schoolId': school, 'personId': old, 'localPath': 'exclusive.pdf'},
+        },
+      };
+      (data.putIfAbsent(retained, () => <String, dynamic>{}) as Map)['keep'] = {
+        'schoolId': school, 'personId': fresh, 'localPath': 'shared.pdf',
+      };
+      expect(purgeStudentGeneration(data, school, id, old), {'exclusive.pdf'});
+      expect(data[retained]['keep']['localPath'], 'shared.pdf');
+    }
+  });
   test(
     'a replacement is recognized only by explicit prior deletion generation',
     () {

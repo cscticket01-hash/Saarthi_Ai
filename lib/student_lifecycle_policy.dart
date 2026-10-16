@@ -189,7 +189,21 @@ Set<String> purgeStudentGeneration(
         row['studentPayloadPurged'] = true;
       }
     }
+  // A managed path may still be shared by a retained record, pending upload or
+  // another occupant. Path location alone is not exclusive ownership proof.
+  paths.removeWhere((path) => studentCleanupPathReferenced(collections, path));
   return paths;
+}
+
+bool studentCleanupPathReferenced(Map<String, dynamic> collections, String path) {
+  bool references(dynamic value) {
+    if (value is String) return value == path;
+    if (value is Map) return value.values.any(references);
+    return value is List && value.any(references);
+  }
+  return collections.entries
+      .where((entry) => entry.key != '_windows_student_file_cleanup')
+      .any((entry) => references(entry.value));
 }
 
 List<String> verifiedDeletedStudentGenerations(Map record) => {
