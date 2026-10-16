@@ -290,6 +290,14 @@ void main() {
         expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
         expect((await db.collection('documents').doc(cardId).get()).data()?['documentRevision'],first['documentRevision']);
       }
+      // A changed remote photo URL cannot borrow the old file's source hash.
+      final changed=Uint8List.fromList(img.encodePng(img.Image(width:20,height:30)));
+      await WindowsSchoolImageCache.store(school,'changed-photo',WindowsSchoolImageCache.dataUrl(changed));
+      await db.collection('students_directory').doc('S1').update({'photoUrl':'https://drive.google.com/file/d/changed-photo/view'});
+      await expectLater(WindowsDocumentTemplates.publishChangedIdCards(readInventory:()async=>
+        {'schoolId':school,'syncProtocol':2,'records':{cardId:published}}),throwsStateError);
+      expect((await db.collection('_local_student_documents').doc(cardId).get()).exists,false);
+      expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
       await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});
       expect(await File(first['localPath']).exists(),true);
     } finally {PrintingPlatform.instance=printing;}

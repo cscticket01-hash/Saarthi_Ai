@@ -138,13 +138,18 @@ class WindowsDocumentTemplates {
       data['schoolLogoUrl'] != null ? null : profile['logoSourceHash'],
       data['principalSignatureUrl'] != null ? data['principalSignatureSourceHash'] : profile['principalSignatureSourceHash'],
       profile['sealSourceHash']];
+    final sourceFileIds=[data['photoFileId'],
+      data['schoolLogoUrl'] != null ? null : profile['logoFileId'],
+      data['principalSignatureUrl'] != null ? data['principalSignatureFileId'] : profile['principalSignatureFileId'],
+      profile['sealFileId']];
     bool hasSource(int i) {
       final source=sourceHashes[i];
       final ref=refs[i]?.toString()??'';
       final inline=ref.startsWith('data:image/') ||
         (i==0 && (data['photoUrl']?.toString()??'').isEmpty &&
           (data['photoBase64']?.toString()??'').isNotEmpty);
-      return ref.isNotEmpty && !inline && source is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(source);
+      return ref.isNotEmpty && !inline && source is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(source) &&
+        sourceFileIds[i] is String && schoolDriveFileId(ref)==sourceFileIds[i];
     }
     // Verified source identity lets a receiving PC reuse a card without first
     // downloading every image. Inline edits always hash their current bytes.
