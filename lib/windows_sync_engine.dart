@@ -1191,17 +1191,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         await syncLocalRestoreRequests(FirebaseFirestore.instance,_activeSchoolSyncId,
           (body) => ManagedSchoolSession.callForSchool(_activeSchoolSyncId,'managed/recycle',body),
           canAdmit: () => !isPaused);
-        _admitBatch();
-        await WindowsDocumentTemplates.publishChangedIdCards();
-        // ID preparation may create credential metadata; drain only those new
-        // durable operations before uploading their published files.
-        try { _admitBatch();
-        await _pushManagedOutbox(); }
-        catch (e) { if (!isRecordSyncConflict(e)) rethrow; }
-        await runDocumentAndDownloadStages(documents: () async {
-          _admitBatch();
-          await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
-        }, download: () async {
+        // Publication must use the same verified school inputs on every PC.
+        // Merge cloud records first; applySyncedDocument retains pending edits.
         if (_lastPull == null ||
             DateTime.now().difference(_lastPull!) >=
                 reconciliationInterval ||
@@ -1218,7 +1209,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           // Only admitted work reaches this pull; idle polling is hourly.
           completedReconciliation = inventoryAudit;
         }
-        });
+        _admitBatch();
+        await WindowsDocumentTemplates.publishChangedIdCards();
+        // ID preparation may create credential metadata; drain only those new
+        // durable operations before uploading their published files.
+        try { _admitBatch();
+        await _pushManagedOutbox(); }
+        catch (e) { if (!isRecordSyncConflict(e)) rethrow; }
+        await runDocumentAndDownloadStages(documents: () async {
+          _admitBatch();
+          await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
+        }, download: () async {});
         _admitBatch();
         await refreshDetails();
         if ((details.value['needsAttention'] as num? ?? 0) > 0)

@@ -97,6 +97,8 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
     );
     result['${prefix}Url'] = upload['fileUrl'];
     result['${prefix}FileId'] = upload['fileId'];
+    // Stable source identity survives portrait optimization and device caches.
+    result['${prefix}SourceHash'] = originalDigest;
   }
   for (final key in result.keys.toList()) {
     final value = result[key];

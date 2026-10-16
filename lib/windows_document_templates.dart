@@ -148,7 +148,8 @@ class WindowsDocumentTemplates {
         if (!{'schoolId', 'photoUrl', 'photoBase64', 'photoFileId',
           'logoUrl', 'logoBase64', 'logoFileId', 'schoolLogoUrl',
           'principalSignatureUrl', 'principalSignatureBase64', 'principalSignatureFileId',
-          'sealUrl', 'sealBase64', 'sealFileId'}.contains(entry.key)) entry.key: entry.value,
+          'sealUrl', 'sealBase64', 'sealFileId',
+          'photoSourceHash', 'logoSourceHash', 'principalSignatureSourceHash', 'sealSourceHash'}.contains(entry.key)) entry.key: entry.value,
     };
     dynamic clean(dynamic v) {
       if (v is Timestamp) return v.millisecondsSinceEpoch;
@@ -174,9 +175,20 @@ class WindowsDocumentTemplates {
       return v;
     }
 
+    final sourceHashes = [data['photoSourceHash'],
+      data['schoolLogoUrl'] != null ? null : profile['logoSourceHash'],
+      data['principalSignatureUrl'] != null ? data['principalSignatureSourceHash'] : profile['principalSignatureSourceHash'],
+      profile['sealSourceHash']];
+    String? imageIdentity(int i) {
+      final source=sourceHashes[i];
+      // Inline edits supersede any retained cloud source metadata.
+      if (!(refs[i]?.toString().startsWith('data:image/')??false) &&
+          source is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(source)) return source;
+      return images[i]==null?null:sha256.convert(images[i]!).toString();
+    }
     return sha256
         .convert(utf8.encode(jsonEncode(clean([inputs(data), inputs(profile), template, qr,
-          for (final bytes in images) bytes == null ? null : sha256.convert(bytes).toString()]))))
+          for (var i=0;i<images.length;i++) imageIdentity(i)]))))
         .toString();
   }
 
