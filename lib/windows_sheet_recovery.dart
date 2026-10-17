@@ -13,24 +13,33 @@ Future<void> cacheVerifiedSheetRecord(
   String collection,
   String id,
   Map<String, dynamic> record,
-) async {
+) => cacheVerifiedSheetRecords(school,collection,{id:record});
+
+/// Recovery originals remain durable before business-record apply; commit up
+/// to 100 verified originals together rather than fsync once for every record.
+Future<void> cacheVerifiedSheetRecords(String school,String collection,
+    Map<String,Map<String,dynamic>> records) async {
   final db = FirebaseFirestore.instance,
       profile = FirebaseFirestore.instance.activeProfileId;
-  if (db.activeProfileIdentity['schoolSyncId'] != school ||
-      record['schoolId'] != school ||
+  if (records.length>100||db.activeProfileIdentity['schoolSyncId'] != school ||
+      records.values.any((record)=>record['schoolId'] != school ||
       record['_syncRevision'] is! String ||
-      (record['_syncRevision'] as String).isEmpty) {
+      (record['_syncRevision'] as String).isEmpty)) {
     throw StateError('Verified same-school cloud record required.');
   }
+  final batch=db.batch();
+  for(final entry in records.entries) {
   final ref = db
       .collection('_windows_verified_cloud_records')
-      .doc(sheetRecoveryCacheKey(collection, id));
-  await ref.set({
+      .doc(sheetRecoveryCacheKey(collection, entry.key));
+  batch.set(ref,{
     'schoolId': school,
     'collection': collection,
-    'documentId': id,
-    'record': migrationJsonValue(record),
+    'documentId': entry.key,
+    'record': migrationJsonValue(entry.value),
   });
+  }
+  await batch.commit();
   if (db.activeProfileId != profile)
     throw StateError('School changed during recovery cache commit.');
 }

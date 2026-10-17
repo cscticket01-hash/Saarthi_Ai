@@ -45,6 +45,7 @@ void main() {
       if(action=='mobile_login')return http.Response(jsonEncode(login()),200);
       dashboardReads++;
       if(dashboardReads==1)return oldReply.future;
+      expect((jsonDecode(request.body)['request'] as Map)['afterSignal'],true);
       return http.Response(jsonEncode(response({'revision':'new','notices':[{'id':'new','title':'After ACK'}]})),200);
     }));
     await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));

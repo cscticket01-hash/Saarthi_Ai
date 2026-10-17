@@ -238,6 +238,32 @@ class FirebaseFirestore {
     ]));
   }
 
+  /// Bounded cloud apply through the same serialized writer and live pending /
+  /// restore guards as single-record downloads. Never admits an upload or ACK.
+  Future<void> applySyncedCollectionBatch(String collection,
+      Map<String,Map<String,dynamic>> records) {
+    if(records.isEmpty)return Future<void>.value();
+    final school=activeProfileIdentity['schoolSyncId'];
+    if(records.length>100||collection.isEmpty||collection.startsWith('_')||
+        collection.contains('/')||school is! String||school.isEmpty||
+        records.values.any((row)=>row['schoolId']!=school)) {
+      throw StateError('Bounded same-school download batch required.');
+    }
+    final operations=<_WriteOperation>[];
+    for(final entry in records.entries) {
+      final ref=this.collection(collection).doc(entry.key);
+      ref.requireOriginProfile();
+      final data=entry.value,deleted=data['_syncDeleted']==true;
+      operations.add(_WriteOperation._(type:deleted?_WriteType.delete:_WriteType.set,
+        collection:collection,documentId:entry.key,data:deleted?null:data,
+        preservePending:true,
+        tombstoneRevision:deleted?data['_syncRevision']?.toString():null,
+        tombstoneUpdatedAt:deleted&&data['_syncUpdatedAt'] is int?data['_syncUpdatedAt'] as int:null));
+    }
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+      ()=>_database.applyOperations(operations));
+  }
+
   /// Readback evidence only. A retained newer edit must never count as a download.
   Future<bool> syncedDocumentMatches(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? expected) async {
     ref.requireOriginProfile();
