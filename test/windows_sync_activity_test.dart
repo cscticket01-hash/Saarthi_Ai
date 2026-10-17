@@ -24,6 +24,22 @@ class _ObservedTimer implements Timer {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('remote discovery selects only changed collections and backs off independently', () {
+    final now=DateTime.utc(2026,10,17);
+    final watch=WindowsCloudChangeWatch();
+    expect(watch.due(now),true);
+    watch.succeeded(now);
+    expect(watch.due(now.add(const Duration(seconds:29))),false);
+    expect(watch.due(now.add(const Duration(seconds:30))),true);
+    final known={'fee_payments':'fee-1','students_directory':'students-1'};
+    expect(changedWindowsCollections(known,known),isEmpty);
+    expect(changedWindowsCollections(known,{...known,'fee_payments':'fee-2'}),{'fee_payments'});
+    expect(()=>changedWindowsCollections(known,{'fee_payments':'fee-2'}),throwsStateError);
+    for(var i=0;i<12;i++)watch.failed(now);
+    expect(watch.nextCheck!.difference(now),const Duration(minutes:15));
+    watch.succeeded(now);expect(watch.failures,0);
+    watch.reset();expect(watch.due(now),true);
+  });
   const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   final db = FirebaseFirestore.instance;
   setUp(() async {

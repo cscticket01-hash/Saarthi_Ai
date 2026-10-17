@@ -71,7 +71,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   static const reconciliationInterval = Duration(hours: 1);
   late final _schedule = WindowsSyncSchedule((delay) => scheduleSoon(delay: delay));
   late final _dispatch = WindowsSyncDispatch(() => unawaited(_automaticSync()));
-  DateTime? _lastSyncAttempt;
+  DateTime? _lastIntegrityAttempt;
   bool _automaticMutationPending = false;
   bool get _hasAutomaticWork => (details.value['liveQueue'] as List? ?? const []).any((raw) {
     if (raw is! Map || raw['schoolId'] != _activeSchoolSyncId) return false;
@@ -80,8 +80,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     return {'pending', 'retry'}.contains(raw['syncState'] ?? 'pending');
   });
   bool get _automaticDue => automaticWindowsSyncDue(now: DateTime.now(),
-      lastAttempt: _lastSyncAttempt, localMutation: _automaticMutationPending,
-      pendingWork: _hasAutomaticWork);
+      lastAttempt: _lastIntegrityAttempt, localMutation: _automaticMutationPending,
+      pendingWork: _hasAutomaticWork || _remoteCollections.isNotEmpty);
   Future<void> _automaticSync() async {
     if (_automaticDue) await syncNow();
   }
@@ -155,6 +155,49 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   String? _protocolIdentity;
   DateTime? _protocolVerifiedAt;
   bool _deltaBatchSupported = false;
+  bool _changeHeadsSupported = false, _checkingHeads = false;
+  final _remoteCollections = <String>{};
+  final _changeWatch = WindowsCloudChangeWatch();
+  Timer? _changeTimer;
+
+  // Read-only discovery stays out of the queue/retry owner. Hints never ACK
+  // uploads or advance local manifests; only verified record apply does that.
+  Future<void> _discoverManagedChanges() async {
+    if (!automaticScheduleExpected || _syncing || _activating > 0 ||
+        !_changeHeadsSupported || _checkingHeads || !_changeWatch.due(DateTime.now()) ||
+        (_quotaRetryAt?.isAfter(DateTime.now()) ?? false) ||
+        (recoveryDecision != null && !recoveryDecision!.retry &&
+          !recoveryDecision!.independentRecords)) return;
+    _checkingHeads = true;
+    final db = FirebaseFirestore.instance, origin = _activeProfileId,
+        school = _activeSchoolSyncId;
+    final watch = Stopwatch()..start();
+    try {
+      final revisions = <String,String>{};
+      for (final col in _firebaseCollections.where((c) => c != 'backups')) {
+        final manifest = (await db.collection('_windows_sync_manifest')
+          .doc(_manifestId('managed', col)).get()).data();
+        revisions[col] = manifest?['revision']?.toString() ?? '';
+      }
+      final heads = await WindowsFirebaseRemote.readManagedHeads(school, revisions);
+      if (origin != _activeProfileId || db.activeProfileId != origin ||
+          school != _activeSchoolSyncId) return;
+      _changeWatch.succeeded(DateTime.now());
+      metrics['changeHeadRequests'] = (metrics['changeHeadRequests'] ?? 0) + 1;
+      _sample('changeDiscoveryMicros', watch.elapsedMicroseconds);
+      _remoteCollections.addAll(changedWindowsCollections(revisions, heads));
+      if (_remoteCollections.isNotEmpty) scheduleSoon();
+    } catch (error) {
+      if (origin != _activeProfileId || school != _activeSchoolSyncId) return;
+      _changeWatch.failed(DateTime.now());
+      // A failed hint is Unknown, never a successful checkpoint. Expose a
+      // bounded diagnostic without altering upload attempts or operation IDs.
+      _recordActivity({'stage':'changeDiscoveryFailed','schoolId':school,
+        'at':DateTime.now().millisecondsSinceEpoch,
+        'failureCategory':windowsSyncRecovery(error).kind.name,
+        'retryAt':_changeWatch.nextCheck!.millisecondsSinceEpoch});
+    } finally { _checkingHeads = false; }
+  }
   final metrics = <String, int>{
     'recordReadRequests': 0,
     'recordWriteRequests': 0,
@@ -275,7 +318,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'activity': [for(final row in _activity) Map<String,dynamic>.from(row)],
       'remotePollIntervalMillis':reconciliationInterval.inMilliseconds,
       'idleReconciliationIntervalMillis':const Duration(hours:1).inMilliseconds,
-      'nextIdleReconciliationMillis':_lastSyncAttempt?.add(const Duration(hours:1)).millisecondsSinceEpoch,
+      'nextIdleReconciliationMillis':_lastIntegrityAttempt?.add(const Duration(hours:1)).millisecondsSinceEpoch,
       'isPaused': isPaused,
       'pauseBoundaryPending': isPaused && _syncing,
       'pausedUntilMillis': pausedUntil?.millisecondsSinceEpoch,
@@ -430,7 +473,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (_resetPaused) return;
 
     _schedule.start(reconciliationInterval);
-    _schedule.armCheckpoint(_lastSyncAttempt ?? DateTime.now());
+    _changeTimer?.cancel();
+    _changeTimer = Timer.periodic(const Duration(seconds: 30),
+      (_) => unawaited(_discoverManagedChanges()));
+    _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
 
     scheduleSoon(delay: const Duration(milliseconds: 800));
   }
@@ -482,7 +528,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (localMutation) _automaticMutationPending = true;
     if (!_automaticDue) return;
     if (recoveryDecision != null && !recoveryDecision!.retry) {
-      if (!localMutation || !recoveryDecision!.independentRecords) return;
+      if ((!localMutation && _remoteCollections.isEmpty) || !recoveryDecision!.independentRecords) return;
       recoveryDecision = null;
       _failures = 0;
     }
@@ -620,6 +666,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   Future<void> pauseForAppReset() async {
     _resetPaused = true;
     _schedule.stop();
+    _changeTimer?.cancel();
     _pauseTimer?.cancel();
     _dispatch.cancel();
     final deadline = DateTime.now().add(const Duration(seconds: 90));
@@ -831,7 +878,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }) async {
     if (_activeProfileId != profile.profileId) {
       _lastPull = null;
-      _lastSyncAttempt = null;
+      _remoteCollections.clear();
+      _changeWatch.reset();
+      _changeHeadsSupported = false;
+      _lastIntegrityAttempt = null;
       _automaticMutationPending = false;
       _failures = 0;
       _nextRetry = null;
@@ -900,7 +950,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         (savedStatus!['successfulAt'] as num).toInt(),
       );
     if (savedStatus?['checkpointAt'] is num) lastVerifiedCheckpoint = DateTime.fromMillisecondsSinceEpoch((savedStatus!['checkpointAt'] as num).toInt());
-    if (_initialized && !_resetPaused) _schedule.armCheckpoint(_lastSyncAttempt ?? DateTime.now());
+    if (_initialized && !_resetPaused) _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
     await refreshDetails();
 
     if (seedGoogleConfig && profile.googleUrl.isNotEmpty) {
@@ -1138,9 +1188,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused) return;
 
     _syncing = true;
-    _lastSyncAttempt = DateTime.now();
+    final now = DateTime.now();
+    if (_manualSync || _lastIntegrityAttempt == null ||
+        now.isBefore(_lastIntegrityAttempt!) ||
+        now.difference(_lastIntegrityAttempt!) >= reconciliationInterval) {
+      _lastIntegrityAttempt = now;
+      _schedule.armCheckpoint(_lastIntegrityAttempt);
+    }
     _automaticMutationPending = false;
-    _schedule.armCheckpoint(_lastSyncAttempt);
     state.value = SchoolCloudState.syncing;
     final syncOrigin = _activeProfileId;
     final watch = Stopwatch()..start();
@@ -1178,6 +1233,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
           );
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
+          _changeHeadsSupported = health['recordChangeHeadsVersion'] == 1 &&
+              health['brokerChangeHeadsVersion'] == 1;
           _protocolIdentity = protocolIdentity;
           _protocolVerifiedAt = DateTime.now();
         }
@@ -1185,7 +1242,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _admitBatch();
           await _pushManagedOutbox();
         } catch (e) {
-          if (!isRecordSyncConflict(e)) rethrow;
+          if (!windowsSyncRecovery(e).independentRecords && !isRecordSyncConflict(e)) rethrow;
         }
         _admitBatch();
         await syncLocalRestoreRequests(FirebaseFirestore.instance,_activeSchoolSyncId,
@@ -1196,10 +1253,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         if (_lastPull == null ||
             DateTime.now().difference(_lastPull!) >=
                 reconciliationInterval ||
-            _manualSync || _checkpointDue) {
+            _manualSync || _checkpointDue || _remoteCollections.isNotEmpty) {
           _admitBatch();
           final inventoryAudit = _manualSync || _checkpointDue;
-          await _pullManagedChanges(verifyInventory: inventoryAudit);
+          final fullPull = inventoryAudit || _lastPull == null ||
+              DateTime.now().difference(_lastPull!) >= reconciliationInterval;
+          final selected = fullPull ? null : Set<String>.from(_remoteCollections);
+          await _pullManagedChanges(verifyInventory: inventoryAudit,
+            selectedCollections: selected);
+          if (selected == null) { _remoteCollections.clear(); }
+          else { _remoteCollections.removeAll(selected); }
           if(FirebaseFirestore.instance.activeProfileId!=syncOrigin)
             throw StateError('School changed after record download.');
           await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
@@ -1215,7 +1278,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         // durable operations before uploading their published files.
         try { _admitBatch();
         await _pushManagedOutbox(); }
-        catch (e) { if (!isRecordSyncConflict(e)) rethrow; }
+        catch (e) { if (!windowsSyncRecovery(e).independentRecords && !isRecordSyncConflict(e)) rethrow; }
         await runDocumentAndDownloadStages(documents: () async {
           _admitBatch();
           await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
@@ -1253,7 +1316,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         lastSuccessfulSync = DateTime.now();
         if (completedReconciliation) {
           lastVerifiedCheckpoint = lastSuccessfulSync;
-          _schedule.armCheckpoint(_lastSyncAttempt ?? DateTime.now());
+          _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
         }
         _failures = 0;
         _nextRetry = null;
@@ -1510,20 +1573,24 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   @visibleForTesting
   Future<void> reconcileManagedCacheForTesting(String school,
-      Future<Map<String, dynamic>> Function(Map<String, String>) read) =>
-      _pullManagedChanges(schoolOverride: school, batchReader: read, verifyInventory: true);
+      Future<Map<String, dynamic>> Function(Map<String, String>) read,
+      {Set<String>? selectedCollections, bool verifyInventory = true}) =>
+      _pullManagedChanges(schoolOverride: school, batchReader: read,
+        verifyInventory: verifyInventory, selectedCollections: selectedCollections);
 
   Future<void> _pullManagedChanges({String? schoolOverride,
       Future<Map<String, dynamic>> Function(Map<String, String>)? batchReader,
-      bool? verifyInventory}) async {
+      bool? verifyInventory, Set<String>? selectedCollections}) async {
     final db = FirebaseFirestore.instance,
         origin = db.activeProfileId,
         school = schoolOverride ?? _activeSchoolSyncId;
     if (db.activeProfileIdentity['schoolSyncId'] != school) throw StateError('School identity changed before recovery.');
     final audit = verifyInventory ?? (_manualSync || _checkpointDue);
+    final collections = _firebaseCollections.where((c) => c != 'backups' &&
+      (selectedCollections == null || selectedCollections.contains(c))).toList();
     final pendingAtRead = (await db.collection('_windows_firebase_outbox').get()).docs;
     final revisions = <String, String>{};
-    for (final collection in _firebaseCollections.where((c) => c != 'backups')) {
+    for (final collection in collections) {
       final prior = (await db.collection('_windows_sync_manifest').doc(_manifestId('managed', collection)).get()).data();
       revisions[collection] = audit ? managedRecoveryRevision(prior,
           (await db.collection(collection).get()).docs.map((d) => d.id).toSet(),
@@ -1537,9 +1604,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     // can drain between groups without waiting for the whole school census.
     Map<String, dynamic>? batch;
     final remainingCollections = revisions.keys.toList();
-    for (final collection in _firebaseCollections.where(
-      (c) => c != 'backups',
-    )) {
+    for (final collection in collections) {
       // A new durable notice must not wait for every startup collection read.
       if (_rerunRequested) {
         _rerunRequested = false;
@@ -1596,6 +1661,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           (await db.collection('_windows_firebase_outbox').get()).docs;
       if (db.activeProfileId != origin)
         throw StateError('School changed during reconciliation.');
+      final pendingById = {for (final row in pending.where(
+        (row) => row.data()['collection'] == collection))
+          row.data()['documentId']: row};
+      var processed = 0;
+      final applyWatch = Stopwatch()..start();
       for (final entry in records.entries) {
         if (db.activeProfileId != origin)
           throw StateError('School changed during reconciliation.');
@@ -1609,19 +1679,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           for(final generation in verifiedDeletedStudentGenerations(data))await db.applyVerifiedStudentDeletion(school,entry.key,generation,data['_syncRevision']);
         }
         if(data['_syncRevision'] is String)await cacheVerifiedSheetRecord(school,collection,entry.key,data);
-        final queued = pending
-            .where(
-              (d) =>
-                  d.data()['collection'] == collection &&
-                  d.data()['documentId'] == entry.key,
-            )
-            .toList();
-        if (queued.isNotEmpty &&
+        final queued = pendingById[entry.key];
+        if (queued != null &&
             (data['_syncRevision'] ?? '') !=
-                (queued.first.data()['baseCloudRevision'] ?? '')) {
+                (queued.data()['baseCloudRevision'] ?? '')) {
           // Compare inside the serialized durable writer: a stale pull cannot
           // re-mark a newer administrator-reviewed operation as conflicted.
-          await db.recordOutboxConflict(queued.first.reference,queued.first.data(),data);
+          await db.recordOutboxConflict(queued.reference,queued.data(),data);
         }
         await db.applySyncedDocument(
           db.collection(collection).doc(entry.key),
@@ -1637,10 +1701,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           // A local edit/conflict is retained. It is not a successful download.
           blockedDownloads++;
         }
+        processed++;
+        if (processed % 50 == 0 || processed == downloadable)
         await progress.set({'remaining':remaining,'verified':verifiedDownloads,'blocked':blockedDownloads,
           if (verifiedDownloads > 0) 'lastVerifiedLocalReadbackAt':DateTime.now().millisecondsSinceEpoch},
           const SetOptions(merge:true));
       }
+      _sample('collectionApplyMicros', applyWatch.elapsedMicroseconds);
       // Missing IDs are not deletions: only explicit server tombstones delete.
       if (db.activeProfileId != origin)
         throw StateError('School changed during reconciliation.');
@@ -2229,6 +2296,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   void dispose() {
     _schedule.stop();
+    _changeTimer?.cancel();
     _pauseTimer?.cancel();
     _dispatch.cancel();
     WidgetsBinding.instance.removeObserver(this);
