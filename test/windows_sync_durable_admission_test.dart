@@ -201,6 +201,25 @@ void main() {
     expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(1));
   });
 
+  test('already deleted payment retries authoritative tombstone without rebasing or fake ACK', () async {
+    final ref = db.collection('fee_payments').doc('deleted-payment');
+    await ref.set({'schoolId':school,'amount':100});
+    await ref.delete();
+    final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original = queue.data();
+    await queue.reference.set({...original,'syncState':'conflict'});
+    final conflicted = (await queue.reference.get()).data()!;
+    expect(await db.recordOutboxConflict(queue.reference,conflicted,
+      {'schoolId':school,'_syncDeleted':true,'_syncRevision':'deleted-elsewhere',
+       '_syncOperationId':'other_device_delete_0001'}),false);
+    final retry = (await queue.reference.get()).data()!;
+    expect(retry['syncState'],'pending');
+    expect(retry['baseCloudRevision'],original['baseCloudRevision']);
+    expect(retry['operationId'],original['operationId']);
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    expect((await ref.get()).exists,false);
+  });
+
   test('adding missing school identity never replaces an original retry operation ID', () async {
     await db.collection('school_notices').doc('notice').set({'title':'Synthetic','capturedAt':123});
     final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;

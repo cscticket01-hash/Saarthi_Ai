@@ -1620,8 +1620,9 @@ class _LocalSchoolDatabase {
         // A verified inventory can contain our committed operation after its
         // response was lost. Retry the ORIGINAL request so the server verifies
         // its request hash and returns the real ACK; inventory alone is no ACK.
-        if (remote['_syncOperationId'] == operationId &&
-            (remote['_syncDeleted'] == true) == (current['operation'] == 'delete')) {
+        final completedDeletion = current['operation'] == 'delete' && remote['_syncDeleted'] == true;
+        if (completedDeletion || (remote['_syncOperationId'] == operationId &&
+            (remote['_syncDeleted'] == true) == (current['operation'] == 'delete'))) {
           if (current['syncState'] == 'conflict') {
             final history = collections.putIfAbsent('_windows_sync_conflict_history',
                 () => <String,dynamic>{}) as Map;
