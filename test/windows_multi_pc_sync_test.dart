@@ -236,6 +236,6 @@ void main() {
         'discoveryScheduleSeconds':30,'liveNetworkMeasured':false});
       print('MULTI_PC_MEASUREMENTS ${jsonEncode(rig.measurements)}');
       await rig.open('pc1');expect((await rig.db.collection('students_directory').get()).docs,hasLength(count));
-    },timeout:const Timeout(Duration(minutes:12)));
+    },tags:const ['load'],timeout:const Timeout(Duration(minutes:12)));
   }
 }
