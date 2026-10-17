@@ -1611,8 +1611,7 @@ class _LocalSchoolDatabase {
         if(current is Map && (replacesDeletedStudent(current,remote)||deletesSameStudentGeneration(current,remote))) {completer.complete(false);return;}
         final parent=(collections['students_directory'] as Map?)?[parentId];
         if(current is Map&&reusesDeletedStudentRecord(current,remote,parent is Map?parent:null)){completer.complete(false);return;}
-        if (current is! Map || current['syncState']=='needsAttention' ||
-            revision == (current['baseCloudRevision'] ?? '') ||
+        if (current is! Map ||
             _jsonStableMap(Map<String,dynamic>.from(current)) != _jsonStableMap(_encodeMap(expected))) {
           completer.complete(false);
           return;
@@ -1645,10 +1644,14 @@ class _LocalSchoolDatabase {
           }
           completer.complete(false);return;
         }
+        if (remote['_syncDeleted'] != true && (current['syncState']=='needsAttention' ||
+            revision == (current['baseCloudRevision'] ?? ''))) {
+          completer.complete(false);return;
+        }
         final completedDeletion = current['operation'] == 'delete' && remote['_syncDeleted'] == true;
         if (completedDeletion || (remote['_syncOperationId'] == operationId &&
             (remote['_syncDeleted'] == true) == (current['operation'] == 'delete'))) {
-          if (current['syncState'] == 'conflict') {
+          if ({'conflict','needsAttention'}.contains(current['syncState'])) {
             final history = collections.putIfAbsent('_windows_sync_conflict_history',
                 () => <String,dynamic>{}) as Map;
             history.putIfAbsent(operationId, () => Map<String,dynamic>.from(current));
