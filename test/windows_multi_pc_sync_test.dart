@@ -206,7 +206,16 @@ void main() {
     expect((await rig.queue()).single.data()['syncState'],'needsAttention');
     await rig.flush(explicitRetry:true);expect(await rig.queue(),isEmpty);
     // A record validation fault cannot starve a later independent operation.
-    await rig.db.collection('school_config').doc('school_profile_cache').set({'schoolId':school,'schoolName':'','principalName':'','schoolContactNo':''});
+    final profile=rig.db.collection('school_config').doc('school_profile_cache');
+    final blank={'schoolId':school,'schoolName':'','principalName':'','schoolContactNo':''};
+    await profile.set(blank);
+    expect(await rig.queue(),isEmpty,reason:'Current admission already blocks blank profiles');
+    await profile.set({'schoolId':school,'schoolName':'Synthetic School',
+      'principalName':'Synthetic Principal','schoolContactNo':'0000000000'});
+    final legacy=(await rig.queue()).single;
+    // Reproduce a bad row retained from an older client. Never weaken the
+    // current local admission guard just to manufacture a pending operation.
+    await legacy.reference.set({...legacy.data(),'data':blank});
     await rig.db.collection('school_settings').doc('independent').set({'schoolId':school,'value':1});
     await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
     expect((await rig.queue()).single.data()['collection'],'school_config');
