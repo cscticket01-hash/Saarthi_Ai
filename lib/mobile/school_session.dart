@@ -568,7 +568,7 @@ class SchoolSession {
       Future<Map<String,dynamic>> next() async {
         if (origin != _generation) throw SchoolAccessDenied('School session changed.');
         _signalRefresh = null;
-        return refreshDashboard();
+        return refreshDashboard(afterSignal:true);
       }
       final follow = running.then((_) => next(), onError:(Object _,StackTrace __) => next());
       _signalRefresh = follow;
@@ -579,7 +579,7 @@ class SchoolSession {
     final origin = _generation;
     connectionState = SchoolConnectionState.syncing;
     final watch = Stopwatch()..start();
-    final pending = _refreshDashboard();
+    final pending = _refreshDashboard(afterSignal:afterSignal);
     _refresh = pending;
     connectionMessage = 'Checking the latest school dashboard; previously verified data remains available.';
     connectionChanges.value++;
@@ -627,10 +627,11 @@ class SchoolSession {
     return pending;
   }
 
-  Future<Map<String, dynamic>> _refreshDashboard() async {
+  Future<Map<String, dynamic>> _refreshDashboard({bool afterSignal=false}) async {
     unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
     final result = await schoolCall('mobile_dashboard', {
+      if(afterSignal)'afterSignal':true,
       if (dashboard['revision'] is String)
         'knownRevision': dashboard['revision'],
       if (dashboard['revisions'] is Map)

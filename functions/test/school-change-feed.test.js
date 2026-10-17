@@ -80,6 +80,19 @@ test('delta after a remote-instance commit cannot reuse a stale five-second view
  assert.equal((await f.call(request)).changes.fee_payments.collectionRevision,'two');
  assert.equal(f.sent.length,2);
 });
+test('Android push/resume refresh bypasses cached dashboard content on any broker',async()=>{
+ let revision='one';
+ const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,
+  revision,sessionExpiresAt:time+60000})}));
+ const request={action:'managed/mobile',schoolId:A,request:{action:'mobile_dashboard',sessionToken:'verified'}};
+ assert.equal((await f.call(request)).revision,'one');
+ revision='two';
+ const signalled={...request,request:{...request.request,afterSignal:true}};
+ assert.equal((await f.call(signalled)).revision,'two');
+ revision='three';
+ assert.equal((await f.call(signalled)).revision,'three');
+ assert.equal(f.sent.length,3);
+});
 test('broker publishes only signed committed writes and rechecks membership after waiting',async()=>{
  const base=fixture(),cloud=sharedCloud();let committed=true;
  const db={...base.db,doc:p=>p.startsWith('school_sync_hints/')?cloud.db.doc(p):base.db.doc(p),

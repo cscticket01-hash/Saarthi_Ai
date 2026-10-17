@@ -358,7 +358,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
    return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,...result,...cardContext};
   }
   const body={action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}};
-  const result=b.request.action==='mobile_dashboard'
+  const result=b.request.action==='mobile_dashboard'&&b.request.afterSignal!==true
    ?await readView(m.schoolId,body,()=>signed(m,body),true):await signed(m,body);
   if(b.request.action==='mobile_mark_attendance')await changeHint(m.schoolId,'attendance_records');
   if(['mobile_logout','mobile_mark_attendance','mobile_complaint'].includes(b.request.action))invalidate(m.schoolId);
