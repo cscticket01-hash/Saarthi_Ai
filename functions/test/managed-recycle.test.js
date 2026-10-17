@@ -164,3 +164,15 @@ test('UTF-8 snapshot byte limit fails before deletion and retains the large orig
  assert.equal(f.call({action:'managed_records',operation:'delete',collection:'students_directory',id:'large',syncProtocol:2,operationId:'delete_operation_0001',expectedRecordRevision:write.recordRevision}).success,false);
  assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).records.large.name,name);
 });
+
+test('independent stale fee deletion acknowledges existing tombstone without rewriting history',()=>{
+ const t=setup('fee_payments');
+ const before=JSON.stringify(t.tomb);
+ const second=t.f.call({...t.deletion,operationId:'delete_other_device_0001'});
+ assert.equal(second.success,true);
+ assert.equal(second.recordRevision,t.deleted.recordRevision);
+ const row=t.f.call({action:'managed_records',operation:'read',collection:t.collection,syncProtocol:2}).records.row;
+ assert.equal(JSON.stringify(row),before);
+ // A stale write can never resurrect the deleted payment.
+ assert.equal(t.f.call({...t.deletion,operation:'write',operationId:'stale_payment_edit_0001',data:{schoolId:A,amount:999}}).success,false);
+});

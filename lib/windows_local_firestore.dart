@@ -1604,7 +1604,7 @@ class _LocalSchoolDatabase {
         }
         final parentId=expected['data'] is Map?expected['data']['studentId']:null;
         final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
-          '_windows_sync_conflicts',if(parentId is String)'students_directory'},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
+          '_windows_sync_conflicts','_windows_sync_conflict_history',if(parentId is String)'students_directory'},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
         final current = queue is Map ? queue[queueId] : null;
@@ -1614,6 +1614,25 @@ class _LocalSchoolDatabase {
         if (current is! Map || current['syncState']=='needsAttention' ||
             revision == (current['baseCloudRevision'] ?? '') ||
             _jsonStableMap(Map<String,dynamic>.from(current)) != _jsonStableMap(_encodeMap(expected))) {
+          completer.complete(false);
+          return;
+        }
+        // A verified inventory can contain our committed operation after its
+        // response was lost. Retry the ORIGINAL request so the server verifies
+        // its request hash and returns the real ACK; inventory alone is no ACK.
+        if (remote['_syncOperationId'] == operationId &&
+            (remote['_syncDeleted'] == true) == (current['operation'] == 'delete')) {
+          if (current['syncState'] == 'conflict') {
+            final history = collections.putIfAbsent('_windows_sync_conflict_history',
+                () => <String,dynamic>{}) as Map;
+            history.putIfAbsent(operationId, () => Map<String,dynamic>.from(current));
+            queue[queueId] = {...Map<String,dynamic>.from(current),
+              'syncState':'pending','retryCount':0}..remove('lastError')..remove('retryAt');
+            _storeCollections(root,collections);
+            await _writeRoot(root);
+            final signal = _signals['_windows_firebase_outbox'];
+            if (signal != null && !signal.isClosed) signal.add(null);
+          }
           completer.complete(false);
           return;
         }

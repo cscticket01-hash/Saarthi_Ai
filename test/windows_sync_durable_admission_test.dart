@@ -174,6 +174,33 @@ void main() {
     expect((await db.collection('_windows_sync_conflicts').get()).docs,isEmpty);
   });
 
+  test('lost payment ACK inventory retains original retry instead of creating conflict', () async {
+    await db.collection('fee_payments').doc('payment').set({'schoolId':school,'amount':100});
+    final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original = queue.data();
+    final remote = {'schoolId':school,'amount':100,'_syncRevision':'committed-payment',
+      '_syncOperationId':original['operationId']};
+    expect(await db.recordOutboxConflict(queue.reference,original,remote),false);
+    expect((await queue.reference.get()).data()?['syncState'],'pending');
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    // Recover a previously misclassified conflict, preserving audit and CAS base.
+    await queue.reference.set({...original,'syncState':'conflict','lastError':'Record revision conflict'});
+    final conflicted = (await queue.reference.get()).data()!;
+    expect(await db.recordOutboxConflict(queue.reference,conflicted,remote),false);
+    final retry = (await queue.reference.get()).data()!;
+    expect(retry['syncState'],'pending');
+    expect(retry['operationId'],original['operationId']);
+    expect(retry['baseCloudRevision'],original['baseCloudRevision']);
+    expect((await db.collection('_windows_sync_conflict_history').get()).docs,hasLength(1));
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},
+      sendVersioned:(item)async {
+        expect(item['operationId'],original['operationId']);
+        return 'committed-payment';
+      });
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(1));
+  });
+
   test('adding missing school identity never replaces an original retry operation ID', () async {
     await db.collection('school_notices').doc('notice').set({'title':'Synthetic','capturedAt':123});
     final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
