@@ -372,6 +372,23 @@ class WindowsFirebaseRemote {
     return result;
   }
 
+  /// Authenticated collection heads are discovery hints, never receipts.
+  static Future<Map<String, String>> readManagedHeads(
+    String school, Map<String, String> revisions,
+  ) async {
+    final result = await ManagedSchoolSession.callForSchool(school,
+      'managed/changes', {'collections': revisions.keys.toList(),
+        'knownRevisions': revisions, 'headOnly': true});
+    final heads = result['revisions'];
+    if (result['schoolId'] != school || result['syncProtocol'] != 2 ||
+        result['headOnly'] != true || heads is! Map ||
+        heads.length != revisions.length || revisions.keys.any((key) =>
+          heads[key] is! String || (heads[key] as String).isEmpty)) {
+      throw StateError('Unverified school change heads.');
+    }
+    return Map<String, String>.from(heads);
+  }
+
   static Future<Map<String, dynamic>> readManagedBatch(
     String school,
     Map<String, String> revisions,

@@ -207,6 +207,29 @@ void main() {
     expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(1));
   });
 
+  test('committed payment identity re-admits exhausted transport only, without a fabricated receipt', () async {
+    await db.collection('fee_payments').doc('exhausted').set({'schoolId':school,'amount':500});
+    final queue=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original=queue.data();
+    final remote={'schoolId':school,'amount':500,'_syncRevision':'verified-committed-head',
+      '_syncOperationId':original['operationId']};
+    for(final category in ['validation','authorization','unknown','quota']) {
+      await queue.reference.set({...original,'syncState':'needsAttention','failureCategory':category,'retryCount':5});
+      expect(await db.recordOutboxConflict(queue.reference,(await queue.reference.get()).data()!,remote),false);
+      expect((await queue.reference.get()).data()?['syncState'],'needsAttention');
+    }
+    await queue.reference.set({...original,'syncState':'needsAttention','failureCategory':'timeout','retryCount':5});
+    final exhausted=(await queue.reference.get()).data()!;
+    expect(await db.recordOutboxConflict(queue.reference,exhausted,{...remote,'_syncOperationId':'other-operation'}),false);
+    expect((await queue.reference.get()).data()?['syncState'],'needsAttention');
+    expect(await db.recordOutboxConflict(queue.reference,exhausted,remote),false);
+    final admitted=(await queue.reference.get()).data()!;
+    expect(admitted['syncState'],'pending');expect(admitted['operationId'],original['operationId']);
+    expect(admitted['baseCloudRevision'],original['baseCloudRevision']);expect(admitted['data'],original['data']);
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    expect((await db.collection('_windows_sync_conflict_history').get()).docs.single.data()['retryCount'],5);
+  });
+
   test('already deleted payment retries authoritative tombstone without rebasing or fake ACK', () async {
     final ref = db.collection('fee_payments').doc('deleted-payment');
     await ref.set({'schoolId':school,'amount':100});

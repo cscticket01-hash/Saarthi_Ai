@@ -1,0 +1,250 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+import '../lib/platform/platform_config.dart';
+import '../lib/windows_connect/central_school_cloud.dart';
+import '../lib/windows_local_firestore.dart';
+import '../lib/windows_local_storage.dart';
+import '../lib/windows_pending_school_sync.dart';
+import '../lib/windows_runtime_flags.dart';
+import '../lib/windows_sync_engine.dart';
+
+const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+// Two physical SQLite files, switched sequentially through the production API.
+// The shared cloud is the real signed Apps Script implementation in a Node VM.
+// All files/accounts/records are synthetic; no production endpoint is called.
+class _Rig {
+  final db = FirebaseFirestore.instance;
+  late Directory root;
+  late Process server;
+  late StreamIterator<String> replies;
+  final measurements = <String,dynamic>{'environment':'synthetic-two-SQLite-PCs-and-Apps-Script-VM'};
+  String pc = '';
+  Future<void> start() async {
+    root = await Directory.systemTemp.createTemp('saarthi-two-pc-');
+    server = await Process.start('node', ['test/helpers/two-pc-cloud.cjs'],
+      workingDirectory: '${Directory.current.path}${Platform.pathSeparator}functions');
+    replies = StreamIterator(server.stdout.transform(utf8.decoder).transform(const LineSplitter()));
+    server.stderr.transform(utf8.decoder).listen((e) => fail('Synthetic Script worker: $e'));
+    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({
+      'managed':true,'projectId':platformProjectId,'folderId':'managed',
+      'schoolId':school,'uid':'synthetic-multi-pc','firebaseRefreshToken':'synthetic',
+      'endpoint':'https://unreachable.example/school-cloud'})});
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    await open('pc1');
+  }
+  Future<void> open(String name) async {
+    await db.resetVolatileSession();
+    final dir = Directory('${root.path}${Platform.pathSeparator}$name');
+    await dir.create(recursive:true);
+    // Configure independent disks without invoking the user folder migration
+    // (which intentionally copies old data and must never join these PCs).
+    await WindowsLocalStorage.controlDirectory.create(recursive:true);
+    await File('${WindowsLocalStorage.controlDirectory.path}${Platform.pathSeparator}storage_config_v1.json')
+      .writeAsString(jsonEncode({'dataPath':dir.path}),flush:true);
+    await WindowsLocalStorage.initialize();
+    await db.switchProfile('synthetic-unbound');
+    await db.switchProfile('same-school',identity:{'schoolId':school,'schoolSyncId':school});
+    final sql=await WindowsLocalStorage.sqliteFile();
+    if (!await sql.exists() && await (await WindowsLocalStorage.databaseFile()).exists()) {
+      await db.migrateLocalDatabaseToSqlite(approved:true);
+    }
+    expect(await sql.exists(),true);
+    pc=name;
+  }
+  Future<Map<String,dynamic>> request(Map<String,dynamic> body) async {
+    server.stdin.writeln(jsonEncode(migrationJsonValue(body)));
+    if (!await replies.moveNext()) throw StateError('Synthetic server closed');
+    final out=Map<String,dynamic>.from(jsonDecode(replies.current) as Map);
+    if(out['success']!=true) {
+      final conflict=RegExp('revision conflict|operation ID conflict',caseSensitive:false)
+        .hasMatch(out['message']?.toString()??'');
+      throw CentralCloudException(conflict?409:422,'school_cloud',out['message']?.toString()??'Synthetic failure',
+        diagnosticCode:conflict?'RECORD_REVISION_CONFLICT':out['code']?.toString()??'');
+    }
+    return out;
+  }
+  Future<String> send(Map<String,dynamic> item) async {
+    final out=await request({'action':'managed_records','operation':item['operation']=='delete'?'delete':'write',
+      'collection':item['collection'],'id':item['documentId'],'syncProtocol':2,
+      'operationId':item['operationId'],'expectedRecordRevision':item['baseCloudRevision']??'',
+      if(item['deletedStudentGeneration']!=null)'deletedStudentGeneration':item['deletedStudentGeneration'],
+      if(item['operation']!='delete')'data':item['data']});
+    expect(out['schoolId'],school);expect(out['syncProtocol'],2);
+    expect(out['recordRevision'],isNotEmpty);
+    return out['recordRevision'] as String;
+  }
+  Future<void> flush({Future<String> Function(Map<String,dynamic>)? sender,
+      bool explicitRetry = false}) async {
+    final rows = explicitRetry ? await queue() : null;
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      onlyOperationId: explicitRetry ? rows!.single.data()['operationId'] as String : null,
+      send:(a,b,c,d)async{},sendVersioned:sender??send);
+  }
+  Future<List<QueryDocumentSnapshot<Map<String,dynamic>>>> queue() async =>
+    (await db.collection('_windows_firebase_outbox').get()).docs;
+  Future<void> pull(Set<String> collections) async {
+    await WindowsSyncEngine.instance.reconcileManagedCacheForTesting(school,(known) async {
+      final result=await request({'action':'managed_delta','collections':known.keys.toList(),'knownRevisions':known});
+      return Map<String,dynamic>.from(result['changes'] as Map);
+    },selectedCollections:collections,verifyInventory:false);
+  }
+  Future<void> close() async {
+    await db.resetVolatileSession();
+    await server.stdin.close();await replies.cancel();
+    await server.exitCode.timeout(const Duration(seconds:5),onTimeout:(){server.kill();return -1;});
+    // Preserve synthetic measurements as CI artifacts, never user data.
+    final report=File('build/multi-pc/$pc-${DateTime.now().microsecondsSinceEpoch}.json');
+    await report.parent.create(recursive:true);await report.writeAsString(jsonEncode(measurements));
+  }
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late _Rig rig;
+  setUp(() async {
+    expect(WindowsLocalStorage.sqliteEnabled,true,reason:'Requires actual independent SQLite files');
+    rig=_Rig();await rig.start();
+  });
+  tearDown(() async => rig.close());
+
+  test('both directions, independent student additions, stale edit evidence and school isolation',() async {
+    await rig.db.collection('students_directory').doc('pupil1').set({'schoolId':school,'name':'PC1','class':'1','rollNo':'1'});
+    await rig.open('pc2');expect((await rig.db.collection('students_directory').get()).docs,isEmpty);
+    await rig.db.collection('students_directory').doc('pupil2').set({'schoolId':school,'name':'PC2','class':'1','rollNo':'2'});
+    // Both independent disks hold additions before either PC uploads.
+    await rig.open('pc1');await rig.flush();expect(await rig.queue(),isEmpty);
+    await rig.open('pc2');await rig.flush();await rig.pull({'students_directory'});
+    expect((await rig.db.collection('students_directory').get()).docs,hasLength(2));
+    await rig.open('pc1');await rig.pull({'students_directory'});
+    expect((await rig.db.collection('students_directory').get()).docs,hasLength(2));
+    await rig.db.collection('students_directory').doc('pupil1').update({'name':'First edit'});
+    await rig.open('pc2');await rig.db.collection('students_directory').doc('pupil1').update({'name':'Different offline edit'});
+    // Both PCs edited from the same baseline before either edit committed.
+    await rig.open('pc1');await rig.flush();
+    await rig.open('pc2');
+    await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
+    await rig.pull({'students_directory'});
+    expect((await rig.queue()).single.data()['syncState'],'conflict');
+    expect((await rig.db.collection('students_directory').doc('pupil1').get()).data()?['name'],'Different offline edit');
+    expect((await rig.db.collection('_windows_sync_conflicts').get()).docs,isNotEmpty);
+    await rig.db.switchProfile('foreign',identity:{'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+    expect((await rig.db.collection('students_directory').get()).docs,isEmpty);expect(await rig.queue(),isEmpty);
+  });
+
+  test('fee lost ACK, distinct payments, genuine conflict, offline deletion and legitimate recreation',() async {
+    final fee=rig.db.collection('fee_payments').doc('payment');
+    await fee.set({'schoolId':school,'amount':500,'receiptNo':'synthetic-1'});
+    final original=(await rig.queue()).single.data();
+    for(var attempt=0;attempt<5;attempt++) {
+      await expectLater(rig.flush(sender:(row)async{await rig.send(row);throw TimeoutException('Response lost after commit');}),throwsA(isA<TimeoutException>()));
+    }
+    expect((await rig.queue()).single.data()['syncState'],'needsAttention');
+    await rig.pull({'fee_payments'});expect((await rig.queue()).single.data()['operationId'],original['operationId']);
+    expect((await rig.queue()).single.data()['syncState'],'pending');
+    await rig.flush();expect(await rig.queue(),isEmpty);
+    await rig.open('pc2');await rig.pull({'fee_payments'});
+    await rig.db.collection('fee_payments').doc('separate-payment').set({'schoolId':school,'amount':250,'receiptNo':'synthetic-2'});
+    await rig.flush();await rig.open('pc1');await rig.pull({'fee_payments'});
+    expect((await rig.db.collection('fee_payments').get()).docs,hasLength(2));
+    await rig.db.collection('fee_payments').doc('payment').update({'amount':550});await rig.flush();
+    await rig.open('pc2');await rig.db.collection('fee_payments').doc('payment').update({'amount':600});
+    final offline=(await rig.queue()).single.data();
+    await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));await rig.pull({'fee_payments'});
+    expect((await rig.queue()).single.data()['syncState'],'conflict');
+    expect((await rig.db.collection('fee_payments').doc('payment').get()).data()?['amount'],600);
+    await rig.open('pc1');await rig.db.collection('fee_payments').doc('payment').delete();await rig.flush();
+    await rig.open('pc2');await rig.pull({'fee_payments'});
+    expect((await rig.db.collection('fee_payments').doc('payment').get()).exists,false);expect(await rig.queue(),isEmpty);
+    final history=(await rig.db.collection('_windows_sync_conflict_history').get()).docs;
+    expect(history.any((r)=>r.data()['operationId']==offline['operationId']),true);
+    await rig.db.collection('fee_payments').doc('payment').set({'schoolId':school,'amount':700,'receiptNo':'synthetic-fresh'});
+    await rig.flush();await rig.open('pc1');await rig.pull({'fee_payments'});
+    expect((await rig.db.collection('fee_payments').doc('payment').get()).data()?['amount'],700);
+    expect(await rig.queue(),isEmpty);
+  });
+
+  test('offline PC cannot attach old student or fee edits to a new Class/Roll generation',() async {
+    final old='p-${List.filled(32,'1').join()}',fresh='p-${List.filled(32,'2').join()}';
+    await rig.db.collection('students_directory').doc('slot').set({
+      'schoolId':school,'name':'Old pupil','class':'Class 1','rollNo':'1','mobileStableId':old});
+    await rig.db.collection('fee_payments').doc('old-fee').set({
+      'schoolId':school,'studentId':'slot','personId':old,'amount':100});
+    await rig.flush();
+    await rig.open('pc2');await rig.pull({'students_directory','fee_payments'});
+    await rig.db.collection('students_directory').doc('slot').update({'name':'Offline old edit'});
+    await rig.db.collection('fee_payments').doc('old-fee').update({'amount':200});
+    await rig.open('pc1');
+    await rig.db.collection('students_directory').doc('slot').delete();await rig.flush();
+    await rig.db.collection('students_directory').doc('slot').set({
+      'schoolId':school,'name':'Fresh pupil','class':'Class 1','rollNo':'1','mobileStableId':fresh});
+    await rig.flush();
+    await rig.open('pc2');await rig.pull({'students_directory','fee_payments'});
+    expect((await rig.db.collection('students_directory').doc('slot').get()).data()?['mobileStableId'],fresh);
+    expect((await rig.db.collection('fee_payments').doc('old-fee').get()).exists,false);
+    expect(await rig.queue(),isEmpty);
+    await rig.open('pc1');await rig.pull({'students_directory','fee_payments'});
+    expect((await rig.db.collection('students_directory').get()).docs,hasLength(1));
+  });
+
+  test('502/503/504, 45-second timeout and lock failure preserve operation across reopen',() async {
+    await rig.db.collection('school_notices').doc('retry').set({'schoolId':school,'title':'Retained'});
+    final original=(await rig.queue()).single.data();
+    for(final error in <Object>[
+      for(final status in [502,503,504])CentralCloudException(status,'school_cloud','Synthetic transport'),
+      TimeoutException('Synthetic 45-second deadline',const Duration(seconds:45)),
+      CentralCloudException(503,'school_cloud','Synthetic Script lock busy'),
+    ]){
+      await expectLater(rig.flush(sender:(row)async=>throw error),throwsA(anything));
+      await rig.open('pc1');
+      final retained=(await rig.queue()).single.data();
+      expect(retained['operationId'],original['operationId']);expect(retained['data'],original['data']);
+    }
+    expect((await rig.queue()).single.data()['syncState'],'needsAttention');
+    await rig.flush(explicitRetry:true);expect(await rig.queue(),isEmpty);
+    // A record validation fault cannot starve a later independent operation.
+    final profile=rig.db.collection('school_config').doc('school_profile_cache');
+    final blank={'schoolId':school,'schoolName':'','principalName':'','schoolContactNo':''};
+    await profile.set(blank);
+    expect(await rig.queue(),isEmpty,reason:'Current admission already blocks blank profiles');
+    await profile.set({'schoolId':school,'schoolName':'Synthetic School',
+      'principalName':'Synthetic Principal','schoolContactNo':'0000000000'});
+    final legacy=(await rig.queue()).single;
+    // Reproduce a bad row retained from an older client. Never weaken the
+    // current local admission guard just to manufacture a pending operation.
+    await legacy.reference.set({...legacy.data(),'data':blank});
+    await rig.db.collection('school_settings').doc('independent').set({'schoolId':school,'value':1});
+    await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
+    expect((await rig.queue()).single.data()['collection'],'school_config');
+    expect((await rig.queue()).single.data()['syncState'],'needsAttention');
+    await rig.open('pc2');await rig.pull({'school_settings'});
+    expect((await rig.db.collection('school_settings').doc('independent').get()).data()?['value'],1);
+  });
+
+  for(final count in [1000,5000]) {
+    test('$count queued students -> real Script VM -> independent SQLite PC, measured',() async {
+      final save=Stopwatch()..start();
+      final batch=rig.db.batch();
+      for(var i=0;i<count;i++)batch.set(rig.db.collection('students_directory').doc('load-$i'),
+        {'schoolId':school,'name':'Synthetic $i','class':'Load','rollNo':'$i'});
+      await batch.commit();save.stop();expect(await rig.queue(),hasLength(count));
+      final upload=Stopwatch()..start();await rig.flush();upload.stop();expect(await rig.queue(),isEmpty);
+      await rig.open('pc2');
+      final discovery=Stopwatch()..start();
+      final heads=await rig.request({'action':'managed_delta','headOnly':true,'collections':['students_directory'],'knownRevisions':{}});
+      discovery.stop();expect(heads['headOnly'],true);
+      final propagation=Stopwatch()..start();await rig.pull({'students_directory'});propagation.stop();
+      expect((await rig.db.collection('students_directory').get()).docs,hasLength(count));
+      expect(await rig.queue(),isEmpty);
+      rig.measurements.addAll({'students':count,'localSaveMicros':save.elapsedMicroseconds,
+        'uploadAndAckMicros':upload.elapsedMicroseconds,'discoveryRequestMicros':discovery.elapsedMicroseconds,
+        'downloadAndVerifiedApplyMicros':propagation.elapsedMicroseconds,
+        'discoveryScheduleSeconds':30,'liveNetworkMeasured':false});
+      print('MULTI_PC_MEASUREMENTS ${jsonEncode(rig.measurements)}');
+      await rig.open('pc1');expect((await rig.db.collection('students_directory').get()).docs,hasLength(count));
+    },tags:const ['load'],timeout:const Timeout(Duration(minutes:12)));
+  }
+}

@@ -114,7 +114,7 @@ class WindowsPendingSchoolSync {
         final order = priority(a.data()).compareTo(priority(b.data()));
         return order != 0 ? order : time(a.data()).compareTo(time(b.data()));
       });
-    Object? firstConflict;
+    Object? firstDeferred;
     for (final queued in docs) {
       unchanged();
       queued.reference.requireOriginProfile();
@@ -289,12 +289,12 @@ class WindowsPendingSchoolSync {
           retryAtMillis: retryAt?.millisecondsSinceEpoch,
           error: e.toString(),
         );
-        if (recordConflict ||
+        if (decision.independentRecords || recordConflict ||
             {
               'SCRIPT_RECORD_VERIFY_FAILED',
               'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
             }.contains(code)) {
-          firstConflict ??= e;
+          firstDeferred ??= e;
           continue; // Independent rows must not be starved by a conflict.
         }
         rethrow;
@@ -309,6 +309,6 @@ class WindowsPendingSchoolSync {
         elapsedMicros: watch.elapsedMicroseconds,
       );
     }
-    if (firstConflict != null) throw firstConflict;
+    if (firstDeferred != null) throw firstDeferred;
   }
 }
