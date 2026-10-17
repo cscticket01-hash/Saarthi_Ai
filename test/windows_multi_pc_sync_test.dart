@@ -111,6 +111,27 @@ void main() {
   });
   tearDown(() async => rig.close());
 
+  test('five independent SQLite devices converge without joining their queues',() async {
+    final timer=Stopwatch()..start();
+    for(var device=1;device<=5;device++) {
+      await rig.open('pc$device');
+      expect((await rig.db.collection('students_directory').get()).docs,isEmpty);
+      await rig.db.collection('students_directory').doc('five-pupil-$device').set({
+        'schoolId':school,'name':'Device $device','class':'5','rollNo':'$device'});
+      expect(await rig.queue(),hasLength(1));
+    }
+    for(var device=1;device<=5;device++) {
+      await rig.open('pc$device');await rig.flush();expect(await rig.queue(),isEmpty);
+    }
+    for(var device=1;device<=5;device++) {
+      await rig.open('pc$device');await rig.pull({'students_directory'});
+      expect((await rig.db.collection('students_directory').get()).docs,hasLength(5));
+      expect(await rig.queue(),isEmpty,reason:'Cloud apply must not echo into upload queue');
+    }
+    timer.stop();rig.measurements['fivePcAddUploadApplyMillis']=timer.elapsedMilliseconds;
+    rig.measurements['fivePcEnvironment']='five independent SQLite files; signed Apps Script VM; sequential disk switching; no network';
+  });
+
   test('both directions, independent student additions, stale edit evidence and school isolation',() async {
     await rig.db.collection('students_directory').doc('pupil1').set({'schoolId':school,'name':'PC1','class':'1','rollNo':'1'});
     await rig.open('pc2');expect((await rig.db.collection('students_directory').get()).docs,isEmpty);
