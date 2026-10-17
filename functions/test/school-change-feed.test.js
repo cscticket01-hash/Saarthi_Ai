@@ -1,7 +1,8 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {createSchoolChangeFeed}=require('../school-change-feed');
-const {fixture,A,B}=require('./helpers/managed-school-broker');
+const {fixture,A,B,key,time}=require('./helpers/managed-school-broker');
+const {createManagedSchools}=require('../managed-schools');
 function sharedCloud(){
  const records=new Map(),listeners=new Map();let tail=Promise.resolve();
  const snapshot=p=>({exists:records.has(p),data:()=>structuredClone(records.get(p))});
@@ -50,4 +51,30 @@ test('events are authenticated through existing school boundaries and unavailabl
  await assert.rejects(f.call({action:'managed/events',schoolId:B}),e=>e.status===403);
  await assert.rejects(f.call({action:'managed/events',schoolId:A},'bad'),e=>e.status===401);
  await assert.rejects(f.call({action:'managed/events',schoolId:A}),e=>e.status===503);
+});
+test('broker publishes only signed committed writes and rechecks membership after waiting',async()=>{
+ const base=fixture(),cloud=sharedCloud();let committed=true;
+ const db={...base.db,doc:p=>p.startsWith('school_sync_hints/')?cloud.db.doc(p):base.db.doc(p),
+  runTransaction:cloud.db.runTransaction};
+ const handle=createManagedSchools({auth:base.auth,db,projectId:'central',encryptionKey:key,now:()=>time,
+  fetchImpl:async(url,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({
+   success:committed,schoolId:JSON.parse(opt.body).schoolId,syncProtocol:2,
+   recordRevision:committed?'verified-revision':undefined,message:committed?'':'Record revision conflict'})})});
+ const call=body=>handle({method:'POST',headers:{authorization:'Bearer A'},body:{schoolId:A,...body}});
+ const initial=await call({action:'managed/events'});
+ const waiting=call({action:'managed/events',cursor:initial.cursor});
+ const write={action:'managed/records',collection:'fee_payments',operation:'write',id:'receipt-1',
+  data:{amount:500},syncProtocol:2,operationId:'synthetic-operation-0001',expectedRecordRevision:''};
+ await call(write);const hint=await waiting;
+ assert.equal(hint.reset,true);assert(hint.collections.includes('fee_payments'));
+ const sequence=[...cloud.records.values()][0].sequence;
+ committed=false;await assert.rejects(call(write),e=>e.code==='RECORD_REVISION_CONFLICT');
+ assert.equal([...cloud.records.values()][0].sequence,sequence);
+ const denied=call({action:'managed/events',cursor:hint.cursor});
+ // Wake an established listener only after the initial identity check passed.
+ await new Promise(resolve=>setImmediate(resolve));
+ base.docs.get('school_memberships/A').active=false;
+ await createSchoolChangeFeed({db:cloud.db,collections:['fee_payments']}).publish(A,'fee_payments');
+ await assert.rejects(denied,e=>e.status===403);
+ assert.equal(cloud.listeners.size,0);
 });
