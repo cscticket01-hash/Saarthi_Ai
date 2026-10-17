@@ -2,6 +2,7 @@
 const {documentResponseDiagnostic}=require('./document-response-diagnostic');
 const {createHealthTelemetry}=require('./universal-health-telemetry');
 const {createManagedCardReader}=require('./managed-card-reader');
+const {createSchoolChangeFeed}=require('./school-change-feed');
 const {createManagedDeviceAccess}=require('./managed-device-access');
 const {createManagedCardIssueAuthority}=require('./managed-card-issue-authority');
 const {firestoreManagedDeviceStore}=require('./managed-device-registry');
@@ -22,6 +23,14 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
  const healthTelemetry=createHealthTelemetry({db,now});
  const cardReader=createManagedCardReader({db,enforced:cardReaderEnforced,privateKey:cardReaderPrivateKey,now});
  if(cardIssueEnabled&&!cardReaderEnforced)throw Error('Card issuance requires all-reader enforcement');
+ const changeFeed=createSchoolChangeFeed({db,collections:[...COLLECTIONS].filter(c=>c!=='backups')});
+ async function changeHint(school,collection,id){
+  let timer;try{await Promise.race([
+   changeFeed.publishMany(school,Array.isArray(collection)?collection:[collection],id),
+   new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Hint publication budget exceeded')),1000);})
+  ]);}catch(_){/* Hints never delay or reverse a verified storage ACK indefinitely; polling repairs gaps. */}
+  finally{clearTimeout(timer);}
+ }
  const readCard=(schoolId,request)=>cardReader.authorizeOnline({schoolId,deviceId:request.deviceId,sessionToken:request.sessionToken,cardAuthorizationToken:request.cardAuthorizationToken,role:request.role,personId:request.personId,linkToken:request.linkToken,cardIssueId:request.cardIssueId});
  if(!['attendance_outbox','attendance_test_outbox'].includes(attendanceCollection))throw Error('Invalid attendance collection');
  const mobileStates=new Map(),storageStates=new Map(),developerViews=new Map(),readViews=new Map();
@@ -101,7 +110,7 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
   if(!permitted.length)return rejected;
   const result=await signed(m,{action:'managed_attendance_batch',lease:{schoolId,expiresAt:lease(m).expiresAt},operations:permitted});
   if(!Array.isArray(result.acknowledgements))throw Error('Attendance acknowledgement missing');
-  if(result.acknowledgements.some(ack=>ack.success===true)){invalidate(schoolId);await notifyChanged(schoolId,'attendance-ack',false).catch(()=>{});}
+  if(result.acknowledgements.some(ack=>ack.success===true)){await changeHint(schoolId,['attendance_records','attendance_logs','teacher_attendance']);invalidate(schoolId);await notifyChanged(schoolId,'attendance-ack',false).catch(()=>{});}
   return [...result.acknowledgements,...rejected];
  }});
  const pushDevices=new Map();
@@ -181,7 +190,11 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
    if(['managed_records','managed_delta','managed_mobile'].includes(body.action)){
     const ack=body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision.length>0;
     await saveSyncEvidence(m.schoolId,{outcome:ack?'durable_ack':'verified_response',stage:body.action,protocol:result.syncProtocol===2?2:1});
-   }return result;
+   }
+   if(body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision){invalidate(m.schoolId);await changeHint(m.schoolId,body.collection,body.id);}
+   if(body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory'));
+   if(body.action==='managed_recycle'&&body.operation==='restore')await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'));
+   return result;
   }catch(error){
    if(['managed_records','managed_delta','managed_mobile'].includes(body.action))await saveSyncEvidence(m.schoolId,{outcome:'failed',stage:body.action,code:
      ['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_TIMEOUT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED'].includes(error.code)?error.code:'SCRIPT_UNVERIFIED'});
@@ -372,8 +385,9 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
    return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,...result,...cardContext};
   }
   const body={action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}};
-  const result=b.request.action==='mobile_dashboard'
+  const result=b.request.action==='mobile_dashboard'&&b.request.afterSignal!==true
    ?await readView(m.schoolId,body,()=>signed(m,body),true):await signed(m,body);
+  if(b.request.action==='mobile_mark_attendance')await changeHint(m.schoolId,'attendance_records');
   if(['mobile_logout','mobile_mark_attendance','mobile_complaint'].includes(b.request.action))invalidate(m.schoolId);
   const verifiedCard=b.request.action==='mobile_login'?await cardReader.verifyLogin({schoolId:b.schoolId,role:b.request.role,personId:b.request.personId,linkToken:b.request.linkToken,deviceId:b.request.deviceId,cardIssueId:b.request.cardIssueId},result):cardContext;
   await registerDevice(b.schoolId,b.request,result);
@@ -472,8 +486,15 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
   const row=await db.doc('platform_schools/'+m.schoolId).get(),data=row.data()||{};
   return {success:true,schoolId:m.schoolId,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
  }
+ if(action==='managed/events'){
+  if(!lease(m).allowed)fail(403,'School licence is inactive');
+  const event=await changeFeed.wait(m.schoolId,b.cursor);
+  const fresh=await identity(req,m.schoolId);if(!lease(fresh).allowed||(fresh.entitlement.status!=='trial'&&fresh.entitlement.activated!==true))fail(403,'School licence is inactive');
+  await deviceAccess.authorize({req,body:b,identity:fresh,entitlement:lease(fresh)});
+  return {success:true,schoolId:m.schoolId,changeFeedVersion:1,...event};
+ }
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
- if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerChangeHeadsVersion:1,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+ if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
   const rows=await Promise.all(b.operationIds.map(id=>db.doc(attendanceCollection+'/'+id).get()));
@@ -485,7 +506,9 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
   if(!Array.isArray(collections)||collections.length>22||new Set(collections).size!==collections.length||collections.some(col=>!COLLECTIONS.has(col))||!known||typeof known!=='object'||Array.isArray(known)||Object.entries(known).some(([key,value])=>!collections.includes(key)||typeof value!=='string'||value.length>1000))fail(400,'Invalid delta checkpoint');
   if(b.headOnly!==undefined&&typeof b.headOnly!=='boolean')fail(400,'Invalid delta mode');
   const body={action:'managed_delta',collections,knownRevisions:known,...(b.headOnly===true?{headOnly:true}:{})};
-  const result=await readView(m.schoolId,body,()=>signed(m,body));
+  // A commit on another broker cannot invalidate this process's five-second
+  // view cache. Verified delta apply must read current authoritative records.
+  const result=b.headOnly===true?await readView(m.schoolId,body,()=>signed(m,body)):await signed(m,body);
   if(b.headOnly===true){
    if(result.headOnly!==true||result.syncProtocol!==2||!result.revisions||typeof result.revisions!=='object'||Array.isArray(result.revisions)||Object.keys(result.revisions).length!==collections.length||collections.some(col=>typeof result.revisions[col]!=='string'||!result.revisions[col]||result.revisions[col].length>1000))fail(502,'Invalid school change heads');
    return {success:true,schoolId:m.schoolId,syncProtocol:2,headOnly:true,revisions:result.revisions};
