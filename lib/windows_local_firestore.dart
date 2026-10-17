@@ -1604,7 +1604,7 @@ class _LocalSchoolDatabase {
         }
         final parentId=expected['data'] is Map?expected['data']['studentId']:null;
         final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
-          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_baselines',if(parentId is String)'students_directory'},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
+          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_baselines','_windows_recycle_requests',if(parentId is String)'students_directory'},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
         final current = queue is Map ? queue[queueId] : null;
@@ -1621,6 +1621,18 @@ class _LocalSchoolDatabase {
         // Retry the ORIGINAL request so the server verifies
         // its request hash and returns the real ACK; inventory alone is no ACK.
         if (remote['_syncDeleted'] == true && current['operation'] != 'delete') {
+          final restores = collections['_windows_recycle_requests'];
+          final localRow = (collections[collection] as Map?)?[id];
+          final localTime = localRow is Map ? localRow['_syncUpdatedAt'] : null;
+          if (restores is Map && restores.values.any((r) => r is Map &&
+              r['localRestore'] == true && r['schoolId'] == school &&
+              r['collection'] == collection && r['documentId'] == id &&
+              (r['state'] != 'verified' || remote['_syncUpdatedAt'] is! int ||
+               localTime is! int || remote['_syncUpdatedAt'] <= localTime ||
+               r['recordRevision'] == revision))) {
+            completer.complete(false);return;
+          }
+
           final data = current['data'];
           if (data is Map && (data['_syncRecreatesDeletedRevision'] == revision ||
               data['_syncRecreatesDeletedOperationId'] != null && data['_syncRecreatesDeletedOperationId'] == remote['_syncOperationId'])) {
