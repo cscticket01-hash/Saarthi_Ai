@@ -24,6 +24,20 @@ class _ObservedTimer implements Timer {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('unverified checkpoints do not turn targeted remote changes into repeated full audits', () {
+    final attempt=DateTime.utc(2026,10,17);
+    expect(windowsIntegrityAuditDue(now:attempt,lastAttempt:null),true);
+    for(var minute=1;minute<60;minute++) {
+      final now=attempt.add(Duration(minutes:minute));
+      expect(automaticWindowsSyncDue(now:now,lastAttempt:attempt,
+        localMutation:false,pendingWork:true),true);
+      expect(windowsIntegrityAuditDue(now:now,lastAttempt:attempt),false);
+      expect(syncCheckpointDue(null,now),true,reason:'Unknown remains unknown, not a fabricated verified checkpoint');
+    }
+    expect(windowsIntegrityAuditDue(now:attempt.add(const Duration(hours:1)),lastAttempt:attempt),true);
+    expect(windowsIntegrityAuditDue(now:attempt,lastAttempt:attempt,manual:true),true);
+    expect(windowsIntegrityAuditDue(now:attempt,lastAttempt:attempt.add(const Duration(hours:1))),true);
+  });
   test('remote discovery selects only changed collections and backs off independently', () {
     final now=DateTime.utc(2026,10,17);
     final watch=WindowsCloudChangeWatch();

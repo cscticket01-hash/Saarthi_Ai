@@ -148,9 +148,15 @@ bool automaticWindowsSyncDue({
   required DateTime? lastAttempt,
   required bool localMutation,
   required bool pendingWork,
-}) => localMutation || pendingWork || lastAttempt == null ||
-    now.isBefore(lastAttempt) ||
-    !now.isBefore(lastAttempt.add(const Duration(hours: 1)));
+}) => localMutation || pendingWork || windowsIntegrityAuditDue(
+    now:now,lastAttempt:lastAttempt);
+
+/// A failed/incomplete verified checkpoint stays visible, but cannot turn every
+/// subsequent remote change into another full-school integrity audit.
+bool windowsIntegrityAuditDue({required DateTime now,
+  required DateTime? lastAttempt, bool manual = false}) => manual ||
+    lastAttempt == null || now.isBefore(lastAttempt) ||
+    !now.isBefore(lastAttempt.add(const Duration(hours:1)));
 
 /// Collection heads are discovery hints. They cannot grant an ACK/checkpoint.
 Set<String> changedWindowsCollections(Map<String,String> known,

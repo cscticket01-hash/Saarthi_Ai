@@ -1189,9 +1189,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
     _syncing = true;
     final now = DateTime.now();
-    if (_manualSync || _lastIntegrityAttempt == null ||
-        now.isBefore(_lastIntegrityAttempt!) ||
-        now.difference(_lastIntegrityAttempt!) >= reconciliationInterval) {
+    final integrityAudit = windowsIntegrityAuditDue(now:now,
+      lastAttempt:_lastIntegrityAttempt,manual:_manualSync);
+    if (integrityAudit) {
       _lastIntegrityAttempt = now;
       _schedule.armCheckpoint(_lastIntegrityAttempt);
     }
@@ -1219,7 +1219,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             'School Drive connection pending. Local data retained.',
           );
         final protocolIdentity = jsonEncode([_activeProfileId, _activeSchoolSyncId, _activeGoogleUrl, central['scriptUrl']]);
-        if (_manualSync || _checkpointDue || _protocolIdentity != protocolIdentity ||
+        if (integrityAudit || _protocolIdentity != protocolIdentity ||
             _protocolVerifiedAt == null || DateTime.now().difference(_protocolVerifiedAt!) >= const Duration(minutes: 5)) {
         final health = await ManagedSchoolSession.callForSchool(
           _activeSchoolSyncId,
@@ -1253,9 +1253,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         if (_lastPull == null ||
             DateTime.now().difference(_lastPull!) >=
                 reconciliationInterval ||
-            _manualSync || _checkpointDue || _remoteCollections.isNotEmpty) {
+            integrityAudit || _remoteCollections.isNotEmpty) {
           _admitBatch();
-          final inventoryAudit = _manualSync || _checkpointDue;
+          final inventoryAudit = integrityAudit;
           final fullPull = inventoryAudit || _lastPull == null ||
               DateTime.now().difference(_lastPull!) >= reconciliationInterval;
           final selected = fullPull ? null : Set<String>.from(_remoteCollections);
