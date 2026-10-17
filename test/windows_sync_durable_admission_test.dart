@@ -174,6 +174,158 @@ void main() {
     expect((await db.collection('_windows_sync_conflicts').get()).docs,isEmpty);
   });
 
+  test('lost payment ACK inventory retains original retry instead of creating conflict', () async {
+    await db.collection('fee_payments').doc('payment').set({'schoolId':school,'amount':100});
+    final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original = queue.data();
+    final remote = {'schoolId':school,'amount':100,'_syncRevision':'committed-payment',
+      '_syncOperationId':original['operationId']};
+    expect(await db.recordOutboxConflict(queue.reference,original,remote),false);
+    expect((await queue.reference.get()).data()?['syncState'],'pending');
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    // Recover a previously misclassified conflict, preserving audit and CAS base.
+    await queue.reference.set({...original,'syncState':'conflict','lastError':'Record revision conflict'});
+    final conflicted = (await queue.reference.get()).data()!;
+    expect(await db.recordOutboxConflict(queue.reference,conflicted,remote),false);
+    final retry = (await queue.reference.get()).data()!;
+    expect(retry['syncState'],'pending');
+    expect(retry['operationId'],original['operationId']);
+    expect(retry['baseCloudRevision'],original['baseCloudRevision']);
+    expect((await db.collection('_windows_sync_conflict_history').get()).docs,hasLength(1));
+    final origin = db.activeProfileId;
+    await db.switchProfile('synthetic-payment-away');
+    await db.switchProfile(origin,identity:{'schoolSyncId':school,'schoolId':school});
+    final reopened = (await db.collection('_windows_firebase_outbox').doc(queue.id).get()).data()!;
+    expect(reopened['syncState'],'pending');
+    expect(reopened['operationId'],original['operationId']);
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},
+      sendVersioned:(item)async {
+        expect(item['operationId'],original['operationId']);
+        return 'committed-payment';
+      });
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    expect((await db.collection('_windows_sync_receipts').get()).docs,hasLength(1));
+  });
+
+  test('already deleted payment retries authoritative tombstone without rebasing or fake ACK', () async {
+    final ref = db.collection('fee_payments').doc('deleted-payment');
+    await ref.set({'schoolId':school,'amount':100});
+    await ref.delete();
+    final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original = queue.data();
+    await queue.reference.set({...original,'syncState':'conflict'});
+    final conflicted = (await queue.reference.get()).data()!;
+    expect(await db.recordOutboxConflict(queue.reference,conflicted,
+      {'schoolId':school,'_syncDeleted':true,'_syncRevision':'deleted-elsewhere',
+       '_syncOperationId':'other_device_delete_0001'}),false);
+    final retry = (await queue.reference.get()).data()!;
+    expect(retry['syncState'],'pending');
+    expect(retry['baseCloudRevision'],original['baseCloudRevision']);
+    expect(retry['operationId'],original['operationId']);
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    expect((await ref.get()).exists,false);
+  });
+
+  test('remote payment deletion retires offline edit; deliberate new save uses deletion revision', () async {
+    final ref = db.collection('fee_payments').doc('same-slot');
+    await ref.set({'schoolId':school,'amount':100});
+    final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original = queue.data();
+    final tomb = {'schoolId':school,'_syncDeleted':true,'_syncRevision':'verified-delete'};
+    expect(await db.recordOutboxConflict(queue.reference,original,tomb),false);
+    expect((await ref.get()).exists,false);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    expect((await db.collection('_windows_sync_conflict_history').get()).docs.single.data()['data']['amount'],100);
+    await db.applySyncedDocument(ref,null,tombstoneRevision:'verified-delete');
+    await ref.set({'schoolId':school,'amount':200});
+    // Full replacement edit before upload must retain fresh-entry identity.
+    await ref.set({'schoolId':school,'amount':250});
+    final fresh = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    expect(fresh.data()['baseCloudRevision'],'verified-delete');
+    expect(fresh.data()['data']['_syncRecreatesDeletedRevision'],'verified-delete');
+    expect(await db.recordOutboxConflict(fresh.reference,fresh.data(),tomb),false);
+    expect((await ref.get()).data()?['amount'],250);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+    await fresh.reference.update({'syncState':'conflict'});
+    final beforeUpgrade = (await fresh.reference.get()).data()!;
+    expect(await db.recordOutboxConflict(fresh.reference,beforeUpgrade,tomb),false);
+    expect((await fresh.reference.get()).data()?['syncState'],'pending');
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+  });
+
+  test('offline delete then re-add sends durable deletion before fresh record', () async {
+    final ref = db.collection('fee_payments').doc('offline-slot');
+    await db.applySyncedDocument(ref,{'schoolId':school,'amount':100,'_syncRevision':'old-cloud'});
+    await ref.delete();
+    final deletion = (await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+    await ref.set({'schoolId':school,'amount':200});
+    await ref.set({'schoolId':school,'amount':250});
+    final origin = db.activeProfileId;
+    await db.switchProfile('synthetic-offline-away');
+    await db.switchProfile(origin,identity:{'schoolSyncId':school,'schoolId':school});
+    final sent = <String>[];
+    await WindowsPendingSchoolSync.flush(profileId:origin,send:(a,b,c,d)async{},sendVersioned:(item)async {
+      sent.add(item['operation'] as String);
+      if(item['operation']=='delete') {
+        expect(item['operationId'],deletion['operationId']);
+        expect(item['baseCloudRevision'],'old-cloud');
+        return 'confirmed-deletion';
+      }
+      expect(item['baseCloudRevision'],'confirmed-deletion');
+      expect(item['data']['_syncRecreatesDeletedOperationId'],deletion['operationId']);
+      expect(item['data']['amount'],250);
+      return 'fresh-record';
+    });
+    expect(sent,['delete','set']);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    expect((await ref.get()).data()?['amount'],250);
+  });
+
+  test('pre-upgrade confirmed deletion supports fresh save without resetting local data', () async {
+    final ref = db.collection('fee_payments').doc('legacy-deleted-slot');
+    await ref.set({'schoolId':school,'amount':100});
+    await ref.delete();
+    final queued = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await db.acknowledgeOutbox(queued.reference,queued.data(),revision:'legacy-deletion-ack');
+    // Older clients persisted revision and verified deletion snapshot, without
+    // the new baseline deleted flag.
+    await db.collection('_windows_sync_baselines').doc(queued.id).set({'revision':'legacy-deletion-ack'});
+    await ref.set({'schoolId':school,'amount':300});
+    final fresh = (await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+    expect(fresh['baseCloudRevision'],'legacy-deletion-ack');
+    expect(fresh['data']['_syncRecreatesDeletedRevision'],'legacy-deletion-ack');
+    expect((await db.collection('_windows_local_deletions').get()).docs,isNotEmpty);
+  });
+
+  test('generic deletion reconciliation never discards a new student generation', () async {
+    final ref = db.collection('students_directory').doc('same-student-slot');
+    await ref.set({'schoolId':school,'name':'New occupant','mobileStableId':'p-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'});
+    final queued = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await db.recordOutboxConflict(queued.reference,queued.data(),
+      {'schoolId':school,'_syncDeleted':true,'_syncRevision':'retired-occupant',
+       '_syncDeletedOwner':'p-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+    expect((await ref.get()).data()?['name'],'New occupant');
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+  });
+
+  test('offline device missing delete/re-add adopts fresh generation but preserves genuine same-generation edits', () async {
+    final ref = db.collection('fee_payments').doc('offline-other-device');
+    await ref.set({'schoolId':school,'amount':100});
+    final old = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final fresh = {'schoolId':school,'amount':200,'_syncRevision':'new-generation',
+      '_syncRecreatesDeletedRevision':'deletion-missed-offline'};
+    await db.recordOutboxConflict(old.reference,old.data(),fresh);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    await db.applySyncedDocument(ref,fresh);
+    expect((await ref.get()).data()?['amount'],200);
+    await ref.set({'schoolId':school,'amount':250});
+    final edit = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    expect(edit.data()['data']['_syncRecreatesDeletedRevision'],'deletion-missed-offline');
+    expect(await db.recordOutboxConflict(edit.reference,edit.data(),{...fresh,'_syncRevision':'parallel-edit','amount':300}),true);
+    expect((await ref.get()).data()?['amount'],250);
+    expect((await edit.reference.get()).data()?['syncState'],'conflict');
+  });
+
   test('adding missing school identity never replaces an original retry operation ID', () async {
     await db.collection('school_notices').doc('notice').set({'title':'Synthetic','capturedAt':123});
     final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;

@@ -6978,7 +6978,11 @@ function VS_managedRecordUnlocked(b) {
     const replacement=VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.operation==='write'&&existing&&b.data&&/^p-[a-f0-9]{32,64}$/.test(b.data.mobileStableId||'')&&b.data.mobileStableId!==b.data.replacesStudentGeneration&&b.data.replacesStudentGeneration===(existing.data._syncDeleted?existing.data._syncDeletedOwner:VS_studentGeneration(existing.data,b.id));
     const childReplacement=VS_reusableStudentChild(b,existing);
     const sameDeletion=VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.operation==='delete'&&existing&&typeof b.deletedStudentGeneration==='string'&&b.deletedStudentGeneration===(existing.data._syncDeleted?existing.data._syncDeletedOwner:VS_studentGeneration(existing.data,b.id));
-    if((existing&&existing.data._syncRevision||'')!==b.expectedRecordRevision&&!replacement&&!sameDeletion&&!childReplacement)throw new Error('Record revision conflict');
+    // Independent devices may delete the same record from an older revision.
+    // The authoritative tombstone already fulfils that intent. Never rebase a
+    // stale delete onto a live (possibly restored/new-generation) record.
+    const alreadyDeleted=b.operation==='delete'&&existing&&existing.data._syncDeleted===true;
+    if((existing&&existing.data._syncRevision||'')!==b.expectedRecordRevision&&!replacement&&!sameDeletion&&!childReplacement&&!alreadyDeleted)throw new Error('Record revision conflict');
     if(replacement&&!existing.data._syncDeleted){VS_deleteStudentOwnedRecords(b.id,existing.data,b.operationId,b.data);}
   }
 
@@ -6991,7 +6995,7 @@ function VS_managedRecordUnlocked(b) {
          (!revision&&current&&b.expectedUploadedAt!==undefined&&b.expectedUploadedAt!==current.data.uploadedAt))throw new Error('Newer cloud document retained; resolve version conflict');
     } else if(revision) throw new Error('Versioned document requires a matching revision');
   }
-  if(b.operation==='write' && existing && existing.data._syncDeleted && !VS_reusableStudentChild(b,existing) && !(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.syncProtocol===2&&/^p-[a-f0-9]{32,64}$/.test(b.data&&b.data.mobileStableId||'')&&b.data.mobileStableId!==existing.data._syncDeletedOwner&&(b.expectedRecordRevision===existing.data._syncRevision||b.data.replacesStudentGeneration===existing.data._syncDeletedOwner)))throw new Error('Record revision conflict');
+  if(b.operation==='write' && existing && existing.data._syncDeleted && !VS_reusableStudentChild(b,existing) && !(b.syncProtocol===2&&b.expectedRecordRevision===existing.data._syncRevision&&b.data&&(b.data._syncRecreatesDeletedRevision===existing.data._syncRevision||b.data._syncRecreatesDeletedOperationId&&b.data._syncRecreatesDeletedOperationId===existing.data._syncOperationId)&&b.collection!=='students_directory') && !(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.syncProtocol===2&&/^p-[a-f0-9]{32,64}$/.test(b.data&&b.data.mobileStableId||'')&&b.data.mobileStableId!==existing.data._syncDeletedOwner&&(b.expectedRecordRevision===existing.data._syncRevision||b.data.replacesStudentGeneration===existing.data._syncDeletedOwner)))throw new Error('Record revision conflict');
   if(b.operation==='delete'){
     if(VS_recycleEnabled()&&b.syncProtocol!==2)throw new Error('Invalid sync operation');
     if(existing&&existing.data._syncDeleted){VS_saveRecordHead(store,existing);if(existing.row){VS_refreshStudentReadable(store,existing,existing.row);VS_refreshRecordReadable(store,existing,existing.row);}VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};}
@@ -7017,7 +7021,10 @@ function VS_managedRecordUnlocked(b) {
     if(known&&known.mobileStableId&&known.mobileStableId!==b.data.personId)throw new Error('Student generation was deleted; stale child rejected');
   }
   const studentUniquenessScope=b.collection==='students_directory'?VS_studentUnique(store,b.id,b.data,existing):undefined;
+  const generation=b.collection!=='students_directory'&&existing&&!existing.data._syncDeleted&&existing.data._syncRecreatesDeletedRevision;
+  if(generation&&b.data._syncRecreatesDeletedRevision&&b.data._syncRecreatesDeletedRevision!==generation)throw new Error('Record revision conflict');
   const revision=Utilities.getUuid(),data=Object.assign({},b.data);
+  if(generation)data._syncRecreatesDeletedRevision=generation;
   Object.keys(data).filter(k=>k.indexOf('_syncRecycle')===0).forEach(k=>delete data[k]);
   delete data._syncDeleted;delete data._syncOperationId;delete data._syncRevision;
   data._syncRevision=revision;
@@ -7327,7 +7334,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',scriptBundleVersion:'2026-10-16.1',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',scriptBundleVersion:'2026-10-17.1',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}

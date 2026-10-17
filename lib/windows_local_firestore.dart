@@ -1159,10 +1159,11 @@ class _LocalSchoolDatabase {
             if(pending is Map && pending.values.any((item)=>item is Map &&
                 item['collection']==operation.collection && item['documentId']==operation.documentId)) continue;
           }
-          if(operation.preservePending && operation.data?['_syncRevision'] is String) {
+          if(operation.preservePending && (operation.data?['_syncRevision'] is String || operation.tombstoneRevision != null)) {
             final baselines = collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
             final key = base64Url.encode(utf8.encode('${operation.collection}\\n${operation.documentId}')).replaceAll('=', '');
-            baselines[key] = {'revision':operation.data!['_syncRevision']};
+            baselines[key] = {'revision':operation.data?['_syncRevision'] ?? operation.tombstoneRevision, 'deleted':operation.data == null,
+              if(operation.data?['_syncRecreatesDeletedRevision'] is String) 'recreatedFrom':operation.data!['_syncRecreatesDeletedRevision']};
           }
           touched.add(operation.collection);
 
@@ -1192,7 +1193,8 @@ class _LocalSchoolDatabase {
               if (operation.acknowledgedRevision != null && operation.data != null) {
                 final sent = operation.data!, revision = operation.acknowledgedRevision!;
                 final baselines = collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
-                baselines[operation.documentId] = {'revision':revision};
+                baselines[operation.documentId] = {'revision':revision,'deleted':sent['operation']=='delete',
+                  if(sent['data'] is Map && sent['data']['_syncRecreatesDeletedRevision'] is String) 'recreatedFrom':sent['data']['_syncRecreatesDeletedRevision']};
                 final receipts=collections.putIfAbsent('_windows_sync_receipts',()=> <String,dynamic>{}) as Map;
                 if(sent['operationId'] is String)receipts.putIfAbsent(sent['operationId'],()=>{
                   'schoolId':sent['schoolId'],'operationId':sent['operationId'],
@@ -1216,6 +1218,13 @@ class _LocalSchoolDatabase {
                 if (queued is Map && queued['operationId'] != sent['operationId'] &&
                     queued['baseCloudRevision'] == sent['baseCloudRevision']) {
                   queued['baseCloudRevision'] = revision;
+                }
+                if(queued is Map && queued['priorDeletion'] is Map &&
+                    queued['priorDeletion']['operationId'] == sent['operationId']) {
+                  if(queued['operation'] != 'delete' && queued['data'] is Map) {
+                    queued['data']['_syncRecreatesDeletedRevision'] = revision;
+                  }
+                  queued.remove('priorDeletion');
                 }
               }
               if(operation.data != null &&
@@ -1604,16 +1613,97 @@ class _LocalSchoolDatabase {
         }
         final parentId=expected['data'] is Map?expected['data']['studentId']:null;
         final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
-          '_windows_sync_conflicts',if(parentId is String)'students_directory'},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
+          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_baselines','_windows_recycle_requests',if(parentId is String)'students_directory'},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
         final current = queue is Map ? queue[queueId] : null;
         if(current is Map && (replacesDeletedStudent(current,remote)||deletesSameStudentGeneration(current,remote))) {completer.complete(false);return;}
         final parent=(collections['students_directory'] as Map?)?[parentId];
         if(current is Map&&reusesDeletedStudentRecord(current,remote,parent is Map?parent:null)){completer.complete(false);return;}
-        if (current is! Map || current['syncState']=='needsAttention' ||
-            revision == (current['baseCloudRevision'] ?? '') ||
+        if (current is! Map ||
             _jsonStableMap(Map<String,dynamic>.from(current)) != _jsonStableMap(_encodeMap(expected))) {
+          completer.complete(false);
+          return;
+        }
+        // A verified inventory can contain our committed operation after its
+        // response was lost; another device may also have completed a delete.
+        // Retry the ORIGINAL request so the server verifies
+        // its request hash and returns the real ACK; inventory alone is no ACK.
+        final remoteGeneration = remote['_syncRecreatesDeletedRevision'];
+        final localGeneration = current['operation'] == 'delete' ? current['recordGeneration'] :
+            current['data'] is Map ? current['data']['_syncRecreatesDeletedRevision'] : null;
+        final replacedGeneration = remote['_syncDeleted'] != true && remoteGeneration is String &&
+            remoteGeneration.isNotEmpty && localGeneration != remoteGeneration && current['priorDeletion'] == null;
+        if ((remote['_syncDeleted'] == true && current['operation'] != 'delete' || replacedGeneration) &&
+            collection != 'students_directory') {
+          final restores = collections['_windows_recycle_requests'];
+          final localRow = (collections[collection] as Map?)?[id];
+          final localTime = localRow is Map ? localRow['_syncUpdatedAt'] : null;
+          if (restores is Map && restores.values.any((r) => r is Map &&
+              r['localRestore'] == true && r['schoolId'] == school &&
+              r['collection'] == collection && r['documentId'] == id &&
+              (r['state'] != 'verified' || remote['_syncUpdatedAt'] is! int ||
+               localTime is! int || remote['_syncUpdatedAt'] <= localTime ||
+               r['recordRevision'] == revision))) {
+            completer.complete(false);return;
+          }
+
+          final data = current['data'];
+          if (data is Map && (data['_syncRecreatesDeletedRevision'] == revision ||
+              data['_syncRecreatesDeletedOperationId'] != null && data['_syncRecreatesDeletedOperationId'] == remote['_syncOperationId'] ||
+              current['priorDeletion'] is Map && data['_syncRecreatesDeletedOperationId'] != null &&
+              data['_syncRecreatesDeletedOperationId'] == current['priorDeletion']['operationId'])) {
+            // An older Script may have rejected this exact fresh-entry intent
+            // before its upgrade. Re-admit the unchanged request for real ACK.
+            if(current['syncState']=='conflict') {
+              final history = collections.putIfAbsent('_windows_sync_conflict_history',
+                  () => <String,dynamic>{}) as Map;
+              history.putIfAbsent(operationId, () => Map<String,dynamic>.from(current));
+              queue[queueId] = {...Map<String,dynamic>.from(current),'syncState':'pending','retryCount':0}
+                ..remove('lastError')..remove('failureCategory')..remove('retryAtMillis');
+              _storeCollections(root,collections);await _writeRoot(root);
+              final signal = _signals['_windows_firebase_outbox'];
+              if(signal != null && !signal.isClosed)signal.add(null);
+            }
+            completer.complete(false);return;
+          }
+          // Authenticated deletion wins over an offline edit. Retain the entire
+          // superseded operation and local values as audit, never upload it again.
+          final history = collections.putIfAbsent('_windows_sync_conflict_history',
+              () => <String,dynamic>{}) as Map;
+          history.putIfAbsent(operationId, () => {...Map<String,dynamic>.from(current),
+            'retiredByDeletionRevision':replacedGeneration ? remoteGeneration : revision});
+          (collections[collection] as Map?)?.remove(id);
+          queue.remove(queueId);
+          final baselines = collections.putIfAbsent('_windows_sync_baselines',
+              () => <String,dynamic>{}) as Map;
+          baselines[queueId] = {'revision':revision,'deleted':remote['_syncDeleted']==true,
+            if(remoteGeneration is String) 'recreatedFrom':remoteGeneration};
+          _storeCollections(root,collections);await _writeRoot(root);
+          for (final name in [collection,'_windows_firebase_outbox']) {
+            final signal = _signals[name];
+            if (signal != null && !signal.isClosed) signal.add(null);
+          }
+          completer.complete(false);return;
+        }
+        if (revision == (current['baseCloudRevision'] ?? '') ||
+            remote['_syncDeleted'] != true && current['syncState']=='needsAttention') {
+          completer.complete(false);return;
+        }
+        final completedDeletion = current['operation'] == 'delete' && remote['_syncDeleted'] == true;
+        if (completedDeletion || (remote['_syncOperationId'] == operationId &&
+            (remote['_syncDeleted'] == true) == (current['operation'] == 'delete'))) {
+          if ({'conflict','needsAttention'}.contains(current['syncState'])) {
+            final history = collections.putIfAbsent('_windows_sync_conflict_history',
+                () => <String,dynamic>{}) as Map;
+            history.putIfAbsent(operationId, () => Map<String,dynamic>.from(current));
+            queue[queueId] = {...Map<String,dynamic>.from(current),
+              'syncState':'pending','retryCount':0}..remove('lastError')..remove('failureCategory')..remove('retryAtMillis');
+            _storeCollections(root,collections);
+            await _writeRoot(root);
+            final signal = _signals['_windows_firebase_outbox'];
+            if (signal != null && !signal.isClosed) signal.add(null);
+          }
           completer.complete(false);
           return;
         }
@@ -1848,14 +1938,48 @@ class _LocalSchoolDatabase {
       if(operationId is String)history.putIfAbsent(operationId,()=>Map<String,dynamic>.from(previous));
     }
 
+    final priorDeletion = previous is Map
+        ? previous['priorDeletion'] ?? (previous['operation'] == 'delete' ? Map<String,dynamic>.from(previous) : null)
+        : null;
     final baseline = collections['_windows_sync_baselines'];
     final baselineEntry = baseline is Map ? baseline[key] : null;
+    if (!isDelete && baselineEntry is Map && baselineEntry['recreatedFrom'] is String &&
+        finalDocs[operation.documentId] is Map) {
+      (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedRevision'] = baselineEntry['recreatedFrom'];
+    }
+    if (!isDelete && previous is Map && previous['data'] is Map &&
+        finalDocs[operation.documentId] is Map) {
+      for (final field in ['_syncRecreatesDeletedRevision','_syncRecreatesDeletedOperationId']) {
+        if ((previous['data'] as Map)[field] is String) {
+          (finalDocs[operation.documentId] as Map)[field] = previous['data'][field];
+        }
+      }
+    }
+    if (!isDelete && previous is Map && previous['operation'] == 'delete' &&
+        finalDocs[operation.documentId] is Map) {
+      (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedOperationId'] = priorDeletion is Map ? priorDeletion['operationId'] : previous['operationId'];
+    }
+    final deletionHistory = collections['_windows_local_deletions'];
+    final verifiedLegacyDeletion = baselineEntry is Map && deletionHistory is Map &&
+        deletionHistory.values.any((d) => d is Map && d['schoolId'] == _activeIdentity['schoolSyncId'] &&
+          d['collection'] == operation.collection && d['documentId'] == operation.documentId &&
+          d['cloudDeletionVerified'] == true && d['deletedRevision'] is String &&
+          d['deletedRevision'] == baselineEntry['revision']);
+    if (!isDelete && previous is! Map && baselineEntry is Map &&
+        (baselineEntry['deleted'] == true || verifiedLegacyDeletion) && baselineEntry['revision'] is String &&
+        finalDocs[operation.documentId] is Map) {
+      // Only a save made AFTER observing this deletion may recreate this slot.
+      (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedRevision'] = baselineEntry['revision'];
+    }
     queue[key] = <String, dynamic>{
       'operationId': base64Url.encode(List<int>.generate(24, (_) => Random.secure().nextInt(256))).replaceAll('=', ''),
       'schoolId': _activeIdentity['schoolSyncId'] ?? '',
       'baseCloudRevision': previous is Map ? previous['baseCloudRevision'] ?? '' :
           baselineEntry is Map ? baselineEntry['revision'] ?? '' : '',
       'syncState':previous is Map && {'conflict','needsAttention'}.contains(previous['syncState']) ? previous['syncState'] : 'pending', 'retryCount':0,
+      if(priorDeletion is Map) 'priorDeletion':Map<String,dynamic>.from(priorDeletion),
+      if(isDelete && (previous is Map && previous['data'] is Map && previous['data']['_syncRecreatesDeletedRevision'] is String || baselineEntry is Map && baselineEntry['recreatedFrom'] is String))
+        'recordGeneration':previous is Map && previous['data'] is Map && previous['data']['_syncRecreatesDeletedRevision'] is String ? previous['data']['_syncRecreatesDeletedRevision'] : baselineEntry['recreatedFrom'],
       'collection': operation.collection,
       'documentId': operation.documentId,
       'operation': isDelete ? 'delete' : 'set',

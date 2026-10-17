@@ -164,3 +164,48 @@ test('UTF-8 snapshot byte limit fails before deletion and retains the large orig
  assert.equal(f.call({action:'managed_records',operation:'delete',collection:'students_directory',id:'large',syncProtocol:2,operationId:'delete_operation_0001',expectedRecordRevision:write.recordRevision}).success,false);
  assert.equal(f.call({action:'managed_records',operation:'read',collection:'students_directory'}).records.large.name,name);
 });
+
+test('independent stale fee deletion acknowledges existing tombstone without rewriting history',()=>{
+ const t=setup('fee_payments');
+ const before=JSON.stringify(t.tomb);
+ const second=t.f.call({...t.deletion,operationId:'delete_other_device_0001'});
+ assert.equal(second.success,true);
+ assert.equal(second.recordRevision,t.deleted.recordRevision);
+ const row=t.f.call({action:'managed_records',operation:'read',collection:t.collection,syncProtocol:2}).records.row;
+ assert.equal(JSON.stringify(row),before);
+ // A stale write can never resurrect the deleted payment.
+ assert.equal(t.f.call({...t.deletion,operation:'write',operationId:'stale_payment_edit_0001',data:{schoolId:A,amount:999}}).success,false);
+});
+
+test('fresh save after verified deletion recreates slot but stale offline payment cannot resurrect it',()=>{
+ const t=setup('fee_payments');
+ const write={...t.deletion,operation:'write',operationId:'new_payment_after_delete_0001',expectedRecordRevision:t.deleted.recordRevision,data:{schoolId:A,amount:200}};
+ assert.equal(t.f.call(write).success,false);
+ const fresh={...write,data:{...write.data,_syncRecreatesDeletedRevision:t.deleted.recordRevision}};
+ const saved=t.f.call(fresh);assert.equal(saved.success,true);
+ assert.equal(t.f.call(fresh).recordRevision,saved.recordRevision);
+ assert.equal(t.f.call({...t.deletion,operationId:'old_device_delete_again_0001'}).success,false);
+ const row=t.f.call({action:'managed_records',operation:'read',collection:t.collection,syncProtocol:2}).records.row;
+ assert.equal(row.amount,200);assert.equal(row._syncDeleted,undefined);
+});
+
+for(const collection of ['fee_ledger','school_expenses','teacher_salary','teachers_directory','teacher_schedules','school_notices','school_settings','attendance_records','exams','exam_results','exam_center_results','documents'])test(collection+': deliberate fresh entry after verified deletion',()=>{
+ const t=setup(collection);
+ const result=t.f.call({...t.deletion,operation:'write',operationId:'fresh_entry_after_delete_0001',expectedRecordRevision:t.deleted.recordRevision,data:{schoolId:A,name:'New entry',_syncRecreatesDeletedRevision:t.deleted.recordRevision}});
+ assert.equal(result.success,true,result.message);
+ assert.notEqual(result.recordRevision,t.deleted.recordRevision);
+ const stale=t.f.call({...t.deletion,operationId:'stale_delete_after_new_0001'});
+ assert.equal(stale.success,false);
+});
+
+test('fresh generation survives older-client edits and lost ACK; caller cannot replace live generation identity',()=>{
+ const t=setup('fee_payments');
+ const fresh=t.f.call({...t.deletion,operation:'write',operationId:'fresh_generation_write_0001',expectedRecordRevision:t.deleted.recordRevision,data:{schoolId:A,amount:200,_syncRecreatesDeletedRevision:t.deleted.recordRevision}});
+ assert.equal(fresh.success,true);
+ const edit={...t.deletion,operation:'write',operationId:'old_client_edit_fresh_0001',expectedRecordRevision:fresh.recordRevision,data:{schoolId:A,amount:250}};
+ const saved=t.f.call(edit);assert.equal(saved.success,true);
+ assert.equal(t.f.call(edit).recordRevision,saved.recordRevision);
+ const row=t.f.call({action:'managed_records',operation:'read',collection:t.collection,syncProtocol:2}).records.row;
+ assert.equal(row._syncRecreatesDeletedRevision,t.deleted.recordRevision);
+ assert.equal(t.f.call({...edit,operationId:'tamper_generation_0001',expectedRecordRevision:saved.recordRevision,data:{...edit.data,_syncRecreatesDeletedRevision:'unrelated-deletion'}}).success,false);
+});
