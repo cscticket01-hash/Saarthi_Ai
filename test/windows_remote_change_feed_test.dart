@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_remote_change_feed.dart';
+import '../lib/windows_connect/school_drive_images.dart';
 
 Map<String,dynamic> event(String school, {List<String> collections=const []}) => {
   'success':true,'schoolId':school,'changeFeedVersion':1,'reset':false,
@@ -9,6 +12,19 @@ Map<String,dynamic> event(String school, {List<String> collections=const []}) =>
 };
 
 void main() {
+  testWidgets('image rebuild retains its download future; changed source replaces it', (tester) async {
+    Widget view(String source,double width)=>MaterialApp(home:Scaffold(body:
+      schoolNetworkImage(source,width:width,height:32)));
+    await tester.pumpWidget(view('invalid-image-a',32));
+    final finder=find.byWidgetPredicate((w)=>w is FutureBuilder<Uint8List?>);
+    final first=tester.widget<FutureBuilder<Uint8List?>>(finder).future;
+    await tester.pumpWidget(view('invalid-image-a',64));
+    expect(identical(first,tester.widget<FutureBuilder<Uint8List?>>(finder).future),true);
+    await tester.pumpWidget(view('invalid-image-b',64));
+    expect(identical(first,tester.widget<FutureBuilder<Uint8List?>>(finder).future),false);
+    await tester.pump();
+  });
+
   test('verified hints schedule changed collections; stop cancels reconnect', () {
     fakeAsync((clock) {
       final hints=<Set<String>>[];var calls=0;

@@ -56,10 +56,32 @@ Future<Uint8List?> schoolImageBytes(String source) async {
   return null;
 }
 Widget schoolNetworkImage(String source,{double? width,double? height,BoxFit? fit,ImageErrorWidgetBuilder? errorBuilder}) {
-  return FutureBuilder<Uint8List?>(future:schoolImageBytes(source),builder:(context,snapshot){
+  // A parent rebuild must not restart the same private Drive download. A new
+  // school or source creates a fresh state, discarding any old pending result.
+  return _SchoolNetworkImage(key:ValueKey(jsonEncode([
+    FirebaseFirestore.instance.activeProfileId,source])),source:source,
+    width:width,height:height,fit:fit,errorBuilder:errorBuilder);
+}
+class _SchoolNetworkImage extends StatefulWidget {
+  const _SchoolNetworkImage({super.key,required this.source,this.width,this.height,this.fit,this.errorBuilder});
+  final String source;
+  final double? width,height;
+  final BoxFit? fit;
+  final ImageErrorWidgetBuilder? errorBuilder;
+  @override
+  State<_SchoolNetworkImage> createState()=>_SchoolNetworkImageState();
+}
+class _SchoolNetworkImageState extends State<_SchoolNetworkImage> {
+  late final Future<Uint8List?> _bytes=schoolImageBytes(widget.source);
+  @override
+  Widget build(BuildContext context) => FutureBuilder<Uint8List?>(future:_bytes,builder:(context,snapshot){
     if (snapshot.connectionState == ConnectionState.done && snapshot.data != null) {
-      return Image.memory(snapshot.data!,width:width,height:height,fit:fit,errorBuilder:errorBuilder);
+      return Image.memory(snapshot.data!,width:widget.width,height:widget.height,fit:widget.fit,errorBuilder:widget.errorBuilder);
     }
-    return SizedBox(width:width,height:height,child:errorBuilder?.call(context,StateError('School image unavailable'),null) ?? const Icon(Icons.image_outlined));
+    if(snapshot.connectionState!=ConnectionState.done) {
+      return SizedBox(width:widget.width,height:widget.height,child:const Center(
+        child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))));
+    }
+    return SizedBox(width:widget.width,height:widget.height,child:widget.errorBuilder?.call(context,StateError('School image unavailable'),null) ?? const Icon(Icons.image_outlined));
   });
 }

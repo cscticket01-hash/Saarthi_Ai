@@ -1256,7 +1256,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           );
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
           _changeFeedSupported=health['brokerChangeFeedVersion']==1;
-          if(_changeFeedSupported)_remoteFeed.start(jsonEncode([_activeProfileId,_activeSchoolSyncId]),_activeSchoolSyncId);
+          if(_changeFeedSupported&&automaticScheduleExpected)_remoteFeed.start(jsonEncode([_activeProfileId,_activeSchoolSyncId]),_activeSchoolSyncId);
           else _remoteFeed.stop();
           _changeHeadsSupported = health['recordChangeHeadsVersion'] == 1 &&
               health['brokerChangeHeadsVersion'] == 1;
