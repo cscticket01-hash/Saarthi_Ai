@@ -46,6 +46,23 @@ test('bounded waiters reject overload and bad cursors without leaking subscripti
  await assert.rejects(feed.wait(A,'forged'),e=>e.status===400);
  await assert.rejects(feed.wait('other'),/school/);
 });
+test('multi-collection hint uses one transaction; stalled hint storage cannot stall a verified ACK',async()=>{
+ const cloud=sharedCloud();let writes=0;
+ const original=cloud.db.runTransaction;
+ cloud.db.runTransaction=(...args)=>{writes++;return original(...args);};
+ const feed=createSchoolChangeFeed({db:cloud.db,collections:['attendance_records','attendance_logs']});
+ await feed.publishMany(A,['attendance_records','attendance_logs','attendance_logs']);
+ assert.equal(writes,1);assert.equal([...cloud.records.values()][0].events.length,2);
+ const base=fixture(),db={...base.db,doc:p=>p.startsWith('school_sync_hints/')?cloud.db.doc(p):base.db.doc(p),
+  runTransaction:()=>new Promise(()=>{})};
+ const handle=createManagedSchools({auth:base.auth,db,projectId:'central',encryptionKey:key,now:()=>time,
+  fetchImpl:async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,syncProtocol:2,recordRevision:'committed'})})});
+ const started=performance.now();
+ const ack=await handle({method:'POST',headers:{authorization:'Bearer A'},body:{action:'managed/records',schoolId:A,
+  collection:'fee_payments',operation:'write',id:'receipt',data:{amount:500},syncProtocol:2,
+  operationId:'synthetic-operation-0002',expectedRecordRevision:''}});
+ assert.equal(ack.recordRevision,'committed');assert(performance.now()-started<2500);
+});
 test('events are authenticated through existing school boundaries and unavailable feed fails visibly',async()=>{
  const f=fixture();
  await assert.rejects(f.call({action:'managed/events',schoolId:B}),e=>e.status===403);

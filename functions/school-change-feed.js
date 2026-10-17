@@ -18,13 +18,18 @@ function createSchoolChangeFeed({db,collections,waitMillis=20000,maxWaiters=500}
   const records={};for(const col of names){const rows=selected.filter(e=>e.collection===col);if(!reset&&rows.length&&rows.every(e=>typeof e.id==='string'))records[col]=[...new Set(rows.map(e=>e.id))];}
   return {cursor:current,reset,collections:names,records};
  }
- return {enabled,async publish(school,collection,id){
-  valid(school);if(!enabled||!allowed.has(collection))return;
+ async function publishMany(school,collections,id){
+  valid(school);const selected=[...new Set(collections)].filter(c=>allowed.has(c));
+  if(!enabled||!selected.length)return;
   await db.runTransaction(async tx=>{const r=ref(school),snap=await tx.get(r),old=snap.exists?snap.data():{};
-   const sequence=(Number.isSafeInteger(old.sequence)?old.sequence:0)+1;
-   tx.set(r,{version:1,epoch:old.epoch||randomUUID(),sequence,
-    events:[...(Array.isArray(old.events)?old.events:[]),{sequence,collection,...(typeof id==='string'&&id.length<=200&&!['.','..','__proto__','prototype','constructor'].includes(id)&&!id.includes('/')?{id}:{})}].slice(-64)});
-  });
+   const previous=Number.isSafeInteger(old.sequence)?old.sequence:0;
+   const events=selected.map((collection,index)=>({sequence:previous+index+1,collection,
+    ...(typeof id==='string'&&id.length<=200&&!['.','..','__proto__','prototype','constructor'].includes(id)&&!id.includes('/')?{id}:{})}));
+   tx.set(r,{version:1,epoch:old.epoch||randomUUID(),sequence:previous+events.length,
+    events:[...(Array.isArray(old.events)?old.events:[]),...events].slice(-64)});
+  },{maxAttempts:2});
+ }
+ return {enabled,publishMany,async publish(school,collection,id){return publishMany(school,[collection],id);
  },async wait(school,cursor){
   valid(school);if(!enabled)throw Object.assign(Error('Change feed unavailable'),{status:503,code:'CHANGE_FEED_UNAVAILABLE',publicMessage:true});
   if(cursor!==undefined&&(typeof cursor!=='string'||cursor.length>80||! /^(?:empty|[a-f0-9-]{36}):[0-9]{1,15}$/.test(cursor)))throw Object.assign(Error('Invalid change cursor'),{status:400,publicMessage:true});

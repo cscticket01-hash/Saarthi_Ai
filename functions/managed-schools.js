@@ -21,7 +21,13 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
  const cardReader=createManagedCardReader({db,enforced:cardReaderEnforced,privateKey:cardReaderPrivateKey,now});
  if(cardIssueEnabled&&!cardReaderEnforced)throw Error('Card issuance requires all-reader enforcement');
  const changeFeed=createSchoolChangeFeed({db,collections:[...COLLECTIONS].filter(c=>c!=='backups')});
- async function changeHint(school,collection,id){try{await changeFeed.publish(school,collection,id);}catch(_){/* Hints never change a verified storage ACK; polling repairs gaps. */}}
+ async function changeHint(school,collection,id){
+  let timer;try{await Promise.race([
+   changeFeed.publishMany(school,Array.isArray(collection)?collection:[collection],id),
+   new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Hint publication budget exceeded')),1000);})
+  ]);}catch(_){/* Hints never delay or reverse a verified storage ACK indefinitely; polling repairs gaps. */}
+  finally{clearTimeout(timer);}
+ }
  const readCard=(schoolId,request)=>cardReader.authorizeOnline({schoolId,deviceId:request.deviceId,sessionToken:request.sessionToken,cardAuthorizationToken:request.cardAuthorizationToken,role:request.role,personId:request.personId,linkToken:request.linkToken,cardIssueId:request.cardIssueId});
  if(!['attendance_outbox','attendance_test_outbox'].includes(attendanceCollection))throw Error('Invalid attendance collection');
  const mobileStates=new Map(),storageStates=new Map(),developerViews=new Map(),readViews=new Map();
@@ -101,7 +107,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   if(!permitted.length)return rejected;
   const result=await signed(m,{action:'managed_attendance_batch',lease:{schoolId,expiresAt:lease(m).expiresAt},operations:permitted});
   if(!Array.isArray(result.acknowledgements))throw Error('Attendance acknowledgement missing');
-  if(result.acknowledgements.some(ack=>ack.success===true)){await Promise.all(['attendance_records','attendance_logs','teacher_attendance'].map(c=>changeHint(schoolId,c)));invalidate(schoolId);await notifyChanged(schoolId,'attendance-ack',false).catch(()=>{});}
+  if(result.acknowledgements.some(ack=>ack.success===true)){await changeHint(schoolId,['attendance_records','attendance_logs','teacher_attendance']);invalidate(schoolId);await notifyChanged(schoolId,'attendance-ack',false).catch(()=>{});}
   return [...result.acknowledgements,...rejected];
  }});
  const pushDevices=new Map();
@@ -182,8 +188,8 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
     await saveSyncEvidence(m.schoolId,{outcome:ack?'durable_ack':'verified_response',stage:body.action,protocol:result.syncProtocol===2?2:1});
    }
    if(body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await changeHint(m.schoolId,body.collection,body.id);
-   if(body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await Promise.all([...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory').map(c=>changeHint(m.schoolId,c)));
-   if(body.action==='managed_recycle'&&body.operation==='restore')await Promise.all([...COLLECTIONS].filter(c=>c!=='backups').map(c=>changeHint(m.schoolId,c)));
+   if(body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory'));
+   if(body.action==='managed_recycle'&&body.operation==='restore')await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'));
    return result;
   }catch(error){
    if(['managed_records','managed_delta','managed_mobile'].includes(body.action))await saveSyncEvidence(m.schoolId,{outcome:'failed',stage:body.action,code:
@@ -354,6 +360,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   const body={action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}};
   const result=b.request.action==='mobile_dashboard'
    ?await readView(m.schoolId,body,()=>signed(m,body),true):await signed(m,body);
+  if(b.request.action==='mobile_mark_attendance')await changeHint(m.schoolId,'attendance_records');
   if(['mobile_logout','mobile_mark_attendance','mobile_complaint'].includes(b.request.action))invalidate(m.schoolId);
   const verifiedCard=b.request.action==='mobile_login'?await cardReader.verifyLogin({schoolId:b.schoolId,role:b.request.role,personId:b.request.personId,linkToken:b.request.linkToken,deviceId:b.request.deviceId,cardIssueId:b.request.cardIssueId},result):cardContext;
   await registerDevice(b.schoolId,b.request,result);
