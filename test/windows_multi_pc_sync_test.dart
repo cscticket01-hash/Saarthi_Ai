@@ -139,10 +139,12 @@ void main() {
     final fee=rig.db.collection('fee_payments').doc('payment');
     await fee.set({'schoolId':school,'amount':500,'receiptNo':'synthetic-1'});
     final original=(await rig.queue()).single.data();
-    for(var attempt=0;attempt<3;attempt++) {
+    for(var attempt=0;attempt<5;attempt++) {
       await expectLater(rig.flush(sender:(row)async{await rig.send(row);throw TimeoutException('Response lost after commit');}),throwsA(isA<TimeoutException>()));
     }
+    expect((await rig.queue()).single.data()['syncState'],'needsAttention');
     await rig.pull({'fee_payments'});expect((await rig.queue()).single.data()['operationId'],original['operationId']);
+    expect((await rig.queue()).single.data()['syncState'],'pending');
     await rig.flush();expect(await rig.queue(),isEmpty);
     await rig.open('pc2');await rig.pull({'fee_payments'});
     await rig.db.collection('fee_payments').doc('separate-payment').set({'schoolId':school,'amount':250,'receiptNo':'synthetic-2'});

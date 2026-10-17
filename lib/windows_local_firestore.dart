@@ -1686,8 +1686,17 @@ class _LocalSchoolDatabase {
           }
           completer.complete(false);return;
         }
+        // A committed operation can exhaust transport retries after repeated
+        // lost ACKs. Its authenticated operation identity admits only a replay
+        // of the original request; the server still validates its request hash.
+        // Validation/authentication/unknown attention states remain for review.
+        final committedTransportRetry = remote['_syncOperationId'] == operationId &&
+            (remote['_syncDeleted'] == true) == (current['operation'] == 'delete') &&
+            current['syncState'] == 'needsAttention' &&
+            {'timeout','server','networkPath'}.contains(current['failureCategory']);
         if (revision == (current['baseCloudRevision'] ?? '') ||
-            remote['_syncDeleted'] != true && current['syncState']=='needsAttention') {
+            remote['_syncDeleted'] != true && current['syncState']=='needsAttention' &&
+              !committedTransportRetry) {
           completer.complete(false);return;
         }
         final completedDeletion = current['operation'] == 'delete' && remote['_syncDeleted'] == true;
