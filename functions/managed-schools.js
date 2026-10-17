@@ -465,7 +465,16 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
    const health=await scriptRequest(url,{schoolId:m.schoolId,timestamp,nonce,payload,signature});
    if(health.success!==true||health.schoolId!==m.schoolId||health.storageReady!==true)fail(409,'Script is not prepared for this school');
    const fresh=await identity(req,m.schoolId);if(!lease(fresh).allowed||fresh.entitlement.status!=='trial'&&fresh.entitlement.activated!==true)fail(403,'School licence is inactive');
-   await db.runTransaction(async tx=>{const current=await tx.get(ref);if(current.exists&&(!old.exists||b.replace!==true||b.expectedScriptUrl!==current.data().url))fail(409,'Existing storage retained. Confirm the current school Drive connection before replacement');tx.set(ref,{url,secret:protect(secret,encryptionKey),ready:true,...(current.exists?{previousConnections:[...(current.data().previousConnections||[]),{url:current.data().url,secret:current.data().secret,at:now()}]}:{})});});
+   await db.runTransaction(async tx=>{
+    const current=await tx.get(ref);
+    // A readiness-only placeholder is not a storage identity. Recheck both
+    // snapshots so a binding created while the signed handshake ran is retained.
+    const empty=s=>s.exists&&s.data().ready!==true&&!s.data().url&&!s.data().secret&&
+      (s.data().previousConnections===undefined||Array.isArray(s.data().previousConnections)&&s.data().previousConnections.length===0);
+    const firstPairing=empty(old)&&empty(current);
+    if(current.exists&&!firstPairing&&(!old.exists||b.replace!==true||b.expectedScriptUrl!==current.data().url))fail(409,'Existing storage retained. Confirm the current school Drive connection before replacement');
+    tx.set(ref,{url,secret:protect(secret,encryptionKey),ready:true,...(current.exists&&!firstPairing?{previousConnections:[...(current.data().previousConnections||[]),{url:current.data().url,secret:current.data().secret,at:now()}]}:{})},{merge:true});
+   });
    // A concurrent readiness read may have cached the missing pre-pairing snapshot.
    // Invalidate after the durable binding commit, not only before pairing starts.
    invalidate(m.schoolId);
