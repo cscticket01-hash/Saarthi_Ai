@@ -51,7 +51,8 @@ void main() {
     final a=queue.singleWhere((q)=>q.data()['documentId']=='a');
     final b=queue.singleWhere((q)=>q.data()['documentId']=='b');
     await db.acknowledgeOutbox(a.reference,a.data(),revision:'synthetic-ACK-a');
-    expect((await b.reference.get()).data(),b.data());
+    // Compare persisted timestamp values, not freshly decoded object identities.
+    expect(migrationJsonValue((await b.reference.get()).data()),migrationJsonValue(b.data()));
     final receipt=(await db.collection('_windows_sync_receipts').get()).docs.single;
     await cacheVerifiedSheetRecord(school,'fee_payments','a',{'schoolId':school,'amount':100,'_syncRevision':'cloud-a'});
     await cacheVerifiedSheetRecord(school,'fee_payments','b',{'schoolId':school,'amount':200,'_syncRevision':'cloud-b'});
@@ -62,7 +63,8 @@ void main() {
     await db.applySyncedDocument(db.collection('school_notices').doc('two'),{'schoolId':school,'title':'Two','_syncRevision':'two'});
     expect((await db.collection('school_notices').get()).docs,hasLength(2));
     expect((await receipt.reference.get()).data(),receipt.data());
-    expect((await b.reference.get()).data(),b.data());
+    // Compare persisted timestamp values, not freshly decoded object identities.
+    expect(migrationJsonValue((await b.reference.get()).data()),migrationJsonValue(b.data()));
     // A legacy queue ID need not equal today's derived record key. Download
     // admission must still see its pending edit and retain the local payload.
     final protected=db.collection('school_notices').doc('protected');
@@ -74,7 +76,8 @@ void main() {
     expect((await db.collection('_windows_firebase_outbox').doc('legacy-noncanonical').get()).exists,true);
     await db.resetVolatileSession();
     expect((await receipt.reference.get()).data(),receipt.data());
-    expect((await b.reference.get()).data(),b.data());
+    // Compare persisted timestamp values, not freshly decoded object identities.
+    expect(migrationJsonValue((await b.reference.get()).data()),migrationJsonValue(b.data()));
   });
   test('offline delete atomically retains original financial snapshot and delete identity after reopen', () async {
     final profile = db.activeProfileId;
