@@ -276,6 +276,22 @@ void main() {
     expect((await ref.get()).data()?['amount'],250);
   });
 
+  test('pre-upgrade confirmed deletion supports fresh save without resetting local data', () async {
+    final ref = db.collection('fee_payments').doc('legacy-deleted-slot');
+    await ref.set({'schoolId':school,'amount':100});
+    await ref.delete();
+    final queued = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await db.acknowledgeOutbox(queued.reference,queued.data(),revision:'legacy-deletion-ack');
+    // Older clients persisted revision and verified deletion snapshot, without
+    // the new baseline deleted flag.
+    await db.collection('_windows_sync_baselines').doc(queued.id).set({'revision':'legacy-deletion-ack'});
+    await ref.set({'schoolId':school,'amount':300});
+    final fresh = (await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+    expect(fresh['baseCloudRevision'],'legacy-deletion-ack');
+    expect(fresh['data']['_syncRecreatesDeletedRevision'],'legacy-deletion-ack');
+    expect((await db.collection('_windows_local_deletions').get()).docs,isNotEmpty);
+  });
+
   test('adding missing school identity never replaces an original retry operation ID', () async {
     await db.collection('school_notices').doc('notice').set({'title':'Synthetic','capturedAt':123});
     final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;

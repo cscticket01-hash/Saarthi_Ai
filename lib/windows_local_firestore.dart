@@ -1934,8 +1934,14 @@ class _LocalSchoolDatabase {
         finalDocs[operation.documentId] is Map) {
       (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedOperationId'] = priorDeletion is Map ? priorDeletion['operationId'] : previous['operationId'];
     }
+    final deletionHistory = collections['_windows_local_deletions'];
+    final verifiedLegacyDeletion = baselineEntry is Map && deletionHistory is Map &&
+        deletionHistory.values.any((d) => d is Map && d['schoolId'] == _activeIdentity['schoolSyncId'] &&
+          d['collection'] == operation.collection && d['documentId'] == operation.documentId &&
+          d['cloudDeletionVerified'] == true && d['deletedRevision'] is String &&
+          d['deletedRevision'] == baselineEntry['revision']);
     if (!isDelete && previous is! Map && baselineEntry is Map &&
-        baselineEntry['deleted'] == true && baselineEntry['revision'] is String &&
+        (baselineEntry['deleted'] == true || verifiedLegacyDeletion) && baselineEntry['revision'] is String &&
         finalDocs[operation.documentId] is Map) {
       // Only a save made AFTER observing this deletion may recreate this slot.
       (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedRevision'] = baselineEntry['revision'];
