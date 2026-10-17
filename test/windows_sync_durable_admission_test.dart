@@ -192,6 +192,12 @@ void main() {
     expect(retry['operationId'],original['operationId']);
     expect(retry['baseCloudRevision'],original['baseCloudRevision']);
     expect((await db.collection('_windows_sync_conflict_history').get()).docs,hasLength(1));
+    final origin = db.activeProfileId;
+    await db.switchProfile('synthetic-payment-away');
+    await db.switchProfile(origin,identity:{'schoolSyncId':school,'schoolId':school});
+    final reopened = (await db.collection('_windows_firebase_outbox').doc(queue.id).get()).data()!;
+    expect(reopened['syncState'],'pending');
+    expect(reopened['operationId'],original['operationId']);
     await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},
       sendVersioned:(item)async {
         expect(item['operationId'],original['operationId']);

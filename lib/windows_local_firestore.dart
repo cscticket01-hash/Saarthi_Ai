@@ -1618,7 +1618,8 @@ class _LocalSchoolDatabase {
           return;
         }
         // A verified inventory can contain our committed operation after its
-        // response was lost. Retry the ORIGINAL request so the server verifies
+        // response was lost; another device may also have completed a delete.
+        // Retry the ORIGINAL request so the server verifies
         // its request hash and returns the real ACK; inventory alone is no ACK.
         final completedDeletion = current['operation'] == 'delete' && remote['_syncDeleted'] == true;
         if (completedDeletion || (remote['_syncOperationId'] == operationId &&
@@ -1628,7 +1629,7 @@ class _LocalSchoolDatabase {
                 () => <String,dynamic>{}) as Map;
             history.putIfAbsent(operationId, () => Map<String,dynamic>.from(current));
             queue[queueId] = {...Map<String,dynamic>.from(current),
-              'syncState':'pending','retryCount':0}..remove('lastError')..remove('retryAt');
+              'syncState':'pending','retryCount':0}..remove('lastError')..remove('failureCategory')..remove('retryAtMillis');
             _storeCollections(root,collections);
             await _writeRoot(root);
             final signal = _signals['_windows_firebase_outbox'];
