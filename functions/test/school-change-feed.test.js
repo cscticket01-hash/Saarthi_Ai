@@ -69,6 +69,17 @@ test('events are authenticated through existing school boundaries and unavailabl
  await assert.rejects(f.call({action:'managed/events',schoolId:A},'bad'),e=>e.status===401);
  await assert.rejects(f.call({action:'managed/events',schoolId:A}),e=>e.status===503);
 });
+test('delta after a remote-instance commit cannot reuse a stale five-second view',async()=>{
+ let revision='one';
+ const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,
+  syncProtocol:2,changes:{fee_payments:{syncProtocol:2,collectionRevision:revision,
+   records:{receipt:{schoolId:A,_syncRevision:revision,amount:500}}}}})}));
+ const request={action:'managed/changes',schoolId:A,collections:['fee_payments'],knownRevisions:{}};
+ assert.equal((await f.call(request)).changes.fee_payments.collectionRevision,'one');
+ revision='two'; // Another broker committed; this process receives no local invalidation.
+ assert.equal((await f.call(request)).changes.fee_payments.collectionRevision,'two');
+ assert.equal(f.sent.length,2);
+});
 test('broker publishes only signed committed writes and rechecks membership after waiting',async()=>{
  const base=fixture(),cloud=sharedCloud();let committed=true;
  const db={...base.db,doc:p=>p.startsWith('school_sync_hints/')?cloud.db.doc(p):base.db.doc(p),

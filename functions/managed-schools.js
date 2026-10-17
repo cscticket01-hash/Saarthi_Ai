@@ -187,7 +187,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
     const ack=body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision.length>0;
     await saveSyncEvidence(m.schoolId,{outcome:ack?'durable_ack':'verified_response',stage:body.action,protocol:result.syncProtocol===2?2:1});
    }
-   if(body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await changeHint(m.schoolId,body.collection,body.id);
+   if(body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision){invalidate(m.schoolId);await changeHint(m.schoolId,body.collection,body.id);}
    if(body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory'));
    if(body.action==='managed_recycle'&&body.operation==='restore')await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'));
    return result;
@@ -478,7 +478,9 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   if(!Array.isArray(collections)||collections.length>22||new Set(collections).size!==collections.length||collections.some(col=>!COLLECTIONS.has(col))||!known||typeof known!=='object'||Array.isArray(known)||Object.entries(known).some(([key,value])=>!collections.includes(key)||typeof value!=='string'||value.length>1000))fail(400,'Invalid delta checkpoint');
   if(b.headOnly!==undefined&&typeof b.headOnly!=='boolean')fail(400,'Invalid delta mode');
   const body={action:'managed_delta',collections,knownRevisions:known,...(b.headOnly===true?{headOnly:true}:{})};
-  const result=await readView(m.schoolId,body,()=>signed(m,body));
+  // A commit on another broker cannot invalidate this process's five-second
+  // view cache. Verified delta apply must read current authoritative records.
+  const result=b.headOnly===true?await readView(m.schoolId,body,()=>signed(m,body)):await signed(m,body);
   if(b.headOnly===true){
    if(result.headOnly!==true||result.syncProtocol!==2||!result.revisions||typeof result.revisions!=='object'||Array.isArray(result.revisions)||Object.keys(result.revisions).length!==collections.length||collections.some(col=>typeof result.revisions[col]!=='string'||!result.revisions[col]||result.revisions[col].length>1000))fail(502,'Invalid school change heads');
    return {success:true,schoolId:m.schoolId,syncProtocol:2,headOnly:true,revisions:result.revisions};
