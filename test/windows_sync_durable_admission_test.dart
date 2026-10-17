@@ -238,11 +238,13 @@ void main() {
     expect((await db.collection('_windows_sync_conflict_history').get()).docs.single.data()['data']['amount'],100);
     await db.applySyncedDocument(ref,null,tombstoneRevision:'verified-delete');
     await ref.set({'schoolId':school,'amount':200});
+    // Full replacement edit before upload must retain fresh-entry identity.
+    await ref.set({'schoolId':school,'amount':250});
     final fresh = (await db.collection('_windows_firebase_outbox').get()).docs.single;
     expect(fresh.data()['baseCloudRevision'],'verified-delete');
     expect(fresh.data()['data']['_syncRecreatesDeletedRevision'],'verified-delete');
     expect(await db.recordOutboxConflict(fresh.reference,fresh.data(),tomb),false);
-    expect((await ref.get()).data()?['amount'],200);
+    expect((await ref.get()).data()?['amount'],250);
     expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
   });
 

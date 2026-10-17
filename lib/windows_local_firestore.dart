@@ -1910,6 +1910,14 @@ class _LocalSchoolDatabase {
 
     final baseline = collections['_windows_sync_baselines'];
     final baselineEntry = baseline is Map ? baseline[key] : null;
+    if (!isDelete && previous is Map && previous['data'] is Map &&
+        finalDocs[operation.documentId] is Map) {
+      for (final field in ['_syncRecreatesDeletedRevision','_syncRecreatesDeletedOperationId']) {
+        if ((previous['data'] as Map)[field] is String) {
+          (finalDocs[operation.documentId] as Map)[field] = previous['data'][field];
+        }
+      }
+    }
     if (!isDelete && previous is Map && previous['operation'] == 'delete' &&
         finalDocs[operation.documentId] is Map) {
       (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedOperationId'] = previous['operationId'];
