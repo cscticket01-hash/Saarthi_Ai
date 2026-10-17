@@ -1,0 +1,55 @@
+name: Repair owner-approved isolated TEST control metadata
+on:
+  push:
+    branches: [ops/isolated-test-readiness-20261017]
+    paths: [.github/workflows/repair-isolated-test-metadata.yml]
+permissions:
+  contents: read
+jobs:
+  repair-test-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts
+        working-directory: functions
+      - name: Restore missing TEST routing marker and renew expired TEST trial only
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          node <<'NODE'
+          const requireAdmin=require('node:module').createRequire(process.cwd()+'/functions/package.json');
+          const {initializeApp,cert}=requireAdmin('firebase-admin/app');
+          const {getFirestore}=requireAdmin('firebase-admin/firestore');
+          (async()=>{
+            const credential=JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT||'{}');
+            if(credential.project_id!=='saarthi-ai-df12b')throw Error('Expected project required');
+            const db=getFirestore(initializeApp({credential:cert(credential)}));
+            const id='vs-db8afb01a3be46a983c8284714d06e5d';
+            const result=await db.runTransaction(async tx=>{
+              const ref=name=>db.doc(name+'/'+id);
+              const [platform,profile,entitlement,legacy]=await Promise.all(
+                ['platform_schools','school_registration_profiles','school_entitlements','schools'].map(name=>tx.get(ref(name))));
+              const p=platform.data()||{},r=profile.data()||{},e=entitlement.data()||{},l=legacy.data()||{};
+              const current=r.profile||r;
+              if(!platform.exists||!profile.exists||!entitlement.exists||p.schoolId!==id||r.schoolId!==id||
+                p.managed!==true||p.blocked||p.deletedAt||p.loginDisabled||
+                p.name!=='TEST Sync V2'||current.schoolName!=='TEST Sync V2'||
+                e.active!==true||e.blocked||e.status!=='trial'||typeof p.authUid!=='string'||!p.authUid)
+                throw Error('Verified active isolated TEST metadata required; no changes allowed');
+              const membership=await tx.get(db.doc('school_memberships/'+p.authUid)),m=membership.data()||{};
+              if(!membership.exists||m.schoolId!==id||m.managed!==true||m.active!==true||m.role!=='school_admin')
+                throw Error('Verified TEST membership required');
+              if(legacy.exists&&(l.schoolId!==id||l.ownerUid!==p.authUid||l.schoolName!=='TEST Sync V2'))
+                throw Error('Conflicting legacy metadata retained');
+              const expired=Number(e.expiresAt||0)<=Date.now();
+              if(!legacy.exists)tx.create(ref('schools'),{schoolId:id,ownerUid:p.authUid,schoolName:p.name,architecture:'managed-v1'});
+              if(expired)tx.update(ref('school_entitlements'),{expiresAt:Date.now()+5*86400000});
+              return {onlyRegisteredTestSchool:true,missingRoutingMarkerCreated:!legacy.exists,expiredTestTrialExtended:expired};
+            });
+            console.log('TEST_REPAIR '+JSON.stringify(result));
+          })().catch(error=>{console.error('TEST-only metadata repair refused/failed; safe code '+String(error.code||'VALIDATION').replace(/[^a-zA-Z0-9_/-]/g,''));process.exitCode=1;});
+          NODE
