@@ -1,0 +1,48 @@
+import 'dart:async';
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_test/flutter_test.dart';
+import '../lib/windows_remote_change_feed.dart';
+
+Map<String,dynamic> event(String school, {List<String> collections=const []}) => {
+  'success':true,'schoolId':school,'changeFeedVersion':1,'reset':false,
+  'cursor':'00000000-0000-4000-8000-000000000000:1','collections':collections,
+};
+
+void main() {
+  test('verified hints schedule changed collections; stop cancels reconnect', () {
+    fakeAsync((clock) {
+      final hints=<Set<String>>[];var calls=0;
+      final reader=WindowsRemoteChangeFeed(allowedCollections:{'fee_payments'},
+        read:(school,cursor) async {calls++;return event(school,collections:['fee_payments']);},
+        onHint:hints.add);
+      reader.start('profile-a','school-a');clock.flushMicrotasks();
+      expect(hints,[{'fee_payments'}]);expect(calls,1);
+      reader.stop();clock.elapse(const Duration(minutes:2));expect(calls,1);
+    });
+  });
+  test('late response from previous school cannot schedule or advance new school', () {
+    fakeAsync((clock) {
+      final pending=<String,Completer<Map<String,dynamic>>>{};
+      final hints=<Set<String>>[];
+      final reader=WindowsRemoteChangeFeed(allowedCollections:{'fee_payments'},
+        read:(school,cursor) => (pending[school]=Completer()).future,onHint:hints.add);
+      reader.start('a','school-a');reader.start('b','school-b');
+      pending['school-a']!.complete(event('school-a',collections:['fee_payments']));
+      clock.flushMicrotasks();expect(hints,isEmpty);
+      pending['school-b']!.complete(event('school-b',collections:['fee_payments']));
+      clock.flushMicrotasks();expect(hints,[{'fee_payments'}]);reader.stop();
+    });
+  });
+  test('foreign and malformed hints fail visibly with bounded backoff', () {
+    fakeAsync((clock) {
+      var calls=0,errors=0;
+      final reader=WindowsRemoteChangeFeed(allowedCollections:{'fee_payments'},
+        read:(school,cursor) async {calls++;return event('another-school',collections:['fee_payments']);},
+        onHint:(_)=>fail('Unverified hint admitted'),onError:(_)=>errors++);
+      reader.start('a','school-a');clock.flushMicrotasks();expect(errors,1);
+      clock.elapse(const Duration(seconds:1));expect(calls,1);
+      clock.elapse(const Duration(seconds:1));clock.flushMicrotasks();expect(calls,2);
+      reader.stop();
+    });
+  });
+}

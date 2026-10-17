@@ -1,3 +1,4 @@
+import 'windows_remote_change_feed.dart';
 import 'student_lifecycle_policy.dart';
 import 'windows_sheet_recovery.dart';
 import 'windows_document_templates.dart';
@@ -120,6 +121,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   Future<void> pauseSync(Duration duration) async {
     final ref = FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause');
     final saved = _pause.pause(duration);
+    _remoteFeed.stop();
     _pauseGeneration++;
     _dispatch.cancel();
     _rerunRequested = false;
@@ -159,10 +161,28 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   final _remoteCollections = <String>{};
   final _changeWatch = WindowsCloudChangeWatch();
   Timer? _changeTimer;
+  bool _changeFeedSupported=false;
+  int _remoteChangeGeneration=0;
+  late final _remoteFeed=WindowsRemoteChangeFeed(
+    allowedCollections:_firebaseCollections.where((c)=>c!='backups').toSet(),
+    read:(school,cursor)=>ManagedSchoolSession.callForSchool(school,'managed/events',{
+      if(cursor!=null)'cursor':cursor}),
+    onHint:(collections){
+      if(!automaticScheduleExpected)return;
+      _remoteChangeGeneration++;
+      _remoteCollections.addAll(collections);
+      if(_syncing)_rerunRequested=true;
+      scheduleSoon();
+    },
+    onError:(error){_recordActivity({'stage':'changeFeedUnavailable','schoolId':_activeSchoolSyncId,
+      'at':DateTime.now().millisecondsSinceEpoch,
+      'failureCategory':windowsSyncRecovery(error).kind.name});});
 
   // Read-only discovery stays out of the queue/retry owner. Hints never ACK
   // uploads or advance local manifests; only verified record apply does that.
   Future<void> _discoverManagedChanges() async {
+    if(!automaticScheduleExpected){_remoteFeed.stop();return;}
+    if(_changeFeedSupported)_remoteFeed.start(jsonEncode([_activeProfileId,_activeSchoolSyncId]),_activeSchoolSyncId);
     if (!automaticScheduleExpected || _syncing || _activating > 0 ||
         !_changeHeadsSupported || _checkingHeads || !_changeWatch.due(DateTime.now()) ||
         (_quotaRetryAt?.isAfter(DateTime.now()) ?? false) ||
@@ -667,6 +687,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _resetPaused = true;
     _schedule.stop();
     _changeTimer?.cancel();
+    _remoteFeed.stop();
     _pauseTimer?.cancel();
     _dispatch.cancel();
     final deadline = DateTime.now().add(const Duration(seconds: 90));
@@ -881,6 +902,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _remoteCollections.clear();
       _changeWatch.reset();
       _changeHeadsSupported = false;
+      _changeFeedSupported=false;_remoteFeed.stop();
       _lastIntegrityAttempt = null;
       _automaticMutationPending = false;
       _failures = 0;
@@ -1233,6 +1255,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
           );
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
+          _changeFeedSupported=health['brokerChangeFeedVersion']==1;
+          if(_changeFeedSupported)_remoteFeed.start(jsonEncode([_activeProfileId,_activeSchoolSyncId]),_activeSchoolSyncId);
+          else _remoteFeed.stop();
           _changeHeadsSupported = health['recordChangeHeadsVersion'] == 1 &&
               health['brokerChangeHeadsVersion'] == 1;
           _protocolIdentity = protocolIdentity;
@@ -1259,10 +1284,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           final fullPull = inventoryAudit || _lastPull == null ||
               DateTime.now().difference(_lastPull!) >= reconciliationInterval;
           final selected = fullPull ? null : Set<String>.from(_remoteCollections);
+          final remoteGenerationAtRead=_remoteChangeGeneration;
           await _pullManagedChanges(verifyInventory: inventoryAudit,
             selectedCollections: selected);
-          if (selected == null) { _remoteCollections.clear(); }
-          else { _remoteCollections.removeAll(selected); }
+          if(remoteGenerationAtRead==_remoteChangeGeneration) {
+            if (selected == null) { _remoteCollections.clear(); }
+            else { _remoteCollections.removeAll(selected); }
+          }
           if(FirebaseFirestore.instance.activeProfileId!=syncOrigin)
             throw StateError('School changed after record download.');
           await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
@@ -1397,7 +1425,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _syncing = false;
       if (isPaused && _activeProfileId == syncOrigin) state.value = SchoolCloudState.syncPending;
       await refreshDetails();
-      if ((lastError != null && _hasAutomaticWork && recoveryDecision?.retry == true && _failures <= 5) || _rerunRequested) {
+      if ((lastError != null && _hasAutomaticWork && recoveryDecision?.retry == true && _failures <= 5) || _rerunRequested || (lastError == null && _remoteCollections.isNotEmpty)) {
         final independentMutation = _rerunRequested && recoveryDecision?.independentRecords == true;
         _rerunRequested = false;
         scheduleSoon(localMutation: independentMutation, delay: lastError == null ? const Duration(milliseconds: 250) : schoolRetryDelay(_failures));
@@ -1445,7 +1473,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').set({'automaticSync': enabled}, const SetOptions(merge: true));
     if (_activeProfileId != origin) return;
     automaticSyncEnabled = enabled;
-    if (!enabled) { _dispatch.cancel(); _rerunRequested = false; }
+    if (!enabled) { _dispatch.cancel(); _remoteFeed.stop(); _rerunRequested = false; }
     else scheduleSoon();
     await refreshDetails();
   }
@@ -2297,6 +2325,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   void dispose() {
     _schedule.stop();
     _changeTimer?.cancel();
+    _remoteFeed.stop();
     _pauseTimer?.cancel();
     _dispatch.cancel();
     WidgetsBinding.instance.removeObserver(this);
