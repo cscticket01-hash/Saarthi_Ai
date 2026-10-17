@@ -208,6 +208,24 @@ class WindowsPendingSchoolSync {
       report('cloudRequest', queued.id, item);
       try {
         if (sendVersioned != null) {
+          final prior = item['priorDeletion'];
+          if (prior is Map) {
+            if (prior['schoolId'] != item['schoolId'] || prior['collection'] != collection ||
+                prior['documentId'] != id || prior['operation'] != 'delete' ||
+                prior['operationId'] is! String || prior['baseCloudRevision'] is! String) {
+              throw StateError('Original same-school deletion dependency required.');
+            }
+            final deletion = Map<String,dynamic>.from(prior);
+            final deletedRevision = await sendVersioned(deletion);
+            unchanged();
+            if (deletedRevision.trim().isEmpty) throw const MissingSyncAcknowledgement();
+            await db.acknowledgeOutbox(queued.reference,deletion,revision:deletedRevision);
+            final current = (await queued.reference.get()).data();
+            unchanged();
+            if (current == null || current['operationId'] != item['operationId']) continue;
+            item = current;
+            if (item['priorDeletion'] != null) throw StateError('Deletion acknowledgement not durable.');
+          }
           final response = sendVersioned(item);
           report('waitingForAck', queued.id, item);
           revision = await response;

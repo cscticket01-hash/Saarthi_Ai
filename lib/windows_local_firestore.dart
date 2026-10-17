@@ -1217,6 +1217,13 @@ class _LocalSchoolDatabase {
                     queued['baseCloudRevision'] == sent['baseCloudRevision']) {
                   queued['baseCloudRevision'] = revision;
                 }
+                if(queued is Map && queued['priorDeletion'] is Map &&
+                    queued['priorDeletion']['operationId'] == sent['operationId']) {
+                  if(queued['operation'] != 'delete' && queued['data'] is Map) {
+                    queued['data']['_syncRecreatesDeletedRevision'] = revision;
+                  }
+                  queued.remove('priorDeletion');
+                }
               }
               if(operation.data != null &&
                   (operation.acknowledgedRevision != null
@@ -1635,7 +1642,9 @@ class _LocalSchoolDatabase {
 
           final data = current['data'];
           if (data is Map && (data['_syncRecreatesDeletedRevision'] == revision ||
-              data['_syncRecreatesDeletedOperationId'] != null && data['_syncRecreatesDeletedOperationId'] == remote['_syncOperationId'])) {
+              data['_syncRecreatesDeletedOperationId'] != null && data['_syncRecreatesDeletedOperationId'] == remote['_syncOperationId'] ||
+              current['priorDeletion'] is Map && data['_syncRecreatesDeletedOperationId'] != null &&
+              data['_syncRecreatesDeletedOperationId'] == current['priorDeletion']['operationId'])) {
             completer.complete(false);return;
           }
           // Authenticated deletion wins over an offline edit. Retain the entire
@@ -1908,6 +1917,9 @@ class _LocalSchoolDatabase {
       if(operationId is String)history.putIfAbsent(operationId,()=>Map<String,dynamic>.from(previous));
     }
 
+    final priorDeletion = previous is Map
+        ? previous['priorDeletion'] ?? (previous['operation'] == 'delete' ? Map<String,dynamic>.from(previous) : null)
+        : null;
     final baseline = collections['_windows_sync_baselines'];
     final baselineEntry = baseline is Map ? baseline[key] : null;
     if (!isDelete && previous is Map && previous['data'] is Map &&
@@ -1920,7 +1932,7 @@ class _LocalSchoolDatabase {
     }
     if (!isDelete && previous is Map && previous['operation'] == 'delete' &&
         finalDocs[operation.documentId] is Map) {
-      (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedOperationId'] = previous['operationId'];
+      (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedOperationId'] = priorDeletion is Map ? priorDeletion['operationId'] : previous['operationId'];
     }
     if (!isDelete && previous is! Map && baselineEntry is Map &&
         baselineEntry['deleted'] == true && baselineEntry['revision'] is String &&
@@ -1934,6 +1946,7 @@ class _LocalSchoolDatabase {
       'baseCloudRevision': previous is Map ? previous['baseCloudRevision'] ?? '' :
           baselineEntry is Map ? baselineEntry['revision'] ?? '' : '',
       'syncState':previous is Map && {'conflict','needsAttention'}.contains(previous['syncState']) ? previous['syncState'] : 'pending', 'retryCount':0,
+      if(priorDeletion is Map) 'priorDeletion':Map<String,dynamic>.from(priorDeletion),
       'collection': operation.collection,
       'documentId': operation.documentId,
       'operation': isDelete ? 'delete' : 'set',

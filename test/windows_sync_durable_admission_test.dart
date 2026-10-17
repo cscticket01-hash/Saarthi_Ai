@@ -248,6 +248,34 @@ void main() {
     expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
   });
 
+  test('offline delete then re-add sends durable deletion before fresh record', () async {
+    final ref = db.collection('fee_payments').doc('offline-slot');
+    await db.applySyncedDocument(ref,{'schoolId':school,'amount':100,'_syncRevision':'old-cloud'});
+    await ref.delete();
+    final deletion = (await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+    await ref.set({'schoolId':school,'amount':200});
+    await ref.set({'schoolId':school,'amount':250});
+    final origin = db.activeProfileId;
+    await db.switchProfile('synthetic-offline-away');
+    await db.switchProfile(origin,identity:{'schoolSyncId':school,'schoolId':school});
+    final sent = <String>[];
+    await WindowsPendingSchoolSync.flush(profileId:origin,send:(a,b,c,d)async{},sendVersioned:(item)async {
+      sent.add(item['operation'] as String);
+      if(item['operation']=='delete') {
+        expect(item['operationId'],deletion['operationId']);
+        expect(item['baseCloudRevision'],'old-cloud');
+        return 'confirmed-deletion';
+      }
+      expect(item['baseCloudRevision'],'confirmed-deletion');
+      expect(item['data']['_syncRecreatesDeletedOperationId'],deletion['operationId']);
+      expect(item['data']['amount'],250);
+      return 'fresh-record';
+    });
+    expect(sent,['delete','set']);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    expect((await ref.get()).data()?['amount'],250);
+  });
+
   test('adding missing school identity never replaces an original retry operation ID', () async {
     await db.collection('school_notices').doc('notice').set({'title':'Synthetic','capturedAt':123});
     final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
