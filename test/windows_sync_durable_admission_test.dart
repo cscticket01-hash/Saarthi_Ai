@@ -246,6 +246,11 @@ void main() {
     expect(await db.recordOutboxConflict(fresh.reference,fresh.data(),tomb),false);
     expect((await ref.get()).data()?['amount'],250);
     expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+    await fresh.reference.update({'syncState':'conflict'});
+    final beforeUpgrade = (await fresh.reference.get()).data()!;
+    expect(await db.recordOutboxConflict(fresh.reference,beforeUpgrade,tomb),false);
+    expect((await fresh.reference.get()).data()?['syncState'],'pending');
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
   });
 
   test('offline delete then re-add sends durable deletion before fresh record', () async {

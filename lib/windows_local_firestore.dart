@@ -1653,6 +1653,18 @@ class _LocalSchoolDatabase {
               data['_syncRecreatesDeletedOperationId'] != null && data['_syncRecreatesDeletedOperationId'] == remote['_syncOperationId'] ||
               current['priorDeletion'] is Map && data['_syncRecreatesDeletedOperationId'] != null &&
               data['_syncRecreatesDeletedOperationId'] == current['priorDeletion']['operationId'])) {
+            // An older Script may have rejected this exact fresh-entry intent
+            // before its upgrade. Re-admit the unchanged request for real ACK.
+            if(current['syncState']=='conflict') {
+              final history = collections.putIfAbsent('_windows_sync_conflict_history',
+                  () => <String,dynamic>{}) as Map;
+              history.putIfAbsent(operationId, () => Map<String,dynamic>.from(current));
+              queue[queueId] = {...Map<String,dynamic>.from(current),'syncState':'pending','retryCount':0}
+                ..remove('lastError')..remove('failureCategory')..remove('retryAtMillis');
+              _storeCollections(root,collections);await _writeRoot(root);
+              final signal = _signals['_windows_firebase_outbox'];
+              if(signal != null && !signal.isClosed)signal.add(null);
+            }
             completer.complete(false);return;
           }
           // Authenticated deletion wins over an offline edit. Retain the entire
