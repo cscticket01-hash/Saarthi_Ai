@@ -303,6 +303,24 @@ void main() {
     expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
   });
 
+  test('offline device missing delete/re-add adopts fresh generation but preserves genuine same-generation edits', () async {
+    final ref = db.collection('fee_payments').doc('offline-other-device');
+    await ref.set({'schoolId':school,'amount':100});
+    final old = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final fresh = {'schoolId':school,'amount':200,'_syncRevision':'new-generation',
+      '_syncRecreatesDeletedRevision':'deletion-missed-offline'};
+    await db.recordOutboxConflict(old.reference,old.data(),fresh);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+    await db.applySyncedDocument(ref,fresh);
+    expect((await ref.get()).data()?['amount'],200);
+    await ref.set({'schoolId':school,'amount':250});
+    final edit = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    expect(edit.data()['data']['_syncRecreatesDeletedRevision'],'deletion-missed-offline');
+    expect(await db.recordOutboxConflict(edit.reference,edit.data(),{...fresh,'_syncRevision':'parallel-edit','amount':300}),true);
+    expect((await ref.get()).data()?['amount'],250);
+    expect((await edit.reference.get()).data()?['syncState'],'conflict');
+  });
+
   test('adding missing school identity never replaces an original retry operation ID', () async {
     await db.collection('school_notices').doc('notice').set({'title':'Synthetic','capturedAt':123});
     final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;

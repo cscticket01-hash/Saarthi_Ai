@@ -197,3 +197,15 @@ for(const collection of ['fee_ledger','school_expenses','teacher_salary','teache
  const stale=t.f.call({...t.deletion,operationId:'stale_delete_after_new_0001'});
  assert.equal(stale.success,false);
 });
+
+test('fresh generation survives older-client edits and lost ACK; caller cannot replace live generation identity',()=>{
+ const t=setup('fee_payments');
+ const fresh=t.f.call({...t.deletion,operation:'write',operationId:'fresh_generation_write_0001',expectedRecordRevision:t.deleted.recordRevision,data:{schoolId:A,amount:200,_syncRecreatesDeletedRevision:t.deleted.recordRevision}});
+ assert.equal(fresh.success,true);
+ const edit={...t.deletion,operation:'write',operationId:'old_client_edit_fresh_0001',expectedRecordRevision:fresh.recordRevision,data:{schoolId:A,amount:250}};
+ const saved=t.f.call(edit);assert.equal(saved.success,true);
+ assert.equal(t.f.call(edit).recordRevision,saved.recordRevision);
+ const row=t.f.call({action:'managed_records',operation:'read',collection:t.collection,syncProtocol:2}).records.row;
+ assert.equal(row._syncRecreatesDeletedRevision,t.deleted.recordRevision);
+ assert.equal(t.f.call({...edit,operationId:'tamper_generation_0001',expectedRecordRevision:saved.recordRevision,data:{...edit.data,_syncRecreatesDeletedRevision:'unrelated-deletion'}}).success,false);
+});
