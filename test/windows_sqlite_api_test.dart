@@ -7,6 +7,7 @@ import '../lib/windows_local_storage.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_pending_school_sync.dart';
+import '../lib/windows_sheet_recovery.dart';
 import '../lib/storage/windows_sqlite_store.dart';
 import '../lib/platform/platform_config.dart';
 
@@ -42,6 +43,38 @@ void main() {
   });
   tearDown(() async {
     await db.resetVolatileSession();
+  });
+  test('scoped ACK/cache/apply preserves neighboring queues, receipts and noncanonical legacy pending rows', () async {
+    await db.collection('fee_payments').doc('a').set({'schoolId':school,'amount':100});
+    await db.collection('fee_payments').doc('b').set({'schoolId':school,'amount':200});
+    final queue=(await db.collection('_windows_firebase_outbox').get()).docs;
+    final a=queue.singleWhere((q)=>q.data()['documentId']=='a');
+    final b=queue.singleWhere((q)=>q.data()['documentId']=='b');
+    await db.acknowledgeOutbox(a.reference,a.data(),revision:'synthetic-ACK-a');
+    expect((await b.reference.get()).data(),b.data());
+    final receipt=(await db.collection('_windows_sync_receipts').get()).docs.single;
+    await cacheVerifiedSheetRecord(school,'fee_payments','a',{'schoolId':school,'amount':100,'_syncRevision':'cloud-a'});
+    await cacheVerifiedSheetRecord(school,'fee_payments','b',{'schoolId':school,'amount':200,'_syncRevision':'cloud-b'});
+    await cacheVerifiedSheetRecord(school,'fee_payments','a',{'schoolId':school,'amount':110,'_syncRevision':'cloud-a2'});
+    expect((await db.collection('_windows_verified_cloud_records').get()).docs,hasLength(2));
+    expect((await db.collection('_windows_verified_cloud_records').doc(sheetRecoveryCacheKey('fee_payments','b')).get()).data()?['record']['amount'],200);
+    await db.applySyncedDocument(db.collection('school_notices').doc('one'),{'schoolId':school,'title':'One','_syncRevision':'one'});
+    await db.applySyncedDocument(db.collection('school_notices').doc('two'),{'schoolId':school,'title':'Two','_syncRevision':'two'});
+    expect((await db.collection('school_notices').get()).docs,hasLength(2));
+    expect((await receipt.reference.get()).data(),receipt.data());
+    expect((await b.reference.get()).data(),b.data());
+    // A legacy queue ID need not equal today's derived record key. Download
+    // admission must still see its pending edit and retain the local payload.
+    final protected=db.collection('school_notices').doc('protected');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>protected.set({'schoolId':school,'title':'Local pending'}));
+    await db.collection('_windows_firebase_outbox').doc('legacy-noncanonical').set({
+      ...b.data(),'collection':'school_notices','documentId':'protected','data':{'schoolId':school,'title':'Local pending'}});
+    await db.applySyncedDocument(protected,{'schoolId':school,'title':'Remote','_syncRevision':'remote-protected'});
+    expect((await protected.get()).data()?['title'],'Local pending');
+    expect((await db.collection('_windows_firebase_outbox').doc('legacy-noncanonical').get()).exists,true);
+    await db.resetVolatileSession();
+    expect((await receipt.reference.get()).data(),receipt.data());
+    expect((await b.reference.get()).data(),b.data());
   });
   test('offline delete atomically retains original financial snapshot and delete identity after reopen', () async {
     final profile = db.activeProfileId;

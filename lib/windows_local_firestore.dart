@@ -1118,14 +1118,52 @@ class _LocalSchoolDatabase {
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed before queued write.');
         final retiringOwner = WindowsLocalFirestoreSyncControl.trackingEnabled && operations.any((o) =>
           o.type == _WriteType.delete && {'students_directory','teachers_directory'}.contains(o.collection));
-        final root = await _readRoot(collections:{
+        // ACKs and verified-cache writes must not deserialize every historical
+        // receipt/baseline for every row. Keep the same serialized transaction,
+        // generation CAS and exact-row queue comparison; narrow only owner paths
+        // whose complete read/write set is known. Legacy JSON remains unchanged.
+        Map<String,List<String>>? ownerScope;
+        Set<String>? ownerCollections;
+        final acknowledgementOnly = operations.every((o) =>
+          o.type == _WriteType.delete && o.collection == '_windows_firebase_outbox' &&
+          o.acknowledgedRevision != null && o.data?['operationId'] is String);
+        final metadataOnly = operations.every((o) => const {
+          '_windows_verified_cloud_records','_windows_sync_downloads',
+          '_windows_sync_manifest','_windows_sync_status',
+        }.contains(o.collection) && o.acknowledgedRevision == null);
+        final downloadOnly = !WindowsLocalFirestoreSyncControl.trackingEnabled &&
+          operations.every((o) => o.preservePending && !o.collection.startsWith('_windows_'));
+        if (acknowledgementOnly) {
+          final queueIds = operations.map((o)=>o.documentId).toSet().toList();
+          final operationIds = operations.map((o)=>o.data!['operationId'] as String).toSet().toList();
+          ownerScope = {
+            '_windows_firebase_outbox':queueIds,'_windows_sync_baselines':queueIds,
+            '_windows_sync_receipts':operationIds,'_windows_local_deletions':operationIds,
+            '_windows_recycle_requests':operationIds.map((id)=>'local-restore-$id').toList(),
+          };
+          ownerCollections = ownerScope.keys.toSet();
+        } else if (metadataOnly) {
+          ownerScope = {for(final name in operations.map((o)=>o.collection).toSet())
+            name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()};
+          ownerCollections = ownerScope.keys.toSet();
+        } else if (downloadOnly) {
+          ownerScope = {for(final name in operations.map((o)=>o.collection).toSet())
+            name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList(),
+            '_windows_sync_baselines':operations.map((o)=>base64Url.encode(
+              utf8.encode('${o.collection}\\n${o.documentId}')).replaceAll('=', '')).toSet().toList()};
+          // Preserve scans of legacy/noncanonical pending IDs and restore
+          // coordinators, so a newer edit or explicit restore is still protected.
+          ownerCollections = {...ownerScope.keys,'_windows_firebase_outbox',
+            '_windows_local_deletions','_windows_recycle_requests'};
+        }
+        final root = await _readRoot(collections:ownerCollections ?? {
           ...operations.map((operation)=>operation.collection),
           '_windows_firebase_outbox','_windows_sync_baselines','_windows_sync_receipts',
           '_windows_sync_conflict_history','_windows_sync_resolution_history',
           '_windows_local_deletions','_windows_recycle_requests',
           if (retiringOwner) ...{'_windows_document_outbox','_local_student_documents','documents',
           'students_directory','teachers_directory',...studentOwnedCollections},
-        },recordScope:{for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !retiringOwner).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
+        },recordScope:ownerScope ?? {for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !retiringOwner).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
         final touched = <String>{};
