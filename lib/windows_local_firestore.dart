@@ -1627,7 +1627,8 @@ class _LocalSchoolDatabase {
         // response was lost; another device may also have completed a delete.
         // Retry the ORIGINAL request so the server verifies
         // its request hash and returns the real ACK; inventory alone is no ACK.
-        if (remote['_syncDeleted'] == true && current['operation'] != 'delete') {
+        if (remote['_syncDeleted'] == true && current['operation'] != 'delete' &&
+            collection != 'students_directory') {
           final restores = collections['_windows_recycle_requests'];
           final localRow = (collections[collection] as Map?)?[id];
           final localTime = localRow is Map ? localRow['_syncUpdatedAt'] : null;
@@ -1665,8 +1666,8 @@ class _LocalSchoolDatabase {
           }
           completer.complete(false);return;
         }
-        if (remote['_syncDeleted'] != true && (current['syncState']=='needsAttention' ||
-            revision == (current['baseCloudRevision'] ?? ''))) {
+        if (revision == (current['baseCloudRevision'] ?? '') ||
+            remote['_syncDeleted'] != true && current['syncState']=='needsAttention') {
           completer.complete(false);return;
         }
         final completedDeletion = current['operation'] == 'delete' && remote['_syncDeleted'] == true;

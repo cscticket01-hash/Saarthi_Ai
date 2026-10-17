@@ -292,6 +292,17 @@ void main() {
     expect((await db.collection('_windows_local_deletions').get()).docs,isNotEmpty);
   });
 
+  test('generic deletion reconciliation never discards a new student generation', () async {
+    final ref = db.collection('students_directory').doc('same-student-slot');
+    await ref.set({'schoolId':school,'name':'New occupant','mobileStableId':'p-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'});
+    final queued = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await db.recordOutboxConflict(queued.reference,queued.data(),
+      {'schoolId':school,'_syncDeleted':true,'_syncRevision':'retired-occupant',
+       '_syncDeletedOwner':'p-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
+    expect((await ref.get()).data()?['name'],'New occupant');
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
+  });
+
   test('adding missing school identity never replaces an original retry operation ID', () async {
     await db.collection('school_notices').doc('notice').set({'title':'Synthetic','capturedAt':123});
     final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
