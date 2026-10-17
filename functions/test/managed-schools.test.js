@@ -126,6 +126,28 @@ test('URL-only storage pairing authorizes a single-use server ticket and keeps s
  assert(f.docs.get('school_storage_private/'+B).url.includes(B));
  await assert.rejects(f.call({action:'managed/storage/authorize',schoolId:A,ticket}),e=>e.status===403);
 });
+test('first pairing accepts unchanged empty readiness metadata but retains concurrent or existing bindings',async()=>{
+ for(const mode of ['empty','concurrent','unready-identity']){
+  const f=fixture(async(url,opt,authorize)=>{
+   const b=JSON.parse(opt.body);
+   if(b.action==='managed_connect')await authorize({action:'managed/storage/authorize',schoolId:A,ticket:b.ticket});
+   else if(mode==='concurrent')f.docs.set('school_storage_private/'+A,{url:'https://script.google.com/macros/s/ConcurrentDeployment/exec',secret:'preserved',ready:true});
+   return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,storageReady:true,connectionSecret:secret})};
+  });
+  f.docs.set('school_storage_private/'+A,{ready:false,diagnosticEvidence:'preserve',...(mode==='unready-identity'?{url:'https://script.google.com/macros/s/OriginalDeployment/exec',secret:'original'}:{})});
+  const foreign=structuredClone(f.docs.get('school_storage_private/'+B));
+  const request={action:'managed/storage/connect',scriptUrl:'https://script.google.com/macros/s/SchoolADeployment/exec'};
+  if(mode==='empty'){
+   assert.equal((await f.call(request)).storageReady,true);
+   assert.equal(f.docs.get('school_storage_private/'+A).diagnosticEvidence,'preserve');
+   assert.equal(unprotect(f.docs.get('school_storage_private/'+A).secret,key),secret);
+  }else{
+   await assert.rejects(f.call(request),e=>e.status===409);
+   assert.equal(f.docs.get('school_storage_private/'+A).secret,mode==='concurrent'?'preserved':'original');
+  }
+  assert.deepEqual(f.docs.get('school_storage_private/'+B),foreign);
+ }
+});
 test('URL-only pairing rejects foreign script identity, unused tickets, blocked access and replacement',async()=>{
  for(const mode of ['foreign','unused','blocked','replacement','foreign-request']){
   const f=fixture(async(url,opt,authorize)=>{
