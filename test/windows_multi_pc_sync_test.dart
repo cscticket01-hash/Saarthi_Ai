@@ -113,15 +113,19 @@ void main() {
 
   test('both directions, independent student additions, stale edit evidence and school isolation',() async {
     await rig.db.collection('students_directory').doc('pupil1').set({'schoolId':school,'name':'PC1','class':'1','rollNo':'1'});
-    await rig.flush();expect(await rig.queue(),isEmpty);
     await rig.open('pc2');expect((await rig.db.collection('students_directory').get()).docs,isEmpty);
     await rig.db.collection('students_directory').doc('pupil2').set({'schoolId':school,'name':'PC2','class':'1','rollNo':'2'});
-    await rig.flush();await rig.pull({'students_directory'});
+    // Both independent disks hold additions before either PC uploads.
+    await rig.open('pc1');await rig.flush();expect(await rig.queue(),isEmpty);
+    await rig.open('pc2');await rig.flush();await rig.pull({'students_directory'});
     expect((await rig.db.collection('students_directory').get()).docs,hasLength(2));
     await rig.open('pc1');await rig.pull({'students_directory'});
     expect((await rig.db.collection('students_directory').get()).docs,hasLength(2));
-    await rig.db.collection('students_directory').doc('pupil1').update({'name':'First edit'});await rig.flush();
+    await rig.db.collection('students_directory').doc('pupil1').update({'name':'First edit'});
     await rig.open('pc2');await rig.db.collection('students_directory').doc('pupil1').update({'name':'Different offline edit'});
+    // Both PCs edited from the same baseline before either edit committed.
+    await rig.open('pc1');await rig.flush();
+    await rig.open('pc2');
     await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
     await rig.pull({'students_directory'});
     expect((await rig.queue()).single.data()['syncState'],'conflict');
@@ -135,7 +139,9 @@ void main() {
     final fee=rig.db.collection('fee_payments').doc('payment');
     await fee.set({'schoolId':school,'amount':500,'receiptNo':'synthetic-1'});
     final original=(await rig.queue()).single.data();
-    await expectLater(rig.flush(sender:(row)async{await rig.send(row);throw TimeoutException('Response lost after commit');}),throwsA(isA<TimeoutException>()));
+    for(var attempt=0;attempt<3;attempt++) {
+      await expectLater(rig.flush(sender:(row)async{await rig.send(row);throw TimeoutException('Response lost after commit');}),throwsA(isA<TimeoutException>()));
+    }
     await rig.pull({'fee_payments'});expect((await rig.queue()).single.data()['operationId'],original['operationId']);
     await rig.flush();expect(await rig.queue(),isEmpty);
     await rig.open('pc2');await rig.pull({'fee_payments'});
@@ -157,6 +163,29 @@ void main() {
     await rig.flush();await rig.open('pc1');await rig.pull({'fee_payments'});
     expect((await rig.db.collection('fee_payments').doc('payment').get()).data()?['amount'],700);
     expect(await rig.queue(),isEmpty);
+  });
+
+  test('offline PC cannot attach old student or fee edits to a new Class/Roll generation',() async {
+    final old='p-${List.filled(32,'1').join()}',fresh='p-${List.filled(32,'2').join()}';
+    await rig.db.collection('students_directory').doc('slot').set({
+      'schoolId':school,'name':'Old pupil','class':'Class 1','rollNo':'1','mobileStableId':old});
+    await rig.db.collection('fee_payments').doc('old-fee').set({
+      'schoolId':school,'studentId':'slot','personId':old,'amount':100});
+    await rig.flush();
+    await rig.open('pc2');await rig.pull({'students_directory','fee_payments'});
+    await rig.db.collection('students_directory').doc('slot').update({'name':'Offline old edit'});
+    await rig.db.collection('fee_payments').doc('old-fee').update({'amount':200});
+    await rig.open('pc1');
+    await rig.db.collection('students_directory').doc('slot').delete();await rig.flush();
+    await rig.db.collection('students_directory').doc('slot').set({
+      'schoolId':school,'name':'Fresh pupil','class':'Class 1','rollNo':'1','mobileStableId':fresh});
+    await rig.flush();
+    await rig.open('pc2');await rig.pull({'students_directory','fee_payments'});
+    expect((await rig.db.collection('students_directory').doc('slot').get()).data()?['mobileStableId'],fresh);
+    expect((await rig.db.collection('fee_payments').doc('old-fee').get()).exists,false);
+    expect(await rig.queue(),isEmpty);
+    await rig.open('pc1');await rig.pull({'students_directory','fee_payments'});
+    expect((await rig.db.collection('students_directory').get()).docs,hasLength(1));
   });
 
   test('502/503/504, 45-second timeout and lock failure preserve operation across reopen',() async {
