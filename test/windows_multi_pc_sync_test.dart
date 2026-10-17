@@ -10,7 +10,6 @@ import '../lib/windows_local_storage.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_sync_engine.dart';
-import '../lib/windows_sync_schedule.dart';
 
 const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -47,6 +46,7 @@ class _Rig {
     await File('${WindowsLocalStorage.controlDirectory.path}${Platform.pathSeparator}storage_config_v1.json')
       .writeAsString(jsonEncode({'dataPath':dir.path}),flush:true);
     await WindowsLocalStorage.initialize();
+    await db.switchProfile('synthetic-unbound');
     await db.switchProfile('same-school',identity:{'schoolId':school,'schoolSyncId':school});
     final sql=await WindowsLocalStorage.sqliteFile();
     if (!await sql.exists() && await (await WindowsLocalStorage.databaseFile()).exists()) {
@@ -77,9 +77,13 @@ class _Rig {
     expect(out['recordRevision'],isNotEmpty);
     return out['recordRevision'] as String;
   }
-  Future<void> flush({Future<String> Function(Map<String,dynamic>)? sender}) =>
-    WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},
-      sendVersioned:sender??send);
+  Future<void> flush({Future<String> Function(Map<String,dynamic>)? sender,
+      bool explicitRetry = false}) async {
+    final rows = explicitRetry ? await queue() : null;
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      onlyOperationId: explicitRetry ? rows!.single.data()['operationId'] as String : null,
+      send:(a,b,c,d)async{},sendVersioned:sender??send);
+  }
   Future<List<QueryDocumentSnapshot<Map<String,dynamic>>>> queue() async =>
     (await db.collection('_windows_firebase_outbox').get()).docs;
   Future<void> pull(Set<String> collections) async {
@@ -168,7 +172,8 @@ void main() {
       final retained=(await rig.queue()).single.data();
       expect(retained['operationId'],original['operationId']);expect(retained['data'],original['data']);
     }
-    await rig.flush();expect(await rig.queue(),isEmpty);
+    expect((await rig.queue()).single.data()['syncState'],'needsAttention');
+    await rig.flush(explicitRetry:true);expect(await rig.queue(),isEmpty);
     // A record validation fault cannot starve a later independent operation.
     await rig.db.collection('school_config').doc('school_profile_cache').set({'schoolId':school,'schoolName':'','principalName':'','schoolContactNo':''});
     await rig.db.collection('school_settings').doc('independent').set({'schoolId':school,'value':1});
