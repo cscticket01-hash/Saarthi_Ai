@@ -21,8 +21,9 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           node <<'NODE'
-          const {initializeApp,cert}=require('./functions/node_modules/firebase-admin/app');
-          const {getFirestore}=require('./functions/node_modules/firebase-admin/firestore');
+          const requireAdmin=require('node:module').createRequire(process.cwd()+'/functions/package.json');
+          const {initializeApp,cert}=requireAdmin('firebase-admin/app');
+          const {getFirestore}=requireAdmin('firebase-admin/firestore');
           (async()=>{
             const credential=JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT||'{}');
             if(credential.project_id!=='saarthi-ai-df12b')throw Error('Expected central project credential required');
@@ -37,7 +38,7 @@ jobs:
               if(collection==='school_registration_profiles')Object.assign(out,{testName:/^TEST\b/i.test(profile.schoolName||''),hasProfile:!!d.profile});
               if(collection==='school_entitlements')Object.assign(out,{active:d.active===true,blocked:d.blocked===true,status:d.status,activated:d.activated===true,expired:Number(d.expiresAt||0)<Date.now()});
               if(collection==='school_storage_private')Object.assign(out,{ready:d.ready===true,hasScript:typeof d.url==='string',hasSecret:!!d.secret});
-              console.log(JSON.stringify(out));
+              console.log('TEST_METADATA '+JSON.stringify(out));
             }
-          })().catch(()=>{console.error('Read-only TEST metadata diagnosis failed; no metadata or credentials changed.');process.exitCode=1;});
+          })().catch(error=>{console.error('Read-only TEST diagnosis failed; safe error code: '+String(error.code||'UNKNOWN').replace(/[^a-zA-Z0-9_/-]/g,''));process.exitCode=1;});
           NODE
