@@ -1,0 +1,43 @@
+name: Isolated TEST scope read-only diagnosis
+on:
+  push:
+    branches: [ops/isolated-test-readiness-20261017]
+    paths: [.github/workflows/test-scope-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  inspect-test-registration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts
+        working-directory: functions
+      - name: Read only registered TEST metadata and verify scope
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          node <<'NODE'
+          const {initializeApp,cert}=require('./functions/node_modules/firebase-admin/app');
+          const {getFirestore}=require('./functions/node_modules/firebase-admin/firestore');
+          (async()=>{
+            const credential=JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT||'{}');
+            if(credential.project_id!=='saarthi-ai-df12b')throw Error('Expected central project credential required');
+            const db=getFirestore(initializeApp({credential:cert(credential)}));
+            const id='vs-db8afb01a3be46a983c8284714d06e5d';
+            const names=['schools','platform_schools','school_registration_profiles','school_entitlements','school_storage_private'];
+            for(const collection of names){
+              const snap=await db.doc(collection+'/'+id).get(),d=snap.data()||{},profile=d.profile||d;
+              const out={collection,exists:snap.exists,schoolIdMatches:d.schoolId===id};
+              if(collection==='schools')Object.assign(out,{testName:/^TEST\b/i.test(d.schoolName||''),hasName:typeof d.schoolName==='string'});
+              if(collection==='platform_schools')Object.assign(out,{managed:d.managed===true,testName:/^TEST\b/i.test(d.name||''),blocked:d.blocked===true,registrationState:d.registrationState});
+              if(collection==='school_registration_profiles')Object.assign(out,{testName:/^TEST\b/i.test(profile.schoolName||''),hasProfile:!!d.profile});
+              if(collection==='school_entitlements')Object.assign(out,{active:d.active===true,blocked:d.blocked===true,status:d.status,activated:d.activated===true,expired:Number(d.expiresAt||0)<Date.now()});
+              if(collection==='school_storage_private')Object.assign(out,{ready:d.ready===true,hasScript:typeof d.url==='string',hasSecret:!!d.secret});
+              console.log(JSON.stringify(out));
+            }
+          })().catch(()=>{console.error('Read-only TEST metadata diagnosis failed; no metadata or credentials changed.');process.exitCode=1;});
+          NODE
