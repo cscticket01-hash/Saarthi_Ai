@@ -27,7 +27,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Analyze modified sync owners and two-PC harness
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_sync_engine.dart lib/windows_sync_schedule.dart lib/windows_firebase_sync.dart lib/windows_pending_school_sync.dart test/windows_multi_pc_sync_test.dart test/windows_sync_activity_test.dart lib/windows_remote_change_feed.dart test/windows_remote_change_feed_test.dart
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_sync_engine.dart lib/windows_sync_schedule.dart lib/windows_firebase_sync.dart lib/windows_pending_school_sync.dart test/windows_multi_pc_sync_test.dart test/windows_sync_activity_test.dart lib/windows_remote_change_feed.dart lib/windows_local_firestore.dart lib/windows_sheet_recovery.dart test/windows_remote_change_feed_test.dart
       - name: Two-PC correctness, payment ACKs and deletion generations
         env:
           APPDATA: ${{ runner.temp }}/multi-pc-synthetic-scenarios

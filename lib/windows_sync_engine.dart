@@ -1694,46 +1694,48 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           row.data()['documentId']: row};
       var processed = 0;
       final applyWatch = Stopwatch()..start();
-      for (final entry in records.entries) {
-        if (db.activeProfileId != origin)
-          throw StateError('School changed during reconciliation.');
-        final data = Map<String, dynamic>.from(entry.value as Map);
-        if (data['schoolId'] != school)
-          throw StateError('Foreign school manifest rejected.');
-        if (collection == 'school_config' &&
-            entry.key == 'google_drive_account')
-          continue;
-        if(collection=='students_directory'&&data['_syncRevision'] is String) {
-          for(final generation in verifiedDeletedStudentGenerations(data))await db.applyVerifiedStudentDeletion(school,entry.key,generation,data['_syncRevision']);
+      final entries=records.entries.where((entry)=>collection!='school_config'||
+          entry.key!='google_drive_account').toList();
+      for(var offset=0;offset<entries.length;offset+=100) {
+        final chunk=entries.skip(offset).take(100).toList();
+        final incoming=<String,Map<String,dynamic>>{};
+        for(final entry in chunk) {
+          if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
+          final data=Map<String,dynamic>.from(entry.value as Map);
+          if(data['schoolId']!=school)throw StateError('Foreign school manifest rejected.');
+          if(collection=='students_directory'&&data['_syncRevision'] is String) {
+            for(final generation in verifiedDeletedStudentGenerations(data)) {
+              await db.applyVerifiedStudentDeletion(school,entry.key,generation,data['_syncRevision']);
+            }
+          }
+          final queued=pendingById[entry.key];
+          if(queued!=null&&(data['_syncRevision']??'')!=(queued.data()['baseCloudRevision']??'')) {
+            // Still compare the live operation inside the existing durable writer.
+            await db.recordOutboxConflict(queued.reference,queued.data(),data);
+          }
+          incoming[entry.key]=data;
         }
-        if(data['_syncRevision'] is String)await cacheVerifiedSheetRecord(school,collection,entry.key,data);
-        final queued = pendingById[entry.key];
-        if (queued != null &&
-            (data['_syncRevision'] ?? '') !=
-                (queued.data()['baseCloudRevision'] ?? '')) {
-          // Compare inside the serialized durable writer: a stale pull cannot
-          // re-mark a newer administrator-reviewed operation as conflicted.
-          await db.recordOutboxConflict(queued.reference,queued.data(),data);
+        await cacheVerifiedSheetRecords(school,collection,{
+          for(final entry in incoming.entries)
+            if(entry.value['_syncRevision'] is String)entry.key:entry.value,
+        });
+        if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
+        await db.applySyncedCollectionBatch(collection,incoming);
+        // Read back after commit. A newer local edit is retained by the same
+        // live queue guard and must not be counted as a verified download.
+        for(final entry in incoming.entries) {
+          final data=entry.value;
+          if(await db.syncedDocumentMatches(db.collection(collection).doc(entry.key),
+              data['_syncDeleted']==true?null:data)) {
+            verifiedDownloads++;remaining--;
+          } else {blockedDownloads++;}
+          processed++;
+          if(processed%50==0||processed==downloadable) {
+            await progress.set({'remaining':remaining,'verified':verifiedDownloads,'blocked':blockedDownloads,
+              if(verifiedDownloads>0)'lastVerifiedLocalReadbackAt':DateTime.now().millisecondsSinceEpoch},
+              const SetOptions(merge:true));
+          }
         }
-        await db.applySyncedDocument(
-          db.collection(collection).doc(entry.key),
-          data['_syncDeleted'] == true ? null : data,
-          tombstoneRevision:data['_syncDeleted']==true?data['_syncRevision']?.toString():null,
-          tombstoneUpdatedAt:data['_syncDeleted']==true && data['_syncUpdatedAt'] is int ? data['_syncUpdatedAt'] as int:null,
-        );
-        if (await db.syncedDocumentMatches(db.collection(collection).doc(entry.key),
-            data['_syncDeleted'] == true ? null : data)) {
-          verifiedDownloads++;
-          remaining--;
-        } else {
-          // A local edit/conflict is retained. It is not a successful download.
-          blockedDownloads++;
-        }
-        processed++;
-        if (processed % 50 == 0 || processed == downloadable)
-        await progress.set({'remaining':remaining,'verified':verifiedDownloads,'blocked':blockedDownloads,
-          if (verifiedDownloads > 0) 'lastVerifiedLocalReadbackAt':DateTime.now().millisecondsSinceEpoch},
-          const SetOptions(merge:true));
       }
       _sample('collectionApplyMicros', applyWatch.elapsedMicroseconds);
       // Missing IDs are not deletions: only explicit server tombstones delete.

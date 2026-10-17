@@ -111,6 +111,38 @@ void main() {
   });
   tearDown(() async => rig.close());
 
+  test('bounded download batch preserves pending payment, operation identity and school isolation across reopen',() async {
+    final payments=rig.db.collection('fee_payments');
+    await payments.doc('pending').set({'schoolId':school,'amount':100});
+    final original=(await rig.queue()).single.data();
+    await rig.db.applySyncedCollectionBatch('fee_payments',{
+      'pending':{'schoolId':school,'amount':200,'_syncRevision':'different-cloud'},
+      'clean':{'schoolId':school,'amount':50,'_syncRevision':'clean-cloud'},
+    });
+    expect((await payments.doc('pending').get()).data()?['amount'],100);
+    expect((await payments.doc('clean').get()).data()?['amount'],50);
+    expect((await rig.queue()).single.data()['operationId'],original['operationId']);
+    await rig.db.applySyncedCollectionBatch('fee_payments',{
+      'pending':{'schoolId':school,'_syncDeleted':true,'_syncRevision':'deleted-cloud'},
+    });
+    expect((await payments.doc('pending').get()).data()?['amount'],100);
+    expect(()=>rig.db.applySyncedCollectionBatch('fee_payments',{
+      'must-not-apply':{'schoolId':school,'amount':1},
+      'foreign':{'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','amount':1},
+    }),throwsStateError);
+    expect(()=>rig.db.applySyncedCollectionBatch('fee_payments',{
+      for(var i=0;i<101;i++)'too-many-$i':{'schoolId':school,'amount':1},
+    }),throwsStateError);
+    await rig.open('pc1');
+    expect((await rig.db.collection('fee_payments').doc('pending').get()).data()?['amount'],100);
+    expect((await rig.db.collection('fee_payments').doc('must-not-apply').get()).exists,false);
+    expect((await rig.queue()).single.data()['operationId'],original['operationId']);
+    await rig.db.collection('fee_payments').doc('clean').update({'amount':60});
+    final queued=await rig.queue();
+    expect(queued,hasLength(2));
+    expect(queued.singleWhere((row)=>row.data()['documentId']=='clean').data()['baseCloudRevision'],'clean-cloud');
+  });
+
   test('five independent SQLite devices converge without joining their queues',() async {
     final timer=Stopwatch()..start();
     for(var device=1;device<=5;device++) {
