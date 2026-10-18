@@ -11,6 +11,8 @@ on:
       - .github/scripts/review_response_match.test.cjs
       - .github/scripts/review_response_body.cjs
       - .github/scripts/review_response_body.test.cjs
+      - .github/scripts/review_fetch_evidence.cjs
+      - .github/scripts/review_fetch_evidence.test.cjs
       - .github/scripts/connect_isolated_test_storage.cjs
       - .github/scripts/test_runtime_identity.cjs
       - staging-school-cloud/**

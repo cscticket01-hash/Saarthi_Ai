@@ -71,9 +71,11 @@ function VS_mobileAction(b){
   Object.keys(groups).forEach(key=>{
    const col=groups[key];if(props.getProperty('VS_SHEET_MIGRATED_'+col)!=='1')VS_managedSheet(col);
    if(key==='reportCards'&&props.getProperty('VS_SHEET_MIGRATED_exam_center_results')!=='1')VS_managedSheet('exam_center_results');
-   const revision=key==='reportCards'
+   let revision=key==='reportCards'
     ? JSON.stringify([props.getProperty('VS_RECORD_REV_exam_results')||'legacy',props.getProperty('VS_RECORD_REV_exam_center_results')||'legacy'])
-    : props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
+    : props.getProperty('VS_RECORD_REV_'+col)||'legacy';
+   if(b.mobileRecordDeltaVersion===1)revision=VS_hash(JSON.stringify([revision,session.role,session.personId,VS_safePerson(session.person)]));
+   revisions[key]=revision;
    if(known[key]===revision)return;
    if(key==='school')result.school=VS_mobileSchoolProfile();
    else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}
@@ -81,7 +83,7 @@ function VS_mobileAction(b){
     const notices=VS_query(col).sort((a,c)=>(c.timestamp||c.createdAt||0)-(a.timestamp||a.createdAt||0)).slice(0,100).map(n=>Object.assign({},n,{_noticeRevision:n._syncRevision||VS_hash(JSON.stringify(n))}));
     const prior=b.knownNoticeRevisions&&typeof b.knownNoticeRevisions==='object'?b.knownNoticeRevisions:{};
     result.noticeIds=notices.map(n=>n.id);result.noticesDelta=true;
-    result.notices=notices.filter(n=>prior[n.id]!==n._noticeRevision);
+    result.notices=b.mobileRecordDeltaVersion===1?notices:notices.filter(n=>prior[n.id]!==n._noticeRevision);
    }
    else if(key==='examinations')result.examinations=VS_query(col);
    else if(key==='feeStructures'){const normalize=value=>String(value||'').toLowerCase().replace(/[ _]/g,'').replace(/^class/,'');const assigned=normalize(session.person.class);result.feeStructures=VS_query(col).filter(row=>assigned&&normalize(row.className||row.class||String(row.id).split('__')[0])===assigned);}
@@ -109,9 +111,33 @@ function VS_mobileAction(b){
     result.reportCards=Object.keys(rows).map(id=>rows[id]);
    } else result[key]=VS_own(col,session);
   });
+  // Permission-filtered list deltas. IDs acknowledge removals; hashes describe
+  // only visible records, never another pupil's inventory.
+  if(b.mobileRecordDeltaVersion===1){
+   const checkpoints=b.knownGroupRecordRevisions||{};
+   if(!checkpoints||typeof checkpoints!=='object'||Array.isArray(checkpoints)||JSON.stringify(checkpoints).length>200000)throw new Error('Invalid mobile record checkpoint');
+   let count=0;Object.keys(checkpoints).forEach(key=>{const values=checkpoints[key];if(!Object.prototype.hasOwnProperty.call(groups,key)||!values||typeof values!=='object'||Array.isArray(values))throw new Error('Invalid mobile group checkpoint');Object.keys(values).forEach(id=>{if(++count>1000||!id||id.length>200||typeof values[id]!=='string'||!/^[a-f0-9]{64}$/.test(values[id]))throw new Error('Invalid mobile record checkpoint');});});
+   result.mobileRecordDeltaVersion=1;result.groupRecordDeltas={};
+   Object.keys(groups).forEach(key=>{
+    if(!Array.isArray(result[key]))return;
+    const prior=checkpoints[key]||{};
+    if(typeof prior!=='object'||Array.isArray(prior))throw new Error('Invalid mobile group checkpoint');
+    const rows=result[key];
+    const ids=[],seen=Object.create(null),changed=[];
+    rows.forEach(row=>{
+     const payload=Object.assign({},row);delete payload._mobileRecordId;delete payload._mobileRecordRevision;
+     const id=String(row.id||row.documentId||row.reportCardId||VS_hash(JSON.stringify(payload)));
+     if(seen[id])throw new Error('Duplicate mobile record identity');seen[id]=true;ids.push(id);
+     const revision=VS_hash(JSON.stringify(payload));
+     if(prior[id]!==revision)changed.push(Object.assign({},payload,{_mobileRecordId:id,_mobileRecordRevision:revision}));
+    });
+    result[key]=changed;result.groupRecordDeltas[key]={ids:ids};
+   });
+   delete result.noticesDelta;delete result.noticeIds;
+  }
   result.revisions=revisions;
   result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',VS_safePerson(session.person)]));
-  if(b.knownRevision===result.revision)return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
+  if(b.knownRevision===result.revision&&!Object.keys(groups).some(key=>Object.prototype.hasOwnProperty.call(result,key)))return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt,...(b.mobileRecordDeltaVersion===1?{mobileRecordDeltaVersion:1}:{})};
 
   return result;
  }

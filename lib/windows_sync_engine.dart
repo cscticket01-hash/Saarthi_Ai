@@ -9,6 +9,7 @@ import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
 
 import 'dart:async';
+
 import 'windows_sync_schedule.dart';
 import 'windows_sync_projection.dart';
 import 'windows_sync_pause.dart';
@@ -21,6 +22,7 @@ import 'package:flutter/widgets.dart';
 import 'school_cloud_state.dart';
 
 import 'dart:convert';
+
 import 'package:crypto/crypto.dart';
 
 import 'school_backend_transport.dart';
@@ -70,22 +72,32 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   ];
 
   static const reconciliationInterval = Duration(hours: 1);
-  late final _schedule = WindowsSyncSchedule((delay) => scheduleSoon(delay: delay));
+  late final _schedule = WindowsSyncSchedule(
+    (delay) => scheduleSoon(delay: delay),
+  );
   late final _dispatch = WindowsSyncDispatch(() => unawaited(_automaticSync()));
   DateTime? _lastIntegrityAttempt;
   bool _automaticMutationPending = false;
-  bool get _hasAutomaticWork => (details.value['liveQueue'] as List? ?? const []).any((raw) {
-    if (raw is! Map || raw['schoolId'] != _activeSchoolSyncId) return false;
-    if (_activeProfileId.startsWith('central_') && raw['_queueCollection'] == '_windows_google_outbox') return false;
-    if (raw['_queueCollection'] == '_windows_recycle_requests') return raw['state'] == 'pending' || raw['state'] == 'retry';
-    return {'pending', 'retry'}.contains(raw['syncState'] ?? 'pending');
-  });
-  bool get _automaticDue => automaticWindowsSyncDue(now: DateTime.now(),
-      lastAttempt: _lastIntegrityAttempt, localMutation: _automaticMutationPending,
-      pendingWork: _hasAutomaticWork || _remoteCollections.isNotEmpty);
+  bool get _hasAutomaticWork =>
+      (details.value['liveQueue'] as List? ?? const []).any((raw) {
+        if (raw is! Map || raw['schoolId'] != _activeSchoolSyncId) return false;
+        if (_activeProfileId.startsWith('central_') &&
+            raw['_queueCollection'] == '_windows_google_outbox')
+          return false;
+        if (raw['_queueCollection'] == '_windows_recycle_requests')
+          return raw['state'] == 'pending' || raw['state'] == 'retry';
+        return {'pending', 'retry'}.contains(raw['syncState'] ?? 'pending');
+      });
+  bool get _automaticDue => automaticWindowsSyncDue(
+    now: DateTime.now(),
+    lastAttempt: _lastIntegrityAttempt,
+    localMutation: _automaticMutationPending,
+    pendingWork: _hasAutomaticWork || _remoteCollections.isNotEmpty,
+  );
   Future<void> _automaticSync() async {
     if (_automaticDue) await syncNow();
   }
+
   bool _initialized = false;
   final _pause = WindowsSyncPause();
   String? _pauseDeviceId;
@@ -101,6 +113,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
     return _pauseDeviceId = id;
   }
+
   Timer? _pauseTimer;
   Future<void> _pauseWrite = Future<void>.value();
   int _pauseGeneration = 0;
@@ -112,15 +125,26 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final expiry = pausedUntil;
     if (expiry == null) return;
     _pauseTimer = Timer(expiry.difference(DateTime.now()), () {
-      if (isPaused) { _armPauseExpiry(); return; }
+      if (isPaused) {
+        _armPauseExpiry();
+        return;
+      }
       unawaited(refreshDetails());
       scheduleSoon();
     });
   }
 
   Future<void> pauseSync(Duration duration) async {
-    final ref = FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause');
+    final ref = FirebaseFirestore.instance
+        .collection('_windows_sync_status')
+        .doc('pause');
     final saved = _pause.pause(duration);
+    state.value = SchoolCloudState.syncPending;
+    details.value = {
+      ...details.value,
+      'isPaused': true,
+      'displayState': 'paused',
+    };
     _remoteFeed.stop();
     _pauseGeneration++;
     _dispatch.cancel();
@@ -139,6 +163,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   void _admitBatch() {
     if (isPaused) throw const _SyncAdmissionPaused();
   }
+
   bool _syncing = false;
   bool _resetPaused = false;
   int _activating = 0;
@@ -148,7 +173,6 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   DateTime? lastSuccessfulSync;
   DateTime? lastVerifiedCheckpoint;
-  bool get _checkpointDue => syncCheckpointDue(lastVerifiedCheckpoint, DateTime.now());
   SyncRecoveryDecision? recoveryDecision;
   bool automaticSyncEnabled = true;
   final recoveryHistory = <Map<String, dynamic>>[];
@@ -156,52 +180,87 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   bool get isSyncing => _syncing;
   String? _protocolIdentity;
   DateTime? _protocolVerifiedAt;
+  bool _recordDeltasSupported = false;
   bool _deltaBatchSupported = false;
   bool _changeHeadsSupported = false, _checkingHeads = false;
   final _remoteCollections = <String>{};
   final _changeWatch = WindowsCloudChangeWatch();
   Timer? _changeTimer;
-  bool _changeFeedSupported=false;
-  int _remoteChangeGeneration=0;
-  late final _remoteFeed=WindowsRemoteChangeFeed(
-    allowedCollections:_firebaseCollections.where((c)=>c!='backups').toSet(),
-    read:(school,cursor)=>ManagedSchoolSession.callForSchool(school,'managed/events',{
-      if(cursor!=null)'cursor':cursor}),
-    onHint:(collections){
-      if(!automaticScheduleExpected)return;
+  bool _changeFeedSupported = false;
+  int _remoteChangeGeneration = 0;
+  late final _remoteFeed = WindowsRemoteChangeFeed(
+    allowedCollections: _firebaseCollections
+        .where((c) => c != 'backups')
+        .toSet(),
+    read: (school, cursor) => ManagedSchoolSession.callForSchool(
+      school,
+      'managed/events',
+      {if (cursor != null) 'cursor': cursor},
+    ),
+    onHint: (collections) {
+      if (!automaticScheduleExpected) return;
       _remoteChangeGeneration++;
       _remoteCollections.addAll(collections);
-      if(_syncing)_rerunRequested=true;
+      if (_syncing) _rerunRequested = true;
       scheduleSoon();
     },
-    onError:(error){_recordActivity({'stage':'changeFeedUnavailable','schoolId':_activeSchoolSyncId,
-      'at':DateTime.now().millisecondsSinceEpoch,
-      'failureCategory':windowsSyncRecovery(error).kind.name});});
+    onError: (error) {
+      _recordActivity({
+        'stage': 'changeFeedUnavailable',
+        'schoolId': _activeSchoolSyncId,
+        'at': DateTime.now().millisecondsSinceEpoch,
+        'failureCategory': windowsSyncRecovery(error).kind.name,
+      });
+    },
+  );
 
   // Read-only discovery stays out of the queue/retry owner. Hints never ACK
   // uploads or advance local manifests; only verified record apply does that.
   Future<void> _discoverManagedChanges() async {
-    if(!automaticScheduleExpected){_remoteFeed.stop();return;}
-    if(_changeFeedSupported)_remoteFeed.start(jsonEncode([_activeProfileId,_activeSchoolSyncId]),_activeSchoolSyncId);
-    if (!automaticScheduleExpected || _syncing || _activating > 0 ||
-        !_changeHeadsSupported || _checkingHeads || !_changeWatch.due(DateTime.now()) ||
+    if (!automaticScheduleExpected) {
+      _remoteFeed.stop();
+      return;
+    }
+    if (_changeFeedSupported)
+      _remoteFeed.start(
+        jsonEncode([_activeProfileId, _activeSchoolSyncId]),
+        _activeSchoolSyncId,
+      );
+    if (!automaticScheduleExpected ||
+        _syncing ||
+        _activating > 0 ||
+        !_changeHeadsSupported ||
+        _checkingHeads ||
+        !_changeWatch.due(DateTime.now()) ||
         (_quotaRetryAt?.isAfter(DateTime.now()) ?? false) ||
-        (recoveryDecision != null && !recoveryDecision!.retry &&
-          !recoveryDecision!.independentRecords)) return;
+        (recoveryDecision != null &&
+            !recoveryDecision!.retry &&
+            !recoveryDecision!.independentRecords))
+      return;
     _checkingHeads = true;
-    final db = FirebaseFirestore.instance, origin = _activeProfileId,
+    final db = FirebaseFirestore.instance,
+        origin = _activeProfileId,
         school = _activeSchoolSyncId;
     final watch = Stopwatch()..start();
     try {
-      final revisions = <String,String>{};
+      final revisions = <String, String>{};
       for (final col in _firebaseCollections.where((c) => c != 'backups')) {
-        final manifest = (await db.collection('_windows_sync_manifest')
-          .doc(_manifestId('managed', col)).get()).data();
+        final manifest =
+            (await db
+                    .collection('_windows_sync_manifest')
+                    .doc(_manifestId('managed', col))
+                    .get())
+                .data();
         revisions[col] = manifest?['revision']?.toString() ?? '';
       }
-      final heads = await WindowsFirebaseRemote.readManagedHeads(school, revisions);
-      if (origin != _activeProfileId || db.activeProfileId != origin ||
-          school != _activeSchoolSyncId) return;
+      final heads = await WindowsFirebaseRemote.readManagedHeads(
+        school,
+        revisions,
+      );
+      if (origin != _activeProfileId ||
+          db.activeProfileId != origin ||
+          school != _activeSchoolSyncId)
+        return;
       _changeWatch.succeeded(DateTime.now());
       metrics['changeHeadRequests'] = (metrics['changeHeadRequests'] ?? 0) + 1;
       _sample('changeDiscoveryMicros', watch.elapsedMicroseconds);
@@ -212,12 +271,18 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _changeWatch.failed(DateTime.now());
       // A failed hint is Unknown, never a successful checkpoint. Expose a
       // bounded diagnostic without altering upload attempts or operation IDs.
-      _recordActivity({'stage':'changeDiscoveryFailed','schoolId':school,
-        'at':DateTime.now().millisecondsSinceEpoch,
-        'failureCategory':windowsSyncRecovery(error).kind.name,
-        'retryAt':_changeWatch.nextCheck!.millisecondsSinceEpoch});
-    } finally { _checkingHeads = false; }
+      _recordActivity({
+        'stage': 'changeDiscoveryFailed',
+        'schoolId': school,
+        'at': DateTime.now().millisecondsSinceEpoch,
+        'failureCategory': windowsSyncRecovery(error).kind.name,
+        'retryAt': _changeWatch.nextCheck!.millisecondsSinceEpoch,
+      });
+    } finally {
+      _checkingHeads = false;
+    }
   }
+
   final metrics = <String, int>{
     'recordReadRequests': 0,
     'recordWriteRequests': 0,
@@ -227,39 +292,64 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   final details = ValueNotifier<Map<String, dynamic>>({});
   final _activity = <Map<String, dynamic>>[];
   void _recordActivity(Map<String, dynamic> event) {
-    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    final school =
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
     if (event['schoolId'] != school) return;
     if (event['stage'] == 'retry' && event['retryAt'] is int) {
       _nextRetry = DateTime.fromMillisecondsSinceEpoch(event['retryAt'] as int);
-      if (event['failureCategory']=='quota') _quotaRetryAt = _nextRetry;
+      if (event['failureCategory'] == 'quota') _quotaRetryAt = _nextRetry;
     }
     if (event['stage'] == 'automaticRepair' ||
-        (event['stage'] == 'verified' && _activity.any((previous) =>
-          previous['stage']=='automaticRepair' && previous['operationId']==event['operationId']))) {
+        (event['stage'] == 'verified' &&
+            _activity.any(
+              (previous) =>
+                  previous['stage'] == 'automaticRepair' &&
+                  previous['operationId'] == event['operationId'],
+            ))) {
       if (recoveryHistory.length >= 100) recoveryHistory.removeAt(0);
-      recoveryHistory.add({'atUtc':DateTime.now().toUtc().toIso8601String(),
-        'category':event['failureCategory'] ?? 'recoverable',
-        'outcome':event['stage']=='verified' ? 'repaired_and_verified' : 'safe_retry_reopened'});
-      unawaited(_persistRepairHistory(FirebaseFirestore.instance.activeProfileId));
+      recoveryHistory.add({
+        'atUtc': DateTime.now().toUtc().toIso8601String(),
+        'category': event['failureCategory'] ?? 'recoverable',
+        'outcome': event['stage'] == 'verified'
+            ? 'repaired_and_verified'
+            : 'safe_retry_reopened',
+      });
+      unawaited(
+        _persistRepairHistory(FirebaseFirestore.instance.activeProfileId),
+      );
     }
     if (_activity.length >= 100) _activity.removeAt(0);
-    _activity.add(Map<String,dynamic>.from(event));
-    details.value = {...details.value,
-      'activity': [for(final row in _activity) Map<String,dynamic>.from(row)]};
+    _activity.add(Map<String, dynamic>.from(event));
+    details.value = {
+      ...details.value,
+      'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
+    };
   }
 
   Future<void> _persistRepairHistory(String origin) async {
     try {
       if (FirebaseFirestore.instance.activeProfileId != origin) return;
-      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
-        FirebaseFirestore.instance.collection('_windows_sync_status').doc('recovery')
-          .set({'events':List<Map<String,dynamic>>.from(recoveryHistory)}));
-    } catch (_) { /* Diagnostic failure cannot remove or ACK a queue row. */ }
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+        () => FirebaseFirestore.instance
+            .collection('_windows_sync_status')
+            .doc('recovery')
+            .set({'events': List<Map<String, dynamic>>.from(recoveryHistory)}),
+      );
+    } catch (_) {
+      /* Diagnostic failure cannot remove or ACK a queue row. */
+    }
   }
 
-  static Duration retryDelayForFailure(int failures, {bool quotaLimited = false}) {
+  static Duration retryDelayForFailure(
+    int failures, {
+    bool quotaLimited = false,
+  }) {
     final exponent = (failures - 1).clamp(0, 6).toInt();
-    return Duration(seconds: ((quotaLimited ? 60 : 5) * (1 << exponent)).clamp(5, quotaLimited ? 900 : 300).toInt());
+    return Duration(
+      seconds: ((quotaLimited ? 60 : 5) * (1 << exponent))
+          .clamp(5, quotaLimited ? 900 : 300)
+          .toInt(),
+    );
   }
 
   int _failures = 0;
@@ -270,20 +360,31 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (values.length >= 256) values.removeAt(0);
     values.add(value);
   }
+
   Map<String, dynamic> get performanceSummary => {
     for (final entry in _samples.entries)
       entry.key: (() {
         final sorted = entry.value.toList()..sort();
         int percentile(double p) => sorted[((sorted.length - 1) * p).ceil()];
-        return {'samples': sorted.length, 'p50': percentile(0.5), 'p95': percentile(0.95)};
+        return {
+          'samples': sorted.length,
+          'p50': percentile(0.5),
+          'p95': percentile(0.95),
+        };
       })(),
   };
   void recordLocalSave(String entity, int micros) {
     metrics['${entity}SaveMicros'] = micros;
     _sample('${entity}SaveMicros', micros);
-    _recordActivity({'stage':'localSave','at':DateTime.now().millisecondsSinceEpoch,
-      'schoolId':FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
-      'entity':entity,'elapsedMicros':micros,'isRetryable':false});
+    _recordActivity({
+      'stage': 'localSave',
+      'at': DateTime.now().millisecondsSinceEpoch,
+      'schoolId':
+          FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
+      'entity': entity,
+      'elapsedMicros': micros,
+      'isRetryable': false,
+    });
   }
 
   Future<void> refreshDetails() async {
@@ -293,63 +394,167 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final documents = await db.collection('_windows_document_outbox').get();
     final legacy = await db.collection('_windows_google_outbox').get();
     final receipts = await db.collection('_windows_sync_receipts').get();
-    final backup = await db.collection('_windows_sync_status').doc('backup').get();
+    final backup = await db
+        .collection('_windows_sync_status')
+        .doc('backup')
+        .get();
     final downloads = await db.collection('_windows_sync_downloads').get();
-    final downloadCheckpoint = (await db.collection('_windows_sync_status').doc('record-download').get()).data();
-    final binary=(await db.collection('_windows_binary_status').doc('current').get()).data();
-    final restoreInventory = await db.collection('_windows_recycle_requests').get();
-    final restores=restoreInventory.docs.where((d)=>d.data()['localRestore']==true && d.data()['schoolId']==db.activeProfileIdentity['schoolSyncId'] && d.data()['state']!='verified').toList();
+    final downloadCheckpoint =
+        (await db
+                .collection('_windows_sync_status')
+                .doc('record-download')
+                .get())
+            .data();
+    final binary =
+        (await db.collection('_windows_binary_status').doc('current').get())
+            .data();
+    final restoreInventory = await db
+        .collection('_windows_recycle_requests')
+        .get();
+    final restores = restoreInventory.docs
+        .where(
+          (d) =>
+              d.data()['localRestore'] == true &&
+              d.data()['schoolId'] ==
+                  db.activeProfileIdentity['schoolSyncId'] &&
+              d.data()['state'] != 'verified',
+        )
+        .toList();
     if (db.activeProfileId != origin) return;
-    final items = [...general.docs, ...documents.docs, ...legacy.docs, ...restores];
-    final outbound = [...general.docs,...documents.docs,...legacy.docs]
-        .map((row)=>row.data()).where((row)=>
-          row['syncState']!='conflict' && row['syncState']!='needsAttention').toList();
+    final items = [
+      ...general.docs,
+      ...documents.docs,
+      ...legacy.docs,
+      ...restores,
+    ];
+    final outbound = [...general.docs, ...documents.docs, ...legacy.docs]
+        .map((row) => row.data())
+        .where(
+          (row) =>
+              row['syncState'] != 'conflict' &&
+              row['syncState'] != 'needsAttention',
+        )
+        .toList();
     final nowMillis = DateTime.now().millisecondsSinceEpoch;
-    final quotaDeadlines = outbound.where((row)=>row['syncState']=='retry' &&
-        row['failureCategory']=='quota' && row['retryAtMillis'] is int &&
-        (row['retryAtMillis'] as int)>nowMillis)
-        .map((row)=>row['retryAtMillis'] as int).toList()..sort();
-    _quotaRetryAt = quotaDeadlines.isEmpty ? null
+    final quotaDeadlines =
+        outbound
+            .where(
+              (row) =>
+                  row['syncState'] == 'retry' &&
+                  row['failureCategory'] == 'quota' &&
+                  row['retryAtMillis'] is int &&
+                  (row['retryAtMillis'] as int) > nowMillis,
+            )
+            .map((row) => row['retryAtMillis'] as int)
+            .toList()
+          ..sort();
+    _quotaRetryAt = quotaDeadlines.isEmpty
+        ? null
         : DateTime.fromMillisecondsSinceEpoch(quotaDeadlines.last);
-    if (outbound.isNotEmpty && outbound.every((row)=>
-        !pendingRecordBackoffDue(row,DateTime.now()))) {
-      final deadlines = outbound.map((row)=>row['retryAtMillis'] as int).toList()..sort();
+    if (outbound.isNotEmpty &&
+        outbound.every(
+          (row) => !pendingRecordBackoffDue(row, DateTime.now()),
+        )) {
+      final deadlines =
+          outbound.map((row) => row['retryAtMillis'] as int).toList()..sort();
       _nextRetry = DateTime.fromMillisecondsSinceEpoch(deadlines.first);
     }
-    final liveQueue = <Map<String,dynamic>>[
-      for(final d in general.docs) {'id':d.id,...d.data(),'_queueCollection':'_windows_firebase_outbox'},
-      for(final d in documents.docs) {'id':d.id,...d.data(),'_queueCollection':'_windows_document_outbox'},
-      for(final d in legacy.docs) {'id':d.id,...d.data(),'_queueCollection':'_windows_google_outbox'},
-      for(final d in restores) {'id':d.id,...d.data(),'_queueCollection':'_windows_recycle_requests'},
+    final liveQueue = <Map<String, dynamic>>[
+      for (final d in general.docs)
+        {
+          'id': d.id,
+          ...d.data(),
+          '_queueCollection': '_windows_firebase_outbox',
+        },
+      for (final d in documents.docs)
+        {
+          'id': d.id,
+          ...d.data(),
+          '_queueCollection': '_windows_document_outbox',
+        },
+      for (final d in legacy.docs)
+        {'id': d.id, ...d.data(), '_queueCollection': '_windows_google_outbox'},
+      for (final d in restores)
+        {
+          'id': d.id,
+          ...d.data(),
+          '_queueCollection': '_windows_recycle_requests',
+        },
     ];
     details.value = {
       'lanes': windowsSyncLanes(liveQueue, nowMillis),
-      'lastRecordCheckMillis':downloadCheckpoint?['verifiedAt'],
-      'lastRecordAckMillis':receipts.docs.where((d)=>d.data()['collection'] is String && d.data()['collection']!='documents').fold<int>(0,
-        (latest,d) { final at=d.data()['acknowledgedAt'];return at is num&&at>latest?at.toInt():latest; }),
-      'lastDocumentAckMillis':receipts.docs.where((d)=>d.data()['collection']=='documents').fold<int>(0,
-        (latest,d) { final at=d.data()['acknowledgedAt'];return at is num&&at>latest?at.toInt():latest; }),
+      'lastRecordCheckMillis': downloadCheckpoint?['verifiedAt'],
+      'lastRecordAckMillis': receipts.docs
+          .where(
+            (d) =>
+                d.data()['collection'] is String &&
+                d.data()['collection'] != 'documents',
+          )
+          .fold<int>(0, (latest, d) {
+            final at = d.data()['acknowledgedAt'];
+            return at is num && at > latest ? at.toInt() : latest;
+          }),
+      'lastDocumentAckMillis': receipts.docs
+          .where((d) => d.data()['collection'] == 'documents')
+          .fold<int>(0, (latest, d) {
+            final at = d.data()['acknowledgedAt'];
+            return at is num && at > latest ? at.toInt() : latest;
+          }),
       'liveQueue': liveQueue,
-      'displayState': projectWindowsSyncState(liveQueue, nowMillis:nowMillis,
-        syncing:_syncing, paused:isPaused, blocked:_syncBlocked,
-        offline:state.value==SchoolCloudState.offline ||
-          recoveryDecision?.kind==SyncFailureKind.networkPath,
-        failed:lastError!=null, reviewRequired:recoveryDecision?.review==true),
-      'activity': [for(final row in _activity) Map<String,dynamic>.from(row)],
-      'remotePollIntervalMillis':reconciliationInterval.inMilliseconds,
-      'idleReconciliationIntervalMillis':const Duration(hours:1).inMilliseconds,
-      'nextIdleReconciliationMillis':_lastIntegrityAttempt?.add(const Duration(hours:1)).millisecondsSinceEpoch,
+      'displayState': projectWindowsSyncState(
+        liveQueue,
+        nowMillis: nowMillis,
+        syncing: _syncing,
+        paused: isPaused,
+        blocked: _syncBlocked,
+        offline:
+            state.value == SchoolCloudState.offline ||
+            recoveryDecision?.kind == SyncFailureKind.networkPath,
+        failed: lastError != null,
+        reviewRequired: recoveryDecision?.review == true,
+      ),
+      'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
+      'remotePollIntervalMillis': reconciliationInterval.inMilliseconds,
+      'idleReconciliationIntervalMillis': const Duration(
+        hours: 1,
+      ).inMilliseconds,
+      'nextIdleReconciliationMillis': _lastIntegrityAttempt
+          ?.add(const Duration(hours: 1))
+          .millisecondsSinceEpoch,
       'isPaused': isPaused,
       'pauseBoundaryPending': isPaused && _syncing,
       'pausedUntilMillis': pausedUntil?.millisecondsSinceEpoch,
       'pending': items.length,
-      'conflictCount': items.where((d)=>d.data()['syncState']=='conflict' || d.data()['state']=='conflict').length,
-      'pendingRestores':restores.length,
-      'mediaInventoryState':(binary != null && binary['schoolId']==db.activeProfileIdentity['schoolSyncId']) ? binary['inventory'] : 'UNKNOWN',
-      if(binary?['schoolId']==db.activeProfileIdentity['schoolSyncId'] && binary?['inventory']!='UNKNOWN')
-        'mediaPending':(binary?['pending'] as int? ?? 0)+(binary?['failed'] as int? ?? 0)+(binary?['interrupted'] as int? ?? 0)+(binary?['missing'] as int? ?? 0)+(binary?['damaged'] as int? ?? 0)+(binary?['unavailable'] as int? ?? 0),
-      'documentPending': documents.docs.length + general.docs.where((d)=>d.data()['collection']=='documents').length,
-      'lastLocalBackupMillis': backup.data()?['createdAt'] is int ? backup.data()!['createdAt'] : 0,
+      'conflictCount': items
+          .where(
+            (d) =>
+                d.data()['syncState'] == 'conflict' ||
+                d.data()['state'] == 'conflict',
+          )
+          .length,
+      'pendingRestores': restores.length,
+      'mediaInventoryState':
+          (binary != null &&
+              binary['schoolId'] == db.activeProfileIdentity['schoolSyncId'])
+          ? binary['inventory']
+          : 'UNKNOWN',
+      if (binary?['schoolId'] == db.activeProfileIdentity['schoolSyncId'] &&
+          binary?['inventory'] != 'UNKNOWN')
+        'mediaPending':
+            (binary?['pending'] as int? ?? 0) +
+            (binary?['failed'] as int? ?? 0) +
+            (binary?['interrupted'] as int? ?? 0) +
+            (binary?['missing'] as int? ?? 0) +
+            (binary?['damaged'] as int? ?? 0) +
+            (binary?['unavailable'] as int? ?? 0),
+      'documentPending':
+          documents.docs.length +
+          general.docs
+              .where((d) => d.data()['collection'] == 'documents')
+              .length,
+      'lastLocalBackupMillis': backup.data()?['createdAt'] is int
+          ? backup.data()!['createdAt']
+          : 0,
       'verifiedReceiptCount': receipts.docs.length,
       'lastCloudAckMillis': receipts.docs.fold<int>(0, (latest, row) {
         final stamp = row.data()['acknowledgedAt'];
@@ -358,97 +563,237 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'needsAttention': items
           .where(
             (d) =>
-                {'conflict', 'needsAttention'}.contains(d.data()['syncState']) || {'conflict','needsReview','rejected'}.contains(d.data()['state']),
+                {
+                  'conflict',
+                  'needsAttention',
+                }.contains(d.data()['syncState']) ||
+                {
+                  'conflict',
+                  'needsReview',
+                  'rejected',
+                }.contains(d.data()['state']),
           )
           .length,
-      'items': [for(final d in general.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_firebase_outbox'},
-        for(final d in documents.docs){'id':d.id,...d.data(),'_queueCollection':'_windows_document_outbox'},
-        for(final d in legacy.docs){'id':d.id,'syncState':d.data()['syncState'] ?? 'pending', 'retryCount':d.data()['retryCount'], 'failureCategory':d.data()['failureCategory'], '_queueCollection':'_windows_google_outbox'},
-        for(final d in restores){'id':d.id,...d.data(),'_queueCollection':'_windows_recycle_requests'}],
+      'items': [
+        for (final d in general.docs)
+          {
+            'id': d.id,
+            ...d.data(),
+            '_queueCollection': '_windows_firebase_outbox',
+          },
+        for (final d in documents.docs)
+          {
+            'id': d.id,
+            ...d.data(),
+            '_queueCollection': '_windows_document_outbox',
+          },
+        for (final d in legacy.docs)
+          {
+            'id': d.id,
+            'syncState': d.data()['syncState'] ?? 'pending',
+            'retryCount': d.data()['retryCount'],
+            'failureCategory': d.data()['failureCategory'],
+            '_queueCollection': '_windows_google_outbox',
+          },
+        for (final d in restores)
+          {
+            'id': d.id,
+            ...d.data(),
+            '_queueCollection': '_windows_recycle_requests',
+          },
+      ],
       'metrics': Map<String, int>.from(metrics),
       'performance': performanceSummary,
-      'downloads': [for (final row in downloads.docs)
-        if (row.data()['schoolId'] == db.activeProfileIdentity['schoolSyncId']) row.data()],
+      'downloads': [
+        for (final row in downloads.docs)
+          if (row.data()['schoolId'] ==
+              db.activeProfileIdentity['schoolSyncId'])
+            row.data(),
+      ],
     };
-    if (_initialized) unawaited(_reportSyncMonitor(origin, Map<String,dynamic>.from(details.value)));
+    if (_initialized)
+      unawaited(
+        _reportSyncMonitor(origin, Map<String, dynamic>.from(details.value)),
+      );
   }
 
   Future<void> reportCurrentSyncMonitor() async {
-    final origin=FirebaseFirestore.instance.activeProfileId;
+    final origin = FirebaseFirestore.instance.activeProfileId;
     await refreshDetails();
-    await _reportSyncMonitor(origin,Map<String,dynamic>.from(details.value),force:true);
+    await _reportSyncMonitor(
+      origin,
+      Map<String, dynamic>.from(details.value),
+      force: true,
+    );
   }
 
-  Future<void> _reportSyncMonitor(String origin, Map<String,dynamic> observed,{bool force=false}) async {
-    if (!force && _lastMonitorProfile == origin && _lastMonitorReport != null && DateTime.now().difference(_lastMonitorReport!) < const Duration(minutes:5)) return;
-    _lastMonitorProfile=origin;_lastMonitorReport=DateTime.now();
+  Future<void> _reportSyncMonitor(
+    String origin,
+    Map<String, dynamic> observed, {
+    bool force = false,
+  }) async {
+    if (!force &&
+        _lastMonitorProfile == origin &&
+        _lastMonitorReport != null &&
+        DateTime.now().difference(_lastMonitorReport!) <
+            const Duration(minutes: 5))
+      return;
+    _lastMonitorProfile = origin;
+    _lastMonitorReport = DateTime.now();
     try {
-      final central=await CentralSchoolCloud.saved();
-      if (FirebaseFirestore.instance.activeProfileId!=origin || central['managed']!=true || central['schoolId']!=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']) return;
-      await ManagedSchoolSession.callForSchool(central['schoolId'] as String,'managed/sync/status',{'report':{
-        'pending':observed['pending'],'needsAttention':observed['needsAttention'],
-        'mediaInventoryState':observed['mediaInventoryState'],
-        if(observed['mediaPending'] is int)'mediaPending':observed['mediaPending'],
-        'lastClientSyncMillis':lastSuccessfulSync?.millisecondsSinceEpoch??0,
-        'appVersion':WindowsPlatformClient.version,'conflictCount':observed['conflictCount'],'documentPending':observed['documentPending'],
-        'lastReconciliationMillis':lastVerifiedCheckpoint?.millisecondsSinceEpoch??0,
-        'lastLocalBackupMillis':observed['lastLocalBackupMillis'],
-        'verifiedReceiptCount':observed['verifiedReceiptCount'],'lastCloudAckMillis':observed['lastCloudAckMillis'],
-      }}).timeout(const Duration(seconds:25));
-    } catch (_) {/* Aggregate monitoring cannot clear queues or change sync success. */}
+      final central = await CentralSchoolCloud.saved();
+      if (FirebaseFirestore.instance.activeProfileId != origin ||
+          central['managed'] != true ||
+          central['schoolId'] !=
+              FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])
+        return;
+      await ManagedSchoolSession.callForSchool(
+        central['schoolId'] as String,
+        'managed/sync/status',
+        {
+          'report': {
+            'pending': observed['pending'],
+            'needsAttention': observed['needsAttention'],
+            'mediaInventoryState': observed['mediaInventoryState'],
+            if (observed['mediaPending'] is int)
+              'mediaPending': observed['mediaPending'],
+            'lastClientSyncMillis':
+                lastSuccessfulSync?.millisecondsSinceEpoch ?? 0,
+            'appVersion': WindowsPlatformClient.version,
+            'conflictCount': observed['conflictCount'],
+            'documentPending': observed['documentPending'],
+            'lastReconciliationMillis':
+                lastVerifiedCheckpoint?.millisecondsSinceEpoch ?? 0,
+            'lastLocalBackupMillis': observed['lastLocalBackupMillis'],
+            'verifiedReceiptCount': observed['verifiedReceiptCount'],
+            'lastCloudAckMillis': observed['lastCloudAckMillis'],
+          },
+        },
+      ).timeout(const Duration(seconds: 25));
+    } catch (_) {
+      /* Aggregate monitoring cannot clear queues or change sync success. */
+    }
   }
 
   String? lastError;
 
   /// Read-only evidence for support. Never exports record bodies or raw errors.
   Future<Map<String, dynamic>> safeQueueDiagnostics() async {
-    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final db = FirebaseFirestore.instance,
+        origin = FirebaseFirestore.instance.activeProfileId;
     final school = db.activeProfileIdentity['schoolSyncId'];
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
     final receipts = await db.collection('_windows_sync_receipts').get();
-    if (db.activeProfileId != origin) throw StateError('School changed. Reopen Sync details.');
-    String? token(dynamic value) => value is String && RegExp(r'^[A-Za-z0-9_-]{1,100}$').hasMatch(value) ? value : null;
+    if (db.activeProfileId != origin)
+      throw StateError('School changed. Reopen Sync details.');
+    String? token(dynamic value) =>
+        value is String && RegExp(r'^[A-Za-z0-9_-]{1,100}$').hasMatch(value)
+        ? value
+        : null;
     Map<String, dynamic> errorMetadata(dynamic value) {
       final text = value is String ? value : '';
       final candidate = RegExp(r'\[([A-Z_]+)\]').firstMatch(text)?.group(1);
-      final code = {'RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED','TEST_ENVIRONMENT_MISMATCH',
-        'SCRIPT_HTTP_ERROR','SCRIPT_INVALID_RESPONSE','SCRIPT_IDENTITY_MISMATCH','SCRIPT_OPERATION_FAILED',
-        'SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED',
-        'SCRIPT_MIGRATION_PENDING','SCRIPT_MIGRATION_CONFLICT','SCRIPT_MISSING_MIGRATED_TAB',
-        'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_PERMISSION_DENIED',
-        'SCRIPT_QUOTA_EXCEEDED','SCRIPT_TIMEOUT','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR'}.contains(candidate) ? candidate : null;
-      final reference = RegExp(r'Ref: ([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.').firstMatch(text)?.group(1);
-      final status = RegExp(r'HTTP (400|401|403|409|429|502|503|504)').firstMatch(text)?.group(1);
-      return {if (code != null) 'code': code, if (reference != null) 'referenceId': reference,
-        if (status != null) 'httpStatus': int.parse(status)};
+      final code =
+          {
+            'RECORD_REVISION_CONFLICT',
+            'OPERATION_ID_CONFLICT',
+            'SCHOOL_STORAGE_NOT_CONNECTED',
+            'TEST_ENVIRONMENT_MISMATCH',
+            'SCRIPT_HTTP_ERROR',
+            'SCRIPT_INVALID_RESPONSE',
+            'SCRIPT_IDENTITY_MISMATCH',
+            'SCRIPT_OPERATION_FAILED',
+            'SCRIPT_TRANSPORT_ERROR',
+            'SCRIPT_RESPONSE_READ_FAILED',
+            'SCRIPT_MIGRATION_PENDING',
+            'SCRIPT_MIGRATION_CONFLICT',
+            'SCRIPT_MISSING_MIGRATED_TAB',
+            'SCRIPT_RECORD_VERIFY_FAILED',
+            'SCRIPT_STORAGE_NOT_PREPARED',
+            'SCRIPT_PERMISSION_DENIED',
+            'SCRIPT_QUOTA_EXCEEDED',
+            'SCRIPT_TIMEOUT',
+            'SCRIPT_TYPE_ERROR',
+            'SCRIPT_PARSE_ERROR',
+          }.contains(candidate)
+          ? candidate
+          : null;
+      final reference = RegExp(
+        r'Ref: ([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.',
+      ).firstMatch(text)?.group(1);
+      final status = RegExp(
+        r'HTTP (400|401|403|409|429|502|503|504)',
+      ).firstMatch(text)?.group(1);
+      return {
+        if (code != null) 'code': code,
+        if (reference != null) 'referenceId': reference,
+        if (status != null) 'httpStatus': int.parse(status),
+      };
     }
+
     final rows = <Map<String, dynamic>>[];
     for (final queue in ['records', 'documents']) {
-    for (final entry in queue == 'records' ? general.docs : documents.docs) {
-      final item = entry.data(), state = item['syncState'];
-      final collection = item['collection'];
-      final queuedAt = item['queuedAt'];
-      rows.add({
-        'queue': queue,
-        'collection': collection is String && _firebaseCollections.contains(collection) ? collection : queue == 'documents' ? 'documents' : 'unknown',
-        'recordFingerprint': sha256.convert(utf8.encode('${collection ?? 'documents'}/${item['documentId'] ?? entry.id}')).toString(),
-        if (token(item['operationId']) != null) 'operationId': token(item['operationId']),
-        if (token(item['baseCloudRevision']) != null) 'baseCloudRevision': token(item['baseCloudRevision']),
-        'state': state == null ? 'pending' : {'pending','leased','retry','failed','accepted','acknowledged','conflict','needsAttention'}.contains(state) ? state : 'unknown',
-        if (queuedAt is Timestamp) 'queuedAtMillis': queuedAt.millisecondsSinceEpoch,
-        if (queuedAt is num && queuedAt.isFinite) 'queuedAtMillis': queuedAt.toInt(),
-        ...errorMetadata(item['lastError']),
-      });
+      for (final entry in queue == 'records' ? general.docs : documents.docs) {
+        final item = entry.data(), state = item['syncState'];
+        final collection = item['collection'];
+        final queuedAt = item['queuedAt'];
+        rows.add({
+          'queue': queue,
+          'collection':
+              collection is String && _firebaseCollections.contains(collection)
+              ? collection
+              : queue == 'documents'
+              ? 'documents'
+              : 'unknown',
+          'recordFingerprint': sha256
+              .convert(
+                utf8.encode(
+                  '${collection ?? 'documents'}/${item['documentId'] ?? entry.id}',
+                ),
+              )
+              .toString(),
+          if (token(item['operationId']) != null)
+            'operationId': token(item['operationId']),
+          if (token(item['baseCloudRevision']) != null)
+            'baseCloudRevision': token(item['baseCloudRevision']),
+          'state': state == null
+              ? 'pending'
+              : {
+                  'pending',
+                  'leased',
+                  'retry',
+                  'failed',
+                  'accepted',
+                  'acknowledged',
+                  'conflict',
+                  'needsAttention',
+                }.contains(state)
+              ? state
+              : 'unknown',
+          if (queuedAt is Timestamp)
+            'queuedAtMillis': queuedAt.millisecondsSinceEpoch,
+          if (queuedAt is num && queuedAt.isFinite)
+            'queuedAtMillis': queuedAt.toInt(),
+          ...errorMetadata(item['lastError']),
+        });
+      }
     }
-    }
-    return {'schemaVersion': 1, 'capturedAtUtc': DateTime.now().toUtc().toIso8601String(),
-      if (school is String && RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)) 'schoolId': school,
-      'pendingCount': rows.length, 'items': rows,
+    return {
+      'schemaVersion': 1,
+      'capturedAtUtc': DateTime.now().toUtc().toIso8601String(),
+      if (school is String && RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school))
+        'schoolId': school,
+      'pendingCount': rows.length,
+      'items': rows,
       'retainedVerifiedReceiptCount': receipts.docs.length,
-      'historicalCountChange': 'Cannot infer ACK for missing historical items without their operation receipts', 'latestError': errorMetadata(lastError),
-      'cloudVerification': 'Not performed by this read-only report'};
+      'historicalCountChange':
+          'Cannot infer ACK for missing historical items without their operation receipts',
+      'latestError': errorMetadata(lastError),
+      'cloudVerification': 'Not performed by this read-only report',
+    };
   }
+
   String _activeProfileId = 'unbound';
   String _activeSchoolSyncId = '';
   String _activeFirebaseProject = '';
@@ -466,9 +811,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     WindowsLocalFirestoreSyncControl.onTrackedMutation = () async {
-      _recordActivity({'stage':'localSave','at':DateTime.now().millisecondsSinceEpoch,
-        'schoolId':FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
-        'scope':'durable_record_mutation','isRetryable':false});
+      _recordActivity({
+        'stage': 'localSave',
+        'at': DateTime.now().millisecondsSinceEpoch,
+        'schoolId':
+            FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
+        'scope': 'durable_record_mutation',
+        'isRetryable': false,
+      });
       scheduleSoon(localMutation: true);
       unawaited(refreshDetails());
     };
@@ -478,9 +828,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     };
 
     WindowsBackendBridge.onLocalDocumentCommitted = () {
-      _recordActivity({'stage':'localSave','at':DateTime.now().millisecondsSinceEpoch,
-        'schoolId':FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
-        'scope':'durable_document_commit','isRetryable':false});
+      _recordActivity({
+        'stage': 'localSave',
+        'at': DateTime.now().millisecondsSinceEpoch,
+        'schoolId':
+            FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
+        'scope': 'durable_document_commit',
+        'isRetryable': false,
+      });
       scheduleSoon(localMutation: true);
       unawaited(refreshDetails());
     };
@@ -494,8 +849,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
     _schedule.start(reconciliationInterval);
     _changeTimer?.cancel();
-    _changeTimer = Timer.periodic(const Duration(seconds: 30),
-      (_) => unawaited(_discoverManagedChanges()));
+    _changeTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => unawaited(_discoverManagedChanges()),
+    );
     _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
 
     scheduleSoon(delay: const Duration(milliseconds: 800));
@@ -543,19 +900,31 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
   }
 
-  void scheduleSoon({Duration delay = const Duration(milliseconds: 250), bool localMutation = false}) {
-    if (!_initialized || _syncBlocked || _resetPaused || isPaused || !automaticSyncEnabled) return;
+  void scheduleSoon({
+    Duration delay = const Duration(milliseconds: 250),
+    bool localMutation = false,
+  }) {
+    if (!_initialized ||
+        _syncBlocked ||
+        _resetPaused ||
+        isPaused ||
+        !automaticSyncEnabled)
+      return;
     if (localMutation) _automaticMutationPending = true;
     if (!_automaticDue) return;
     if (recoveryDecision != null && !recoveryDecision!.retry) {
-      if ((!localMutation && _remoteCollections.isEmpty) || !recoveryDecision!.independentRecords) return;
+      if ((!localMutation && _remoteCollections.isEmpty) ||
+          !recoveryDecision!.independentRecords)
+        return;
       recoveryDecision = null;
       _failures = 0;
     }
     // A fresh durable change may dispatch while an older transient row waits;
     // the row-level deadline still prevents retrying that older operation early.
-    if (localMutation && recoveryDecision?.kind != SyncFailureKind.quota &&
-        (_quotaRetryAt == null || !_quotaRetryAt!.isAfter(DateTime.now()))) _nextRetry = null;
+    if (localMutation &&
+        recoveryDecision?.kind != SyncFailureKind.quota &&
+        (_quotaRetryAt == null || !_quotaRetryAt!.isAfter(DateTime.now())))
+      _nextRetry = null;
     if (_syncing) {
       if (localMutation) _rerunRequested = true;
       return;
@@ -566,7 +935,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       delay = _nextRetry!.difference(DateTime.now());
     // Fresh data can advance an already armed long retry timer. The durable
     // row-level backoff still protects the older failed operation.
-    _dispatch.request(delay,localMutation:localMutation);
+    _dispatch.request(delay, localMutation: localMutation);
   }
 
   Future<void> changeGoogleConnection({
@@ -792,7 +1161,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           projectId: projectId,
           googleUrl: googleUrl,
           googleEmail: googleEmail,
-          message: 'School isolation BLOCKED: Firebase aur Google Drive alag school identity ke hain. Koi data sync nahi hua.',
+          message:
+              'School isolation BLOCKED: Firebase aur Google Drive alag school identity ke hain. Koi data sync nahi hua.',
         );
       }
 
@@ -801,7 +1171,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           projectId: projectId,
           googleUrl: googleUrl,
           googleEmail: googleEmail,
-          message: 'School isolation pending: current Firebase + Drive pair verify/claim nahi hua. Advanced Settings me correct Drive link Save karein.',
+          message:
+              'School isolation pending: current Firebase + Drive pair verify/claim nahi hua. Advanced Settings me correct Drive link Save karein.',
         );
       }
 
@@ -840,7 +1211,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           projectId: projectId,
           googleUrl: googleUrl,
           googleEmail: googleEmail,
-          message: 'School isolation verify nahi hua. Koi cross-source sync nahi hua.',
+          message:
+              'School isolation verify nahi hua. Koi cross-source sync nahi hua.',
         );
       }
     } else if (projectId.isNotEmpty) {
@@ -902,7 +1274,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _remoteCollections.clear();
       _changeWatch.reset();
       _changeHeadsSupported = false;
-      _changeFeedSupported=false;_remoteFeed.stop();
+      _changeFeedSupported = false;
+      _remoteFeed.stop();
       _lastIntegrityAttempt = null;
       _automaticMutationPending = false;
       _failures = 0;
@@ -943,21 +1316,48 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     );
 
     windows_html.setSchoolStorageNamespace(profile.profileId);
-    final preferences = (await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').get()).data();
+    final preferences =
+        (await FirebaseFirestore.instance
+                .collection('_windows_sync_status')
+                .doc('settings')
+                .get())
+            .data();
     automaticSyncEnabled = preferences?['automaticSync'] != false;
-    final storedPause = (await FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause').get()).data();
+    final storedPause =
+        (await FirebaseFirestore.instance
+                .collection('_windows_sync_status')
+                .doc('pause')
+                .get())
+            .data();
     final device = await _localPauseDeviceId();
     _pause.restore(storedPause?['deviceId'] == device ? storedPause : null);
     _armPauseExpiry();
-    final storedHistory = (await FirebaseFirestore.instance.collection('_windows_sync_status').doc('recovery').get()).data()?['events'];
+    final storedHistory =
+        (await FirebaseFirestore.instance
+                .collection('_windows_sync_status')
+                .doc('recovery')
+                .get())
+            .data()?['events'];
     recoveryHistory.clear();
     if (storedHistory is List) {
       for (final event in storedHistory.take(100)) {
-        if (event is Map && SyncFailureKind.values.any((kind) => kind.name == event['category']) &&
-            {'retained_for_retry', 'retained_for_review'}.contains(event['outcome']) &&
-            event['atUtc'] is String && DateTime.tryParse(event['atUtc'] as String) != null && event['attempt'] is num) {
-          recoveryHistory.add({'atUtc': event['atUtc'], 'category': event['category'],
-            'outcome': event['outcome'], 'attempt': (event['attempt'] as num).toInt()});
+        if (event is Map &&
+            SyncFailureKind.values.any(
+              (kind) => kind.name == event['category'],
+            ) &&
+            {
+              'retained_for_retry',
+              'retained_for_review',
+            }.contains(event['outcome']) &&
+            event['atUtc'] is String &&
+            DateTime.tryParse(event['atUtc'] as String) != null &&
+            event['attempt'] is num) {
+          recoveryHistory.add({
+            'atUtc': event['atUtc'],
+            'category': event['category'],
+            'outcome': event['outcome'],
+            'attempt': (event['attempt'] as num).toInt(),
+          });
         }
       }
     }
@@ -971,8 +1371,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       lastSuccessfulSync = DateTime.fromMillisecondsSinceEpoch(
         (savedStatus!['successfulAt'] as num).toInt(),
       );
-    if (savedStatus?['checkpointAt'] is num) lastVerifiedCheckpoint = DateTime.fromMillisecondsSinceEpoch((savedStatus!['checkpointAt'] as num).toInt());
-    if (_initialized && !_resetPaused) _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
+    if (savedStatus?['checkpointAt'] is num)
+      lastVerifiedCheckpoint = DateTime.fromMillisecondsSinceEpoch(
+        (savedStatus!['checkpointAt'] as num).toInt(),
+      );
+    if (_initialized && !_resetPaused)
+      _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
     await refreshDetails();
 
     if (seedGoogleConfig && profile.googleUrl.isNotEmpty) {
@@ -1106,8 +1510,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       }
 
       var current = Uri.parse(scriptUrl);
-      var response = await sendPost(current)
-          .timeout(const Duration(seconds: 30));
+      var response = await sendPost(
+        current,
+      ).timeout(const Duration(seconds: 30));
 
       for (var redirectCount = 0; redirectCount < 8; redirectCount++) {
         final code = response.statusCode;
@@ -1206,14 +1611,21 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       throw StateError('School sync did not complete; retry Drive backup.');
   }
 
-  Future<void> syncNow() async {
-    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused) return;
+  Future<void> syncNow({bool verifyInventory = false}) async {
+    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused)
+      return;
 
     _syncing = true;
     final now = DateTime.now();
-    final integrityAudit = windowsIntegrityAuditDue(now:now,
-      lastAttempt:_lastIntegrityAttempt,manual:_manualSync);
-    if (integrityAudit) {
+    final scheduledCheck = windowsIntegrityAuditDue(
+      now: now,
+      lastAttempt: _lastIntegrityAttempt,
+      manual: _manualSync,
+    );
+    // Even the normal manual Sync Now button transfers changes only.
+    // Broad verification requires a separate explicit caller opt-in.
+    final integrityAudit = verifyInventory;
+    if (scheduledCheck) {
       _lastIntegrityAttempt = now;
       _schedule.armCheckpoint(_lastIntegrityAttempt);
     }
@@ -1232,7 +1644,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         return;
       }
       if (central['managed'] == true) {
-        ManagedSchoolSession.verifyBuildEndpoint(central['endpoint']?.toString()??'');
+        ManagedSchoolSession.verifyBuildEndpoint(
+          central['endpoint']?.toString() ?? '',
+        );
         if (SchoolCloudEngine.instance.identity != null &&
             !SchoolCloudEngine.instance.canOpen)
           throw StateError('School access requires verification.');
@@ -1240,25 +1654,42 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           throw StateError(
             'School Drive connection pending. Local data retained.',
           );
-        final protocolIdentity = jsonEncode([_activeProfileId, _activeSchoolSyncId, _activeGoogleUrl, central['scriptUrl']]);
-        if (integrityAudit || _protocolIdentity != protocolIdentity ||
-            _protocolVerifiedAt == null || DateTime.now().difference(_protocolVerifiedAt!) >= const Duration(minutes: 5)) {
-        final health = await ManagedSchoolSession.callForSchool(
+        final protocolIdentity = jsonEncode([
+          _activeProfileId,
           _activeSchoolSyncId,
-          'managed/storage/check',
-          {},
-        );
-        metrics['storageChecks'] = metrics['storageChecks']! + 1;
-        if (health['recordSyncVersion'] != 2 ||
-            health['brokerRecordSyncVersion'] != 2)
-          throw StateError(
-            'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
+          _activeGoogleUrl,
+          central['scriptUrl'],
+        ]);
+        if (integrityAudit ||
+            _protocolIdentity != protocolIdentity ||
+            _protocolVerifiedAt == null ||
+            DateTime.now().difference(_protocolVerifiedAt!) >=
+                const Duration(minutes: 5)) {
+          final health = await ManagedSchoolSession.callForSchool(
+            _activeSchoolSyncId,
+            'managed/storage/check',
+            {},
           );
+          metrics['storageChecks'] = metrics['storageChecks']! + 1;
+          if (health['recordSyncVersion'] != 2 ||
+              health['brokerRecordSyncVersion'] != 2)
+            throw StateError(
+              'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
+            );
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
-          _changeFeedSupported=health['brokerChangeFeedVersion']==1;
-          if(_changeFeedSupported&&automaticScheduleExpected)_remoteFeed.start(jsonEncode([_activeProfileId,_activeSchoolSyncId]),_activeSchoolSyncId);
-          else _remoteFeed.stop();
-          _changeHeadsSupported = health['recordChangeHeadsVersion'] == 1 &&
+          _recordDeltasSupported =
+              health['recordDeltaRecordsVersion'] == 1 &&
+              health['brokerRecordDeltaRecordsVersion'] == 1;
+          _changeFeedSupported = health['brokerChangeFeedVersion'] == 1;
+          if (_changeFeedSupported && automaticScheduleExpected)
+            _remoteFeed.start(
+              jsonEncode([_activeProfileId, _activeSchoolSyncId]),
+              _activeSchoolSyncId,
+            );
+          else
+            _remoteFeed.stop();
+          _changeHeadsSupported =
+              health['recordChangeHeadsVersion'] == 1 &&
               health['brokerChangeHeadsVersion'] == 1;
           _protocolIdentity = protocolIdentity;
           _protocolVerifiedAt = DateTime.now();
@@ -1267,50 +1698,109 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _admitBatch();
           await _pushManagedOutbox();
         } catch (e) {
-          if (!windowsSyncRecovery(e).independentRecords && !isRecordSyncConflict(e)) rethrow;
+          if (!windowsSyncRecovery(e).independentRecords &&
+              !isRecordSyncConflict(e))
+            rethrow;
         }
         _admitBatch();
-        await syncLocalRestoreRequests(FirebaseFirestore.instance,_activeSchoolSyncId,
-          (body) => ManagedSchoolSession.callForSchool(_activeSchoolSyncId,'managed/recycle',body),
-          canAdmit: () => !isPaused);
+        await syncLocalRestoreRequests(
+          FirebaseFirestore.instance,
+          _activeSchoolSyncId,
+          (body) => ManagedSchoolSession.callForSchool(
+            _activeSchoolSyncId,
+            'managed/recycle',
+            body,
+          ),
+          canAdmit: () => !isPaused,
+        );
         // Publication must use the same verified school inputs on every PC.
         // Merge cloud records first; applySyncedDocument retains pending edits.
         if (_lastPull == null ||
-            DateTime.now().difference(_lastPull!) >=
-                reconciliationInterval ||
-            integrityAudit || _remoteCollections.isNotEmpty) {
+            DateTime.now().difference(_lastPull!) >= reconciliationInterval ||
+            scheduledCheck ||
+            integrityAudit ||
+            _remoteCollections.isNotEmpty) {
           _admitBatch();
           final inventoryAudit = integrityAudit;
-          final fullPull = inventoryAudit || _lastPull == null ||
+          final fullPull =
+              inventoryAudit ||
+              _lastPull == null ||
               DateTime.now().difference(_lastPull!) >= reconciliationInterval;
-          final selected = fullPull ? null : Set<String>.from(_remoteCollections);
-          final remoteGenerationAtRead=_remoteChangeGeneration;
-          await _pullManagedChanges(verifyInventory: inventoryAudit,
-            selectedCollections: selected);
-          if(remoteGenerationAtRead==_remoteChangeGeneration) {
-            if (selected == null) { _remoteCollections.clear(); }
-            else { _remoteCollections.removeAll(selected); }
+          Set<String>? selected = fullPull
+              ? null
+              : Set<String>.from(_remoteCollections);
+          if (!integrityAudit && _lastPull != null && _changeHeadsSupported) {
+            final known = <String, String>{};
+            for (final col in _firebaseCollections.where(
+              (c) => c != 'backups',
+            )) {
+              final prior =
+                  (await FirebaseFirestore.instance
+                          .collection('_windows_sync_manifest')
+                          .doc(_manifestId('managed', col))
+                          .get())
+                      .data();
+              known[col] = prior?['revision']?.toString() ?? '';
+            }
+            final heads = await WindowsFirebaseRemote.readManagedHeads(
+              _activeSchoolSyncId,
+              known,
+            );
+            _admitBatch();
+            if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
+              throw StateError('School changed during change check.');
+            selected = {
+              ..._remoteCollections,
+              ...changedWindowsCollections(known, heads),
+            };
           }
-          if(FirebaseFirestore.instance.activeProfileId!=syncOrigin)
+          final remoteGenerationAtRead = _remoteChangeGeneration;
+          await _pullManagedChanges(
+            verifyInventory: inventoryAudit,
+            selectedCollections: selected,
+          );
+          if (remoteGenerationAtRead == _remoteChangeGeneration) {
+            if (selected == null) {
+              _remoteCollections.clear();
+            } else {
+              _remoteCollections.removeAll(selected);
+            }
+          }
+          if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
             throw StateError('School changed after record download.');
-          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
-            FirebaseFirestore.instance.collection('_windows_sync_status').doc('record-download')
-              .set({'verifiedAt':DateTime.now().millisecondsSinceEpoch}));
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+            () => FirebaseFirestore.instance
+                .collection('_windows_sync_status')
+                .doc('record-download')
+                .set({'verifiedAt': DateTime.now().millisecondsSinceEpoch}),
+          );
           _lastPull = DateTime.now();
           // Only admitted work reaches this pull; idle polling is hourly.
-          completedReconciliation = inventoryAudit;
+          completedReconciliation = scheduledCheck;
         }
         _admitBatch();
         await WindowsDocumentTemplates.publishChangedIdCards();
         // ID preparation may create credential metadata; drain only those new
         // durable operations before uploading their published files.
-        try { _admitBatch();
-        await _pushManagedOutbox(); }
-        catch (e) { if (!windowsSyncRecovery(e).independentRecords && !isRecordSyncConflict(e)) rethrow; }
-        await runDocumentAndDownloadStages(documents: () async {
+        try {
           _admitBatch();
-          await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
-        }, download: () async {});
+          await _pushManagedOutbox();
+        } catch (e) {
+          if (!windowsSyncRecovery(e).independentRecords &&
+              !isRecordSyncConflict(e))
+            rethrow;
+        }
+        await runDocumentAndDownloadStages(
+          documents: () async {
+            _admitBatch();
+            await WindowsBackendBridge.flushDocumentPending(
+              canAdmit: () => !isPaused,
+              respectBackoff: true,
+              onActivity: _recordActivity,
+            );
+          },
+          download: () async {},
+        );
         _admitBatch();
         await refreshDetails();
         if ((details.value['needsAttention'] as num? ?? 0) > 0)
@@ -1324,8 +1814,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           // blocked/legacy rows every 250 ms creates an infinite upload loop.
           // Only the durable commit callback requests an immediate rerun.
           final deadline = nextWindowsQueueRetry(
-            (details.value['liveQueue'] as List).cast<Map<String,dynamic>>(),
-            DateTime.now().millisecondsSinceEpoch);
+            (details.value['liveQueue'] as List).cast<Map<String, dynamic>>(),
+            DateTime.now().millisecondsSinceEpoch,
+          );
           if (deadline != null) {
             _nextRetry = DateTime.fromMillisecondsSinceEpoch(deadline);
             _dispatch.request(_nextRetry!.difference(DateTime.now()));
@@ -1337,9 +1828,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           () => FirebaseFirestore.instance
               .collection('_windows_sync_status')
               .doc('last')
-              .set({'successfulAt': DateTime.now().millisecondsSinceEpoch,
-                if (completedReconciliation) 'checkpointAt': DateTime.now().millisecondsSinceEpoch,
-                if (!completedReconciliation && lastVerifiedCheckpoint != null) 'checkpointAt': lastVerifiedCheckpoint!.millisecondsSinceEpoch}),
+              .set({
+                'successfulAt': DateTime.now().millisecondsSinceEpoch,
+                if (completedReconciliation)
+                  'checkpointAt': DateTime.now().millisecondsSinceEpoch,
+                if (!completedReconciliation && lastVerifiedCheckpoint != null)
+                  'checkpointAt':
+                      lastVerifiedCheckpoint!.millisecondsSinceEpoch,
+              }),
         );
         lastSuccessfulSync = DateTime.now();
         if (completedReconciliation) {
@@ -1388,12 +1884,20 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
       if (scriptUrl.isNotEmpty && central.isEmpty) {
         _admitBatch();
-        await WindowsBackendBridge.flushPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
+        await WindowsBackendBridge.flushPending(
+          canAdmit: () => !isPaused,
+          respectBackoff: true,
+          onActivity: _recordActivity,
+        );
       }
 
       if (central['managed'] == true) {
         _admitBatch();
-        await WindowsBackendBridge.flushDocumentPending(canAdmit: () => !isPaused, respectBackoff: true, onActivity: _recordActivity);
+        await WindowsBackendBridge.flushDocumentPending(
+          canAdmit: () => !isPaused,
+          respectBackoff: true,
+          onActivity: _recordActivity,
+        );
       }
 
       _admitBatch();
@@ -1408,59 +1912,111 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _failures++;
       _nextRetry = recoveryDecision!.retry
           ? (_nextRetry != null && _nextRetry!.isAfter(DateTime.now())
-              ? _nextRetry : DateTime.now().add(recoveryDecision!.delay(_failures)))
+                ? _nextRetry
+                : DateTime.now().add(recoveryDecision!.delay(_failures)))
           : null;
       if (recoveryHistory.length >= 100) recoveryHistory.removeAt(0);
-      recoveryHistory.add({'atUtc': DateTime.now().toUtc().toIso8601String(),
-        'category': recoveryDecision!.kind.name, 'attempt': _failures,
-        'outcome': recoveryDecision!.retry ? 'retained_for_retry' : 'retained_for_review'});
+      recoveryHistory.add({
+        'atUtc': DateTime.now().toUtc().toIso8601String(),
+        'category': recoveryDecision!.kind.name,
+        'attempt': _failures,
+        'outcome': recoveryDecision!.retry
+            ? 'retained_for_retry'
+            : 'retained_for_review',
+      });
       try {
-        await FirebaseFirestore.instance.collection('_windows_sync_status').doc('recovery').set({'events': List<Map<String, dynamic>>.from(recoveryHistory)});
-      } catch (_) { /* A failed diagnostic write never removes the durable queue. */ }
+        await FirebaseFirestore.instance
+            .collection('_windows_sync_status')
+            .doc('recovery')
+            .set({'events': List<Map<String, dynamic>>.from(recoveryHistory)});
+      } catch (_) {
+        /* A failed diagnostic write never removes the durable queue. */
+      }
       if (_activeProfileId == syncOrigin)
         state.value = SchoolCloudState.syncError;
     } finally {
       watch.stop();
       metrics['reconciliationMicros'] = watch.elapsedMicroseconds;
       _syncing = false;
-      if (isPaused && _activeProfileId == syncOrigin) state.value = SchoolCloudState.syncPending;
+      if (isPaused && _activeProfileId == syncOrigin)
+        state.value = SchoolCloudState.syncPending;
       await refreshDetails();
-      if ((lastError != null && _hasAutomaticWork && recoveryDecision?.retry == true && _failures <= 5) || _rerunRequested || (lastError == null && _remoteCollections.isNotEmpty)) {
-        final independentMutation = _rerunRequested && recoveryDecision?.independentRecords == true;
+      if ((lastError != null &&
+              _hasAutomaticWork &&
+              recoveryDecision?.retry == true &&
+              _failures <= 5) ||
+          _rerunRequested ||
+          (lastError == null && _remoteCollections.isNotEmpty)) {
+        final independentMutation =
+            _rerunRequested && recoveryDecision?.independentRecords == true;
         _rerunRequested = false;
-        scheduleSoon(localMutation: independentMutation, delay: lastError == null ? const Duration(milliseconds: 250) : schoolRetryDelay(_failures));
+        scheduleSoon(
+          localMutation: independentMutation,
+          delay: lastError == null
+              ? const Duration(milliseconds: 250)
+              : schoolRetryDelay(_failures),
+        );
       }
     }
   }
 
   bool _manualSync = false;
+
   /// Guardian may repair the owner's local timer, never its queue or ACKs.
-  bool get automaticScheduleExpected => _initialized && automaticSyncEnabled &&
-      !_syncBlocked && !_resetPaused && !isPaused && _activeSchoolSyncId.isNotEmpty &&
+  bool get automaticScheduleExpected =>
+      _initialized &&
+      automaticSyncEnabled &&
+      !_syncBlocked &&
+      !_resetPaused &&
+      !isPaused &&
+      _activeSchoolSyncId.isNotEmpty &&
       FirebaseFirestore.instance.activeProfileId == _activeProfileId;
-  bool get automaticScheduleRunning => _schedule.reconciliation?.isActive == true;
-  bool get retryDispatchExpected => automaticScheduleExpected && !_syncing &&
-      _activating == 0 && canRestoreOwnerDispatch(retryAllowed: recoveryDecision?.retry != false, admittedAt: _dispatch.scheduledAt, nextRetry: _nextRetry, quotaRetry: _quotaRetryAt);
+  bool get automaticScheduleRunning =>
+      _schedule.reconciliation?.isActive == true;
+  bool get retryDispatchExpected =>
+      automaticScheduleExpected &&
+      !_syncing &&
+      _activating == 0 &&
+      canRestoreOwnerDispatch(
+        retryAllowed: recoveryDecision?.retry != false,
+        admittedAt: _dispatch.scheduledAt,
+        nextRetry: _nextRetry,
+        quotaRetry: _quotaRetryAt,
+      );
   bool get retryDispatchRunning => _dispatch.running;
-  bool get checkpointTimerExpected => automaticScheduleExpected && !_syncing &&
-      _schedule.checkpointExpected;
+  bool get checkpointTimerExpected =>
+      automaticScheduleExpected && !_syncing && _schedule.checkpointExpected;
   bool get checkpointTimerRunning => _schedule.checkpointRunning;
   void repairRetryDispatch({required String school, required String profile}) {
-    if (!retryDispatchExpected || school != _activeSchoolSyncId || profile != _activeProfileId) {
+    if (!retryDispatchExpected ||
+        school != _activeSchoolSyncId ||
+        profile != _activeProfileId) {
       throw StateError('Owner dispatch repair is not admitted.');
     }
     // Restores the captured deadline only. It does not call syncNow, reset
     // backoff, select a queue item or authorize a business retry.
     _dispatch.repair();
   }
-  void repairCheckpointTimer({required String school, required String profile}) {
-    if (!checkpointTimerExpected || school != _activeSchoolSyncId || profile != _activeProfileId) {
+
+  void repairCheckpointTimer({
+    required String school,
+    required String profile,
+  }) {
+    if (!checkpointTimerExpected ||
+        school != _activeSchoolSyncId ||
+        profile != _activeProfileId) {
       throw StateError('Owner checkpoint timer repair is not admitted.');
     }
     _schedule.repairCheckpoint();
   }
-  void repairAutomaticSchedule({required String school, required String profile}) {
-    if (!automaticScheduleExpected || school != _activeSchoolSyncId || profile != _activeProfileId) {
+
+  void repairAutomaticSchedule({
+    required String school,
+    required String profile,
+  }) {
+    if (!automaticScheduleExpected ||
+        school != _activeSchoolSyncId ||
+        profile != _activeProfileId) {
       throw StateError('Automatic scheduling is paused or the school changed.');
     }
     if (automaticScheduleRunning) return;
@@ -1468,22 +2024,35 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     // Subsequent timer ticks still enter scheduleSoon's owner admission policy.
     _schedule.repairReconciliationTimer(reconciliationInterval);
   }
+
   Future<void> setAutomaticSync(bool enabled) async {
     final origin = _activeProfileId;
-    await FirebaseFirestore.instance.collection('_windows_sync_status').doc('settings').set({'automaticSync': enabled}, const SetOptions(merge: true));
+    await FirebaseFirestore.instance
+        .collection('_windows_sync_status')
+        .doc('settings')
+        .set({'automaticSync': enabled}, const SetOptions(merge: true));
     if (_activeProfileId != origin) return;
     automaticSyncEnabled = enabled;
-    if (!enabled) { _dispatch.cancel(); _remoteFeed.stop(); _rerunRequested = false; }
-    else scheduleSoon();
+    if (!enabled) {
+      _dispatch.cancel();
+      _remoteFeed.stop();
+      _rerunRequested = false;
+    } else
+      scheduleSoon();
     await refreshDetails();
   }
+
   bool _rerunRequested = false;
   Future<void> requestSync() async {
     final generation = ++_pauseGeneration;
     final origin = _activeProfileId;
-    final ref = FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause');
+    final ref = FirebaseFirestore.instance
+        .collection('_windows_sync_status')
+        .doc('pause');
     // Persist cancellation before admitting resumed work.
-    final write = _pauseWrite.catchError((Object _) {}).then((_) => ref.set({'pausedUntilMillis': 0, 'startedAtMillis': 0}));
+    final write = _pauseWrite
+        .catchError((Object _) {})
+        .then((_) => ref.set({'pausedUntilMillis': 0, 'startedAtMillis': 0}));
     _pauseWrite = write;
     await write;
     if (_activeProfileId != origin || generation != _pauseGeneration) return;
@@ -1505,56 +2074,91 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   /// One reviewed transient record/document retry through the same serial admission lane.
   /// It never clears a queue, replaces operation IDs, or resumes a user pause.
-  Future<void> retryRecoverableOperation({required String queueCollection,
-      required String queueId, required String expectedOperationId,
-      required String expectedSchoolId}) async {
+  Future<void> retryRecoverableOperation({
+    required String queueCollection,
+    required String queueId,
+    required String expectedOperationId,
+    required String expectedSchoolId,
+  }) async {
     final documentRetry = queueCollection == '_windows_document_outbox';
     final operationField = documentRetry ? 'documentRevision' : 'operationId';
     if (!documentRetry && queueCollection != '_windows_firebase_outbox') {
       throw StateError('This queue requires its own verified recovery action.');
     }
-    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused) {
-      throw StateError('Sync is busy, paused, or unavailable. Pending data retained.');
+    if (_syncing ||
+        _activating > 0 ||
+        _syncBlocked ||
+        _resetPaused ||
+        isPaused) {
+      throw StateError(
+        'Sync is busy, paused, or unavailable. Pending data retained.',
+      );
     }
     _syncing = true;
     final db = FirebaseFirestore.instance, origin = _activeProfileId;
-    bool valid(Map<String,dynamic>? row) => row != null &&
-        row[operationField] == expectedOperationId && expectedOperationId.isNotEmpty &&
-        row['schoolId'] == expectedSchoolId && expectedSchoolId == _activeSchoolSyncId &&
-        db.activeProfileId == origin && _activeProfileId == origin &&
+    bool valid(Map<String, dynamic>? row) =>
+        row != null &&
+        row[operationField] == expectedOperationId &&
+        expectedOperationId.isNotEmpty &&
+        row['schoolId'] == expectedSchoolId &&
+        expectedSchoolId == _activeSchoolSyncId &&
+        db.activeProfileId == origin &&
+        _activeProfileId == origin &&
         row['syncState'] == 'retry' &&
-        {'networkPath','timeout','server'}.contains(row['failureCategory']);
+        {'networkPath', 'timeout', 'server'}.contains(row['failureCategory']);
     try {
       final ref = db.collection(queueCollection).doc(queueId);
       final row = (await ref.get()).data();
-      if (!valid(row)) throw StateError('Retry is stale or requires administrator review.');
+      if (!valid(row))
+        throw StateError('Retry is stale or requires administrator review.');
       final central = await CentralSchoolCloud.saved();
-      if (central['managed'] != true || central['schoolId'] != expectedSchoolId ||
-          central['storageReady'] != true) throw StateError('Verified managed school storage required.');
-      ManagedSchoolSession.verifyBuildEndpoint(central['endpoint']?.toString() ?? '');
+      if (central['managed'] != true ||
+          central['schoolId'] != expectedSchoolId ||
+          central['storageReady'] != true)
+        throw StateError('Verified managed school storage required.');
+      ManagedSchoolSession.verifyBuildEndpoint(
+        central['endpoint']?.toString() ?? '',
+      );
       await SchoolCloudEngine.instance.verify();
-      if (SchoolCloudEngine.instance.identity != null && !SchoolCloudEngine.instance.canOpen) {
+      if (SchoolCloudEngine.instance.identity != null &&
+          !SchoolCloudEngine.instance.canOpen) {
         throw StateError('School authorization needs verification.');
       }
       _admitBatch();
-      final health = await ManagedSchoolSession.callForSchool(expectedSchoolId,'managed/storage/check',{});
-      if (health['recordSyncVersion'] != 2 || health['brokerRecordSyncVersion'] != 2) {
+      final health = await ManagedSchoolSession.callForSchool(
+        expectedSchoolId,
+        'managed/storage/check',
+        {},
+      );
+      if (health['recordSyncVersion'] != 2 ||
+          health['brokerRecordSyncVersion'] != 2) {
         throw StateError('School sync protocol verification required.');
       }
-      if (!valid((await ref.get()).data())) throw StateError('Operation changed during retry preparation.');
+      if (!valid((await ref.get()).data()))
+        throw StateError('Operation changed during retry preparation.');
       _admitBatch();
-      bool admit() => db.activeProfileId == origin && _activeProfileId == origin && !isPaused;
+      bool admit() =>
+          db.activeProfileId == origin &&
+          _activeProfileId == origin &&
+          !isPaused;
       if (documentRetry) {
-        await WindowsBackendBridge.flushDocumentPending(canAdmit: admit,
-          admitRow: (id,record) => id == queueId && valid(record),
-          onActivity: _recordActivity);
+        await WindowsBackendBridge.flushDocumentPending(
+          canAdmit: admit,
+          admitRow: (id, record) => id == queueId && valid(record),
+          onActivity: _recordActivity,
+        );
       } else {
-        await _pushManagedOutbox(onlyQueueId:queueId, onlyOperationId:expectedOperationId,
-          canAdmit: admit);
+        await _pushManagedOutbox(
+          onlyQueueId: queueId,
+          onlyOperationId: expectedOperationId,
+          canAdmit: admit,
+        );
       }
       final remaining = (await ref.get()).data();
       if (remaining?[operationField] == expectedOperationId) {
-        throw StateError('Operation remains pending; completion is unverified.');
+        throw StateError(
+          'Operation remains pending; completion is unverified.',
+        );
       }
     } finally {
       _syncing = false;
@@ -1566,7 +2170,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _pushManagedOutbox({String? onlyQueueId, String? onlyOperationId, bool Function()? canAdmit}) => WindowsPendingSchoolSync.flush(
+  Future<void> _pushManagedOutbox({
+    String? onlyQueueId,
+    String? onlyOperationId,
+    bool Function()? canAdmit,
+  }) => WindowsPendingSchoolSync.flush(
     profileId: _activeProfileId,
     onlyQueueId: onlyQueueId,
     onlyOperationId: onlyOperationId,
@@ -1577,10 +2185,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     sendVersioned: (item) async {
       metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
       final queuedAt = item['queuedAt'];
-      final queuedMillis = queuedAt is Timestamp ? queuedAt.millisecondsSinceEpoch
-          : queuedAt is num ? queuedAt.toInt() : null;
-      if (queuedMillis != null) metrics['lastQueueWaitMillis'] =
-          (DateTime.now().millisecondsSinceEpoch - queuedMillis).clamp(0, 1 << 53).toInt();
+      final queuedMillis = queuedAt is Timestamp
+          ? queuedAt.millisecondsSinceEpoch
+          : queuedAt is num
+          ? queuedAt.toInt()
+          : null;
+      if (queuedMillis != null)
+        metrics['lastQueueWaitMillis'] =
+            (DateTime.now().millisecondsSinceEpoch - queuedMillis)
+                .clamp(0, 1 << 53)
+                .toInt();
       final watch = Stopwatch()..start();
       final reply = await WindowsFirebaseRemote.syncManagedRecord(
         item,
@@ -1589,10 +2203,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       watch.stop();
       metrics['lastRecordAckMicros'] = watch.elapsedMicroseconds;
       _sample('cloudAckMicros', watch.elapsedMicroseconds);
-      if (queuedMillis != null) _sample('queueWaitMillis', metrics['lastQueueWaitMillis']!);
+      if (queuedMillis != null)
+        _sample('queueWaitMillis', metrics['lastQueueWaitMillis']!);
       final timing = reply['syncTiming'];
       if (timing is Map && timing['scriptRoundTripMillis'] is num) {
-        metrics['lastScriptRoundTripMillis'] = (timing['scriptRoundTripMillis'] as num).toInt();
+        metrics['lastScriptRoundTripMillis'] =
+            (timing['scriptRoundTripMillis'] as num).toInt();
         _sample('scriptRoundTripMillis', metrics['lastScriptRoundTripMillis']!);
       }
       return reply['recordRevision'] as String;
@@ -1600,32 +2216,112 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   );
 
   @visibleForTesting
-  Future<void> reconcileManagedCacheForTesting(String school,
-      Future<Map<String, dynamic>> Function(Map<String, String>) read,
-      {Set<String>? selectedCollections, bool verifyInventory = true}) =>
-      _pullManagedChanges(schoolOverride: school, batchReader: read,
-        verifyInventory: verifyInventory, selectedCollections: selectedCollections);
+  Future<void> reconcileManagedCacheForTesting(
+    String school,
+    Future<Map<String, dynamic>> Function(Map<String, String>) read, {
+    Set<String>? selectedCollections,
+    bool verifyInventory = true,
+  }) => _pullManagedChanges(
+    schoolOverride: school,
+    batchReader: read,
+    verifyInventory: verifyInventory,
+    selectedCollections: selectedCollections,
+  );
 
-  Future<void> _pullManagedChanges({String? schoolOverride,
-      Future<Map<String, dynamic>> Function(Map<String, String>)? batchReader,
-      bool? verifyInventory, Set<String>? selectedCollections}) async {
+  @visibleForTesting
+  Future<void> reconcileManagedRecordDeltaForTesting(
+    String school,
+    Future<Map<String, dynamic>> Function(
+      Map<String, String>,
+      Map<String, Map<String, String>>,
+    )
+    read, {
+    Set<String>? selectedCollections,
+  }) => _pullManagedChanges(
+    schoolOverride: school,
+    recordBatchReader: read,
+    verifyInventory: false,
+    selectedCollections: selectedCollections,
+  );
+
+  Future<void> _pullManagedChanges({
+    String? schoolOverride,
+    Future<Map<String, dynamic>> Function(Map<String, String>)? batchReader,
+    Future<Map<String, dynamic>> Function(
+      Map<String, String>,
+      Map<String, Map<String, String>>,
+    )?
+    recordBatchReader,
+    bool? verifyInventory,
+    Set<String>? selectedCollections,
+  }) async {
     final db = FirebaseFirestore.instance,
         origin = db.activeProfileId,
         school = schoolOverride ?? _activeSchoolSyncId;
-    if (db.activeProfileIdentity['schoolSyncId'] != school) throw StateError('School identity changed before recovery.');
-    final audit = verifyInventory ?? (_manualSync || _checkpointDue);
-    final collections = _firebaseCollections.where((c) => c != 'backups' &&
-      (selectedCollections == null || selectedCollections.contains(c))).toList();
-    final pendingAtRead = (await db.collection('_windows_firebase_outbox').get()).docs;
+    if (db.activeProfileIdentity['schoolSyncId'] != school)
+      throw StateError('School identity changed before recovery.');
+    final audit = verifyInventory ?? false;
+    if (!audit &&
+        !_recordDeltasSupported &&
+        batchReader == null &&
+        recordBatchReader == null) {
+      throw StateError(
+        'Record-only sync requires the matching updated school Script and central backend. Pending data retained.',
+      );
+    }
+    final collections = _firebaseCollections
+        .where(
+          (c) =>
+              c != 'backups' &&
+              (selectedCollections == null || selectedCollections.contains(c)),
+        )
+        .toList();
+    final pendingAtRead =
+        (await db.collection('_windows_firebase_outbox').get()).docs;
     final revisions = <String, String>{};
+    final recordCheckpoints = <String, Map<String, String>>{};
     for (final collection in collections) {
-      final prior = (await db.collection('_windows_sync_manifest').doc(_manifestId('managed', collection)).get()).data();
-      revisions[collection] = audit ? managedRecoveryRevision(prior,
-          (await db.collection(collection).get()).docs.map((d) => d.id).toSet(),
-          {...pendingAtRead.where((d) => d.data()['collection'] == collection).map((d) => d.data()['documentId']).whereType<String>(), if (collection == 'school_config') 'google_drive_account'})
+      final prior =
+          (await db
+                  .collection('_windows_sync_manifest')
+                  .doc(_manifestId('managed', collection))
+                  .get())
+              .data();
+      if ((_recordDeltasSupported || recordBatchReader != null) &&
+          !audit &&
+          prior?['recordRevisions'] is Map) {
+        recordCheckpoints[collection] = Map<String, String>.from(
+          prior!['recordRevisions'] as Map,
+        );
+      }
+      final needsBaseline =
+          !audit &&
+          (_recordDeltasSupported || recordBatchReader != null) &&
+          prior?['recordRevisions'] is! Map;
+      if (needsBaseline && prior?['recordDeltaBaselineAttempted'] == true)
+        throw StateError(
+          'Verified record revision baseline unavailable; explicit inventory repair required.',
+        );
+      revisions[collection] = needsBaseline
+          ? ''
+          : audit
+          ? managedRecoveryRevision(
+              prior,
+              (await db.collection(collection).get()).docs
+                  .map((d) => d.id)
+                  .toSet(),
+              {
+                ...pendingAtRead
+                    .where((d) => d.data()['collection'] == collection)
+                    .map((d) => d.data()['documentId'])
+                    .whereType<String>(),
+                if (collection == 'school_config') 'google_drive_account',
+              },
+            )
           : prior?['revision']?.toString() ?? '';
     }
-    if (db.activeProfileId != origin) throw StateError('School changed during recovery inventory.');
+    if (db.activeProfileId != origin)
+      throw StateError('School changed during recovery inventory.');
     // A full-school Apps Script read holds one lock while opening every
     // category and checking its retained heads. Bound each request instead:
     // verified earlier categories survive a later timeout, and local mutations
@@ -1643,16 +2339,32 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       final manifest = db
           .collection('_windows_sync_manifest')
           .doc(_manifestId('managed', collection));
-      if (_deltaBatchSupported || batchReader != null) {
+      if (_deltaBatchSupported ||
+          batchReader != null ||
+          recordBatchReader != null) {
         if (batch == null || !batch.containsKey(collection)) {
           final group = <String, String>{
             for (final name in remainingCollections.take(2))
               name: revisions[name]!,
           };
           metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
-          batch = await (batchReader != null
+          batch = await (recordBatchReader != null
+              ? recordBatchReader(group, {
+                  for (final name in group.keys)
+                    if (recordCheckpoints.containsKey(name))
+                      name: recordCheckpoints[name]!,
+                })
+              : batchReader != null
               ? batchReader(group)
-              : WindowsFirebaseRemote.readManagedBatch(school, group));
+              : WindowsFirebaseRemote.readManagedBatch(
+                  school,
+                  group,
+                  knownRecordRevisions: {
+                    for (final name in group.keys)
+                      if (recordCheckpoints.containsKey(name))
+                        name: recordCheckpoints[name]!,
+                  },
+                ));
           if (db.activeProfileId != origin)
             throw StateError('School changed during reconciliation.');
           if (batch.length != group.length ||
@@ -1663,77 +2375,150 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       } else {
         metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
       }
-      final result = batch!=null?Map<String,dynamic>.from(batch[collection] as Map):await WindowsFirebaseRemote.readManagedChanges(
-        school,collection,revisions[collection] ?? '',
-      );
+      final result = batch != null
+          ? Map<String, dynamic>.from(batch[collection] as Map)
+          : await WindowsFirebaseRemote.readManagedChanges(
+              school,
+              collection,
+              revisions[collection] ?? '',
+            );
       if (db.activeProfileId != origin)
         throw StateError('School changed during reconciliation.');
-      if (result['syncProtocol'] != 2 || result['collectionRevision'] is! String || result['records'] is! Map) throw StateError('Invalid authoritative recovery response.');
+      if (result['syncProtocol'] != 2 ||
+          result['collectionRevision'] is! String ||
+          result['records'] is! Map)
+        throw StateError('Invalid authoritative recovery response.');
+      if (result['partialRecords'] == true &&
+          !recordCheckpoints.containsKey(collection))
+        throw StateError('Incremental baseline missing.');
       if (result['unchanged'] == true) continue;
       final records = Map<String, dynamic>.from(result['records'] as Map);
-      if(result['missingRecords'] is List && batchReader==null) {
-        final restored=await recoverMissingSheetRecords(school,collection,result['missingRecords'] as List);
-        if(restored>0){_rerunRequested=true;scheduleSoon(localMutation: true);}
+      if (result['missingRecords'] is List &&
+          batchReader == null &&
+          recordBatchReader == null) {
+        final restored = await recoverMissingSheetRecords(
+          school,
+          collection,
+          result['missingRecords'] as List,
+        );
+        if (restored > 0) {
+          _rerunRequested = true;
+          scheduleSoon(localMutation: true);
+        }
       }
+      if (result['partialRecords'] == true &&
+          result['missingRecords'] is List &&
+          (result['missingRecords'] as List).isNotEmpty)
+        throw StateError(
+          'Missing Sheet records require verified recovery; checkpoint retained.',
+        );
       // Validate the whole response before recording any inventory or applying it.
-      if (records.values.any((value) => value is! Map || value['schoolId'] != school))
+      if (records.values.any(
+        (value) => value is! Map || value['schoolId'] != school,
+      ))
         throw StateError('Foreign or invalid school inventory rejected.');
-      final downloadable = records.entries.where((entry) => collection != 'school_config' || entry.key != 'google_drive_account').length;
+      final downloadable = records.entries
+          .where(
+            (entry) =>
+                collection != 'school_config' ||
+                entry.key != 'google_drive_account',
+          )
+          .length;
       final progress = db.collection('_windows_sync_downloads').doc(collection);
       var remaining = downloadable, verifiedDownloads = 0, blockedDownloads = 0;
-      await progress.set({'schoolId':school,'collection':collection,
-        'collectionRevision':result['collectionRevision'],'observedAt':DateTime.now().millisecondsSinceEpoch,
-        'inventoryScope':'records_only','state':'downloading','remaining':remaining,
-        'verified':0,'blocked':0});
+      await progress.set({
+        'schoolId': school,
+        'collection': collection,
+        'collectionRevision': result['collectionRevision'],
+        'observedAt': DateTime.now().millisecondsSinceEpoch,
+        'inventoryScope': 'records_only',
+        'state': 'downloading',
+        'remaining': remaining,
+        'verified': 0,
+        'blocked': 0,
+      });
       final pending =
           (await db.collection('_windows_firebase_outbox').get()).docs;
       if (db.activeProfileId != origin)
         throw StateError('School changed during reconciliation.');
-      final pendingById = {for (final row in pending.where(
-        (row) => row.data()['collection'] == collection))
-          row.data()['documentId']: row};
+      final pendingById = {
+        for (final row in pending.where(
+          (row) => row.data()['collection'] == collection,
+        ))
+          row.data()['documentId']: row,
+      };
       var processed = 0;
       final applyWatch = Stopwatch()..start();
-      final entries=records.entries.where((entry)=>collection!='school_config'||
-          entry.key!='google_drive_account').toList();
-      for(var offset=0;offset<entries.length;offset+=100) {
-        final chunk=entries.skip(offset).take(100).toList();
-        final incoming=<String,Map<String,dynamic>>{};
-        for(final entry in chunk) {
-          if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
-          final data=Map<String,dynamic>.from(entry.value as Map);
-          if(data['schoolId']!=school)throw StateError('Foreign school manifest rejected.');
-          if(collection=='students_directory'&&data['_syncRevision'] is String) {
-            for(final generation in verifiedDeletedStudentGenerations(data)) {
-              await db.applyVerifiedStudentDeletion(school,entry.key,generation,data['_syncRevision']);
+      final entries = records.entries
+          .where(
+            (entry) =>
+                collection != 'school_config' ||
+                entry.key != 'google_drive_account',
+          )
+          .toList();
+      for (var offset = 0; offset < entries.length; offset += 100) {
+        final chunk = entries.skip(offset).take(100).toList();
+        final incoming = <String, Map<String, dynamic>>{};
+        for (final entry in chunk) {
+          if (db.activeProfileId != origin)
+            throw StateError('School changed during reconciliation.');
+          final data = Map<String, dynamic>.from(entry.value as Map);
+          if (data['schoolId'] != school)
+            throw StateError('Foreign school manifest rejected.');
+          if (collection == 'students_directory' &&
+              data['_syncRevision'] is String) {
+            for (final generation in verifiedDeletedStudentGenerations(data)) {
+              await db.applyVerifiedStudentDeletion(
+                school,
+                entry.key,
+                generation,
+                data['_syncRevision'],
+              );
             }
           }
-          final queued=pendingById[entry.key];
-          if(queued!=null&&(data['_syncRevision']??'')!=(queued.data()['baseCloudRevision']??'')) {
+          final queued = pendingById[entry.key];
+          if (queued != null &&
+              (data['_syncRevision'] ?? '') !=
+                  (queued.data()['baseCloudRevision'] ?? '')) {
             // Still compare the live operation inside the existing durable writer.
-            await db.recordOutboxConflict(queued.reference,queued.data(),data);
+            await db.recordOutboxConflict(
+              queued.reference,
+              queued.data(),
+              data,
+            );
           }
-          incoming[entry.key]=data;
+          incoming[entry.key] = data;
         }
-        await cacheVerifiedSheetRecords(school,collection,{
-          for(final entry in incoming.entries)
-            if(entry.value['_syncRevision'] is String)entry.key:entry.value,
+        await cacheVerifiedSheetRecords(school, collection, {
+          for (final entry in incoming.entries)
+            if (entry.value['_syncRevision'] is String) entry.key: entry.value,
         });
-        if(db.activeProfileId!=origin)throw StateError('School changed during reconciliation.');
-        await db.applySyncedCollectionBatch(collection,incoming);
+        if (db.activeProfileId != origin)
+          throw StateError('School changed during reconciliation.');
+        await db.applySyncedCollectionBatch(collection, incoming);
         // Read back after commit. A newer local edit is retained by the same
         // live queue guard and must not be counted as a verified download.
-        for(final entry in incoming.entries) {
-          final data=entry.value;
-          if(await db.syncedDocumentMatches(db.collection(collection).doc(entry.key),
-              data['_syncDeleted']==true?null:data)) {
-            verifiedDownloads++;remaining--;
-          } else {blockedDownloads++;}
+        for (final entry in incoming.entries) {
+          final data = entry.value;
+          if (await db.syncedDocumentMatches(
+            db.collection(collection).doc(entry.key),
+            data['_syncDeleted'] == true ? null : data,
+          )) {
+            verifiedDownloads++;
+            remaining--;
+          } else {
+            blockedDownloads++;
+          }
           processed++;
-          if(processed%50==0||processed==downloadable) {
-            await progress.set({'remaining':remaining,'verified':verifiedDownloads,'blocked':blockedDownloads,
-              if(verifiedDownloads>0)'lastVerifiedLocalReadbackAt':DateTime.now().millisecondsSinceEpoch},
-              const SetOptions(merge:true));
+          if (processed % 50 == 0 || processed == downloadable) {
+            await progress.set({
+              'remaining': remaining,
+              'verified': verifiedDownloads,
+              'blocked': blockedDownloads,
+              if (verifiedDownloads > 0)
+                'lastVerifiedLocalReadbackAt':
+                    DateTime.now().millisecondsSinceEpoch,
+            }, const SetOptions(merge: true));
           }
         }
       }
@@ -1741,19 +2526,54 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       // Missing IDs are not deletions: only explicit server tombstones delete.
       if (db.activeProfileId != origin)
         throw StateError('School changed during reconciliation.');
+      final partial = result['partialRecords'] == true;
+      if (partial && !recordCheckpoints.containsKey(collection))
+        throw StateError('Incremental baseline missing.');
+      final nextRecordRevisions = <String, String>{
+        if (partial) ...recordCheckpoints[collection]!,
+        for (final entry in records.entries)
+          if ((entry.value as Map)['_syncRevision'] is String)
+            entry.key: (entry.value as Map)['_syncRevision'] as String,
+      };
+      final priorManifest = partial ? (await manifest.get()).data() : null;
+      final deletedIds = <String>{
+        if (partial)
+          ...((priorManifest?['deletedIds'] as List?) ?? [])
+              .whereType<String>(),
+      };
+      for (final entry in records.entries) {
+        if ((entry.value as Map)['_syncDeleted'] == true) {
+          deletedIds.add(entry.key);
+        } else {
+          deletedIds.remove(entry.key);
+        }
+      }
       await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
         () => manifest.set({
           'revision': result['collectionRevision'],
           'collection': collection,
-          'ids': records.keys.toList(),
-          'deletedIds': records.entries
-              .where((e) => (e.value as Map)['_syncDeleted'] == true)
-              .map((e) => e.key)
-              .toList(),
+          'ids': <String>{
+            if (partial)
+              ...((priorManifest?['ids'] as List?) ?? []).whereType<String>(),
+            ...records.keys,
+          }.toList(),
+          'recordRevisions':
+              records.values.every(
+                (row) =>
+                    row is Map &&
+                    row['_syncRevision'] is String &&
+                    (row['_syncRevision'] as String).isNotEmpty,
+              )
+              ? nextRecordRevisions
+              : null,
+          'recordDeltaBaselineAttempted': true,
+          'deletedIds': deletedIds.toList(),
         }),
       );
-      await progress.set({'state':remaining == 0 ? 'verified' : 'needsReview',
-        'finishedAt':DateTime.now().millisecondsSinceEpoch},const SetOptions(merge:true));
+      await progress.set({
+        'state': remaining == 0 ? 'verified' : 'needsReview',
+        'finishedAt': DateTime.now().millisecondsSinceEpoch,
+      }, const SetOptions(merge: true));
     }
   }
 

@@ -35,8 +35,16 @@ function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatc
     let acknowledgements;
     try{acknowledgements=await deliver(school,items);}
     catch(_){acknowledgements=[];}
+    // Only one unambiguous receipt for this claimed operation can finish it.
+    // Missing, malformed or duplicated receipts remain durable retry work.
+    const receipts=new Map(),duplicates=new Set(),claimed=new Set(items.map(i=>i.operationId));
+    for(const ack of Array.isArray(acknowledgements)?acknowledgements:[]){
+     if(!ack||!claimed.has(ack.operationId))continue;
+     if(receipts.has(ack.operationId)){duplicates.add(ack.operationId);continue;}
+     receipts.set(ack.operationId,ack);
+    }
     for(const item of items){
-     const ack=acknowledgements.find(a=>a.operationId===item.operationId);
+     const ack=duplicates.has(item.operationId)?null:receipts.get(item.operationId);
      const definitive=ack?.success===false&&ack.authoritative===true;
      const state=ack?.success===true?'completed':definitive?'needsAttention':'retry';
      const attempts=item.attempts+1;

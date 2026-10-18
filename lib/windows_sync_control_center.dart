@@ -287,7 +287,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         db.activeProfileIdentity['schoolSyncId'] != school) {
       throw StateError('School changed during quota read');
     }
-    if (mounted) setState(() { storageEvidence = result; quotaEvidence = quota; });
+    if (mounted)
+      setState(() {
+        storageEvidence = result;
+        quotaEvidence = quota;
+      });
   }
 
   Future<void> _exportDiagnostics() async {
@@ -361,7 +365,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     try {
       final directory = await WindowsLocalStorage.dataDirectory();
       dataPath = directory.absolute.path;
-      filesPath = (await WindowsLocalStorage.localFilesDirectory()).absolute.path;
+      filesPath =
+          (await WindowsLocalStorage.localFilesDirectory()).absolute.path;
       result = await (widget.diskProbe != null
           ? widget.diskProbe!(dataPath)
           : diskStorage.measure(dataPath));
@@ -382,7 +387,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       await WindowsLocalStorage.openFolder();
     } catch (_) {
       if (mounted && db.activeProfileId == origin) {
-        setState(() => notice = 'Could not open the local data folder. Copy the path and open it in File Explorer.');
+        setState(
+          () => notice = 'Could not open the local data folder. Copy the path and open it in File Explorer.',
+        );
       }
     }
   }
@@ -726,17 +733,22 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   }
 
   Widget _hero(Map<String, dynamic> details, List<dynamic> items, bool active) {
-    final laneRows=details['liveQueue'] is List
-      ? (details['liveQueue'] as List).whereType<Map>().map((r)=>Map<String,dynamic>.from(r)).toList()
-      : <Map<String,dynamic>>[];
-    final lanes=details['lanes'] is Map ? details['lanes'] as Map
-      : windowsSyncLanes(laneRows,DateTime.now().millisecondsSinceEpoch);
+    final laneRows = details['liveQueue'] is List
+        ? (details['liveQueue'] as List)
+              .whereType<Map>()
+              .map((r) => Map<String, dynamic>.from(r))
+              .toList()
+        : <Map<String, dynamic>>[];
+    final lanes = details['lanes'] is Map
+        ? details['lanes'] as Map
+        : windowsSyncLanes(laneRows, DateTime.now().millisecondsSinceEpoch);
     String laneText(String key) {
-      if(details['liveQueue'] is! List) return 'Not yet measured';
-      final lane=lanes[key] as Map;
+      if (details['liveQueue'] is! List) return 'Not yet measured';
+      final lane = lanes[key] as Map;
       return '${lane['pending']} outstanding · ${lane['retry']} retry · ${lane['review']} need review';
     }
-    final syncing = engine.isSyncing;
+
+    final syncing = engine.isSyncing && !engine.isPaused;
     final phase =
         details['displayState']?.toString() ??
         (syncing
@@ -786,16 +798,33 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           ],
         ),
         const SizedBox(height: 14),
-        Wrap(spacing:14,runSpacing:14,children:[
-          metric('School records', '${laneText('records')}\nLast verified cloud ACK: ${stamp(details['lastRecordAckMillis'])}'),
-          metric('Documents & ID cards', '${laneText('documents')}\nLast verified cloud ACK: ${stamp(details['lastDocumentAckMillis'])}'),
-          if((lanes['other'] as Map?)?['pending'] is num && lanes['other']['pending']>0)
-            metric('Restore & legacy work',laneText('other')),
-          metric('Photos & file downloads', details['mediaPending'] is num
-            ? '${details['mediaPending']} outstanding · ${details['mediaInventoryState'] ?? 'Unknown inventory'}'
-            : 'Inventory not yet verified'),
-          metric('Cloud record check',stamp(details['lastRecordCheckMillis'])),
-        ]),
+        Wrap(
+          spacing: 14,
+          runSpacing: 14,
+          children: [
+            metric(
+              'School records',
+              '${laneText('records')}\nLast verified cloud ACK: ${stamp(details['lastRecordAckMillis'])}',
+            ),
+            metric(
+              'Documents & ID cards',
+              '${laneText('documents')}\nLast verified cloud ACK: ${stamp(details['lastDocumentAckMillis'])}',
+            ),
+            if ((lanes['other'] as Map?)?['pending'] is num &&
+                lanes['other']['pending'] > 0)
+              metric('Restore & legacy work', laneText('other')),
+            metric(
+              'Photos & file downloads',
+              details['mediaPending'] is num
+                  ? '${details['mediaPending']} outstanding · ${details['mediaInventoryState'] ?? 'Unknown inventory'}'
+                  : 'Inventory not yet verified',
+            ),
+            metric(
+              'Cloud record check',
+              stamp(details['lastRecordCheckMillis']),
+            ),
+          ],
+        ),
         const SizedBox(height: 22),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -866,23 +895,47 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               'Local PC',
                               diskLabel,
                               const Color(0xFF24DD9B),
-                              details: localDataPath == null ? null : Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(height: 10),
-                                  const Text('Data folder', style: TextStyle(fontSize: 12)),
-                                  SelectableText(localDataPath!, style: const TextStyle(fontSize: 12, color: Color(0xFF9AB4C9))),
-                                  const SizedBox(height: 8),
-                                  const Text('Files folder', style: TextStyle(fontSize: 12)),
-                                  SelectableText(localFilesPath ?? 'Unknown', style: const TextStyle(fontSize: 12, color: Color(0xFF9AB4C9))),
-                                  const SizedBox(height: 8),
-                                  TextButton.icon(
-                                    onPressed: _openLocalFolder,
-                                    icon: const Icon(Icons.folder_open, size: 18),
-                                    label: const Text('Open Folder'),
-                                  ),
-                                ],
-                              ),
+                              details: localDataPath == null
+                                  ? null
+                                  : Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const SizedBox(height: 10),
+                                        const Text(
+                                          'Data folder',
+                                          style: TextStyle(fontSize: 12),
+                                        ),
+                                        SelectableText(
+                                          localDataPath!,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Color(0xFF9AB4C9),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        const Text(
+                                          'Files folder',
+                                          style: TextStyle(fontSize: 12),
+                                        ),
+                                        SelectableText(
+                                          localFilesPath ?? 'Unknown',
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Color(0xFF9AB4C9),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextButton.icon(
+                                          onPressed: _openLocalFolder,
+                                          icon: const Icon(
+                                            Icons.folder_open,
+                                            size: 18,
+                                          ),
+                                          label: const Text('Open Folder'),
+                                        ),
+                                      ],
+                                    ),
                             ),
                             _connection(
                               Icons.cloud_outlined,
@@ -1396,9 +1449,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                   final item = Map<String, dynamic>.from(
                                     raw as Map,
                                   );
-                                  final decision=smartSyncDecision(item,
-                                    school:db.activeProfileIdentity['schoolSyncId']?.toString()??'',
-                                    nowMillis:DateTime.now().millisecondsSinceEpoch);
+                                  final decision = smartSyncDecision(
+                                    item,
+                                    school:
+                                        db.activeProfileIdentity['schoolSyncId']
+                                            ?.toString() ??
+                                        '',
+                                    nowMillis:
+                                        DateTime.now().millisecondsSinceEpoch,
+                                  );
                                   return Card(
                                     child: ListTile(
                                       title: Text(
@@ -1809,8 +1868,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
 }
 
 String syncFailureReason(Map item) {
-  final specific=documentFailureExplanation(item);
-  if(specific.isNotEmpty)return specific;
+  final specific = documentFailureExplanation(item);
+  if (specific.isNotEmpty) return specific;
   final kind = failure_policy.SyncFailureKind.values.where(
     (kind) => kind.name == item['failureCategory'],
   );

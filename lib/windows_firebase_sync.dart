@@ -339,24 +339,33 @@ class WindowsFirebaseRemote {
             (action, body) =>
                 ManagedSchoolSession.callForSchool(school, action, body),
           );
-    final requestBody=<String,dynamic>{
-        'operation': item['operation'] == 'delete' ? 'delete' : 'write',
-        'collection': collection,
-        'id': id,
-        'syncProtocol': 2,
-        'operationId': item['operationId'],
-        'expectedRecordRevision': item['baseCloudRevision'] ?? '',
-        if(item['deletedStudentGeneration'] is String)'deletedStudentGeneration':item['deletedStudentGeneration'],
-        if (data != null) 'data': migrationJsonValue(data),
-      };
-    Future<Map<String,dynamic>> sendPrepared()=>ManagedSchoolSession.callForSchool(school,'managed/records',requestBody);
-    Map<String,dynamic> result;
-    try { result=await sendPrepared(); }
-    on CentralCloudException catch(error) {
-      if(error.diagnosticCode!='SCRIPT_SHEET_RECOVERY_REQUIRED')rethrow;
-      final restored=await recoverMissingSheetRecords(school,collection,[{'id':id,'revision':item['baseCloudRevision']??''}]);
-      if(restored!=1)rethrow;
-      result=await sendPrepared();
+    final requestBody = <String, dynamic>{
+      'operation': item['operation'] == 'delete' ? 'delete' : 'write',
+      'collection': collection,
+      'id': id,
+      'syncProtocol': 2,
+      'operationId': item['operationId'],
+      'expectedRecordRevision': item['baseCloudRevision'] ?? '',
+      if (item['deletedStudentGeneration'] is String)
+        'deletedStudentGeneration': item['deletedStudentGeneration'],
+      if (data != null) 'data': migrationJsonValue(data),
+    };
+    Future<Map<String, dynamic>> sendPrepared() =>
+        ManagedSchoolSession.callForSchool(
+          school,
+          'managed/records',
+          requestBody,
+        );
+    Map<String, dynamic> result;
+    try {
+      result = await sendPrepared();
+    } on CentralCloudException catch (error) {
+      if (error.diagnosticCode != 'SCRIPT_SHEET_RECOVERY_REQUIRED') rethrow;
+      final restored = await recoverMissingSheetRecords(school, collection, [
+        {'id': id, 'revision': item['baseCloudRevision'] ?? ''},
+      ]);
+      if (restored != 1) rethrow;
+      result = await sendPrepared();
     }
     if (result['schoolId'] != school ||
         result['syncProtocol'] != 2 ||
@@ -364,26 +373,54 @@ class WindowsFirebaseRemote {
       throw StateError(
         'Version-safe acknowledgement missing. Pending operation retained.',
       );
-    if(result['record'] is Map&&(result['record']['schoolId']!=school||result['record']['_syncRevision']!=result['recordRevision']))throw StateError('Canonical acknowledgement record did not verify.');
-    if(collection=='students_directory'&&result['record'] is Map) {
-      for(final generation in verifiedDeletedStudentGenerations(result['record']))await FirebaseFirestore.instance.applyVerifiedStudentDeletion(school,id,generation,result['recordRevision']);
+    if (result['record'] is Map &&
+        (result['record']['schoolId'] != school ||
+            result['record']['_syncRevision'] != result['recordRevision']))
+      throw StateError('Canonical acknowledgement record did not verify.');
+    if (collection == 'students_directory' && result['record'] is Map) {
+      for (final generation in verifiedDeletedStudentGenerations(
+        result['record'],
+      ))
+        await FirebaseFirestore.instance.applyVerifiedStudentDeletion(
+          school,
+          id,
+          generation,
+          result['recordRevision'],
+        );
     }
-    if(result['record'] is Map)await cacheVerifiedSheetRecord(school,collection,id,Map<String,dynamic>.from(result['record'] as Map));
+    if (result['record'] is Map)
+      await cacheVerifiedSheetRecord(
+        school,
+        collection,
+        id,
+        Map<String, dynamic>.from(result['record'] as Map),
+      );
     return result;
   }
 
   /// Authenticated collection heads are discovery hints, never receipts.
   static Future<Map<String, String>> readManagedHeads(
-    String school, Map<String, String> revisions,
+    String school,
+    Map<String, String> revisions,
   ) async {
-    final result = await ManagedSchoolSession.callForSchool(school,
-      'managed/changes', {'collections': revisions.keys.toList(),
-        'knownRevisions': revisions, 'headOnly': true});
+    final result = await ManagedSchoolSession.callForSchool(
+      school,
+      'managed/changes',
+      {
+        'collections': revisions.keys.toList(),
+        'knownRevisions': revisions,
+        'headOnly': true,
+      },
+    );
     final heads = result['revisions'];
-    if (result['schoolId'] != school || result['syncProtocol'] != 2 ||
-        result['headOnly'] != true || heads is! Map ||
-        heads.length != revisions.length || revisions.keys.any((key) =>
-          heads[key] is! String || (heads[key] as String).isEmpty)) {
+    if (result['schoolId'] != school ||
+        result['syncProtocol'] != 2 ||
+        result['headOnly'] != true ||
+        heads is! Map ||
+        heads.length != revisions.length ||
+        revisions.keys.any(
+          (key) => heads[key] is! String || (heads[key] as String).isEmpty,
+        )) {
       throw StateError('Unverified school change heads.');
     }
     return Map<String, String>.from(heads);
@@ -391,22 +428,34 @@ class WindowsFirebaseRemote {
 
   static Future<Map<String, dynamic>> readManagedBatch(
     String school,
-    Map<String, String> revisions,
-  ) async {
+    Map<String, String> revisions, {
+    Map<String, Map<String, String>> knownRecordRevisions = const {},
+  }) async {
     final result = await ManagedSchoolSession.callForSchool(
       school,
       'managed/changes',
-      {'collections': revisions.keys.toList(), 'knownRevisions': revisions},
+      {
+        'collections': revisions.keys.toList(),
+        'knownRevisions': revisions,
+        if (knownRecordRevisions.isNotEmpty)
+          'knownRecordRevisions': knownRecordRevisions,
+      },
     );
     if (result['schoolId'] != school ||
         result['syncProtocol'] != 2 ||
         result['changes'] is! Map)
       throw StateError('Version-safe school delta unavailable.');
-    final changes=Map<String,dynamic>.from(result['changes'] as Map);
-    if(changes.length!=revisions.length)throw StateError('Incomplete school delta.');
-    for(final collection in revisions.keys){
-      final group=Map<String,dynamic>.from(changes[collection] as Map);
-      if(group['syncProtocol']!=2||group['collectionRevision'] is! String||group['records'] is! Map)
+    final changes = Map<String, dynamic>.from(result['changes'] as Map);
+    if (changes.length != revisions.length)
+      throw StateError('Incomplete school delta.');
+    for (final collection in revisions.keys) {
+      final group = Map<String, dynamic>.from(changes[collection] as Map);
+      if (group['partialRecords'] != null && group['partialRecords'] is! bool ||
+          group['partialRecords'] == true &&
+              !knownRecordRevisions.containsKey(collection) ||
+          group['syncProtocol'] != 2 ||
+          group['collectionRevision'] is! String ||
+          group['records'] is! Map)
         throw StateError('Invalid school delta checkpoint.');
       group['records'] = (group['records'] as Map).map(
         (key, value) => MapEntry(
@@ -418,7 +467,7 @@ class WindowsFirebaseRemote {
         (row) => row['schoolId'] != school,
       ))
         throw StateError('Foreign school delta rejected.');
-      changes[collection]=group;
+      changes[collection] = group;
     }
     return changes;
   }
@@ -662,22 +711,28 @@ class WindowsFirebaseRemote {
     num? expectedUploadedAt,
     String? operationId,
     String? expectedRecordRevision,
-    void Function(Map<String,dynamic>)? onManagedAcknowledgement,
+    void Function(Map<String, dynamic>)? onManagedAcknowledgement,
   }) async {
     if ((await CentralSchoolCloud.saved())['managed'] == true) {
       final result = await _managedRecords(idToken, {
         'operation': 'delete',
         'collection': collection,
         'id': documentId,
-        if(operationId!=null && expectedRecordRevision!=null)...{
-          'syncProtocol':2,'operationId':operationId,'expectedRecordRevision':expectedRecordRevision,
+        if (operationId != null && expectedRecordRevision != null) ...{
+          'syncProtocol': 2,
+          'operationId': operationId,
+          'expectedRecordRevision': expectedRecordRevision,
         },
         if (expectedRevision != null) 'expectedRevision': expectedRevision,
         if (expectedUploadedAt != null)
           'expectedUploadedAt': expectedUploadedAt,
       });
-      onManagedAcknowledgement?.call({...result, 'collection':collection,
-        'documentId':documentId, 'operationId':operationId});
+      onManagedAcknowledgement?.call({
+        ...result,
+        'collection': collection,
+        'documentId': documentId,
+        'operationId': operationId,
+      });
       return;
     }
     final remoteCollection = await _remoteCollection(projectId, collection);

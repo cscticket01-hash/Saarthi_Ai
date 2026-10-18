@@ -3,8 +3,7 @@
 // no hosting deployment, production app request or production data is used.
 const {chromium}=require('playwright');
 const fs=require('node:fs'),path=require('node:path');
-const {requestBody,matchesNoticeWrite,matchesNoticeRead}=require('./review_response_match.cjs');
-const {responseJson}=require('./review_response_body.cjs');
+const {installBrowserEvidence}=require('./review_fetch_evidence.cjs');
 (async()=>{
  const school='vs-db8afb01a3be46a983c8284714d06e5d',run=process.env.GITHUB_RUN_ID;
  if(process.env.VS_TEST_CONNECT_CONFIRM!==school||process.env.GITHUB_ACTIONS!=='true')throw Error('Isolated hosted TEST runner required');
@@ -29,6 +28,7 @@ const {responseJson}=require('./review_response_body.cjs');
    category:typeof failure==='string'&&/^net::ERR_[A-Z_]+$/.test(failure)?failure:'OTHER_TRANSPORT_FAILURE'});
  }});
  const page=await context.newPage();
+ await page.addInitScript(installBrowserEvidence,{endpoint:'https://saarthi-sync-v2-test.onrender.com/school-cloud',school,noticeId:`synthetic-web-notice-${run}`,title:`Synthetic website exchange ${run}`});
  async function typeField(label,value){
   const input=page.getByRole('textbox',{name:label,exact:true});
   // Flutter installs its focused DOM editing bridge on a subsequent frame.
@@ -43,24 +43,20 @@ const {responseJson}=require('./review_response_body.cjs');
   throw Error('TEST field input did not match; no write attempted');
  }
  async function publishAndReadback(id){
-  const endpoint='https://saarthi-sync-v2-test.onrender.com/school-cloud';
-  const writePromise=page.waitForResponse(response=>matchesNoticeWrite(response,endpoint,school,id),{timeout:180000});
-  const readPromise=page.waitForResponse(response=>matchesNoticeRead(response,endpoint,school),{timeout:180000});
+  await page.evaluate(()=>{window.__vsReviewEvidence=[];});
   await page.getByRole('button',{name:'Publish TEST notice',exact:true}).click();
-  const response=await writePromise,ack=await responseJson(response),body=requestBody(response);
-  proof.writeVerification={http:response.status(),success:ack.success===true,schoolMatches:ack.schoolId===school,
-   protocolMatches:ack.syncProtocol===2,hasRevision:typeof ack.recordRevision==='string'&&ack.recordRevision.length>0};
-  if(response.status()!==200||ack.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision)throw Error('Verified TEST write ACK required');
-  const read=await readPromise;
-  proof.readResponseObserved={http:read.status()};
-  // JSON decoding waits for the completed body with an explicit deadline.
-  // No second request or fallback ACK is manufactured by the observer.
-  const reply=await responseJson(read);
-  proof.readVerification={http:read.status(),schoolMatches:reply.schoolId===school,protocolMatches:reply.syncProtocol===2,
-   hasNoticeChanges:!!reply.changes?.school_notices};
-  if(read.status()!==200||reply.schoolId!==school||reply.syncProtocol!==2||!reply.changes?.school_notices)throw Error('Verified TEST post-write readback required');
+  await page.waitForFunction(()=>window.__vsReviewEvidence.some(e=>e.kind==='write'&&(e.complete||e.failed)),null,{timeout:180000});
+  const ack=await page.evaluate(()=>window.__vsReviewEvidence.find(e=>e.kind==='write'));
+  proof.writeVerification={http:ack.http,success:ack.success,schoolMatches:ack.schoolMatches,
+   protocolMatches:ack.protocolMatches,hasRevision:typeof ack.recordRevision==='string'&&ack.recordRevision.length>0};
+  if(!ack.complete||ack.http!==200||!ack.success||!ack.schoolMatches||!ack.protocolMatches||!ack.recordRevision)throw Error('Verified TEST write ACK required');
+  await page.waitForFunction(()=>window.__vsReviewEvidence.some(e=>e.kind==='read'&&(e.complete||e.failed)),null,{timeout:180000});
+  const read=await page.evaluate(()=>window.__vsReviewEvidence.find(e=>e.kind==='read'));
+  proof.readVerification={http:read.http,schoolMatches:read.schoolMatches,protocolMatches:read.protocolMatches,
+   hasNoticeChanges:read.hasNoticeChanges,noticeMatches:read.noticeMatches,unchanged:read.unchanged};
+  if(!read.complete||read.http!==200||!read.schoolMatches||!read.protocolMatches||!read.hasNoticeChanges||!(read.noticeMatches||read.unchanged))throw Error('Verified TEST post-write readback required');
   await page.getByText('Website ACK and readback verified',{exact:true}).waitFor({timeout:180000});
-  return {operationId:body.operationId,recordRevision:ack.recordRevision,readbackVerified:true};
+  return {operationId:ack.operationId,recordRevision:ack.recordRevision,readbackVerified:true};
  }
  const proof={scope:'Hosted Chromium actual TEST school review UI, locally intercepted static build; authenticated TEST backend',schoolId:school,status:'RUNNING',stage:'load UI'};
  try {

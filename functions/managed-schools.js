@@ -331,7 +331,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
   // Windows presence is monitoring only. Signed school storage and current licence
   // authorize mobile access independently of the management PC's availability.
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
   if(b.request.action==='mobile_login'&&b.request.cardIssueId&&!cardReaderEnforced)fail(503,'Issued card readers are not enabled','CARD_READER_DISABLED');
   const cardContext=b.request.action==='mobile_login'?null:await readCard(b.schoolId,b.request);
   if(b.request.action==='mobile_attendance_status'){
@@ -475,7 +475,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   return {success:true,schoolId:m.schoolId,changeFeedVersion:1,...event};
  }
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
- if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+ if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
   const rows=await Promise.all(b.operationIds.map(id=>db.doc(attendanceCollection+'/'+id).get()));
@@ -486,7 +486,15 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
   const collections=b.collections,known=b.knownRevisions||{};
   if(!Array.isArray(collections)||collections.length>22||new Set(collections).size!==collections.length||collections.some(col=>!COLLECTIONS.has(col))||!known||typeof known!=='object'||Array.isArray(known)||Object.entries(known).some(([key,value])=>!collections.includes(key)||typeof value!=='string'||value.length>1000))fail(400,'Invalid delta checkpoint');
   if(b.headOnly!==undefined&&typeof b.headOnly!=='boolean')fail(400,'Invalid delta mode');
-  const body={action:'managed_delta',collections,knownRevisions:known,...(b.headOnly===true?{headOnly:true}:{})};
+  const recordCheckpoints=b.knownRecordRevisions;
+  if(recordCheckpoints!==undefined){
+   if(!recordCheckpoints||typeof recordCheckpoints!=='object'||Array.isArray(recordCheckpoints))fail(400,'Invalid record checkpoint');
+   let count=0;for(const [col,rows] of Object.entries(recordCheckpoints)){
+    if(!collections.includes(col)||!rows||typeof rows!=='object'||Array.isArray(rows))fail(400,'Invalid record checkpoint');
+    for(const [id,revision] of Object.entries(rows))if(++count>100000||!id||id.length>200||id.includes('/')||['.','..'].includes(id)||typeof revision!=='string'||!revision||revision.length>1000)fail(400,'Invalid record checkpoint');
+   }
+  }
+  const body={action:'managed_delta',collections,knownRevisions:known,...(recordCheckpoints!==undefined?{knownRecordRevisions:recordCheckpoints}:{}),...(b.headOnly===true?{headOnly:true}:{})};
   // A commit on another broker cannot invalidate this process's five-second
   // view cache. Verified delta apply must read current authoritative records.
   const result=b.headOnly===true?await readView(m.schoolId,body,()=>signed(m,body)):await signed(m,body);
@@ -495,7 +503,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKe
    return {success:true,schoolId:m.schoolId,syncProtocol:2,headOnly:true,revisions:result.revisions};
   }
   if(result.syncProtocol!==2||!result.changes||typeof result.changes!=='object'||Object.keys(result.changes).length!==collections.length)fail(502,'Invalid delta response');
-  for(const col of collections){const group=result.changes[col];if(!group||group.syncProtocol!==2||typeof group.collectionRevision!=='string'||!group.records||typeof group.records!=='object'||Array.isArray(group.records)||Object.values(group.records).some(row=>!row||row.schoolId!==m.schoolId))fail(502,'Foreign or invalid school delta');}
+  for(const col of collections){const group=result.changes[col];if(!group||(group.partialRecords!==undefined&&typeof group.partialRecords!=='boolean')||group.partialRecords===true&&(!recordCheckpoints||!Object.prototype.hasOwnProperty.call(recordCheckpoints,col))||group.syncProtocol!==2||typeof group.collectionRevision!=='string'||!group.records||typeof group.records!=='object'||Array.isArray(group.records)||Object.values(group.records).some(row=>!row||row.schoolId!==m.schoolId))fail(502,'Foreign or invalid school delta');}
   return result;
  }
  // Inactive controlled-import foundation. No arbitrary managed Sheet edits.
