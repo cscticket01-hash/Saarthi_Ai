@@ -18,12 +18,14 @@ class _DeveloperNotificationPanelState extends State<DeveloperNotificationPanel>
     final title = TextEditingController(), message = TextEditingController();
     final id = FirebaseFirestore.instance.collection('platform_developer_notifications').doc(_audience).collection('messages').doc().id;
     final audience = _audience;
+    final recipient = audience == 'all' ? 'All schools' :
+        (widget.schools.firstWhere((s) => s['id'] == audience, orElse: () => {'name': audience})['name'] ?? audience).toString();
     bool busy = false;
     String? error;
     await showDialog<void>(context:context,barrierDismissible:false,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>PopScope(
       canPop:!busy,child:AlertDialog(title:const Text('Send developer notification'),
         content:SizedBox(width:520,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
-          Text(audience=='all'?'Recipient: All schools':'Recipient: ${widget.schools.firstWhere((s)=>s['id']==audience)['name'] ?? audience}'),
+          Text('Recipient: $recipient'),
           TextField(controller:title,maxLength:160,enabled:!busy,decoration:const InputDecoration(labelText:'Title')),
           TextField(controller:message,maxLength:5000,minLines:4,maxLines:10,enabled:!busy,decoration:const InputDecoration(labelText:'Message')),
           if(error!=null)Text(error!,style:const TextStyle(color:Colors.orangeAccent)),
