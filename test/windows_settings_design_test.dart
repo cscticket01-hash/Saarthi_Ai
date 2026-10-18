@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -7,7 +8,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/main_dashboard_screen_windows.dart' show SettingsScreen;
 import '../lib/windows_settings_design.dart';
-import '../lib/windows_settings_panel.dart';
 import '../lib/windows_update_service.dart';
 import '../lib/windows_sync_engine.dart';
 import '../lib/windows_sync_control_center.dart';
@@ -44,7 +44,8 @@ void main() {
 
   testWidgets('actual Settings page renders responsive, DPI-scaled review PNGs without overflow', (tester) async {
     await tester.runAsync(() async {
-      await (FontLoader('Roboto')..addFont(rootBundle.load('assets/id_card_regular.ttf'))).load();
+      await (FontLoader('Segoe UI')..addFont(Future.value(ByteData.sublistView(
+        await File('C:/Windows/Fonts/segoeui.ttf').readAsBytes())))).load();
       await (FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
     });
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -58,8 +59,8 @@ void main() {
       await tester.binding.setSurfaceSize(spec.$2);
       final key = GlobalKey();
       final navigator = GlobalKey<NavigatorState>();
-      await tester.pumpWidget(MaterialApp(navigatorKey: navigator, theme: ThemeData.dark(useMaterial3: true).copyWith(
-        textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Roboto')),
+      await tester.pumpWidget(MaterialApp(navigatorKey: navigator, theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Segoe UI',
+          fontFamilyFallback: const ['Nirmala UI', 'Arial'], scaffoldBackgroundColor: const Color(0xFF0B141A)),
         builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(
           textScaler: TextScaler.linear(spec.$4)), child: child!),
         home: const Scaffold()));
@@ -71,6 +72,7 @@ void main() {
       expect(find.text('Windows master app update • Current v$windowsAppVersion'), findsOneWidget);
       expect(find.text('Sync Status • Synced'), findsOneWidget);
       expect(tester.takeException(), isNull, reason: spec.$1);
+      expect(tester.getSize(find.byType(WindowsSettingsBody)).height, spec.$2.height - kToolbarHeight);
       await tester.runAsync(() async {
         final image = await (key.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage(pixelRatio: spec.$3);
         final bytes = (await image.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
@@ -87,6 +89,10 @@ void main() {
         }
         image.dispose();
       });
+      await tester.ensureVisible(find.text('Open Sync & Backup Control Center'));
+      await tester.pumpAndSettle();
+      expect(find.text('Open Sync & Backup Control Center').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     }
   });

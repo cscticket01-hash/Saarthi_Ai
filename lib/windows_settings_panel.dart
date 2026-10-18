@@ -877,7 +877,7 @@ class WindowsAppUpdateCard extends StatelessWidget {
                     color: state.phase == WindowsUpdatePhase.error
                         ? Colors.redAccent
                         : Colors.white70,
-                    fontSize: 17, height: 1.4,
+                    fontSize: 20, height: 1.4,
                   ),
                 )),
                 ]),
@@ -997,11 +997,11 @@ class WindowsSyncStatusCard extends StatelessWidget {
           title:'Sync',subtitle:'Sync Status • $label',
           content:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
             Text('Last successful sync: ${engine.lastSuccessfulSync?.toLocal().toString()??'Not yet completed'}',
-              style:const TextStyle(color:Color(0xFFB7C3DA),fontSize:16,height:1.5)),
+              style:const TextStyle(color:Color(0xFFB7C3DA),fontSize:18,height:1.5)),
             const SizedBox(height:8),
             Wrap(crossAxisAlignment:WrapCrossAlignment.center,spacing:6,children:[
-              const Text('Pending:',style:TextStyle(color:Color(0xFFB7C3DA),fontSize:17)),
-              Text('$pending',style:TextStyle(color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontSize:17,fontWeight:FontWeight.w600)),
+              const Text('Pending:',style:TextStyle(color:Color(0xFFB7C3DA),fontSize:20)),
+              Text('$pending',style:TextStyle(color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontSize:20,fontWeight:FontWeight.w600)),
             ]),
             if(engine.lastError!=null)Padding(padding:const EdgeInsets.only(top:10),
               child:Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent,fontSize:14))),

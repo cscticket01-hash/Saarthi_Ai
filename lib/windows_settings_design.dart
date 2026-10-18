@@ -8,6 +8,7 @@ class WindowsSettingsBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
+    width: double.infinity, height: double.infinity,
     decoration: const BoxDecoration(gradient: LinearGradient(
       begin: Alignment.topLeft, end: Alignment.bottomRight,
       colors: [Color(0xFF0B1429), Color(0xFF0B1934), Color(0xFF091226)],
@@ -36,7 +37,7 @@ class WindowsSettingsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(30),
+    padding: const EdgeInsets.symmetric(horizontal: 38, vertical: 30),
     decoration: BoxDecoration(
       borderRadius: BorderRadius.circular(24),
       border: Border.all(color: const Color(0xFF294777)),
@@ -45,12 +46,14 @@ class WindowsSettingsCard extends StatelessWidget {
       boxShadow: const [BoxShadow(color: Color(0x30000000), blurRadius: 20, offset: Offset(0, 8))],
     ),
     child: LayoutBuilder(builder: (context, constraints) {
-      final wide = constraints.maxWidth >= 760;
+      final wide = constraints.maxWidth / MediaQuery.textScalerOf(context).scale(1) >= 760;
       final compact = constraints.maxWidth < 480;
       final accent = sync ? const Color(0xFF57E6C4) : const Color(0xFF7DABFF);
+      final heading = Text(title, style: TextStyle(color: Colors.white, fontSize: compact ? 24 : 32, fontWeight: FontWeight.w700));
+      final description = Text(subtitle, style: const TextStyle(color: Color(0xFFB7C3DA), fontSize: 20, height: 1.4));
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(width: compact ? 54 : 96, height: compact ? 54 : 96,
+          Container(width: compact ? 54 : 100, height: compact ? 54 : 100,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(compact ? 16 : 24),
               border: Border.all(color: accent.withValues(alpha: .55)),
@@ -59,20 +62,24 @@ class WindowsSettingsCard extends StatelessWidget {
                   : [const Color(0xFF294FAD), const Color(0xFF102653)]),
               boxShadow: [BoxShadow(color: accent.withValues(alpha: .08), blurRadius: 24)],
             ), child: Icon(icon, color: accent, size: compact ? 30 : 54)),
-          SizedBox(width: compact ? 14 : 28),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: TextStyle(color: Colors.white, fontSize: compact ? 24 : 32, fontWeight: FontWeight.w700)),
+          SizedBox(width: compact ? 14 : 36),
+          Expanded(child: compact ? heading : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            heading,
             const SizedBox(height: 8),
-            Text(subtitle, style: const TextStyle(color: Color(0xFFB7C3DA), fontSize: 17, height: 1.4)),
+            description,
             const SizedBox(height: 18),
             content,
           ])),
           if (wide) ...[
             const SizedBox(width: 24),
-            ExcludeSemantics(child: SizedBox(width: 230, height: sync ? 164 : 145,
+            ExcludeSemantics(child: SizedBox(width: 230, height: sync ? 194 : 160,
               child: CustomPaint(painter: _SettingsIllustration(sync: sync, success: success)))),
           ],
         ]),
+        if (compact) ...[
+          const SizedBox(height: 18), description,
+          const SizedBox(height: 18), content,
+        ],
         const SizedBox(height: 28),
         actions,
       ]);
@@ -94,8 +101,8 @@ class WindowsSettingsButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(30),
       gradient: LinearGradient(colors: onPressed == null
         ? [const Color(0xFF273750), const Color(0xFF29314B)]
-        : purple ? [const Color(0xFF263B75), const Color(0xFF403873), const Color(0xFF283878)]
-          : [const Color(0xFF2D64C8), const Color(0xFF5151B8), const Color(0xFF356BCC)]),
+        : purple ? [const Color(0xFF1A2853), const Color(0xFF27224E), const Color(0xFF223565)]
+          : [const Color(0xFF17366B), const Color(0xFF292F7C), const Color(0xFF193C91)]),
     ),
     child: OutlinedButton(
       onPressed: onPressed,
@@ -109,7 +116,7 @@ class WindowsSettingsButton extends StatelessWidget {
       child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         icon, const SizedBox(width: 12),
         Flexible(child: Text(label, textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600))),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600))),
       ]),
     ),
   );
