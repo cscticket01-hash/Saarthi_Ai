@@ -621,7 +621,7 @@ class _WindowsLicenseSettingsPanelState
   }
 
   Future<void> _clear() async {
-    if (_saving || _savedKey.isEmpty) return;
+    if (_saving) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -644,13 +644,26 @@ class _WindowsLicenseSettingsPanelState
     );
     if (confirm != true) return;
 
-    await WindowsLicenseStore.clear();
     if (!mounted) return;
-    setState(() {
-      _savedKey = '';
-      _status = '';
-      _savedAt = '';
-    });
+    setState(() => _saving = true);
+    try {
+      await WindowsLicenseStore.clear();
+      if (!mounted) return;
+      setState(() {
+        _savedKey = '';
+        _status = '';
+        _savedAt = '';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No saved key remains on this device. Online licence unchanged.'),
+      ));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Saved key could not be removed. Please retry.'),
+      ));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   String _licenceDate(DateTime d) {const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];final v=d.toLocal();return '${v.day.toString().padLeft(2,'0')} ${months[v.month-1]} ${v.year}';}
@@ -714,7 +727,8 @@ class _WindowsLicenseSettingsPanelState
           ),
           const SizedBox(height: 14),
           if(_centralManaged) Padding(padding:const EdgeInsets.only(bottom:14),child:Text('Expiry / renewal: ${_licenceDate(WindowsPlatformClient.instance.state.value.expiresAt)}\nDays remaining: ${WindowsPlatformClient.instance.state.value.daysLeft}')),
-          if (_savedKey.isNotEmpty) ...[
+          // Device cache changes the displayed value, never feature availability.
+          ...[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
@@ -736,13 +750,13 @@ class _WindowsLicenseSettingsPanelState
                                 TextStyle(color: Colors.white38, fontSize: 10)),
                         const SizedBox(height: 3),
                         SelectableText(
-                          _maskedKey(_savedKey),
+                          _savedKey.isEmpty ? 'No key saved on this device' : _maskedKey(_savedKey),
                           style: const TextStyle(
                               color: Colors.white, fontWeight: FontWeight.w700),
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          'Saved: ${_savedAtText()}',
+                          _savedKey.isEmpty ? 'The school licence status is shown above.' : 'Saved: ${_savedAtText()}',
                           style: const TextStyle(
                               color: Colors.white38, fontSize: 10),
                         ),
@@ -750,6 +764,7 @@ class _WindowsLicenseSettingsPanelState
                     ),
                   ),
                   IconButton(
+                    key: const ValueKey('windows-licence-remove'),
                     tooltip: WindowsUiLanguage.translate('Remove key'),
                     onPressed: _saving ? null : _clear,
                     icon: const Icon(Icons.delete_outline_rounded,
