@@ -212,3 +212,21 @@ String windowsManagedCheckpointRevision(
   final revision = manifest?['revision'];
   return revision is String ? revision : '';
 }
+
+/// Only identity inputs require card publication. Null requests a full audit.
+Map<String, Set<String>>? windowsIdPublicationTargets(
+  Map<String, Set<String>> changes, {
+  bool audit = false,
+}) {
+  if (audit ||
+      (changes['school_config']?.contains('school_profile_cache') ?? false) ||
+      (changes['school_settings']?.contains('document_templates') ?? false)) {
+    return null;
+  }
+  return {
+    if (changes['students_directory']?.isNotEmpty ?? false)
+      'studentId': {...changes['students_directory']!},
+    if (changes['teachers_directory']?.isNotEmpty ?? false)
+      'teacherId': {...changes['teachers_directory']!},
+  };
+}

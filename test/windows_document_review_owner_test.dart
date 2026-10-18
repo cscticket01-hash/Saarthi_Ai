@@ -196,6 +196,18 @@ void main() {
       expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
     });
   }
+  test('empty ID targets do not initialize unrelated people or read inventory', () async {
+    await db.collection('students_directory').doc('unrelated').set({'name': 'Unrelated'});
+    final before = (await db.collection('students_directory').doc('unrelated').get()).data();
+    final queueBefore = (await db.collection('_windows_document_outbox').get()).docs.map((row) => row.id).toList();
+    await WindowsDocumentTemplates.publishChangedIdCards(
+      affectedPeople: {},
+      readInventory: () async => throw StateError('Unrelated cloud read'),
+    );
+    expect((await db.collection('students_directory').doc('unrelated').get()).data(), before);
+    expect((await db.collection('_windows_document_outbox').get()).docs.map((row) => row.id).toList(), queueBefore);
+  });
+
   test('unchanged published ID survives photo upload references, retry and restart without new files', () async {
     await CentralSchoolCloud.updateSession(school, {'endpoint': 'https://saarthi-oauth-staging.onrender.com/school-cloud'});
     final photo = Uint8List.fromList(img.encodePng(img.Image(width: 16, height: 24)));
@@ -216,7 +228,12 @@ void main() {
     final printing = PrintingPlatform.instance;
     PrintingPlatform.instance = OwnerReviewPrinting(qr);
     try {
-      await WindowsDocumentTemplates.publishChangedIdCards(readInventory: inventory);
+      await db.collection('students_directory').doc('untouched').set({'name': 'Other Student'});
+      await WindowsDocumentTemplates.publishChangedIdCards(
+        readInventory: inventory, affectedPeople: {'studentId': {'S1'}});
+      expect((await db.collection('students_directory').doc('untouched').get()).data()?['mobileLinkToken'], isNull);
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+        () => db.collection('students_directory').doc('untouched').delete());
       final first = (await db.collection('_local_student_documents').doc(cardId).get()).data()!;
       final file = File(first['localPath']);
       expect(first['optimizedPath'], file.path); expect(first['processedPath'], file.path);
