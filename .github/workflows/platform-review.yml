@@ -116,7 +116,7 @@ jobs:
     - name: Verify payroll, reset and licence activation regressions
       env:
         APPDATA: ${{ runner.temp }}/windows-operations-tests
-      run: flutter test test/windows_operations_test.dart test/windows_developer_notifications_test.dart
+      run: flutter test --concurrency=1 test/windows_operations_test.dart test/windows_developer_notifications_test.dart
     - uses: actions/upload-artifact@v4
       with:
         name: staff-salary-layout-preview
@@ -228,6 +228,15 @@ jobs:
         open(p,'w').write(s)
         PY
     - run: flutter pub get
+    - name: Analyze Settings-only presentation
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_settings_design.dart lib/windows_settings_panel.dart test/windows_settings_design_test.dart
+    - name: Verify actual Windows Settings and render responsive review screenshots
+      run: flutter test --concurrency=1 test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart --dart-define=APP_VERSION=2.1.143
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: windows-settings-ui-comparison
+        path: build/settings-preview
     - name: SQLite migration, integrity, atomicity and production API regression
       run: |
         flutter test --concurrency=1 test/windows_sqlite_storage_test.dart test/windows_sqlite_api_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
