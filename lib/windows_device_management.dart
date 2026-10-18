@@ -22,7 +22,8 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
     with WidgetsBindingObserver {
   List<Map<String,dynamic>> devices = [];
   String? current, error;
-  bool busy = false, verified = false;
+  bool busy = false, verified = false, revoking=false;
+  int readGeneration=0;
   Timer? refreshTimer, activityTimer;
   String? cacheScope;
   bool hasSnapshot=false;
@@ -82,7 +83,8 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   }
   void sessionChanged() {
     if (!mounted) return;
-    setState(() { devices = []; current = null; verified = false; hasSnapshot=false; cacheScope=null; });
+    readGeneration++;
+    setState(() { busy=false; revoking=false; devices = []; current = null; verified = false; hasSnapshot=false; cacheScope=null; });
     // A response from the previous session must never populate this page.
     Navigator.of(context).maybePop();
   }
@@ -103,6 +105,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   Future<void> load({bool silent=false}) async {
     if (busy) return;
     final session = ManagedSchoolSession.changed.value;
+    final generation=++readGeneration;
     setState(() { busy = true; if(!silent) error = null; });
     try {
       final response = await request('managed/device/list', {});
@@ -116,7 +119,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
         for(final row in devices) if(incoming.containsKey(row['deviceIdentity'])) incoming.remove(row['deviceIdentity'])!,
         ...incoming.values,
       ];
-      if (!mounted || session != ManagedSchoolSession.changed.value) return;
+      if (!mounted || session != ManagedSchoolSession.changed.value || generation!=readGeneration) return;
       setState(() {
         serverTime = response['serverTime'] is int ? response['serverTime'] as int : null;
         freshness..reset()..start();
@@ -129,25 +132,26 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
         try { await WindowsDeviceDirectoryCache.write(scope,ordered); } catch (_) { /* Cache is optional; server result remains authoritative. */ }
       }
     } catch (e) {
-      if (mounted && session == ManagedSchoolSession.changed.value) {
+      if (mounted && session == ManagedSchoolSession.changed.value && generation==readGeneration) {
         setState(() { error = e.toString().contains('DEVICE_ROLLOUT_DISABLED')
             ? 'Device management is not enabled on this server. Saved devices remain visible; activity cannot be verified.'
             : e.toString(); verified = false; });
       }
-    } finally { if (mounted) setState(() => busy = false); }
+    } finally { if (mounted && generation==readGeneration) setState(() => busy = false); }
   }
   Future<void> revoke(Map<String,dynamic> row) async {
     final identity = row['deviceIdentity'];
     final session = ManagedSchoolSession.changed.value;
-    if (!verified || busy || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
+    if (!verified || revoking || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
     final approved = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
       title: const Text('Revoke this PC?'),
       content: Text('${row['name'] ?? 'PC'} will lose online school access. An offline PC receives this change when it reconnects; its existing offline authorization policy still applies. Local records will remain preserved.'),
       actions: [TextButton(onPressed: () => Navigator.pop(context,false), child: const Text('Cancel')),
         FilledButton(onPressed: () => Navigator.pop(context,true), child: const Text('Revoke'))],
     ));
-    if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || !verified || busy) return;
-    setState(() { busy = true; error = null; });
+    if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || !verified || revoking || identity==current) return;
+    readGeneration++; // A prior list response cannot undo this mutation.
+    setState(() { busy = true; revoking=true; error = null; });
     try {
       final result = await request('managed/device/revoke', {'targetDeviceIdentity':identity});
       if (result['success'] != true || result['device'] is! Map ||
@@ -155,10 +159,10 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
         throw StateError('Revocation not verified. Refresh before retrying.');
       }
       if (!mounted || session != ManagedSchoolSession.changed.value) return;
-      setState(() { busy = false; verified = false; });
-      await load();
+      setState(() { busy = false; revoking=false; verified = false; });
+      await load(silent:true);
     } catch(e) {
-      if(mounted) setState(() { error=e.toString(); busy=false; verified=false; });
+      if(mounted && session==ManagedSchoolSession.changed.value) setState(() { error=e.toString(); busy=false; revoking=false; verified=false; });
     }
   }
   @override
@@ -180,7 +184,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
           if(busy && !hasSnapshot) const LinearProgressIndicator(minHeight:2),
           if(hasSnapshot && !verified) const Padding(padding:EdgeInsets.only(bottom:10),child:Text('Saved device list • Activity not verified',style:TextStyle(color:muted,fontSize:12))),
           if(error!=null) Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(error!,style:const TextStyle(color:Color(0xffffb4ab)))),
-          Container(decoration:BoxDecoration(color:const Color(0xff121f34),borderRadius:BorderRadius.circular(16),border:Border.all(color:const Color(0xff26364f))),
+          Container(key:const ValueKey('device-directory-panel'),decoration:BoxDecoration(color:const Color(0xff121f34),borderRadius:BorderRadius.circular(16),border:Border.all(color:const Color(0xff26364f))),
             child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
               const Padding(padding:EdgeInsets.all(20),child:Text('Devices',style:TextStyle(color:Colors.white,fontSize:18,fontWeight:FontWeight.w600))),
               LayoutBuilder(builder:(context,constraints) {
@@ -195,7 +199,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   const SizedBox(width:8),Expanded(child:Text(recentlyActive(row)?'Recently active':row['status']=='revoked'?'Revoked':'Activity unknown',style:TextStyle(color:recentlyActive(row)?const Color(0xff6ed6aa):muted))),
                 ]);
                 Widget action(Map<String,dynamic> row) => row['status']=='active' && row['deviceIdentity']!=current
-                  ? TextButton(onPressed:busy || !verified ? null:()=>revoke(row),child:const Text('Revoke'))
+                  ? TextButton(onPressed:revoking || !verified ? null:()=>revoke(row),child:const Text('Revoke'))
                   : const Text('—',style:TextStyle(color:muted));
                 return Column(children:[
                   if(!compact) const Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[

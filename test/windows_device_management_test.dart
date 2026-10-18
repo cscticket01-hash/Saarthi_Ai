@@ -83,6 +83,7 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(reads,2);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton,'Revoke')).onPressed,isNotNull);
     expect(find.byType(LinearProgressIndicator),findsNothing);
     expect(identical(element,tester.element(row)),isTrue);
     final changed=response();
@@ -95,6 +96,28 @@ void main() {
     expect(tester.getTopLeft(row).dy,lessThan(tester.getTopLeft(find.byKey(ValueKey('device-$other'))).dy));
     expect(find.text('Recently active'),findsNothing);
     expect(actions,everyElement('managed/device/list'));
+    await close(tester);
+  });
+  testWidgets('old background response cannot undo a successful revoke', (tester) async {
+    var reads=0,revoked=false;
+    final delayed=Completer<Map<String,dynamic>>();
+    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(action,body) async {
+      if(action=='managed/device/revoke') {
+        revoked=true;
+        return {'success':true,'device':{'deviceIdentity':other,'status':'revoked'}};
+      }
+      reads++;
+      return reads==2 ? delayed.future : response(revoked:revoked);
+    })));
+    await tester.pumpAndSettle();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.tap(find.text('Revoke')); await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton,'Revoke')); await tester.pumpAndSettle();
+    expect(find.text('Authorized PCs: 1 / 5   |   Recently active: 1'),findsOneWidget);
+    delayed.complete(response()); await tester.pumpAndSettle();
+    expect(find.text('Authorized PCs: 1 / 5   |   Recently active: 1'),findsOneWidget);
+    expect(find.text('Revoked'),findsOneWidget);
     await close(tester);
   });
   testWidgets('saved devices survive unavailable refresh with gray lights and disabled revoke', (tester) async {
