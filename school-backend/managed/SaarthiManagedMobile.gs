@@ -71,9 +71,11 @@ function VS_mobileAction(b){
   Object.keys(groups).forEach(key=>{
    const col=groups[key];if(props.getProperty('VS_SHEET_MIGRATED_'+col)!=='1')VS_managedSheet(col);
    if(key==='reportCards'&&props.getProperty('VS_SHEET_MIGRATED_exam_center_results')!=='1')VS_managedSheet('exam_center_results');
-   const revision=key==='reportCards'
+   let revision=key==='reportCards'
     ? JSON.stringify([props.getProperty('VS_RECORD_REV_exam_results')||'legacy',props.getProperty('VS_RECORD_REV_exam_center_results')||'legacy'])
-    : props.getProperty('VS_RECORD_REV_'+col)||'legacy';revisions[key]=revision;
+    : props.getProperty('VS_RECORD_REV_'+col)||'legacy';
+   if(b.mobileRecordDeltaVersion===1)revision=VS_hash(JSON.stringify([revision,session.role,session.personId,VS_safePerson(session.person)]));
+   revisions[key]=revision;
    if(known[key]===revision)return;
    if(key==='school')result.school=VS_mobileSchoolProfile();
    else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}

@@ -389,8 +389,9 @@ test('mobile versioned lists transfer only changed visible records and acknowled
  write('fee_ledger','own',{personId:'pupil',amount:50});write('fee_ledger','other',{personId:'another',amount:999});
  const mobile=request=>f.call({action:'managed_mobile',request,lease:{schoolId:A,expiresAt:Date.now()+3600000}});
  const login=mobile({action:'mobile_login',projectId:A,role:'student',personId:'pupil',linkToken:token,studentClass:'1',rollNo:'1',dob:'2015-01-01'});
+ write('fee_settings','class1',{className:'1',amount:10});write('fee_settings','class2',{className:'2',amount:20});
  const legacy=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken});
- const upgraded=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,mobileRecordDeltaVersion:1,knownRevision:legacy.revision,knownRevisions:legacy.revisions});assert.equal(upgraded.unchanged,true);assert.equal(upgraded.mobileRecordDeltaVersion,1);
+ const upgraded=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,mobileRecordDeltaVersion:1,knownRevision:legacy.revision,knownRevisions:legacy.revisions});assert.equal(upgraded.mobileRecordDeltaVersion,1);
  const request={action:'mobile_dashboard',sessionToken:login.sessionToken,mobileRecordDeltaVersion:1};
  const first=mobile(request);assert.equal(first.success,true);assert.equal(first.calendar.length,2);assert.equal(first.fees.length,1);assert.equal(first.fees[0].amount,50);
  const knownGroupRecordRevisions=Object.fromEntries(Object.keys(first.groupRecordDeltas).map(key=>[key,Object.fromEntries(first[key].map(row=>[row._mobileRecordId,row._mobileRecordRevision]))]));
@@ -399,4 +400,6 @@ test('mobile versioned lists transfer only changed visible records and acknowled
  assert.equal(f.call({action:'managed_records',operation:'delete',collection:'school_calendar',id:'b'}).success,true);
  const removed=mobile({...request,knownRevisions:first.revisions,knownGroupRecordRevisions});assert.equal(removed.success,true);assert.deepEqual(removed.groupRecordDeltas.calendar.ids,['a']);assert.deepEqual(removed.calendar,[]);
  const bad=mobile({...request,knownGroupRecordRevisions:{calendar:[]}});assert.equal(bad.success,false);
+ write('students_directory','pupil',{name:'Pupil',class:'2',rollNo:'1',dob:'2015-01-01',mobileLinkToken:token});
+ const reScoped=mobile({...request,knownRevisions:first.revisions,knownGroupRecordRevisions});assert.equal(reScoped.success,true);assert.deepEqual(reScoped.groupRecordDeltas.feeStructures.ids,['class2']);assert.equal(reScoped.feeStructures[0].amount,20);
 });
