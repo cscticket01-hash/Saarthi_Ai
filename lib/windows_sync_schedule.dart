@@ -183,21 +183,26 @@ Set<String> changedWindowsCollections(
 class WindowsCloudChangeWatch {
   DateTime? nextCheck;
   int failures = 0;
+  bool _verified = false;
+  bool get hasVerifiedDiscovery => _verified;
   bool due(DateTime now) => nextCheck == null || !now.isBefore(nextCheck!);
   void succeeded(DateTime now) {
+    _verified = true;
     failures = 0;
     nextCheck = now.add(const Duration(seconds: 30));
   }
 
   void failed(DateTime now) {
+    _verified = false;
     failures = (failures + 1).clamp(1, 6);
     nextCheck = now.add(
       Duration(seconds: (30 * (1 << failures)).clamp(60, 900)),
     );
   }
 
-  void reset() {
-    nextCheck = null;
+  void reset({DateTime? notBefore}) {
+    _verified = false;
+    nextCheck = notBefore;
     failures = 0;
   }
 }
