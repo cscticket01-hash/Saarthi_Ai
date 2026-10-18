@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -6,8 +8,10 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_device_management.dart';
+import '../lib/windows_device_directory_cache.dart';
 
 void main() {
+  setUp(()=>SharedPreferences.setMockInitialValues({}));
   final own = 'a' * 64, other = 'b' * 64;
   Map<String,dynamic> response({bool revoked = false}) => {'success':true,'serverTime':1792363200000,'devices':[
     {'deviceIdentity':own,'name':'School Office PC','status':'active','current':true,'activity':'recently_seen','lastSeenAt':1792363200000},
@@ -38,7 +42,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(a,b) async => throw StateError('DEVICE_ROLLOUT_DISABLED'))));
     await tester.pumpAndSettle();
     expect(find.textContaining('Authorized PCs: — / 5'),findsOneWidget);
-    expect(find.textContaining('DEVICE_ROLLOUT_DISABLED'),findsOneWidget);
+    expect(find.textContaining('Device management is not enabled on this server'),findsOneWidget);
     expect(find.text('Revoke'),findsNothing);
     await close(tester);
   });
@@ -49,6 +53,69 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Invalid device response'),findsOneWidget);
     expect(find.text('Revoke'),findsNothing);
+    await close(tester);
+  });
+  test('directory cache is account/server scoped and never stores proof secrets',() async {
+    final profile=<String,dynamic>{'managed':true,'endpoint':'https://school.example/school-cloud','schoolId':'vs-'+'a'*32,'uid':'A'};
+    final scope=WindowsDeviceDirectoryCache.scope(profile)!;
+    expect(scope,isNot(WindowsDeviceDirectoryCache.scope({...profile,'uid':'B'})));
+    expect(scope,isNot(WindowsDeviceDirectoryCache.scope({...profile,'endpoint':'https://other.example/school-cloud'})));
+    expect(scope,isNot(WindowsDeviceDirectoryCache.scope({...profile,'schoolId':'vs-'+'b'*32})));
+    final rows=WindowsDeviceDirectoryCache.validate(response()['devices']);
+    rows.first['credential']='must-not-save';
+    await WindowsDeviceDirectoryCache.write(scope,rows);
+    expect((await WindowsDeviceDirectoryCache.read(scope)).length,2);
+    final prefs=await SharedPreferences.getInstance();
+    expect(prefs.getString(prefs.getKeys().single),isNot(contains('must-not-save')));
+    expect(await WindowsDeviceDirectoryCache.read('different-scope'),isEmpty);
+  });
+  testWidgets('background read preserves keyed rows, ordering and loading-free layout', (tester) async {
+    var reads=0;
+    final pending=Completer<Map<String,dynamic>>();
+    final actions=<String>[];
+    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(action,body) async {
+      actions.add(action); reads++;
+      return reads==1 ? response() : pending.future;
+    })));
+    await tester.pumpAndSettle();
+    final row=find.byKey(ValueKey('device-$own'));
+    final element=tester.element(row);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(reads,2);
+    expect(find.byType(LinearProgressIndicator),findsNothing);
+    expect(identical(element,tester.element(row)),isTrue);
+    final changed=response();
+    final list=changed['devices'] as List;
+    list.first['activity']='unknown';
+    changed['devices']=list.reversed.toList();
+    pending.complete(changed);
+    await tester.pumpAndSettle();
+    expect(identical(element,tester.element(row)),isTrue);
+    expect(tester.getTopLeft(row).dy,lessThan(tester.getTopLeft(find.byKey(ValueKey('device-$other'))).dy));
+    expect(find.text('Recently active'),findsNothing);
+    expect(actions,everyElement('managed/device/list'));
+    await close(tester);
+  });
+  testWidgets('saved devices survive unavailable refresh with gray lights and disabled revoke', (tester) async {
+    const scope='school-A';
+    await WindowsDeviceDirectoryCache.write(scope,WindowsDeviceDirectoryCache.validate(response()['devices']));
+    final pending=Completer<Map<String,dynamic>>();
+    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(cacheScope:()async=>scope,request:(a,b)=>pending.future)));
+    await tester.pumpAndSettle();
+    expect(find.text('School Office PC'),findsOneWidget);
+    expect(find.text('Recently active'),findsNothing);
+    expect(find.textContaining('Saved device list'),findsOneWidget);
+    expect(find.byType(LinearProgressIndicator),findsNothing);
+    final revoke=tester.widget<TextButton>(find.widgetWithText(TextButton,'Revoke'));
+    expect(revoke.onPressed,isNull);
+    pending.completeError(StateError('DEVICE_ROLLOUT_DISABLED'));
+    await tester.pumpAndSettle();
+    expect(find.text('School Office PC'),findsOneWidget);
+    expect(find.textContaining('Authorized PCs: 2 / 5'),findsOneWidget);
+    expect(find.textContaining('Device management is not enabled'),findsOneWidget);
+    final light=tester.widget<Icon>(find.byKey(ValueKey('activity-$own')));
+    expect(light.color,const Color(0xff9caac0));
     await close(tester);
   });
   testWidgets('native page renders desktop and narrow high-DPI layout', (tester) async {
