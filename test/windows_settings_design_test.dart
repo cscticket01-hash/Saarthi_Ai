@@ -69,6 +69,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(BackButton), findsOneWidget);
       expect(find.byType(WindowsSettingsCard), findsNWidgets(2));
+      if (spec.$1 == 'wide' || spec.$1 == 'desktop') {
+        final cards = find.byType(WindowsSettingsCard);
+        expect(tester.getSize(cards.first).height + tester.getSize(cards.last).height, lessThan(500));
+      }
       expect(find.text('Windows master app update • Current v$windowsAppVersion'), findsOneWidget);
       expect(find.text('Sync Status • Synced'), findsOneWidget);
       expect(tester.takeException(), isNull, reason: spec.$1);

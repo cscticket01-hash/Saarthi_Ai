@@ -163,14 +163,14 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('real widget preview artifact', (tester) async {
-    tester.view.physicalSize = const Size(1440, 1100);
+    tester.view.physicalSize = const Size(1536, 736);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.runAsync(() async {
-      final font = FontLoader('Preview');
+      final font = FontLoader(Platform.isWindows ? 'Segoe UI' : 'Preview');
       font.addFont(
-        File('assets/id_card_regular.ttf')
+        File(Platform.isWindows ? 'C:/Windows/Fonts/segoeui.ttf' : 'assets/id_card_regular.ttf')
             .readAsBytes()
             .then((bytes) => ByteData.sublistView(bytes)),
       );
@@ -184,19 +184,19 @@ void main() {
       RepaintBoundary(
         key: key,
         child: MaterialApp(
-          theme: ThemeData.dark().copyWith(
-            textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Preview'),
-          ),
+          theme: ThemeData(brightness: Brightness.dark,
+            fontFamily: Platform.isWindows ? 'Segoe UI' : 'Preview'),
           home: page(),
         ),
       ),
     );
     await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('Diagnostics and recovery tools')).dy, lessThan(736));
     await tester.runAsync(() async {
       final image =
           await (key.currentContext!.findRenderObject()
                   as RenderRepaintBoundary)
-              .toImage(pixelRatio: 1);
+              .toImage(pixelRatio: 1.25);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       await Directory('build/ui-previews').create(recursive: true);
       await File('build/ui-previews/sync-control-modern.png')

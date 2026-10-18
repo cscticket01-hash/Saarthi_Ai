@@ -611,7 +611,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   final _statusKey = GlobalKey();
 
   Widget _panelBox(Widget child) => Container(
-    padding: const EdgeInsets.all(22),
+    padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
       gradient: const LinearGradient(
         colors: [Color(0xFF132D46), Color(0xFF0C1F34)],
@@ -625,7 +625,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   );
 
   Widget metric(String name, String value) => SizedBox(
-    width: 258,
+    width: 248,
     child: Card(
       margin: EdgeInsets.zero,
       color: Colors.transparent,
@@ -637,10 +637,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               name,
               style: const TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 6),
             Text(
               value,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -786,7 +786,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 "${other['pending']} outstanding · ${other['retry']} retry · ${other['review']} need review"),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {
             final progress = _panelBox(
@@ -795,26 +795,27 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 children: [
                   const Text(
                     'Sync Progress',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(height: 24),
-                  Wrap(
-                    spacing: 32,
-                    runSpacing: 24,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      SizedBox(
-                        width: 190,
-                        height: 190,
+                  const SizedBox(height: 10),
+                  LayoutBuilder(builder: (context, space) {
+                    final scale = MediaQuery.textScalerOf(context).scale(1);
+                    final horizontal = space.maxWidth / scale >= 620;
+                    final indicatorExtent = 120.0 * scale.clamp(1.0, 2.0);
+                    final connectionWidth = horizontal ? space.maxWidth - indicatorExtent - 16 : space.maxWidth;
+                    final twoColumns = connectionWidth / scale >= 440;
+                    final indicator = SizedBox(
+                        width: indicatorExtent,
+                        height: indicatorExtent,
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
                             SizedBox(
-                              width: 180,
-                              height: 180,
+                              width: indicatorExtent - 8,
+                              height: indicatorExtent - 8,
                               child: CircularProgressIndicator(
                                 value: syncing ? null : 0,
-                                strokeWidth: 10,
+                                strokeWidth: 6,
                                 color: phaseColor,
                                 backgroundColor: const Color(0xFF24445D),
                               ),
@@ -824,14 +825,14 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               children: [
                                 Icon(
                                   syncing ? Icons.sync : Icons.shield_outlined,
-                                  size: 40,
+                                  size: 26,
                                   color: _cyan,
                                 ),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 6),
                                 Text(
                                   phaseLabel,
                                   style: const TextStyle(
-                                    fontSize: 20,
+                                    fontSize: 15,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -846,12 +847,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             ),
                           ],
                         ),
-                      ),
-                      SizedBox(
-                        width: 290,
-                        child: Column(
-                          children: [
-                            _connection(
+                      );
+                    final local = _connection(
                               Icons.computer,
                               'Local PC',
                               diskLabel,
@@ -897,8 +894,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         ),
                                       ],
                                     ),
-                            ),
-                            _connection(
+                            );
+                    final cloud = _connection(
                               Icons.cloud_outlined,
                               'School Cloud',
                               syncing
@@ -909,19 +906,29 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                   ? 'Last ACK: ${stamp(ack)}'
                                   : 'No verified ACK yet',
                               _cyan,
-                            ),
-                            _connection(
+                            );
+                    final drive = _connection(
                               Icons.folder_outlined,
                               'Google Drive',
                               driveLabel,
                               const Color(0xFFFFC153),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
+                            );
+                    final connections = twoColumns
+                      ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Expanded(child: local), const SizedBox(width: 10),
+                          Expanded(child: Column(children: [cloud, drive])),
+                        ])
+                      : Column(children: [local, cloud, drive]);
+                    return horizontal
+                      ? Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                          indicator, const SizedBox(width: 16), Expanded(child: connections),
+                        ])
+                      : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          Align(alignment: Alignment.centerLeft, child: indicator),
+                          const SizedBox(height: 12), connections,
+                        ]);
+                  }),
+                  const SizedBox(height: 12),
                   const Text(
                     'Live state from the durable queue • No estimated percentages',
                     style: TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
@@ -941,17 +948,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         child: Text(
                           'Live Queue Activity',
                           style: TextStyle(
-                            fontSize: 20,
+                            fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 12),
                   if ((details['liveQueue'] as List? ?? items).isEmpty)
                     const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 24),
+                      padding: EdgeInsets.symmetric(vertical: 12),
                       child: Text('No pending operations in this school.'),
                     ),
                   for (final raw
@@ -975,7 +982,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           style: const TextStyle(color: Color(0xFFFFC153)),
                         ),
                       ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 10),
                   TextButton.icon(
                     onPressed: () => _jump(_queueKey),
                     icon: const Icon(Icons.arrow_forward),
@@ -986,7 +993,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             );
             if (constraints.maxWidth < 960)
               return Column(
-                children: [progress, const SizedBox(height: 18), activity],
+                children: [progress, const SizedBox(height: 12), activity],
               );
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1181,8 +1188,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     Color accent, {
     Widget? details,
   }) => Container(
-    margin: const EdgeInsets.only(bottom: 12),
-    padding: const EdgeInsets.all(14),
+    margin: const EdgeInsets.only(bottom: 8),
+    padding: const EdgeInsets.all(10),
     decoration: BoxDecoration(
       color: _panel,
       borderRadius: BorderRadius.circular(14),
@@ -1190,14 +1197,14 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     ),
     child: Row(
       children: [
-        Icon(icon, color: accent, size: 30),
-        const SizedBox(width: 14),
+        Icon(icon, color: accent, size: 22),
+        const SizedBox(width: 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
                 status,
                 style: const TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
@@ -1307,12 +1314,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   final active = busy || engine.isSyncing || syncCommandRunning;
                   return ListView(
                     key: _overviewKey,
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.all(16),
                     children: [
                       const Text(
                         'Sync & Backup Control Center',
                         style: TextStyle(
-                          fontSize: 26,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
