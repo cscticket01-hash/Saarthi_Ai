@@ -189,6 +189,38 @@ void main() {
   });
   tearDown(() async => rig.close());
 
+  test('offline identical entry adopts cloud original on independent SQLite PC and unchanged head repair stays incremental', () async {
+    const values = {'schoolId':school,'title':'Same notice','message':'Identical content'};
+    await rig.db.collection('school_notices').doc('N1').set(values);
+    await rig.flush();
+    final cloud = (await rig.request({'action':'managed_records','operation':'read',
+      'collection':'school_notices','syncProtocol':2}))['records']['N1'] as Map;
+    await rig.open('pc2');
+    await rig.db.collection('school_notices').doc('N1').set(values);
+    final original = (await rig.queue()).single.data();
+    await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
+    await rig.pull({'school_notices'});
+    expect(await rig.queue(),isEmpty);
+    expect((await rig.db.collection('school_notices').doc('N1').get()).data()?['_syncRevision'],cloud['_syncRevision']);
+    final archived = (await rig.db.collection('_windows_sync_conflict_history').get()).docs.single.data();
+    expect(archived['operationId'],original['operationId']);
+    await rig.open('pc2');
+    expect(await rig.queue(),isEmpty);
+
+    // A retained stale operation can conflict even with unchanged collection
+    // heads. Fetch only this missing checkpoint, retaining every other one.
+    await rig.db.collection('school_notices').doc('N1').set(values);
+    final q = (await rig.queue()).single;
+    await q.reference.update({'baseCloudRevision':''});
+    await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
+    await rig.pull({'school_notices'});
+    expect(await rig.queue(),isEmpty);
+    final unchanged = (await rig.request({'action':'managed_records','operation':'read',
+      'collection':'school_notices','syncProtocol':2}))['records']['N1'] as Map;
+    expect(unchanged['_syncRevision'],cloud['_syncRevision']);
+    expect(unchanged['_syncOperationId'],cloud['_syncOperationId']);
+  });
+
   test('dependent work survives SQLite restart without requiring a full idle scan', () async {
     await WindowsSyncDependencies.retain(school, 'notices', 'N1', 'notice-1');
     expect(await WindowsSyncDependencies.read(school), isEmpty);

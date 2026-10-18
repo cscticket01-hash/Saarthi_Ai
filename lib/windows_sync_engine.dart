@@ -1769,6 +1769,21 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           if (!windowsSyncRecovery(e).independentRecords &&
               !isRecordSyncConflict(e))
             rethrow;
+          // A rejected write can concern an unchanged cloud head already in
+          // our manifest. Admit one bounded record delta for these conflicts;
+          // otherwise the normal unchanged-head shortcut would hide readback.
+          final pending = await FirebaseFirestore.instance
+              .collection('_windows_firebase_outbox').get();
+          if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
+            throw StateError('School changed before duplicate readback.');
+          for (final row in pending.docs) {
+            final item = row.data();
+            if (item['syncState'] == 'conflict' &&
+                item['schoolId'] == _activeSchoolSyncId &&
+                _firebaseCollections.contains(item['collection'])) {
+              _remoteCollections.add(item['collection'] as String);
+            }
+          }
         }
         _admitBatch();
         await syncLocalRestoreRequests(
@@ -2439,6 +2454,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         recordCheckpoints[collection] = Map<String, String>.from(
           prior!['recordRevisions'] as Map,
         );
+        for (final row in pendingAtRead) {
+          final item = row.data();
+          if (item['collection'] == collection && item['syncState'] == 'conflict') {
+            recordCheckpoints[collection]!.remove(item['documentId']);
+          }
+        }
       }
       final needsBaseline =
           !audit &&
@@ -2465,6 +2486,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               },
             )
           : prior?['revision']?.toString() ?? '';
+      if (recordCheckpoints.containsKey(collection) && pendingAtRead.any((row) =>
+          row.data()['collection'] == collection && row.data()['syncState'] == 'conflict')) {
+        // Keep every other record revision: only conflicted IDs are fetched.
+        revisions[collection] = '';
+      }
     }
     if (db.activeProfileId != origin)
       throw StateError('School changed during recovery inventory.');
