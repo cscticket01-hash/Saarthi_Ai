@@ -32,9 +32,16 @@ Future<void> _backgroundNotice(RemoteMessage message) async {
   if (!SchoolSession.instance.loggedIn) return;
   try {
     await Firebase.initializeApp();
-    if (SchoolNotifications.belongsToSession(message.data, SchoolSession.instance.link?.projectId)) {
+    if (SchoolNotifications.belongsToSession(
+      message.data,
+      SchoolSession.instance.link?.projectId,
+    )) {
       await SchoolNotifications.show(message);
-      try { await SchoolSession.instance.flushAttendance().timeout(const Duration(seconds: 20)); } catch (_) {}
+      try {
+        await SchoolSession.instance.flushAttendance().timeout(
+          const Duration(seconds: 20),
+        );
+      } catch (_) {}
     }
   } catch (_) {}
 }
@@ -42,30 +49,43 @@ Future<void> _backgroundNotice(RemoteMessage message) async {
 final _messenger = GlobalKey<ScaffoldMessengerState>();
 StreamSubscription<String>? _messagingTokenChanges;
 Future<void> _registerManagedNotifications() async {
-  if (!SchoolMessaging.ready || SchoolSession.instance.link?.managed != true) return;
-  _messagingTokenChanges ??= FirebaseMessaging.instance.onTokenRefresh.listen((token) {
-    unawaited(SchoolSession.instance.registerNotificationDevice(token).catchError((_) {}));
+  if (!SchoolMessaging.ready || SchoolSession.instance.link?.managed != true)
+    return;
+  _messagingTokenChanges ??= FirebaseMessaging.instance.onTokenRefresh.listen((
+    token,
+  ) {
+    unawaited(
+      SchoolSession.instance
+          .registerNotificationDevice(token)
+          .catchError((_) {}),
+    );
   });
   final token = await FirebaseMessaging.instance.getToken();
-  if (token != null) await SchoolSession.instance.registerNotificationDevice(token);
+  if (token != null)
+    await SchoolSession.instance.registerNotificationDevice(token);
 }
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(MobileStartupGate(
-    restore: SchoolSession.instance.restore,
-    readyBuilder: (_) => const SaarthiMobileApp(),
-    onReady: () {
-      unawaited(initializeAttendanceBackground());
-      unawaited(_initializeMobileNotifications().catchError((_) {}));
-    },
-  ));
+  runApp(
+    MobileStartupGate(
+      restore: SchoolSession.instance.restore,
+      readyBuilder: (_) => const SaarthiMobileApp(),
+      onReady: () {
+        unawaited(initializeAttendanceBackground());
+        unawaited(_initializeMobileNotifications().catchError((_) {}));
+      },
+    ),
+  );
 }
 
 Future<void> _initializeMobileNotifications() async {
   await SchoolNotifications.initialize();
   try {
-    await SchoolMessaging.configure(SchoolSession.instance.messaging,
-        centralSchool: SchoolSession.instance.link?.managed == true);
+    await SchoolMessaging.configure(
+      SchoolSession.instance.messaging,
+      centralSchool: SchoolSession.instance.link?.managed == true,
+    );
     await _registerManagedNotifications();
   } catch (_) {}
   FirebaseMessaging.onBackgroundMessage(_backgroundNotice);
@@ -277,8 +297,10 @@ class _SchoolLoginState extends State<_SchoolLogin> {
           if (!same()) return;
           await SchoolNotifications.clear().timeout(const Duration(seconds: 5));
           if (!same()) return;
-          await SchoolMessaging.configure(messaging, centralSchool: account?.managed == true)
-              .timeout(const Duration(seconds: 10));
+          await SchoolMessaging.configure(
+            messaging,
+            centralSchool: account?.managed == true,
+          ).timeout(const Duration(seconds: 10));
           if (same()) await _registerManagedNotifications();
         } catch (_) {
           _messenger.currentState?.showSnackBar(
@@ -425,7 +447,8 @@ class _SchoolDashboard extends StatefulWidget {
   State<_SchoolDashboard> createState() => _SchoolDashboardState();
 }
 
-class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingObserver {
+class _SchoolDashboardState extends State<_SchoolDashboard>
+    with WidgetsBindingObserver {
   StreamSubscription<void>? _noticeOpened;
   StreamSubscription<RemoteMessage>? _noticeReceived;
   final _s = SchoolSession.instance;
@@ -455,11 +478,13 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
     _data = Map<String, dynamic>.from(_s.dashboard);
     _loading = _data.isEmpty;
     _load();
-    _timer = Timer.periodic(const Duration(minutes: 4), (_) => _presence());
-    _noticeOpened = SchoolNotifications.opened.listen((_) => _load(afterSignal:true));
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) => _presence());
+    _noticeOpened = SchoolNotifications.opened.listen(
+      (_) => _load(afterSignal: true),
+    );
     _noticeReceived = FirebaseMessaging.onMessage.listen((m) {
       if (SchoolNotifications.belongsToSession(m.data, _s.link?.projectId))
-        _load(afterSignal:true);
+        _load(afterSignal: true);
     });
   }
 
@@ -476,7 +501,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) unawaited(_load(afterSignal:true));
+    if (state == AppLifecycleState.resumed) unawaited(_load(afterSignal: true));
   }
 
   void _connectionChanged() {
@@ -484,24 +509,32 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
     setState(() {
       _data = Map<String, dynamic>.from(_s.dashboard);
       _error = _s.connectionState == SchoolConnectionState.connectionError
-          ? _s.connectionMessage : null;
-      _loading = _s.connectionState == SchoolConnectionState.syncing && _data.isEmpty;
+          ? _s.connectionMessage
+          : null;
+      _loading =
+          _s.connectionState == SchoolConnectionState.syncing && _data.isEmpty;
     });
   }
 
-  void _attendanceChanged() { if (mounted) setState(() {}); }
+  void _attendanceChanged() {
+    if (mounted) setState(() {});
+  }
 
   Future<void> _presence([String? token]) async {
     if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
       return;
-    await _load();
+    try {
+      await _s.refreshIfIdleDue();
+    } catch (_) {
+      /* Session publishes its retained-cache error state. */
+    }
   }
 
-  Future<void> _load({bool afterSignal=false}) async {
-    if (!mounted) return;
+  Future<void> _load({bool afterSignal = false}) async {
+    if (!mounted || _s.syncPaused) return;
     setState(() => _loading = _data.isEmpty);
     try {
-      final d = await _s.refreshDashboard(afterSignal:afterSignal);
+      final d = await _s.refreshDashboard(afterSignal: afterSignal);
       if (mounted)
         setState(() {
           _data = Map<String, dynamic>.from(d);
@@ -520,13 +553,19 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
       if (mounted)
         setState(() {
           _blocked = !_s.cachedAccessAllowed;
-          _error = _blocked ? 'School access needs online verification.'
+          _error = _blocked
+              ? 'School access needs online verification.'
               : _s.connectionState == SchoolConnectionState.connectionError
-                  ? _s.connectionMessage : null;
+              ? _s.connectionMessage
+              : null;
         });
     } finally {
-      if (mounted) setState(() => _loading =
-          _data.isEmpty && _s.connectionState == SchoolConnectionState.syncing);
+      if (mounted)
+        setState(
+          () => _loading =
+              _data.isEmpty &&
+              _s.connectionState == SchoolConnectionState.syncing,
+        );
     }
   }
 
@@ -616,12 +655,23 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 20),
       );
-      await _s.saveAttendance({
-        'latitude': position.latitude, 'longitude': position.longitude,
-        'accuracy': position.accuracy,
-      }, scanCapturedAt, _attendanceMode);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Attendance saved on this device. Cloud confirmation pending.')));
+      await _s.saveAttendance(
+        {
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          'accuracy': position.accuracy,
+        },
+        scanCapturedAt,
+        _attendanceMode,
+      );
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Attendance saved on this device. Cloud confirmation pending.',
+            ),
+          ),
+        );
       await _loadAttendance();
     } catch (e) {
       if (mounted)
@@ -721,8 +771,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
       if (kind == 'studentId' || kind == 'teacherId') {
         final cached = await _s.cachedPdf('idCard');
         final manifest = _data['idCardPackage'];
-        final expected = manifest is Map ? manifest['documentRevision']?.toString() : null;
-        if (cached != null && !(_data.containsKey('idCardPackage') && manifest == null) &&
+        final expected = manifest is Map
+            ? manifest['documentRevision']?.toString()
+            : null;
+        if (cached != null &&
+            !(_data.containsKey('idCardPackage') && manifest == null) &&
             (expected == null || expected == _s.cachedPdfVersion('idCard'))) {
           unawaited(_refreshPublishedCard().catchError((Object _) => null));
           await _previewPdf(cached, 'School ID card • Front & back');
@@ -745,11 +798,15 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
         'schoolName': school['schoolName'] ?? school['name'] ?? _s.schoolName,
         ...d,
       };
-      final reportKey = 'report:${d['id'] ?? d['reportCardId'] ?? d['examName'] ?? 'current'}';
-      final reportVersion = sha256.convert(utf8.encode(jsonEncode([index, school, d]))).toString();
+      final reportKey =
+          'report:${d['id'] ?? d['reportCardId'] ?? d['examName'] ?? 'current'}';
+      final reportVersion = sha256
+          .convert(utf8.encode(jsonEncode([index, school, d])))
+          .toString();
       if (kind == 'reportCard') {
         previousReport = await _s.cachedPdf(reportKey);
-        if (previousReport != null && _s.cachedPdfVersion(reportKey) == reportVersion) {
+        if (previousReport != null &&
+            _s.cachedPdfVersion(reportKey) == reportVersion) {
           await _previewPdf(previousReport, 'Report card');
           return;
         }
@@ -774,8 +831,12 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
         logo: logo,
       );
       if (kind == 'reportCard') {
-        await _s.cachePdf(reportKey, reportVersion, pdf,
-            expectedHash: sha256.convert(pdf).toString());
+        await _s.cachePdf(
+          reportKey,
+          reportVersion,
+          pdf,
+          expectedHash: sha256.convert(pdf).toString(),
+        );
       }
       if (mounted)
         await Navigator.push(
@@ -798,7 +859,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
           ),
         );
     } catch (e) {
-      if (previousReport != null && e is! SchoolAccessDenied && _s.cachedAccessAllowed) {
+      if (previousReport != null &&
+          e is! SchoolAccessDenied &&
+          _s.cachedAccessAllowed) {
         await _previewPdf(previousReport, 'Report card • Saved copy');
         return;
       }
@@ -815,9 +878,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
       _error = null;
     });
     try {
-      final r = update == null ? await _s.platformCall('updates/latest', {
-        'platform': 'android',
-      }) : <String, dynamic>{'update': update};
+      final r = update == null
+          ? await _s.platformCall('updates/latest', {'platform': 'android'})
+          : <String, dynamic>{'update': update};
       final u = r['update'];
       if (u is! Map) throw StateError('No update is published yet.');
       final installed =
@@ -869,13 +932,16 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
       if (yes != true) return;
       setState(() => _busy = true);
       final dir = await getTemporaryDirectory();
-      final file = await downloadAndroidUpdate(Map<String, dynamic>.from(u),
-          File('${dir.path}/vidya-saarthi-update.apk'));
+      final file = await downloadAndroidUpdate(
+        Map<String, dynamic>.from(u),
+        File('${dir.path}/vidya-saarthi-update.apk'),
+      );
       await OpenFilex.open(file.path);
     } catch (e) {
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(androidUpdateErrorMessage(e))));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(androidUpdateErrorMessage(e))));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1088,11 +1154,22 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
           (r) => _card(
             Row(
               children: [
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(r['date'].toString()),
-                  if (r['captureTimeSource'] == 'DEVICE_REPORTED') const Text('Device scan time', style: TextStyle(fontSize: 12)),
-                ])),
-                Text('${time(r['entryCapturedAt'] ?? r['checkIn'])} → ${time(r['exitCapturedAt'] ?? r['checkOut'])}'),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(r['date'].toString()),
+                      if (r['captureTimeSource'] == 'DEVICE_REPORTED')
+                        const Text(
+                          'Device scan time',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '${time(r['entryCapturedAt'] ?? r['checkIn'])} → ${time(r['exitCapturedAt'] ?? r['checkOut'])}',
+                ),
               ],
             ),
           ),
@@ -1132,8 +1209,12 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
       const SizedBox(height: 12),
       if (_list(_data['examinations']).isNotEmpty)
         _heading('Examinations', 'Published school examinations'),
-      for(final exam in _list(_data['examinations']))
-        _card(Text('${exam['examName'] ?? exam['name'] ?? exam['id']} • ${exam['academicSession'] ?? ''}')),
+      for (final exam in _list(_data['examinations']))
+        _card(
+          Text(
+            '${exam['examName'] ?? exam['name'] ?? exam['id']} • ${exam['academicSession'] ?? ''}',
+          ),
+        ),
       if (_list(_data['reportCards']).isEmpty)
         _card(const Text('Your school has not published a report card yet.')),
       ..._list(_data['reportCards']).map(
@@ -1157,12 +1238,22 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
       _heading('Fees', 'Your school fee ledger and payment history'),
       for (final structure in _list(_data['feeStructures']))
         if (structure['fees'] is Map)
-          _card(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-            Text('Fee Structure • ${structure['academicSession'] ?? 'Legacy'}',
-              style:const TextStyle(fontSize:18,fontWeight:FontWeight.w700)),
-            for(final head in (structure['fees'] as Map).entries)
-              Text('${head.key}: INR ${head.value}'),
-          ])),
+          _card(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Fee Structure • ${structure['academicSession'] ?? 'Legacy'}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                for (final head in (structure['fees'] as Map).entries)
+                  Text('${head.key}: INR ${head.value}'),
+              ],
+            ),
+          ),
       if (_list(_data['fees']).isEmpty)
         _card(const Text('Your school has not published a fee ledger yet.')),
       ..._list(_data['fees']).map((f) {
@@ -1287,17 +1378,48 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
       appBar: AppBar(
         title: const VidyaSaarthiBrand(),
         actions: [
+          IconButton(
+            tooltip: _s.syncPaused ? 'Resume sync' : 'Pause sync',
+            icon: Icon(_s.syncPaused ? Icons.play_arrow : Icons.pause),
+            onPressed: () async {
+              try {
+                await _s.setSyncPaused(!_s.syncPaused);
+              } catch (_) {
+                if (mounted)
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Sync setting or refresh failed; cached data retained.',
+                      ),
+                    ),
+                  );
+              }
+            },
+          ),
           PopupMenuButton<String>(
             onSelected: (v) {
               if (v == 'complaint') _complaint();
-              if (v == 'settings') Navigator.push(context, MaterialPageRoute(
-                builder: (_) => MobileSettingsScreen(
-                  version: SchoolSession.version,
-                  buildNumber: int.tryParse(const String.fromEnvironment('APP_BUILD', defaultValue: '0')) ?? 0,
-                  checkUpdate: () => _s.platformCall('updates/latest', {'platform': 'android'}),
-                  installUpdate: (update) => _update(update: update),
-                ),
-              ));
+              if (v == 'settings')
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => MobileSettingsScreen(
+                      version: SchoolSession.version,
+                      buildNumber:
+                          int.tryParse(
+                            const String.fromEnvironment(
+                              'APP_BUILD',
+                              defaultValue: '0',
+                            ),
+                          ) ??
+                          0,
+                      checkUpdate: () => _s.platformCall('updates/latest', {
+                        'platform': 'android',
+                      }),
+                      installUpdate: (update) => _update(update: update),
+                    ),
+                  ),
+                );
               if (v == 'logout') _logout();
             },
             itemBuilder: (_) => const [
@@ -1329,28 +1451,59 @@ class _SchoolDashboardState extends State<_SchoolDashboard> with WidgetsBindingO
               child: ListView(
                 padding: const EdgeInsets.all(20),
                 children: [
-                  if (_loading || _busy) const LinearProgressIndicator(),
-                  Text(switch (_s.connectionState) {
-                    SchoolConnectionState.connected => 'Connected — last dashboard verified',
-                    SchoolConnectionState.syncing => 'Syncing',
-                    SchoolConnectionState.cachedOffline => 'Cached / Offline',
-                    SchoolConnectionState.connectionError => 'Connection error — cached data retained',
-                  }, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                  Text(_s.attendanceStatusReady
-                    ? 'Attendance pending: ${_s.attendancePending} (central accepted: ${_s.attendanceAccepted})'
-                    : 'Loading local attendance queue…'),
-                  if (_s.attendanceFailure.isNotEmpty) Text(_s.attendanceFailure),
-                  if (_s.attendancePending > 0) TextButton(
-                    onPressed: () async { try { await _s.retryAttendance(); } catch (_) {} },
-                    child: const Text('Retry retained attendance'),
+                  if (!_s.syncPaused && (_loading || _busy))
+                    const LinearProgressIndicator(),
+                  Text(
+                    _s.syncPaused
+                        ? 'Sync paused'
+                        : switch (_s.connectionState) {
+                            SchoolConnectionState.connected =>
+                              'Connected — last dashboard verified',
+                            SchoolConnectionState.syncing => 'Syncing',
+                            SchoolConnectionState.cachedOffline =>
+                              'Cached / Offline',
+                            SchoolConnectionState.connectionError =>
+                              'Connection error — cached data retained',
+                          },
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
-                  if (_s.lastAttendanceAck != null) Text('Attendance cloud ACK: ${_s.lastAttendanceAck!.toLocal()}'),
+                  Text(
+                    _s.attendanceStatusReady
+                        ? 'Attendance pending: ${_s.attendancePending} (central accepted: ${_s.attendanceAccepted})'
+                        : 'Loading local attendance queue…',
+                  ),
+                  if (_s.attendanceFailure.isNotEmpty)
+                    Text(_s.attendanceFailure),
+                  if (_s.attendancePending > 0)
+                    TextButton(
+                      onPressed: () async {
+                        try {
+                          await _s.retryAttendance();
+                        } catch (_) {}
+                      },
+                      child: const Text('Retry retained attendance'),
+                    ),
+                  if (_s.lastAttendanceAck != null)
+                    Text(
+                      'Attendance cloud ACK: ${_s.lastAttendanceAck!.toLocal()}',
+                    ),
                   if (_s.lastDashboardVerifiedAt != null)
-                    Text('Verified: ${_s.lastDashboardVerifiedAt!.toLocal()}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 11)),
-                  if (SchoolSession.version.endsWith('-sync-test') && _s.lastDashboardRefreshDuration != null)
-                    Text('Dashboard refresh: ${_s.lastDashboardRefreshDuration!.inMilliseconds} ms',
-                      style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                    Text(
+                      'Verified: ${_s.lastDashboardVerifiedAt!.toLocal()}',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                    ),
+                  if (SchoolSession.version.endsWith('-sync-test') &&
+                      _s.lastDashboardRefreshDuration != null)
+                    Text(
+                      'Dashboard refresh: ${_s.lastDashboardRefreshDuration!.inMilliseconds} ms',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                    ),
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 16),
