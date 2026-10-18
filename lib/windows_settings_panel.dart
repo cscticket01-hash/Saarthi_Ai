@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart' as material show Text;
 import 'windows_settings_design.dart';
 import 'windows_sync_conflict_review.dart';
 import 'windows_sync_control_center.dart';
@@ -999,10 +1000,13 @@ class WindowsSyncStatusCard extends StatelessWidget {
             Text('Last successful sync: ${engine.lastSuccessfulSync?.toLocal().toString()??'Not yet completed'}',
               style:const TextStyle(color:Color(0xFFB7C3DA),fontSize:18,height:1.5)),
             const SizedBox(height:8),
-            Wrap(crossAxisAlignment:WrapCrossAlignment.center,spacing:6,children:[
-              const Text('Pending:',style:TextStyle(color:Color(0xFFB7C3DA),fontSize:20)),
-              Text('$pending',style:TextStyle(color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontSize:20,fontWeight:FontWeight.w600)),
-            ]),
+            ValueListenableBuilder<String>(valueListenable:WindowsUiLanguage.changed,
+              builder:(context,language,_)=>material.Text.rich(TextSpan(
+                text:WindowsUiLanguage.translate('Pending: '),
+                style:const TextStyle(color:Color(0xFFB7C3DA),fontSize:20),
+                children:[TextSpan(text:'$pending',style:TextStyle(
+                  color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontWeight:FontWeight.w600))],
+              ))),
             if(engine.lastError!=null)Padding(padding:const EdgeInsets.only(top:10),
               child:Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent,fontSize:14))),
           ]),

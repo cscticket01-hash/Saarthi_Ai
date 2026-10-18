@@ -125,7 +125,7 @@ void main() {
     engine.state.value = SchoolCloudState.syncing;
     await tester.pump();
     expect(find.text('Sync Status • Syncing 37 items...'), findsOneWidget);
-    expect(find.text('37'), findsOneWidget);
+    expect(find.text('Pending: 37'), findsOneWidget);
     engine.state.value = SchoolCloudState.offline;
     await tester.pump();
     expect(find.text('Sync Status • Offline'), findsOneWidget);
