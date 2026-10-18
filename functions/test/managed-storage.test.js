@@ -389,6 +389,8 @@ test('mobile versioned lists transfer only changed visible records and acknowled
  write('fee_ledger','own',{personId:'pupil',amount:50});write('fee_ledger','other',{personId:'another',amount:999});
  const mobile=request=>f.call({action:'managed_mobile',request,lease:{schoolId:A,expiresAt:Date.now()+3600000}});
  const login=mobile({action:'mobile_login',projectId:A,role:'student',personId:'pupil',linkToken:token,studentClass:'1',rollNo:'1',dob:'2015-01-01'});
+ const legacy=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken});
+ const upgraded=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,mobileRecordDeltaVersion:1,knownRevision:legacy.revision,knownRevisions:legacy.revisions});assert.equal(upgraded.unchanged,true);assert.equal(upgraded.mobileRecordDeltaVersion,1);
  const request={action:'mobile_dashboard',sessionToken:login.sessionToken,mobileRecordDeltaVersion:1};
  const first=mobile(request);assert.equal(first.success,true);assert.equal(first.calendar.length,2);assert.equal(first.fees.length,1);assert.equal(first.fees[0].amount,50);
  const knownGroupRecordRevisions=Object.fromEntries(Object.keys(first.groupRecordDeltas).map(key=>[key,Object.fromEntries(first[key].map(row=>[row._mobileRecordId,row._mobileRecordRevision]))]));

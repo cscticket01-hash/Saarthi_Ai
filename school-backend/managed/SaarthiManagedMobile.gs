@@ -135,7 +135,7 @@ function VS_mobileAction(b){
   }
   result.revisions=revisions;
   result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',VS_safePerson(session.person)]));
-  if(b.knownRevision===result.revision&&!Object.keys(groups).some(key=>Object.prototype.hasOwnProperty.call(result,key)))return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
+  if(b.knownRevision===result.revision&&!Object.keys(groups).some(key=>Object.prototype.hasOwnProperty.call(result,key)))return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt,...(b.mobileRecordDeltaVersion===1?{mobileRecordDeltaVersion:1}:{})};
 
   return result;
  }

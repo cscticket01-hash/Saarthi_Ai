@@ -1008,7 +1008,8 @@ class SchoolSession {
       if (dashboard['revisions'] is Map)
         'knownRevisions': {
           for (final entry in (dashboard['revisions'] as Map).entries)
-            if (dashboard[entry.key] is! List ||
+            if (dashboard['mobileRecordDeltaVersion'] != 1 ||
+                dashboard[entry.key] is! List ||
                 groupCheckpoints.containsKey(entry.key))
               entry.key: entry.value,
         },
