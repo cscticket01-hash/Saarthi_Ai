@@ -92,7 +92,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     now: DateTime.now(),
     lastAttempt: _lastIntegrityAttempt,
     localMutation: _automaticMutationPending,
-    pendingWork: _hasAutomaticWork || _remoteCollections.isNotEmpty,
+    pendingWork:
+        _hasAutomaticWork ||
+        _remoteCollections.isNotEmpty ||
+        _remoteResetPending,
   );
   Future<void> _automaticSync() async {
     if (_automaticDue) await syncNow();
@@ -165,6 +168,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   bool _syncing = false;
+  bool _checkingCloud = false;
+  bool get isCheckingCloud => _syncing && _checkingCloud;
+  void _setCheckingCloud(bool value) {
+    _checkingCloud = value;
+    details.value = {
+      ...details.value,
+      'checkingCloud': isCheckingCloud,
+      if (_syncing && !isPaused) 'displayState': 'syncing',
+    };
+  }
+
   bool _resetPaused = false;
   int _activating = 0;
   bool _syncBlocked = false;
@@ -188,6 +202,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   Timer? _changeTimer;
   bool _changeFeedSupported = false;
   int _remoteChangeGeneration = 0;
+  bool _remoteResetPending = false;
   late final _remoteFeed = WindowsRemoteChangeFeed(
     allowedCollections: _firebaseCollections
         .where((c) => c != 'backups')
@@ -197,6 +212,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'managed/events',
       {if (cursor != null) 'cursor': cursor},
     ),
+    onReset: () {
+      if (!automaticScheduleExpected) return;
+      _remoteChangeGeneration++;
+      _remoteResetPending = true;
+      if (_syncing) _rerunRequested = true;
+      scheduleSoon();
+    },
     onHint: (collections) {
       if (!automaticScheduleExpected) return;
       _remoteChangeGeneration++;
@@ -501,6 +523,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             return at is num && at > latest ? at.toInt() : latest;
           }),
       'liveQueue': liveQueue,
+      'checkingCloud': isCheckingCloud,
       'displayState': projectWindowsSyncState(
         liveQueue,
         nowMillis: nowMillis,
@@ -1271,6 +1294,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }) async {
     if (_activeProfileId != profile.profileId) {
       _lastPull = null;
+      _remoteResetPending = false;
       _remoteCollections.clear();
       _changeWatch.reset();
       _changeHeadsSupported = false;
@@ -1636,6 +1660,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     bool completedReconciliation = false;
     lastError = null;
     recoveryDecision = null;
+    _setCheckingCloud(true);
 
     try {
       final central = await CentralSchoolCloud.saved();
@@ -1696,6 +1721,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         try {
           _admitBatch();
+          _setCheckingCloud(false);
           await _pushManagedOutbox();
         } catch (e) {
           if (!windowsSyncRecovery(e).independentRecords &&
@@ -1719,7 +1745,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             DateTime.now().difference(_lastPull!) >= reconciliationInterval ||
             scheduledCheck ||
             integrityAudit ||
-            _remoteCollections.isNotEmpty) {
+            _remoteCollections.isNotEmpty ||
+            _remoteResetPending) {
           _admitBatch();
           final inventoryAudit = integrityAudit;
           final fullPull =
@@ -1729,37 +1756,31 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           Set<String>? selected = fullPull
               ? null
               : Set<String>.from(_remoteCollections);
-          if (!integrityAudit && _lastPull != null && _changeHeadsSupported) {
-            final known = <String, String>{};
-            for (final col in _firebaseCollections.where(
-              (c) => c != 'backups',
-            )) {
-              final prior =
-                  (await FirebaseFirestore.instance
-                          .collection('_windows_sync_manifest')
-                          .doc(_manifestId('managed', col))
-                          .get())
-                      .data();
-              known[col] = prior?['revision']?.toString() ?? '';
-            }
-            final heads = await WindowsFirebaseRemote.readManagedHeads(
+          // The durable manifest remains valid across restarts. Process-local
+          // _lastPull must not force one delta request per collection at launch.
+          if (!integrityAudit && _changeHeadsSupported) {
+            _setCheckingCloud(true);
+            final changed = await _managedChangedCollections(
               _activeSchoolSyncId,
-              known,
+              (known) => WindowsFirebaseRemote.readManagedHeads(
+                _activeSchoolSyncId,
+                known,
+              ),
+              recordDeltas: _recordDeltasSupported,
             );
             _admitBatch();
-            if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
-              throw StateError('School changed during change check.');
-            selected = {
-              ..._remoteCollections,
-              ...changedWindowsCollections(known, heads),
-            };
+            selected = {..._remoteCollections, ...changed};
           }
           final remoteGenerationAtRead = _remoteChangeGeneration;
-          await _pullManagedChanges(
-            verifyInventory: inventoryAudit,
-            selectedCollections: selected,
-          );
+          if (selected == null || selected.isNotEmpty) {
+            _setCheckingCloud(false);
+            await _pullManagedChanges(
+              verifyInventory: inventoryAudit,
+              selectedCollections: selected,
+            );
+          }
           if (remoteGenerationAtRead == _remoteChangeGeneration) {
+            _remoteResetPending = false;
             if (selected == null) {
               _remoteCollections.clear();
             } else {
@@ -1779,6 +1800,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           completedReconciliation = scheduledCheck;
         }
         _admitBatch();
+        _setCheckingCloud(false);
         await WindowsDocumentTemplates.publishChangedIdCards();
         // ID preparation may create credential metadata; drain only those new
         // durable operations before uploading their published files.
@@ -1937,6 +1959,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     } finally {
       watch.stop();
       metrics['reconciliationMicros'] = watch.elapsedMicroseconds;
+      _checkingCloud = false;
       _syncing = false;
       if (isPaused && _activeProfileId == syncOrigin)
         state.value = SchoolCloudState.syncPending;
@@ -1946,7 +1969,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               recoveryDecision?.retry == true &&
               _failures <= 5) ||
           _rerunRequested ||
-          (lastError == null && _remoteCollections.isNotEmpty)) {
+          (lastError == null &&
+              (_remoteCollections.isNotEmpty || _remoteResetPending))) {
         final independentMutation =
             _rerunRequested && recoveryDecision?.independentRecords == true;
         _rerunRequested = false;
@@ -2161,6 +2185,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         );
       }
     } finally {
+      _checkingCloud = false;
       _syncing = false;
       await refreshDetails();
       if (_rerunRequested) {
@@ -2214,6 +2239,45 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       return reply['recordRevision'] as String;
     },
   );
+
+  Future<Set<String>> _managedChangedCollections(
+    String school,
+    Future<Map<String, String>> Function(Map<String, String>) read, {
+    required bool recordDeltas,
+  }) async {
+    final db = FirebaseFirestore.instance,
+        origin = FirebaseFirestore.instance.activeProfileId;
+    if (db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School identity changed before change check.');
+    }
+    final known = <String, String>{};
+    for (final col in _firebaseCollections.where((c) => c != 'backups')) {
+      final prior =
+          (await db
+                  .collection('_windows_sync_manifest')
+                  .doc(_manifestId('managed', col))
+                  .get())
+              .data();
+      known[col] = windowsManagedCheckpointRevision(
+        prior,
+        recordDeltas: recordDeltas,
+      );
+    }
+    if (db.activeProfileId != origin)
+      throw StateError('School changed before change check.');
+    final heads = await read(known);
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed during change check.');
+    }
+    return changedWindowsCollections(known, heads);
+  }
+
+  @visibleForTesting
+  Future<Set<String>> changedManagedCollectionsForTesting(
+    String school,
+    Future<Map<String, String>> Function(Map<String, String>) read,
+  ) => _managedChangedCollections(school, read, recordDeltas: true);
 
   @visibleForTesting
   Future<void> reconcileManagedCacheForTesting(
