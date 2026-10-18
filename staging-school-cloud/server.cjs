@@ -86,10 +86,16 @@ function managedFeatureOptions(env,testSchoolId) {
  const flag=name=>{const value=env[name];if(value===undefined||value==='false')return false;
   if(value!=='true')throw Error('Invalid managed feature configuration');
   if(!testSchoolId)throw Error('Managed feature rollout requires isolated TEST scope');return true;};
+ const enrollmentFlag=env.SAARTHI_DEVICE_ENROLLMENT_ENABLED;
+ if(enrollmentFlag!==undefined&&!['true','false'].includes(enrollmentFlag))throw Error('Invalid managed feature configuration');
+ const deviceEnrollmentEnabled=enrollmentFlag==='true';
+ const managementFlag=env.SAARTHI_DEVICE_MANAGEMENT_ENABLED;
+ if(managementFlag!==undefined&&!['true','false'].includes(managementFlag))throw Error('Invalid managed feature configuration');
+ const deviceManagementEnabled=managementFlag==='true';
  const deviceAccessEnforced=flag('SAARTHI_TEST_DEVICE_ACCESS_ENFORCED');
  const studentImportEnabled=flag('SAARTHI_TEST_STUDENT_IMPORT_ENABLED');
  if(deviceAccessEnforced&&!env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY)throw Error('TEST offline signing key required');
- return {deviceAccessEnforced,studentImportEnabled,
+ return {deviceAccessEnforced,studentImportEnabled,...(deviceEnrollmentEnabled?{deviceEnrollmentEnabled:true}:{}),...(deviceManagementEnabled?{deviceManagementEnabled:true}:{}),
   ...(deviceAccessEnforced?{deviceOfflinePrivateKey:env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY}:{})};
 }
 function fromEnvironment(env) {
