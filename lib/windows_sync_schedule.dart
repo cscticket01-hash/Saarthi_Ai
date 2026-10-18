@@ -148,21 +148,32 @@ bool automaticWindowsSyncDue({
   required DateTime? lastAttempt,
   required bool localMutation,
   required bool pendingWork,
-}) => localMutation || pendingWork || windowsIntegrityAuditDue(
-    now:now,lastAttempt:lastAttempt);
+}) =>
+    localMutation ||
+    pendingWork ||
+    windowsIntegrityAuditDue(now: now, lastAttempt: lastAttempt);
 
 /// A failed/incomplete verified checkpoint stays visible, but cannot turn every
 /// subsequent remote change into another full-school integrity audit.
-bool windowsIntegrityAuditDue({required DateTime now,
-  required DateTime? lastAttempt, bool manual = false}) => manual ||
-    lastAttempt == null || now.isBefore(lastAttempt) ||
-    !now.isBefore(lastAttempt.add(const Duration(hours:1)));
+bool windowsIntegrityAuditDue({
+  required DateTime now,
+  required DateTime? lastAttempt,
+  bool manual = false,
+}) =>
+    manual ||
+    lastAttempt == null ||
+    now.isBefore(lastAttempt) ||
+    !now.isBefore(lastAttempt.add(const Duration(hours: 1)));
 
 /// Collection heads are discovery hints. They cannot grant an ACK/checkpoint.
-Set<String> changedWindowsCollections(Map<String,String> known,
-    Map<String,String> observed) {
-  if (known.length != observed.length || known.keys.any((key) =>
-      observed[key] == null || observed[key]!.isEmpty)) {
+Set<String> changedWindowsCollections(
+  Map<String, String> known,
+  Map<String, String> observed,
+) {
+  if (known.length != observed.length ||
+      known.keys.any(
+        (key) => observed[key] == null || observed[key]!.isEmpty,
+      )) {
     throw StateError('Incomplete school change heads.');
   }
   return known.keys.where((key) => known[key] != observed[key]).toSet();
@@ -175,11 +186,29 @@ class WindowsCloudChangeWatch {
   bool due(DateTime now) => nextCheck == null || !now.isBefore(nextCheck!);
   void succeeded(DateTime now) {
     failures = 0;
-    nextCheck = now.add(const Duration(seconds:30));
+    nextCheck = now.add(const Duration(seconds: 30));
   }
+
   void failed(DateTime now) {
-    failures = (failures + 1).clamp(1,6);
-    nextCheck = now.add(Duration(seconds:(30 * (1 << failures)).clamp(60,900)));
+    failures = (failures + 1).clamp(1, 6);
+    nextCheck = now.add(
+      Duration(seconds: (30 * (1 << failures)).clamp(60, 900)),
+    );
   }
-  void reset() { nextCheck = null; failures = 0; }
+
+  void reset() {
+    nextCheck = null;
+    failures = 0;
+  }
+}
+
+/// Durable collection heads can be reused after process restart. Older caches
+/// without per-record revisions still need one verified baseline.
+String windowsManagedCheckpointRevision(
+  Map<String, dynamic>? manifest, {
+  required bool recordDeltas,
+}) {
+  if (recordDeltas && manifest?['recordRevisions'] is! Map) return '';
+  final revision = manifest?['revision'];
+  return revision is String ? revision : '';
 }

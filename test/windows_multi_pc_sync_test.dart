@@ -188,6 +188,63 @@ void main() {
   });
   tearDown(() async => rig.close());
 
+  test('restart uses durable heads once and requests only changed or missing baselines', () async {
+    final engine = WindowsSyncEngine.instance;
+    final names = <String>[];
+    final initial = await engine.changedManagedCollectionsForTesting(school, (
+      known,
+    ) async {
+      names.addAll(known.keys);
+      expect(known.values.every((r) => r.isEmpty), true);
+      return {for (final key in known.keys) key: 'r1'};
+    });
+    expect(initial.toSet(), names.toSet());
+    String manifestId(String col) =>
+        base64UrlEncode(utf8.encode('managed\n$col')).replaceAll('=', '');
+    for (final col in names) {
+      await rig.db
+          .collection('_windows_sync_manifest')
+          .doc(manifestId(col))
+          .set({
+            'collection': col,
+            'revision': 'r1',
+            'recordRevisions': <String, String>{},
+          });
+    }
+    await rig.open('pc1');
+    var reads = 0;
+    final unchanged = await engine.changedManagedCollectionsForTesting(school, (
+      known,
+    ) async {
+      reads++;
+      expect(known.values.every((r) => r == 'r1'), true);
+      return {...known};
+    });
+    expect(reads, 1);
+    expect(unchanged, isEmpty);
+    final changed = await engine.changedManagedCollectionsForTesting(
+      school,
+      (known) async => {...known, 'fee_payments': 'r2'},
+    );
+    expect(changed, {'fee_payments'});
+    await rig.db
+        .collection('_windows_sync_manifest')
+        .doc(manifestId('students_directory'))
+        .set({'revision': 'r1'});
+    final baseline = await engine.changedManagedCollectionsForTesting(
+      school,
+      (known) async => {for (final key in known.keys) key: 'r1'},
+    );
+    expect(baseline, {'students_directory'});
+    await expectLater(
+      engine.changedManagedCollectionsForTesting('vs-foreign', (known) async {
+        fail('Foreign read must not be sent');
+        return known;
+      }),
+      throwsStateError,
+    );
+  });
+
   test('bounded download batch preserves pending payment, operation identity and school isolation across reopen', () async {
     final payments = rig.db.collection('fee_payments');
     await payments.doc('pending').set({'schoolId': school, 'amount': 100});

@@ -761,8 +761,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             : (details['pending'] is num && details['pending'] > 0)
             ? 'pending'
             : 'idle');
-    const phaseLabels = {
-      'syncing': 'Syncing',
+    final phaseLabels = {
+      'syncing': engine.isCheckingCloud ? 'Checking cloud' : 'Syncing',
       'needsAttention': 'Needs Attention',
       'offline': 'Offline',
       'waiting': 'Waiting',
@@ -941,7 +941,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               Icons.cloud_outlined,
                               'School Cloud',
                               syncing
-                                  ? 'Sync in progress'
+                                  ? engine.isCheckingCloud
+                                        ? 'Checking cloud changes'
+                                        : 'Sync in progress'
                                   : ack is num && ack > 0
                                   ? 'Last ACK: ${stamp(ack)}'
                                   : 'No verified ACK yet',
