@@ -10,7 +10,14 @@ import '../lib/windows_settings_design.dart';
 import '../lib/windows_settings_panel.dart';
 import '../lib/windows_update_service.dart';
 import '../lib/windows_sync_engine.dart';
+import '../lib/windows_sync_control_center.dart';
 import '../lib/school_cloud_state.dart';
+
+class _Routes extends NavigatorObserver {
+  Route<dynamic>? latest;
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) { latest = route; }
+}
 
 void main() {
   final engine = WindowsSyncEngine.instance;
@@ -114,6 +121,32 @@ void main() {
     expect(find.text('Sync Status • Offline'), findsOneWidget);
     expect(tester.widgetList<WindowsSettingsCard>(find.byType(WindowsSettingsCard)).last.success, false);
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Check for Update still calls the existing service and reports its errors', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
+    await HttpOverrides.runZoned(() async {
+      await tester.tap(find.text('Check for Update'));
+      await tester.pump();
+      expect(WindowsUpdateService.state.value.phase, WindowsUpdatePhase.error);
+      expect(find.text('Synthetic update request reached'), findsOneWidget);
+    }, createHttpClient: (_) => throw StateError('Synthetic update request reached'));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Sync button pushes the existing Control Center with its backup action', (tester) async {
+    final routes = _Routes();
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(navigatorObservers: [routes], home: const SettingsScreen()));
+    final source = routes.latest;
+    await tester.tap(find.text('Open Sync & Backup Control Center'));
+    expect(routes.latest, isNot(same(source)));
+    final destination = (routes.latest! as MaterialPageRoute<void>).builder(
+      tester.element(find.byType(SettingsScreen)));
+    expect(destination, isA<WindowsSyncControlCenter>());
+    expect((destination as WindowsSyncControlCenter).backupRequest, isNotNull);
     await tester.pumpWidget(const SizedBox());
   });
 
