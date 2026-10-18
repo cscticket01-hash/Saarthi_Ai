@@ -1,3 +1,4 @@
+import 'windows_settings_design.dart';
 import 'windows_sync_conflict_review.dart';
 import 'windows_sync_control_center.dart';
 import 'windows_school_backup_action.dart';
@@ -856,24 +857,30 @@ class WindowsAppUpdateCard extends StatelessWidget {
             ? ''
             : ' ${(state.progress! * 100).clamp(0, 100).toStringAsFixed(0)}%';
 
-        return _settingsStyleCard(
-          icon: Icons.system_update_alt_rounded,
-          iconColor: const Color(0xFF4DA3FF),
+        return WindowsSettingsCard(
+          icon: Icons.file_download_outlined,
+          sync: false,
+          success: state.phase == WindowsUpdatePhase.upToDate,
           title: 'App Update',
           subtitle: 'Windows master app update • Current v$windowsAppVersion',
-          child: Column(
+          content: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (state.message.isNotEmpty) ...[
-                Text(
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Icon(state.phase == WindowsUpdatePhase.upToDate ? Icons.check_circle_rounded : state.phase == WindowsUpdatePhase.error ? Icons.error_outline : Icons.info_outline,
+                    color: state.phase == WindowsUpdatePhase.upToDate ? const Color(0xFF43DBAA) : const Color(0xFF9DB9E8), size: 23),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(
                   state.message,
                   style: TextStyle(
                     color: state.phase == WindowsUpdatePhase.error
                         ? Colors.redAccent
                         : Colors.white70,
-                    fontSize: 11,
+                    fontSize: 17, height: 1.4,
                   ),
-                ),
+                )),
+                ]),
                 const SizedBox(height: 10),
               ],
               if (state.downloading || state.launching) ...[
@@ -893,41 +900,27 @@ class WindowsAppUpdateCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
               ],
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: state.busy ? null : _check,
-                      icon: state.checking
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.refresh_rounded, size: 18),
-                      label: Text(state.checking ? 'Checking...' : 'Check for Update'),
-                    ),
-                  ),
-                  if (update?.updateAvailable == true) ...[
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: state.busy ? null : _install,
-                        icon: const Icon(Icons.download_rounded, size: 18),
-                        label: Text(
-                          state.downloading
-                              ? 'Downloading$progressText'
-                              : state.launching
-                                  ? 'Opening Installer...'
-                                  : 'Download & Install',
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+
             ],
           ),
+          actions: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            WindowsSettingsButton(
+              onPressed: state.busy ? null : _check,
+              icon: state.checking
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.refresh_rounded, size: 24),
+              label: state.checking ? 'Checking...' : 'Check for Update',
+            ),
+            if (update?.updateAvailable == true) ...[
+              const SizedBox(height: 12),
+              WindowsSettingsButton(
+                onPressed: state.busy ? null : _install,
+                icon: const Icon(Icons.download_rounded, size: 24),
+                label: state.downloading ? 'Downloading$progressText'
+                  : state.launching ? 'Opening Installer...' : 'Download & Install',
+              ),
+            ],
+          ]),
         );
       },
     );
@@ -994,17 +987,29 @@ class WindowsSyncStatusCard extends StatelessWidget {
     return ValueListenableBuilder<SchoolCloudState>(valueListenable:engine.state,builder:(context,state,_)=>
       ValueListenableBuilder<Map<String,dynamic>>(valueListenable:engine.details,builder:(context,details,_) {
         final pending=(details['pending'] as num? ?? 0).toInt(),attention=(details['needsAttention'] as num? ?? 0).toInt();
-        final label=state==SchoolCloudState.syncing?'Syncing $pending items...':attention>0?'$attention items need attention':
+        final label=engine.isPaused?'Paused':state==SchoolCloudState.offline?'Offline':
+          state==SchoolCloudState.authRequired?'Sign-in required':state==SchoolCloudState.driveDisconnected?'Drive disconnected':
+          state==SchoolCloudState.syncError?'Sync error':state==SchoolCloudState.syncing?'Syncing $pending items...':attention>0?'$attention items need attention':
           pending>0?'$pending items pending':engine.lastSuccessfulSync==null?'Awaiting first successful sync':'Synced';
-        return _settingsStyleCard(icon:Icons.sync,iconColor:attention>0?Colors.orangeAccent:const Color(0xFF00A884),
-          title:'Sync',subtitle:'Sync Status • $label',child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-            Text('Last successful sync: ${engine.lastSuccessfulSync?.toLocal().toString()??'Not yet completed'}'),
-            Text('Pending: $pending'),
-            TextButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => WindowsSyncControlCenter(backupRequest: () => exportWindowsSchoolBackup(context)))),
-              icon: const Icon(Icons.dashboard_outlined), label: const Text('Open Sync & Backup Control Center')),
-            if(engine.lastError!=null)Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent)),
-
-          ]));
+        final success = state == SchoolCloudState.synced && pending == 0 && attention == 0 &&
+          !engine.isPaused && engine.lastError == null && engine.lastSuccessfulSync != null;
+        return WindowsSettingsCard(icon:Icons.sync_rounded, sync:true, success:success,
+          title:'Sync',subtitle:'Sync Status • $label',
+          content:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Text('Last successful sync: ${engine.lastSuccessfulSync?.toLocal().toString()??'Not yet completed'}',
+              style:const TextStyle(color:Color(0xFFB7C3DA),fontSize:16,height:1.5)),
+            const SizedBox(height:8),
+            Wrap(crossAxisAlignment:WrapCrossAlignment.center,spacing:6,children:[
+              const Text('Pending:',style:TextStyle(color:Color(0xFFB7C3DA),fontSize:17)),
+              Text('$pending',style:TextStyle(color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontSize:17,fontWeight:FontWeight.w600)),
+            ]),
+            if(engine.lastError!=null)Padding(padding:const EdgeInsets.only(top:10),
+              child:Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent,fontSize:14))),
+          ]),
+          actions:WindowsSettingsButton(purple:true,
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => WindowsSyncControlCenter(backupRequest: () => exportWindowsSchoolBackup(context)))),
+            icon: const Icon(Icons.grid_view_rounded,size:23), label: 'Open Sync & Backup Control Center'),
+        );
       }));
   }
 }

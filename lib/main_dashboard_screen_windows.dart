@@ -1,3 +1,4 @@
+import 'windows_settings_design.dart';
 import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
 import 'windows_fee_structure.dart';
@@ -9868,15 +9869,9 @@ class SettingsScreen extends StatelessWidget {
           ),
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 30),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 920),
-            child: const Column(children: [WindowsAppUpdateCard(), SizedBox(height:16), WindowsSyncStatusCard()]),
-          ),
-        ),
-      ),
+      body: const WindowsSettingsBody(children: [
+        WindowsAppUpdateCard(), SizedBox(height: 30), WindowsSyncStatusCard(),
+      ]),
     );
   }
 }
