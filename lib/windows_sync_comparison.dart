@@ -82,6 +82,53 @@ String compareSyncVersions(Map queued, Map cloud) {
   return 'differs (revision order unknown)';
 }
 
+/// Only an identical complete value for the same logical record is disposable.
+/// Partial updates, deletes, recreation intents and owner/media changes retain
+/// their originals for explicit review. No name/phone similarity heuristic.
+bool automaticDuplicateReadback(Map queued, Map cloud) {
+  final id = queued['documentId'];
+  final revision = cloud['_syncRevision'];
+  final data = queued['data'];
+  return queued['operation'] == 'set' &&
+      queued['collection'] != 'documents' &&
+      queued['priorDeletion'] == null &&
+      queued['reviewedFromOperationId'] == null &&
+      queued['schoolId'] is String && (queued['schoolId'] as String).isNotEmpty &&
+      id is String && id.isNotEmpty && cloud['id'] == id &&
+      (cloud['documentId'] == null || cloud['documentId'] == id) &&
+      revision is String && revision.isNotEmpty &&
+      data is Map && (data['schoolId'] == null || data['schoolId'] == queued['schoolId']) &&
+      !data.keys.any((key) => key.toString().startsWith('_syncRecreates')) &&
+      (compareSyncVersions({...queued, 'data': {...data, 'schoolId': queued['schoolId']}}, cloud) == 'identical' ||
+        identicalFreshStudent(queued, cloud));
+}
+
+/// Independently entered pupils have different generated identities/timestamps.
+/// A slot/name alone never establishes equivalence. All business fields must
+/// match, with populated parent and DOB evidence, and no replacement intent.
+/// The durable writer must additionally reject any linked local child records.
+bool identicalFreshStudent(Map queued, Map cloud) {
+  final data = queued['data'];
+  if (queued['collection'] != 'students_directory' || data is! Map ||
+      (queued['baseCloudRevision'] ?? '') != '' ||
+      data['replacesStudentGeneration'] != null ||
+      cloud['replacesStudentGeneration'] != null ||
+      data['mobileStableId'] is! String || cloud['mobileStableId'] is! String ||
+      (data['mobileStableId'] as String).isEmpty || (cloud['mobileStableId'] as String).isEmpty ||
+      data['mobileStableId'] == cloud['mobileStableId']) return false;
+  for (final key in ['name', 'parentName', 'dateOfBirth', 'class', 'rollNo']) {
+    if (data[key] is! String || (data[key] as String).trim().isEmpty ||
+        data[key] != cloud[key]) return false;
+  }
+  const generated = {'mobileStableId', 'createdAt', 'updatedAt', 'studentUidTest'};
+  Map business(Map row) => {
+    for (final entry in row.entries)
+      if (!generated.contains(entry.key)) entry.key: entry.value,
+    'schoolId': queued['schoolId'],
+  };
+  return syncPayloadHash(business(data)) == syncPayloadHash(business(cloud));
+}
+
 /// Bind identity to the key selected from an authenticated managed readback.
 /// Never replace an explicitly contradictory ID or weaken content verification.
 Map<String, dynamic> documentAcknowledgementFromReadback(Map payload, Map reply, {Map? deleteAcknowledgement}) {

@@ -682,6 +682,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       'verified': 'Verified sync',
       'retry': 'Retry scheduled',
       'conflict': 'Conflict — administrator review',
+      'duplicateReconciled': 'Duplicate reconciled — original cloud record retained',
       'unauthorized': 'Unauthorized — authentication required',
       'needsAttention': 'Administrator attention required',
       'waitingForResponse': 'Waiting for provider response',

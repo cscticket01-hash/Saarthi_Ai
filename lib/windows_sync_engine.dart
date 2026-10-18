@@ -39,6 +39,7 @@ import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_runtime_flags.dart';
 import 'windows_sync_recovery.dart';
+import 'windows_sync_comparison.dart';
 import 'sync_recovery_policy.dart';
 import 'windows_platform_client.dart';
 
@@ -352,7 +353,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _nextRetry = DateTime.fromMillisecondsSinceEpoch(event['retryAt'] as int);
       if (event['failureCategory'] == 'quota') _quotaRetryAt = _nextRetry;
     }
-    if (event['stage'] == 'automaticRepair' ||
+    if (event['stage'] == 'duplicateReconciled' || event['stage'] == 'automaticRepair' ||
         (event['stage'] == 'verified' &&
             _activity.any(
               (previous) =>
@@ -363,9 +364,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       recoveryHistory.add({
         'atUtc': DateTime.now().toUtc().toIso8601String(),
         'category': event['failureCategory'] ?? 'recoverable',
-        'outcome': event['stage'] == 'verified'
+        'outcome': event['stage'] == 'duplicateReconciled'
+            ? 'duplicate_reconciled'
+            : event['stage'] == 'verified'
             ? 'repaired_and_verified'
             : 'safe_retry_reopened',
+        if (event['stage'] == 'duplicateReconciled') 'attempt': 1,
       });
       unawaited(
         _persistRepairHistory(FirebaseFirestore.instance.activeProfileId),
@@ -1769,6 +1773,21 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           if (!windowsSyncRecovery(e).independentRecords &&
               !isRecordSyncConflict(e))
             rethrow;
+          // A rejected write can concern an unchanged cloud head already in
+          // our manifest. Admit one bounded record delta for these conflicts;
+          // otherwise the normal unchanged-head shortcut would hide readback.
+          final pending = await FirebaseFirestore.instance
+              .collection('_windows_firebase_outbox').get();
+          if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
+            throw StateError('School changed before duplicate readback.');
+          for (final row in pending.docs) {
+            final item = row.data();
+            if (item['syncState'] == 'conflict' &&
+                item['schoolId'] == _activeSchoolSyncId &&
+                _firebaseCollections.contains(item['collection'])) {
+              _remoteCollections.add(item['collection'] as String);
+            }
+          }
         }
         _admitBatch();
         await syncLocalRestoreRequests(
@@ -2439,6 +2458,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         recordCheckpoints[collection] = Map<String, String>.from(
           prior!['recordRevisions'] as Map,
         );
+        for (final row in pendingAtRead) {
+          final item = row.data();
+          if (item['collection'] == collection && item['syncState'] == 'conflict') {
+            recordCheckpoints[collection]!.remove(item['documentId']);
+          }
+        }
       }
       final needsBaseline =
           !audit &&
@@ -2465,6 +2490,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               },
             )
           : prior?['revision']?.toString() ?? '';
+      if (recordCheckpoints.containsKey(collection) && pendingAtRead.any((row) =>
+          row.data()['collection'] == collection && row.data()['syncState'] == 'conflict')) {
+        // Keep every other record revision: only conflicted IDs are fetched.
+        revisions[collection] = '';
+      }
     }
     if (db.activeProfileId != origin)
       throw StateError('School changed during recovery inventory.');
@@ -2611,6 +2641,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           final data = Map<String, dynamic>.from(entry.value as Map);
           if (data['schoolId'] != school)
             throw StateError('Foreign school manifest rejected.');
+          if (data['id'] != null && data['id'] != entry.key)
+            throw StateError('Cloud record identity mismatch.');
+          data['id'] = entry.key;
           if (collection == 'students_directory' &&
               data['_syncRevision'] is String) {
             for (final generation in verifiedDeletedStudentGenerations(data)) {
@@ -2632,6 +2665,23 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               queued.data(),
               data,
             );
+            if (automaticDuplicateReadback(queued.data(), data)) {
+              final history = (await db.collection('_windows_sync_conflict_history')
+                  .doc(queued.data()['operationId'] as String).get()).data();
+              if (db.activeProfileId != origin)
+                throw StateError('School changed after duplicate reconciliation.');
+              if (history?['resolution'] == 'automatic identical authenticated readback' &&
+                  history?['verifiedCloud'] is Map &&
+                  history!['verifiedCloud']['_syncRevision'] == data['_syncRevision']) {
+                _recordActivity({
+                  'schoolId': school, 'queueCollection': '_windows_firebase_outbox',
+                  'queueId': queued.id, 'operationId': queued.data()['operationId'],
+                  'collection': collection, 'documentId': entry.key,
+                  'stage': 'duplicateReconciled', 'failureCategory': 'verifiedDuplicate',
+                  'at': DateTime.now().millisecondsSinceEpoch,
+                });
+              }
+            }
           }
           incoming[entry.key] = data;
         }
