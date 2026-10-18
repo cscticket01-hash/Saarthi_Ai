@@ -6,7 +6,7 @@ import 'windows_service_status.dart';
 import 'package:flutter/material.dart';
 
 import 'windows_connect/managed_school_session.dart';
-import 'main_dashboard_screen_windows.dart' show WindowsLicenseSettingsPanel;
+import 'main_dashboard_screen_windows.dart' show WindowsLicenseSettingsPanel, WindowsLicenseStore;
 import 'windows_sync_engine.dart';
 
 class WindowsManagedSchoolGate extends StatefulWidget {
@@ -28,6 +28,7 @@ class WindowsManagedSchoolGate extends StatefulWidget {
 class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   late final SchoolCloudEngine engine;
   bool routed = false;
+  bool _activatingLicence = false;
   String? error;
   final licence = TextEditingController();
   Timer? expiryTimer;
@@ -135,6 +136,9 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
             ),
           ),
         );
+      final renewalRequired = s['status'] == 'expired' ||
+          s['status'] == 'licensed' && s['expiresAt'] is num &&
+          (s['expiresAt'] as num) <= DateTime.now().millisecondsSinceEpoch;
       return Scaffold(
         body: Center(
           child: SizedBox(
@@ -143,30 +147,33 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text('School ${s['schoolId']} • ${s['status']}'),
-                const Text(
-                  'School access needs verification or a valid licence.',
-                ),
+                Text(renewalRequired
+                    ? 'Licence expired. Enter the new renewal key issued by the developer.'
+                    : 'School access needs verification or a valid licence.'),
                 if (s['status'] != 'blocked' &&
                     s['status'] != 'auth_required') ...[
                   TextField(
                     controller: licence,
-                    decoration: const InputDecoration(
-                      labelText: 'School licence key',
+                    decoration: InputDecoration(
+                      labelText: renewalRequired ? 'New renewal licence key' : 'School licence key',
                     ),
                   ),
                   FilledButton(
-                    onPressed: () async {
+                    onPressed: _activatingLicence ? null : () async {
+                      if (_activatingLicence) return;
+                      setState(() { _activatingLicence = true; error = null; });
                       try {
-                        await ManagedSchoolSession.call(
-                          'managed/licence/activate',
-                          {'key': licence.text},
-                        );
+                        await WindowsLicenseStore.save(licence.text);
+                        if (!mounted) return;
+                        licence.clear();
                         await engine.verify();
                       } catch (e) {
                         if (mounted) setState(() => error = '$e');
+                      } finally {
+                        if (mounted) setState(() => _activatingLicence = false);
                       }
                     },
-                    child: const Text('Verify licence'),
+                    child: Text(_activatingLicence ? 'Verifying licence...' : 'Verify licence'),
                   ),
                 ],
                 FilledButton(

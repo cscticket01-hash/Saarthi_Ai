@@ -439,6 +439,26 @@ class WindowsPlatformClient {
     await _secure.delete(key: licenseSkippedKey);
   }
 
+  /// Apply only the authenticated activated managed-session receipt. Lock the UI
+  /// immediately; a later session refresh is not the activation receipt.
+  Future<void> applyManagedActivation(Map<String, dynamic> reply) async {
+    final school = await CentralSchoolCloud.saved();
+    if (school['managed'] != true || reply['success'] != true || reply['managed'] != true ||
+        reply['projectId'] != school['projectId'] ||
+        reply['schoolId'] != school['schoolId'] || reply['uid'] != school['uid'] ||
+        reply['status'] != 'licensed' || reply['allowed'] != true ||
+        reply['activated'] != true || reply['expiresAt'] is! num ||
+        (reply['expiresAt'] as num) <= DateTime.now().millisecondsSinceEpoch) {
+      throw StateError('Verified school licence activation required.');
+    }
+    await _apply(reply);
+    final current = await CentralSchoolCloud.saved();
+    if (current['schoolId'] != school['schoolId'] || current['uid'] != school['uid'] ||
+        !state.value.allowed || state.value.status != 'licensed' || !state.value.activated) {
+      throw StateError('School licence changed or could not be verified.');
+    }
+  }
+
   Future<void> activate(String key) async {
     if (_paused || _activating) throw StateError('Licence operation is already running.');
     final normalized = key.trim().toUpperCase();

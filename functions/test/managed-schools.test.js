@@ -467,3 +467,30 @@ test('revoked school-admin cannot list or mutate recycle snapshots',async()=>{
  await assert.rejects(f.call({action:'managed/recycle',operation:'restore',fileId:'own',operationId:'restore_operation_0001',expectedRecordRevision:'deleted'}),e=>e.status===403);
  assert.equal(f.sent.length,0);
 });
+
+test('verified school licence stays bound until expiry; only developer renewal reactivates all PCs', async()=>{
+ const f=fixture();
+ const first=await f.call({action:'developer/managed/licence',schoolId:A,days:30,paid:true},'developer');
+ const active=await f.call({action:'managed/licence/activate',key:first.key});
+ assert.equal(active.activated,true);assert.equal(active.allowed,true);
+ const repeated=await f.call({action:'managed/licence/activate',key:first.key});
+ assert.equal(repeated.expiresAt,active.expiresAt,'re-entering a key cannot extend validity');
+ await assert.rejects(f.call({action:'managed/licence/activate',key:'VS-NOT-ISSUED'}),e=>e.status===403);
+ assert.equal((await f.call({action:'managed/session'},'A-new-pc')).activated,true);
+ const oldHash=f.docs.get('school_entitlements/'+A).licenseHash;
+ f.docs.get('school_entitlements/'+A).expiresAt=time-1;
+ f.docs.get('platform_license_status/'+oldHash).expiresAt=time-1;
+ const expired=await f.call({action:'managed/session'});
+ assert.equal(expired.status,'expired');assert.equal(expired.allowed,false);
+ await assert.rejects(f.call({action:'managed/licence/activate',key:first.key}),e=>e.status===403);
+ await assert.rejects(f.call({action:'developer/managed/licence',schoolId:A,days:60,paid:true}),e=>e.status===403);
+ const renewal=await f.call({action:'developer/managed/licence',schoolId:A,days:60,paid:true},'developer');
+ assert.notEqual(renewal.key,first.key);
+ assert.equal((await f.call({action:'managed/session'})).activated,false);
+ await assert.rejects(f.call({action:'managed/licence/activate',key:first.key}),e=>e.status===403);
+ await assert.rejects(f.call({action:'managed/licence/activate',key:renewal.key},'B'),e=>e.status===403);
+ const renewed=await f.call({action:'managed/licence/activate',key:renewal.key});
+ assert.equal(renewed.allowed,true);assert.equal(renewed.activated,true);assert(renewed.expiresAt>active.expiresAt);
+ const anotherPc=await f.call({action:'managed/session'},'A-new-pc');
+ assert.equal(anotherPc.activated,true);assert.equal(anotherPc.expiresAt,renewed.expiresAt);
+});
