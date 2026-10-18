@@ -33,6 +33,7 @@ class _DeveloperNotificationPanelState extends State<DeveloperNotificationPanel>
           FilledButton(onPressed:busy?null:()async{
             final heading=title.text.trim(),body=message.text.trim();
             if(heading.isEmpty||body.isEmpty){update(()=>error='Enter a title and message.');return;}
+            if(heading.length>160||body.length>5000){update(()=>error='Use a title up to 160 characters and a message up to 5000 characters.');return;}
             update((){busy=true;error=null;});
             try{
               final user=FirebaseAuth.instance.currentUser;
