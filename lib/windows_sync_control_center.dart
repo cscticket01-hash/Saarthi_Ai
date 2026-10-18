@@ -734,21 +734,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   }
 
   Widget _hero(Map<String, dynamic> details, List<dynamic> items, bool active) {
-    final laneRows = details['liveQueue'] is List
-        ? (details['liveQueue'] as List)
-              .whereType<Map>()
-              .map((r) => Map<String, dynamic>.from(r))
-              .toList()
-        : <Map<String, dynamic>>[];
-    final lanes = details['lanes'] is Map
-        ? details['lanes'] as Map
-        : windowsSyncLanes(laneRows, DateTime.now().millisecondsSinceEpoch);
-    String laneText(String key) {
-      if (details['liveQueue'] is! List) return 'Not yet measured';
-      final lane = lanes[key] as Map;
-      return '${lane['pending']} outstanding · ${lane['retry']} retry · ${lane['review']} need review';
-    }
-
     final syncing = engine.isSyncing && !engine.isPaused;
     final phase =
         details['displayState']?.toString() ??
@@ -789,40 +774,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 'Pending Uploads',
                 "${details['pending'] ?? 'Unknown'} Pending · ${details['needsAttention'] ?? 'Unknown'} Need Attention\n${details['conflictCount'] ?? (details['items'] is List ? items.where((row) => row is Map && (row['syncState'] ?? row['state']) == 'conflict').length : 'Unknown')} Conflicts · ${details['items'] is List ? items.where((row) => row is Map && row['syncState'] == 'failed').length : 'Unknown'} Failed",
               ),
-            ),
-            metric(
-              'Verified cloud receipts',
-              '${details['verifiedReceiptCount'] ?? 'Not measured'}',
-            ),
-
-            metric('Last local backup', stamp(lastBackupAt)),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Wrap(
-          spacing: 14,
-          runSpacing: 14,
-          children: [
-            metric(
-              'School records',
-              '${laneText('records')}\nLast verified cloud ACK: ${stamp(details['lastRecordAckMillis'])}',
-            ),
-            metric(
-              'Documents & ID cards',
-              '${laneText('documents')}\nLast verified cloud ACK: ${stamp(details['lastDocumentAckMillis'])}',
-            ),
-            if ((lanes['other'] as Map?)?['pending'] is num &&
-                lanes['other']['pending'] > 0)
-              metric('Restore & legacy work', laneText('other')),
-            metric(
-              'Photos & file downloads',
-              details['mediaPending'] is num
-                  ? '${details['mediaPending']} outstanding · ${details['mediaInventoryState'] ?? 'Unknown inventory'}'
-                  : 'Inventory not yet verified',
-            ),
-            metric(
-              'Cloud record check',
-              stamp(details['lastRecordCheckMillis']),
             ),
           ],
         ),

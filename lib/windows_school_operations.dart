@@ -3,6 +3,8 @@ import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 
 import 'dart:convert';
+import 'dart:async';
+import 'windows_developer_notifications.dart';
 
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 
@@ -288,10 +290,20 @@ class WindowsSupportScreen extends StatefulWidget {
 
 class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   final _message = TextEditingController();
+  final _inbox = DeveloperInbox();
+  Timer? _inboxTimer;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_inbox.initialize());
+    _inboxTimer = Timer.periodic(const Duration(minutes: 1), (_) => _inbox.refresh());
+  }
   bool _busy = false;
   String? _error;
   @override
   void dispose() {
+    _inboxTimer?.cancel();
+    _inbox.dispose();
     _message.dispose();
     super.dispose();
   }
@@ -325,8 +337,8 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Report app problem')),
-    body: SingleChildScrollView(
-      padding: const EdgeInsets.all(28),
+    body: Stack(children: [SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(28, 28, 92, 28),
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
@@ -366,6 +378,17 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
         ),
       ),
     ),
+      Positioned(top: 28, right: 28, child: AnimatedBuilder(
+        animation: _inbox,
+        builder: (context, _) => IconButton(
+          tooltip: 'Developer notifications',
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => DeveloperInboxScreen(inbox: _inbox))),
+          icon: Badge(isLabelVisible: _inbox.unread > 0,
+            label: Text('${_inbox.unread}'), child: const Icon(Icons.notifications_outlined)),
+        ),
+      )),
+    ]),
   );
 }
 

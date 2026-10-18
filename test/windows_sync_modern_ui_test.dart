@@ -86,10 +86,10 @@ void main() {
       expect(find.text('Needs Attention'), findsOneWidget);
       expect(find.text('Idle'), findsNothing);
       expect(find.text('Verified sync'), findsNothing);
-      expect(find.text('School records'),findsOneWidget);
-      expect(find.text('Documents & ID cards'),findsOneWidget);
-      expect(find.text('Photos & file downloads'),findsOneWidget);
-      expect(find.text('Inventory not yet verified'),findsOneWidget);
+      expect(find.text('School records'),findsNothing);
+      expect(find.text('Documents & ID cards'),findsNothing);
+      expect(find.text('Photos & file downloads'),findsNothing);
+      expect(find.text('Inventory not yet verified'),findsNothing);
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('Smart Repair History'));
       await tester.pumpAndSettle();
