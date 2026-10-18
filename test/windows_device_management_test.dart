@@ -9,7 +9,7 @@ import '../lib/windows_device_management.dart';
 
 void main() {
   final own = 'a' * 64, other = 'b' * 64;
-  Map<String,dynamic> response({bool revoked = false}) => {'success':true,'devices':[
+  Map<String,dynamic> response({bool revoked = false}) => {'success':true,'serverTime':1792363200000,'devices':[
     {'deviceIdentity':own,'name':'School Office PC','status':'active','current':true,'activity':'recently_seen','lastSeenAt':1792363200000},
     {'deviceIdentity':other,'name':'Accounts PC','status':revoked ? 'revoked':'active','current':false,'activity':revoked ? 'revoked':'unknown','lastSeenAt':1792359600000},
   ]};

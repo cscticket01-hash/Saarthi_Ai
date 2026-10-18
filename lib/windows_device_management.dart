@@ -21,6 +21,25 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   String? current, error;
   bool busy = false, verified = false;
   Timer? refreshTimer;
+  int? serverTime;
+  final freshness = Stopwatch();
+  int get estimatedNow => serverTime == null ? DateTime.now().millisecondsSinceEpoch : serverTime! + freshness.elapsedMilliseconds;
+  bool recentlyActive(Map<String,dynamic> row) {
+    final seen=row['lastSeenAt'];
+    final age=seen is int ? estimatedNow-seen : -1;
+    return verified && row['status']=='active' && row['activity']=='recently_seen' && age>=0 && age<=120000;
+  }
+  String lastSeen(Map<String,dynamic> row) {
+    final seen=row['lastSeenAt'];
+    if(seen is! int) return 'Unknown';
+    final age=estimatedNow-seen;
+    if(age<0) return deviceTimeLabel(seen);
+    if(age<60000) return 'Just now';
+    if(age<3600000) return '${age~/60000} min ago';
+    if(age<86400000) return '${age~/3600000} hours ago';
+    if(age<172800000) return 'Yesterday';
+    return deviceTimeLabel(seen);
+  }
   static final identityPattern = RegExp(r'^[a-f0-9]{64}$');
   @override
   void initState() {
@@ -80,6 +99,8 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       }
       if (!mounted || session != ManagedSchoolSession.changed.value) return;
       setState(() {
+        serverTime = response['serverTime'] is int ? response['serverTime'] as int : null;
+        freshness..reset()..start();
         devices = rows;
         current = marked.single['deviceIdentity'] as String;
         verified = true;
@@ -119,7 +140,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   Widget build(BuildContext context) {
     const muted = Color(0xff9caac0);
     final active = devices.where((r) => r['status'] == 'active').length;
-    final recent = devices.where((r) => r['status'] == 'active' && r['activity'] == 'recently_seen').length;
+    final recent = devices.where(recentlyActive).length;
     return Scaffold(
       backgroundColor: const Color(0xff0b1425),
       appBar: AppBar(backgroundColor: const Color(0xff0b1425), title: const Text('Device Management'), actions:[
@@ -143,7 +164,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   Expanded(child:Text(row['name'] is String && (row['name'] as String).isNotEmpty ? row['name'] as String : 'Unnamed PC',style:const TextStyle(color:Colors.white))),
                   if(row['deviceIdentity']==current) Container(margin:const EdgeInsets.only(left:8),padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),decoration:BoxDecoration(color:const Color(0xff233d64),borderRadius:BorderRadius.circular(6)),child:const Text('This PC',style:TextStyle(color:Color(0xffa6caff),fontSize:11))),
                 ]);
-                Widget activity(Map<String,dynamic> row) => Text(verified && row['activity']=='recently_seen' ? 'Recently active' : verified ? deviceActivityLabel(row['activity']) : 'Activity unknown',style:TextStyle(color:verified && row['activity']=='recently_seen' ? const Color(0xff6ed6aa):muted));
+                Widget activity(Map<String,dynamic> row) => Text(recentlyActive(row) ? 'Recently active' : row['status']=='revoked' ? 'Revoked' : 'Activity unknown',style:TextStyle(color:recentlyActive(row) ? const Color(0xff6ed6aa):muted));
                 Widget action(Map<String,dynamic> row) => row['status']=='active' && row['deviceIdentity']!=current
                   ? TextButton(onPressed:busy || !verified ? null:()=>revoke(row),child:const Text('Revoke'))
                   : const Text('—',style:TextStyle(color:muted));
@@ -152,8 +173,8 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                     Expanded(flex:4,child:Text('Device name',style:TextStyle(color:muted))),Expanded(flex:3,child:Text('Activity',style:TextStyle(color:muted))),Expanded(flex:3,child:Text('Last seen',style:TextStyle(color:muted))),SizedBox(width:80,child:Text('Action',style:TextStyle(color:muted))),
                   ])),
                   for(final row in devices) Container(padding:const EdgeInsets.symmetric(horizontal:20,vertical:14),decoration:const BoxDecoration(border:Border(top:BorderSide(color:Color(0xff26364f)))),child:compact
-                    ? Column(crossAxisAlignment:CrossAxisAlignment.start,children:[name(row),const SizedBox(height:12),activity(row),const SizedBox(height:6),Text('Last seen: ${deviceTimeLabel(row['lastSeenAt'])}',style:const TextStyle(color:muted)),Align(alignment:Alignment.centerRight,child:action(row))])
-                    : Row(children:[Expanded(flex:4,child:name(row)),Expanded(flex:3,child:activity(row)),Expanded(flex:3,child:Text(deviceTimeLabel(row['lastSeenAt']),style:const TextStyle(color:muted))),SizedBox(width:80,child:action(row))])),
+                    ? Column(crossAxisAlignment:CrossAxisAlignment.start,children:[name(row),const SizedBox(height:12),activity(row),const SizedBox(height:6),Text('Last seen: ${lastSeen(row)}',style:const TextStyle(color:muted)),Align(alignment:Alignment.centerRight,child:action(row))])
+                    : Row(children:[Expanded(flex:4,child:name(row)),Expanded(flex:3,child:activity(row)),Expanded(flex:3,child:Text(lastSeen(row),style:const TextStyle(color:muted))),SizedBox(width:80,child:action(row))])),
                   if(devices.isEmpty) Padding(padding:const EdgeInsets.all(24),child:Text(busy ? 'Loading devices…' : 'No verified device list available.',style:const TextStyle(color:muted))),
                 ]);
               }),
