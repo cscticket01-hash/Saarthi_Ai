@@ -801,7 +801,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   LayoutBuilder(builder: (context, space) {
                     final scale = MediaQuery.textScalerOf(context).scale(1);
                     final horizontal = space.maxWidth / scale >= 620;
-                    final indicatorExtent = 120.0 * scale.clamp(1.0, 2.0);
+                    final indicatorExtent = 144.0 * scale.clamp(1.0, 2.0);
                     final connectionWidth = horizontal ? space.maxWidth - indicatorExtent - 16 : space.maxWidth;
                     final twoColumns = connectionWidth / scale >= 440;
                     final indicator = SizedBox(
@@ -1232,14 +1232,14 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         style: OutlinedButton.styleFrom(
           foregroundColor: _cyan,
           side: const BorderSide(color: Color(0xFF285369)),
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: _cyan,
           foregroundColor: const Color(0xFF071626),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
         ),
       ),
     ),
