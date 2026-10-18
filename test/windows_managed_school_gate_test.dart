@@ -21,7 +21,7 @@ void main(){
   test('web registration metadata never reads native hostname and preserves device admission action', () {
     final body=ManagedSchoolSession.deviceRegistrationBody(web:true,
         hostname:()=>throw UnsupportedError('Native hostname unavailable on web'));
-    expect(body,{'action':'managed/device/register','deviceName':'Web browser','deviceOs':'Web','type':'pc'});
+    expect(body,{'action':'managed/device/register','deviceManagementProtocol':2,'deviceName':'Web browser','deviceOs':'Web','type':'pc'});
   });
   test('native registration retains measured hostname with bounded fallback', () {
     expect(ManagedSchoolSession.deviceRegistrationBody(web:false,hostname:()=>'School PC')['deviceName'],'School PC');

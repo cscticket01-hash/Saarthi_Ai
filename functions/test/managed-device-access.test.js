@@ -5,9 +5,9 @@ const {createManagedDeviceAccess,verifyOfflineDeviceLease,MAX_OFFLINE_MS}=requir
 const {generateDeviceCredential,createManagedDeviceRegistry}=require('../managed-device-registry');
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),keys=generateKeyPairSync('ed25519');
 const hash=value=>createHash('sha256').update(value).digest('hex');
-function fixture(enforced=true,managementEnabled=false){let time=1000000,tail=Promise.resolve();const rows=new Map(),audit=[];
+function fixture(enforced=true,managementEnabled=false,enrollmentEnabled=false){let time=1000000,tail=Promise.resolve();const rows=new Map(),audit=[];
  const store={transaction(school,work){const result=tail.then(async()=>{const change=await work(rows.has(school)?structuredClone(rows.get(school)):null);rows.set(school,structuredClone(change.state));if(change.audit)audit.push(change.audit);return change.result;});tail=result.catch(()=>{});return result;}};
- const access=createManagedDeviceAccess({store,enforced,managementEnabled,offlinePrivateKey:keys.privateKey,now:()=>time});
+ const access=createManagedDeviceAccess({store,enforced,managementEnabled,enrollmentEnabled,offlinePrivateKey:keys.privateKey,now:()=>time});
  const identity={schoolId:A,uid:'school-admin',authenticatedAt:time};
  const entitlement={allowed:true,expiresAt:time+86400000};
  const proof=n=>({'x-vidya-device-id':String(n).padStart(32,'0'),'x-vidya-device-credential':generateDeviceCredential()});
@@ -99,4 +99,36 @@ test('management mode preserves offline policy but checks registration and revoc
   await assert.rejects(f.call(action,two),{code:'DEVICE_AUTHORIZATION_REJECTED'});
  }
  assert.equal((await f.call('managed/device/list',one)).result.devices.filter(d=>d.status==='active').length,1);
+});
+
+test('enrollment mode keeps existing sync/session authorization exactly legacy and negotiates new clients',async()=>{
+ const f=fixture(false,false,true),headers=f.proof(1);
+ for(const action of ['managed/session','managed/records','managed/disconnect','managed/storage/connect']) {
+  assert.deepEqual(await f.call(action,{}),{handled:false,mode:'legacy_unenforced',deviceEnforced:false});
+ }
+ await assert.rejects(f.call('managed/device/register',headers),{code:'DEVICE_ROLLOUT_DISABLED'});
+ assert.equal(f.rows.size,0);
+ const first=(await f.call('managed/device/register',headers,{deviceManagementProtocol:2})).result;
+ assert.equal(first.deviceManaged,true);assert.equal(first.deviceEnforced,false);
+ assert.equal(first.deviceEnrollmentOnly,true);assert.equal(first.offlineLease,undefined);
+ const list=(await f.call('managed/device/list',headers)).result;
+ assert.equal(list.canRevoke,false);assert.equal(list.devices.length,1);
+ const before=structuredClone(f.rows.get(A));
+ await assert.rejects(f.call('managed/device/revoke',headers,{targetDeviceIdentity:hash('other')}),{code:'DEVICE_ENFORCEMENT_REQUIRED'});
+ assert.deepEqual(f.rows.get(A),before);
+ f.setTime(f.time()+61000);
+ await f.access.observePresence({headers},{schoolId:A,uid:f.identity.uid});
+ const seen=(await createManagedDeviceRegistry({store:f.store,schoolId:A,now:f.time}).list({...f.identity,role:'school_admin'}))[0].lastSeenAt;
+ assert.equal(seen,f.time());
+ await f.access.observePresence({headers:{}},{schoolId:A,uid:f.identity.uid});
+ await f.access.observePresence({headers},{schoolId:B,uid:f.identity.uid});
+ assert.equal((await f.call('managed/device/list',headers)).result.devices.length,1);
+});
+test('enrollment still enforces school isolation, fresh registration and five-PC admission',async()=>{
+ const f=fixture(false,false,true),body={deviceManagementProtocol:2};
+ await assert.rejects(f.call('managed/device/register',f.proof(1),body,{...f.identity,authenticatedAt:f.time()-300001}),{code:'DEVICE_FRESH_LOGIN_REQUIRED'});
+ for(let i=1;i<=5;i++) await f.call('managed/device/register',f.proof(i),body);
+ await assert.rejects(f.call('managed/device/register',f.proof(6),body),{code:'DEVICE_LIMIT_REACHED'});
+ await assert.rejects(f.call('managed/device/list',f.proof(7),{schoolId:B}),{code:'DEVICE_SCHOOL_MISMATCH'});
+ assert.deepEqual(await f.call('managed/records',{}),{handled:false,mode:'legacy_unenforced',deviceEnforced:false});
 });

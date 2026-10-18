@@ -9,7 +9,7 @@ function header(req,key){const value=req?.headers?.[key];if(typeof value!=='stri
  * a request's asserted identity here. Mobile/developer routes run before this.
  * Enabling enforcement must be an explicit TEST-approved server configuration.
  */
-function createManagedDeviceAccess({store,enforced=false,managementEnabled=false,offlinePrivateKey,now=Date.now}){
+function createManagedDeviceAccess({store,enforced=false,managementEnabled=false,enrollmentEnabled=false,offlinePrivateKey,now=Date.now}){
  let key;
  if(enforced){if(!offlinePrivateKey)throw new Error('Offline device signing key required for enforced rollout');
   key=typeof offlinePrivateKey==='string'||Buffer.isBuffer(offlinePrivateKey)?createPrivateKey(offlinePrivateKey):offlinePrivateKey;
@@ -21,15 +21,26 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
   if(entitlement.allowed!==true||!Number.isSafeInteger(expiresAt)||expiresAt<=issuedAt)reject(403,'DEVICE_ENTITLEMENT_EXPIRED');
   const data={version:1,purpose:'vidya-pc-offline',schoolId:auth.schoolId,uid:auth.uid,deviceIdentity:device.deviceIdentity,generationHash:device.generationHash,issuedAt,expiresAt};
   const payload=Buffer.from(JSON.stringify(data)).toString('base64url');return {offlineLease:payload+'.'+sign(null,Buffer.from(payload),key).toString('base64url'),offlineExpiresAt:expiresAt,device};}
- return {async authorize({req,body,identity,entitlement}){
+ return {async observePresence(req,presence){
+  // Optional display metadata only. Never change the legacy presence result.
+  if(!enrollmentEnabled||enforced||managementEnabled)return;
+  try{
+   if(!/^vs-[a-f0-9]{32}$/.test(presence?.schoolId)||typeof presence.uid!=='string')return;
+   const registry=createManagedDeviceRegistry({store,schoolId:presence.schoolId,now});
+   await registry.verify({deviceId:header(req,'x-vidya-device-id'),credential:header(req,'x-vidya-device-credential')});
+  }catch{/* Missing/stale device metadata cannot interrupt existing access. */}
+ },async authorize({req,body,identity,entitlement}){
   const action=body?.action;
   // Independent Android school-session and developer protocols are preserved.
   if(action==='managed/mobile'||typeof action!=='string'||!action.startsWith('managed/'))return {handled:false,mode:'non_pc'};
   const auth=context(identity,body),isDeviceAction=action.startsWith('managed/device/');
-  if(!enforced&&!managementEnabled){if(isDeviceAction)reject(503,'DEVICE_ROLLOUT_DISABLED');return {handled:false,mode:'legacy_unenforced',deviceEnforced:false};}
+  if(!enforced&&!managementEnabled&&(!enrollmentEnabled||!isDeviceAction)){if(isDeviceAction)reject(503,'DEVICE_ROLLOUT_DISABLED');return {handled:false,mode:'legacy_unenforced',deviceEnforced:false};}
   if(entitlement?.allowed!==true||Number(entitlement.expiresAt)<=now())reject(403,'DEVICE_ENTITLEMENT_EXPIRED');
-  const mode=enforced?'enforced':'managed';
-  const access=device=>enforced?{deviceEnforced:true,...lease(auth,device,entitlement)}:{deviceManaged:true,deviceEnforced:false,device};
+  const enrollmentOnly=!enforced&&!managementEnabled;
+  if(enrollmentOnly&&action==='managed/device/register'&&body.deviceManagementProtocol!==2)reject(503,'DEVICE_ROLLOUT_DISABLED');
+  if(enrollmentOnly&&action==='managed/device/revoke')reject(503,'DEVICE_ENFORCEMENT_REQUIRED');
+  const mode=enforced?'enforced':enrollmentOnly?'enrollment':'managed';
+  const access=device=>enforced?{deviceEnforced:true,...lease(auth,device,entitlement)}:{deviceManaged:true,deviceEnforced:false,...(enrollmentOnly?{deviceEnrollmentOnly:true}:{}),device};
   const proof={deviceId:header(req,'x-vidya-device-id'),credential:header(req,'x-vidya-device-credential')};
   const registry=createManagedDeviceRegistry({store,schoolId:auth.schoolId,now,requireFreshAuthentication:true});
   if(action==='managed/device/register'){
@@ -42,7 +53,7 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
   // presence/session/offline lease may authorize an online server request.
   const device=await registry.verify(proof);
   if(action==='managed/device/check')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,...access(device)}};
-  if(action==='managed/device/list')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,serverTime:now(),deviceLimit:5,recentActivityWindowMs:120000,devices:(await registry.list(auth)).map(row=>({...row,current:row.deviceIdentity===device.deviceIdentity}))}};
+  if(action==='managed/device/list')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,serverTime:now(),deviceLimit:5,canRevoke:!enrollmentOnly,recentActivityWindowMs:120000,devices:(await registry.list(auth)).map(row=>({...row,current:row.deviceIdentity===device.deviceIdentity}))}};
   if(action==='managed/device/revoke'){
    const target=await registry.revoke(auth,{currentDeviceId:proof.deviceId,currentCredential:proof.credential,targetDeviceIdentity:body.targetDeviceIdentity});
    return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,device:target}};
