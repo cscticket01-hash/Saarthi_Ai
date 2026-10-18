@@ -1,4 +1,5 @@
 import 'windows_remote_change_feed.dart';
+import 'windows_sync_dependencies.dart';
 import 'student_lifecycle_policy.dart';
 import 'windows_sheet_recovery.dart';
 import 'windows_document_templates.dart';
@@ -206,9 +207,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   final _pendingIdInputs = <String, Set<String>>{};
 
   void _noteIdInput(String collection, String id) {
-    if (collection == 'students_directory' || collection == 'teachers_directory' ||
-        collection == 'school_config' && id == 'school_profile_cache' ||
-        collection == 'school_settings' && id == 'document_templates') {
+    if (WindowsSyncDependencies.relevant(collection, id)) {
       (_pendingIdInputs[collection] ??= <String>{}).add(id);
     }
   }
@@ -252,11 +251,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _remoteFeed.stop();
       return;
     }
-    if (_changeFeedSupported)
+    if (_changeFeedSupported) {
       _remoteFeed.start(
         jsonEncode([_activeProfileId, _activeSchoolSyncId]),
         _activeSchoolSyncId,
       );
+      // Healthy server notifications already report remote changes. Keep heads
+      // polling only as a fallback; normal reconciliation remains hourly.
+      if (_remoteFeed.isHealthy) return;
+    }
     if (!automaticScheduleExpected ||
         _syncing ||
         _activating > 0 ||
@@ -1354,6 +1357,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       },
     );
 
+    if (profile.profileId.startsWith('central_') && !profile.blocked) {
+      for (final row in await WindowsSyncDependencies.read(profile.schoolSyncId)) {
+        final input = row.data();
+        _noteIdInput(input['collection'] as String, input['documentId'] as String);
+      }
+    }
+
     windows_html.setSchoolStorageNamespace(profile.profileId);
     final preferences =
         (await FirebaseFirestore.instance
@@ -1664,10 +1674,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     // Even the normal manual Sync Now button transfers changes only.
     // Broad verification requires a separate explicit caller opt-in.
     final integrityAudit = verifyInventory;
-    // Recover interrupted card preparation on idle maintenance, never on a
-    // notice-only mutation. Explicit inventory audits retain full coverage.
-    final auditCards = integrityAudit ||
-        (scheduledCheck && !_hasAutomaticWork && _remoteCollections.isEmpty);
+    // Hourly/manual normal checks never imply full card preparation. Durable
+    // dependency work survives restart; only explicit repair requests audit all.
+    final auditCards = integrityAudit;
     if (scheduledCheck) {
       _lastIntegrityAttempt = now;
       _schedule.armCheckpoint(_lastIntegrityAttempt);
@@ -1820,6 +1829,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         _admitBatch();
         _setCheckingCloud(false);
+        final dependencyRows = await WindowsSyncDependencies.read(_activeSchoolSyncId);
+        for (final row in dependencyRows) {
+          final input = row.data();
+          _noteIdInput(input['collection'] as String, input['documentId'] as String);
+        }
         final idInputs = {
           for (final entry in _pendingIdInputs.entries)
             entry.key: {...entry.value},
@@ -1858,6 +1872,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               download: () async {},
             );
           }
+          await WindowsSyncDependencies.complete(_activeSchoolSyncId, dependencyRows);
         } catch (_) {
           if (_activeProfileId == syncOrigin) {
             for (final entry in idInputs.entries) {
@@ -2008,7 +2023,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         state.value = SchoolCloudState.syncPending;
       await refreshDetails();
       if ((lastError != null &&
-              _hasAutomaticWork &&
+              (_hasAutomaticWork || _pendingIdInputs.isNotEmpty) &&
               recoveryDecision?.retry == true &&
               _failures <= 5) ||
           _rerunRequested ||
@@ -2264,6 +2279,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             (DateTime.now().millisecondsSinceEpoch - queuedMillis)
                 .clamp(0, 1 << 53)
                 .toInt();
+      final origin = FirebaseFirestore.instance.activeProfileId;
+      final school = _activeSchoolSyncId;
       final watch = Stopwatch()..start();
       final reply = await WindowsFirebaseRemote.syncManagedRecord(
         item,
@@ -2280,7 +2297,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             (timing['scriptRoundTripMillis'] as num).toInt();
         _sample('scriptRoundTripMillis', metrics['lastScriptRoundTripMillis']!);
       }
-      return reply['recordRevision'] as String;
+      if (FirebaseFirestore.instance.activeProfileId != origin || _activeSchoolSyncId != school) {
+        throw StateError('School changed before retaining verified dependencies.');
+      }
+      final revision = reply['recordRevision'] as String;
+      // Persist before the outbox ACK can remove its only recovery source.
+      await WindowsSyncDependencies.retain(school, item['collection'] as String,
+          item['documentId'] as String, revision);
+      return revision;
     },
   );
 
@@ -2656,6 +2680,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           deletedIds.remove(entry.key);
         }
       }
+      // Persist dependent work before advancing the record checkpoint. A crash
+      // before this write leaves the old checkpoint and the delta is replayed.
+      await WindowsSyncDependencies.retainMany(school, collection, {
+        for (final entry in records.entries)
+          if (WindowsSyncDependencies.relevant(collection, entry.key))
+            entry.key: ((entry.value as Map)['_syncRevision'] as String?) ??
+                result['collectionRevision'] as String,
+      });
       await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
         () => manifest.set({
           'revision': result['collectionRevision'],
