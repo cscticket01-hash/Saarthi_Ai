@@ -1,3 +1,4 @@
+import 'developer_notification_panel.dart';
 import 'developer_login_shell.dart';
 import 'managed_developer_panel.dart';
 import 'developer_account_widgets.dart';
@@ -899,6 +900,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        DeveloperNotificationPanel(schools: _schools),
         const Text(
           'App complaints',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),

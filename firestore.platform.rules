@@ -120,6 +120,15 @@ service cloud.firestore {
           request.time >= resource.data.lastSentAt + duration.value(30, 's'));
     }
     match /app_config/{config} { allow get: if config in ['android_update','windows_update']; }
+    // Developer inbox is separate from school Drive records. Membership is
+    // server-created; a school can only read broadcasts and its own audience.
+    match /platform_developer_notifications/{audience}/messages/{message} {
+      allow read: if request.auth != null &&
+        get(/databases/$(database)/documents/school_memberships/$(request.auth.uid)).data.active == true &&
+        get(/databases/$(database)/documents/school_memberships/$(request.auth.uid)).data.role == 'school_admin' &&
+        (audience == 'all' || audience == get(/databases/$(database)/documents/school_memberships/$(request.auth.uid)).data.schoolId);
+      // Publishing remains developer-only under the rule below.
+    }
     // Developer-only enumeration, keys, renewal, support and legacy collections.
     match /{document=**} { allow read, write: if developer(); }
   }

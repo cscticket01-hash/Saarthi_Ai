@@ -123,3 +123,29 @@ test('mobile sessions, raw school records and unlisted data remain private centr
   await assertFails(getDoc(doc(school(),path)));await assertFails(setDoc(doc(school(),path),{name:'Changed'}));
  }
 });
+
+test('developer notifications are developer-written, own-school or broadcast read-only and membership revocation takes effect',async()=>{
+ const own='platform_developer_notifications/school-one/messages/n1';
+ const other='platform_developer_notifications/school-two/messages/n2';
+ const all='platform_developer_notifications/all/messages/n3';
+ const note={title:'Developer update',message:'Synthetic notification',createdAt:serverTimestamp()};
+ await seed('school_memberships/school-one-monitor',{schoolId:'school-one',role:'school_admin',active:true,managed:true});
+ await seed('school_memberships/school-two-monitor',{schoolId:'school-two',role:'school_admin',active:true,managed:true});
+ for(const path of [own,other,all])await assertSucceeds(setDoc(doc(dev(),path),note));
+ for(const path of [own,all])await assertSucceeds(getDoc(doc(school(),path)));
+ await assertSucceeds(getDocs(collection(school(),'platform_developer_notifications/all/messages')));
+ await assertSucceeds(getDocs(collection(school(),'platform_developer_notifications/school-one/messages')));
+ await assertFails(getDoc(doc(school(),other)));
+ await assertFails(getDocs(collection(school(),'platform_developer_notifications/school-two/messages')));
+ for(const db of [school(),publicDb(),anon(),env.authenticatedContext('ordinary').firestore()]){
+  await assertFails(setDoc(doc(db,own),note));
+  await assertFails(updateDoc(doc(db,all),{title:'Forged'}));
+  await assertFails(deleteDoc(doc(db,all)));
+ }
+ await assertFails(getDoc(doc(publicDb(),all)));
+ await seed('school_memberships/school-one-monitor',{schoolId:'school-one',role:'student',active:true});
+ await assertFails(getDoc(doc(school(),all)));
+ await seed('school_memberships/school-one-monitor',{schoolId:'school-one',role:'school_admin',active:false});
+ await assertFails(getDoc(doc(school(),own)));
+ await assertFails(getDoc(doc(school(),all)));
+});
