@@ -50,7 +50,7 @@ void main(){
  test('foreign path and changed profile during a response cannot write cache or expose another school',()async{
   final bad=DeveloperInbox(readPage:(a,c)async=>{'documents':[note('foreign-school','bad')]});
   await bad.initialize();expect(bad.error,isNotNull);expect(bad.messages,isEmpty);
-  expect((await db.collection('_developer_inbox').get()).docs,isEmpty);bad.dispose();
+  expect((await db.collection('_windows_developer_inbox').get()).docs,isEmpty);bad.dispose();
   final response=Completer<Map<String,dynamic>>();
   final started=Completer<void>();
   final switched=DeveloperInbox(readPage:(a,c){ if(!started.isCompleted)started.complete();return response.future; });
@@ -59,6 +59,6 @@ void main(){
   await db.switchProfile('another-school',identity:{'schoolSyncId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
   response.complete({'documents':[note('all','late')]});await loading;
   expect(switched.current,false);expect(switched.messages,isEmpty);
-  expect((await db.collection('_developer_inbox').get()).docs,isEmpty);switched.dispose();
+  expect((await db.collection('_windows_developer_inbox').get()).docs,isEmpty);switched.dispose();
  });
 }

@@ -31,10 +31,10 @@ class DeveloperInbox extends ChangeNotifier {
     final saved = await CentralSchoolCloud.saved();
     if (!current || _disposed) return;
     _uid = saved['uid']?.toString();
-    final cached = await _db.collection('_developer_inbox').get();
+    final cached = await _db.collection('_windows_developer_inbox').get();
     if (!current || _disposed) return;
     messages = cached.docs.map((d) => d.data()).where((m) => m['schoolId'] == _school).toList();
-    final read = await _db.collection('_developer_inbox_read').get();
+    final read = await _db.collection('_windows_developer_inbox_read').get();
     if (!current || _disposed) return;
     _read = read.docs.map((d) => d.id).toSet();
     _sort(); _notify();
@@ -96,7 +96,7 @@ class DeveloperInbox extends ChangeNotifier {
         m.entries.any((e) => existing[m['key']]![e.key] != e.value)).toList();
       if (changed.isNotEmpty) {
         final batch = _db.batch();
-        for (final m in changed) { batch.set(_db.collection('_developer_inbox').doc(m['key'] as String),m); }
+        for (final m in changed) { batch.set(_db.collection('_windows_developer_inbox').doc(m['key'] as String),m); }
         await batch.commit();
       }
       if (!current || _disposed) return;
@@ -111,7 +111,7 @@ class DeveloperInbox extends ChangeNotifier {
   Future<void> markRead(Map<String,dynamic> message) async {
     if (!current || _disposed || _read.contains(message['key']) || !messages.any((m) => m['key'] == message['key'])) return;
     try {
-      await _db.collection('_developer_inbox_read').doc(message['key'] as String).set({'readAt':DateTime.now().millisecondsSinceEpoch});
+      await _db.collection('_windows_developer_inbox_read').doc(message['key'] as String).set({'readAt':DateTime.now().millisecondsSinceEpoch});
       if (!current || _disposed) return;
       _read.add(message['key'] as String); _notify();
     } catch (_) { if (current && !_disposed) { error = 'Read status could not be saved. Try again.'; _notify(); } }
