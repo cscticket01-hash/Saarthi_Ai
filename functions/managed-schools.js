@@ -1,6 +1,4 @@
 'use strict';
-const {documentResponseDiagnostic}=require('./document-response-diagnostic');
-const {createHealthTelemetry}=require('./universal-health-telemetry');
 const {createManagedCardReader}=require('./managed-card-reader');
 const {createSchoolChangeFeed}=require('./school-change-feed');
 const {createManagedDeviceAccess}=require('./managed-device-access');
@@ -17,10 +15,9 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stringify(entry)),deviceAccessEnforced=false,deviceOfflinePrivateKey,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+function createManagedSchools({deviceAccessEnforced=false,deviceOfflinePrivateKey,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,offlinePrivateKey:deviceOfflinePrivateKey,now});
  const cardAuthority=createManagedCardIssueAuthority({db,now});
- const healthTelemetry=createHealthTelemetry({db,now});
  const cardReader=createManagedCardReader({db,enforced:cardReaderEnforced,privateKey:cardReaderPrivateKey,now});
  if(cardIssueEnabled&&!cardReaderEnforced)throw Error('Card issuance requires all-reader enforcement');
  const changeFeed=createSchoolChangeFeed({db,collections:[...COLLECTIONS].filter(c=>c!=='backups')});
@@ -186,7 +183,6 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
  }
  async function signed(m,body){
   try{const result=await signedRequest(m,body);
-   try{const diagnostic=documentResponseDiagnostic(body,result,m.schoolId,encryptionKey);if(diagnostic)documentDiagnostics(diagnostic);}catch(_){}
    if(['managed_records','managed_delta','managed_mobile'].includes(body.action)){
     const ack=body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision.length>0;
     await saveSyncEvidence(m.schoolId,{outcome:ack?'durable_ack':'verified_response',stage:body.action,protocol:result.syncProtocol===2?2:1});
@@ -225,28 +221,7 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
  async function readScript(response) {
   try{return await response.text();}catch(error){scriptTransportFailure(error,'response');}
  }
- // Follow only the provider's response resource, never replay the signed POST.
- // Every hop is checked before fetching; login pages and foreign origins fail closed.
- async function followScriptResponse(response,base,signal){
-  const visited=new Set();
-  for(let hop=0;[301,302,303,307,308].includes(response.status);hop++){
-   if(hop>=5)fail(502,'School script response redirect limit reached','SCRIPT_REDIRECT_LIMIT');
-   let target;
-   try{const location=response.headers.get('location');if(!location)throw new Error();target=new URL(location,base);}
-   catch{fail(502,'Unexpected script redirect','SCRIPT_REDIRECT_REJECTED');}
-   if(target.protocol!=='https:'||target.hostname!=='script.googleusercontent.com'||target.port||target.username||target.password)
-    fail(502,'Unexpected script redirect','SCRIPT_REDIRECT_REJECTED');
-   target.hash='';
-   if(visited.has(target.href))fail(502,'School script response redirect loop','SCRIPT_REDIRECT_LIMIT');
-   visited.add(target.href);
-   // Cancel the unused response stream to release its connection.
-   try{await response.body?.cancel();}catch{}
-   base=target.href;
-   response=await fetchScript(base,{method:'GET',redirect:'manual',signal},'redirect');
-  }
-  return response;
- }
- async function signedRequest(m,body){const started=performance.now();const s=await cachedRead(storageStates,m.schoolId,()=>db.doc('school_storage_private/'+m.schoolId).get());if(!s.exists||s.data().ready!==true)fail(409,'Developer must connect this school Apps Script first','SCHOOL_STORAGE_NOT_CONNECTED');const c=s.data(),payload=JSON.stringify(body),timestamp=now(),nonce=randomBytes(24).toString('hex'),signature=createHmac('sha256',unprotect(c.secret,encryptionKey)).update(m.schoolId+'\n'+timestamp+'\n'+nonce+'\n'+payload).digest('hex');let url=scriptUrl(c.url);const scriptStarted=performance.now();let response=await fetchScript(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify({schoolId:m.schoolId,timestamp,nonce,payload,signature}),signal:AbortSignal.timeout(90000)});response=await followScriptResponse(response,url,AbortSignal.timeout(90000));if(!response.ok)fail(502,'School script request failed','SCRIPT_HTTP_ERROR');const raw=await readScript(response);if(raw.length>30*1024*1024)fail(502,'School script response is too large');let out;try{out=JSON.parse(raw);}catch{fail(502,'School script returned invalid JSON','SCRIPT_INVALID_RESPONSE');}if(out.schoolId!==m.schoolId)fail(502,'School script identity or operation failed','SCRIPT_IDENTITY_MISMATCH');if(out.success!==true){if(['SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING'].includes(out.code))fail(503,'Verified local Sheet recovery required before editing',out.code);if(['SCRIPT_RECOVERY_MISMATCH','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_SYNC_STATE_IDENTITY','SCRIPT_SYNC_STATE_UNAVAILABLE'].includes(out.code))fail(409,'School record recovery needs review',out.code);if(['SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_INVALID_SYNC_OPERATION'].includes(out.code))fail(422,'School record validation failed; original retained',out.code);if(out.code==='SCRIPT_DOCUMENT_REVISION_CONFLICT'||out.message==='Newer cloud document retained; resolve version conflict')fail(409,'Document version conflict; both copies retained','SCRIPT_DOCUMENT_REVISION_CONFLICT');if(out.message==='Student class/section/roll conflict')fail(409,'Student class/section/roll conflict','STUDENT_SLOT_CONFLICT');if(out.message==='Record revision conflict')fail(409,'Record revision conflict','RECORD_REVISION_CONFLICT');if(out.message==='Sync operation ID conflict')fail(409,'Sync operation ID conflict','OPERATION_ID_CONFLICT');const safe=['This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.','Ask your school to regenerate this ID card.','Class, roll number or date of birth is incorrect','School session expired. Scan your ID again.','School session expired','School login required','School identity mismatch','This QR does not belong to the active school','School record or ID card was changed; scan again'];if(body.action==='managed_mobile'&&safe.includes(out.message))fail(403,out.message);const codes={'School data organization in progress; retry Sync. Pending data retained':'SCRIPT_MIGRATION_PENDING','Migration conflict; both versions retained':'SCRIPT_MIGRATION_CONFLICT','Verified school tab is missing; operator recovery required':'SCRIPT_MISSING_MIGRATED_TAB','School record verification failed':'SCRIPT_RECORD_VERIFY_FAILED','Managed storage not prepared':'SCRIPT_STORAGE_NOT_PREPARED'};fail(502,'School script identity or operation failed',codes[out.message]||(['SCRIPT_ROOT_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_REVIEW_REQUIRED','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED','SCRIPT_FOREIGN_RECORD_REJECTED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_DOCUMENT_REVISION_REQUIRED','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_MIGRATION_CONFLICT','SCRIPT_MISSING_MIGRATED_TAB','SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_TIMEOUT','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR'].includes(out.code)?out.code:'SCRIPT_OPERATION_FAILED'));}return {...out,syncTiming:{brokerPreparationMillis:Math.round(scriptStarted-started),scriptRoundTripMillis:Math.round(performance.now()-scriptStarted)}};}
+ async function signedRequest(m,body){const started=performance.now();const s=await cachedRead(storageStates,m.schoolId,()=>db.doc('school_storage_private/'+m.schoolId).get());if(!s.exists||s.data().ready!==true)fail(409,'Developer must connect this school Apps Script first','SCHOOL_STORAGE_NOT_CONNECTED');const c=s.data(),payload=JSON.stringify(body),timestamp=now(),nonce=randomBytes(24).toString('hex'),signature=createHmac('sha256',unprotect(c.secret,encryptionKey)).update(m.schoolId+'\n'+timestamp+'\n'+nonce+'\n'+payload).digest('hex');let url=scriptUrl(c.url);const scriptStarted=performance.now();let response=await fetchScript(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify({schoolId:m.schoolId,timestamp,nonce,payload,signature}),signal:AbortSignal.timeout(90000)});if([301,302,303].includes(response.status)){const target=new URL(response.headers.get('location'));if(target.protocol!=='https:'||target.hostname!=='script.googleusercontent.com'||target.username||target.password)fail(502,'Unexpected script redirect');response=await fetchScript(target.href,{redirect:'error',signal:AbortSignal.timeout(90000)},'redirect');}if(!response.ok)fail(502,'School script request failed','SCRIPT_HTTP_ERROR');const raw=await readScript(response);if(raw.length>30*1024*1024)fail(502,'School script response is too large');let out;try{out=JSON.parse(raw);}catch{fail(502,'School script returned invalid JSON','SCRIPT_INVALID_RESPONSE');}if(out.schoolId!==m.schoolId)fail(502,'School script identity or operation failed','SCRIPT_IDENTITY_MISMATCH');if(out.success!==true){if(['SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING'].includes(out.code))fail(503,'Verified local Sheet recovery required before editing',out.code);if(['SCRIPT_RECOVERY_MISMATCH','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_SYNC_STATE_IDENTITY','SCRIPT_SYNC_STATE_UNAVAILABLE'].includes(out.code))fail(409,'School record recovery needs review',out.code);if(['SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_INVALID_SYNC_OPERATION'].includes(out.code))fail(422,'School record validation failed; original retained',out.code);if(out.code==='SCRIPT_DOCUMENT_REVISION_CONFLICT'||out.message==='Newer cloud document retained; resolve version conflict')fail(409,'Document version conflict; both copies retained','SCRIPT_DOCUMENT_REVISION_CONFLICT');if(out.message==='Student class/section/roll conflict')fail(409,'Student class/section/roll conflict','STUDENT_SLOT_CONFLICT');if(out.message==='Record revision conflict')fail(409,'Record revision conflict','RECORD_REVISION_CONFLICT');if(out.message==='Sync operation ID conflict')fail(409,'Sync operation ID conflict','OPERATION_ID_CONFLICT');const safe=['This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.','Ask your school to regenerate this ID card.','Class, roll number or date of birth is incorrect','School session expired. Scan your ID again.','School session expired','School login required','School identity mismatch','This QR does not belong to the active school','School record or ID card was changed; scan again'];if(body.action==='managed_mobile'&&safe.includes(out.message))fail(403,out.message);const codes={'School data organization in progress; retry Sync. Pending data retained':'SCRIPT_MIGRATION_PENDING','Migration conflict; both versions retained':'SCRIPT_MIGRATION_CONFLICT','Verified school tab is missing; operator recovery required':'SCRIPT_MISSING_MIGRATED_TAB','School record verification failed':'SCRIPT_RECORD_VERIFY_FAILED','Managed storage not prepared':'SCRIPT_STORAGE_NOT_PREPARED'};fail(502,'School script identity or operation failed',codes[out.message]||(['SCRIPT_ROOT_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_REVIEW_REQUIRED','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED','SCRIPT_FOREIGN_RECORD_REJECTED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_DOCUMENT_REVISION_REQUIRED','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_MIGRATION_CONFLICT','SCRIPT_MISSING_MIGRATED_TAB','SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_TIMEOUT','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR'].includes(out.code)?out.code:'SCRIPT_OPERATION_FAILED'));}return {...out,syncTiming:{brokerPreparationMillis:Math.round(scriptStarted-started),scriptRoundTripMillis:Math.round(performance.now()-scriptStarted)}};}
  async function scriptRequest(url,body){
   let response=await fetchImpl(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
   if([301,302,303].includes(response.status)){const target=new URL(response.headers.get('location'));if(target.protocol!=='https:'||target.hostname!=='script.googleusercontent.com'||target.username||target.password)fail(502,'Unexpected script redirect');response=await fetchImpl(target.href,{redirect:'error',signal:AbortSignal.timeout(30000)});}
@@ -295,8 +270,7 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
    await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,...(password===undefined?{passwordSetupLink:await auth.generatePasswordResetLink(email)}:{})};
   }
   if(action==='developer/managed/monitor'){const started=now();const metrics=await monitor();return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics};}
-  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view','developer/managed/sync/status','developer/managed/health/summary'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
-  if(action==='developer/managed/health/summary')return healthTelemetry.summary(id);
+  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view','developer/managed/sync/status'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
   if(action==='developer/managed/sync/status')return {success:true,schoolId:id,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
   if(action==='developer/managed/view'){
    const known=b.knownRevisions||{};if(!known||typeof known!=='object'||Array.isArray(known)||JSON.stringify(known).length>16000)fail(400,'Invalid school view checkpoint');
@@ -357,10 +331,9 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
   // Windows presence is monitoring only. Signed school storage and current licence
   // authorize mobile access independently of the management PC's availability.
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>16000||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_complaint','mobile_health_report'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_complaint'].includes(b.request.action))fail(400,'Invalid mobile operation');
   if(b.request.action==='mobile_login'&&b.request.cardIssueId&&!cardReaderEnforced)fail(503,'Issued card readers are not enabled','CARD_READER_DISABLED');
   const cardContext=b.request.action==='mobile_login'?null:await readCard(b.schoolId,b.request);
-  if(b.request.action==='mobile_health_report'){const permit=verifyAttendanceIdentity(b.schoolId,b.request);return {...await healthTelemetry.report(b.schoolId,permit.role+'/'+permit.documentId,b.request.report),projectId:b.schoolId,...cardContext};}
   if(b.request.action==='mobile_attendance_status'){
    const permit=verifyAttendanceIdentity(b.schoolId,b.request),ids=b.request.operationIds;
    if(!Array.isArray(ids)||ids.length<1||ids.length>25||ids.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(ids).size!==ids.length)fail(400,'Invalid attendance status batch');
@@ -397,7 +370,6 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
  }
  const m=await identity(req,b.schoolId);
  const deviceDecision=await deviceAccess.authorize({req,body:b,identity:m,entitlement:lease(m)});if(deviceDecision.handled)return deviceDecision.result;
- if(action==='managed/health/report'){if(!lease(m).allowed)fail(403,'School licence is inactive');return healthTelemetry.report(m.schoolId,m.uid,b.report);}
  if(action==='managed/presence'){
   const p=verifiedPresence(b.presenceToken);if(p.schoolId!==m.schoolId||p.uid!==m.uid)fail(403,'Another school is not accessible');
   await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:now()},{merge:true});return {success:true,schoolId:m.schoolId};
@@ -503,7 +475,7 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
   return {success:true,schoolId:m.schoolId,changeFeedVersion:1,...event};
  }
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
- if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+ if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
   const rows=await Promise.all(b.operationIds.map(id=>db.doc(attendanceCollection+'/'+id).get()));
@@ -514,7 +486,15 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
   const collections=b.collections,known=b.knownRevisions||{};
   if(!Array.isArray(collections)||collections.length>22||new Set(collections).size!==collections.length||collections.some(col=>!COLLECTIONS.has(col))||!known||typeof known!=='object'||Array.isArray(known)||Object.entries(known).some(([key,value])=>!collections.includes(key)||typeof value!=='string'||value.length>1000))fail(400,'Invalid delta checkpoint');
   if(b.headOnly!==undefined&&typeof b.headOnly!=='boolean')fail(400,'Invalid delta mode');
-  const body={action:'managed_delta',collections,knownRevisions:known,...(b.headOnly===true?{headOnly:true}:{})};
+  const recordCheckpoints=b.knownRecordRevisions;
+  if(recordCheckpoints!==undefined){
+   if(!recordCheckpoints||typeof recordCheckpoints!=='object'||Array.isArray(recordCheckpoints))fail(400,'Invalid record checkpoint');
+   let count=0;for(const [col,rows] of Object.entries(recordCheckpoints)){
+    if(!collections.includes(col)||!rows||typeof rows!=='object'||Array.isArray(rows))fail(400,'Invalid record checkpoint');
+    for(const [id,revision] of Object.entries(rows))if(++count>100000||!id||id.length>200||id.includes('/')||['.','..'].includes(id)||typeof revision!=='string'||!revision||revision.length>1000)fail(400,'Invalid record checkpoint');
+   }
+  }
+  const body={action:'managed_delta',collections,knownRevisions:known,...(recordCheckpoints!==undefined?{knownRecordRevisions:recordCheckpoints}:{}),...(b.headOnly===true?{headOnly:true}:{})};
   // A commit on another broker cannot invalidate this process's five-second
   // view cache. Verified delta apply must read current authoritative records.
   const result=b.headOnly===true?await readView(m.schoolId,body,()=>signed(m,body)):await signed(m,body);
@@ -523,7 +503,7 @@ function createManagedSchools({documentDiagnostics=entry=>console.info(JSON.stri
    return {success:true,schoolId:m.schoolId,syncProtocol:2,headOnly:true,revisions:result.revisions};
   }
   if(result.syncProtocol!==2||!result.changes||typeof result.changes!=='object'||Object.keys(result.changes).length!==collections.length)fail(502,'Invalid delta response');
-  for(const col of collections){const group=result.changes[col];if(!group||group.syncProtocol!==2||typeof group.collectionRevision!=='string'||!group.records||typeof group.records!=='object'||Array.isArray(group.records)||Object.values(group.records).some(row=>!row||row.schoolId!==m.schoolId))fail(502,'Foreign or invalid school delta');}
+  for(const col of collections){const group=result.changes[col];if(!group||(group.partialRecords!==undefined&&typeof group.partialRecords!=='boolean')||group.partialRecords===true&&(!recordCheckpoints||!Object.prototype.hasOwnProperty.call(recordCheckpoints,col))||group.syncProtocol!==2||typeof group.collectionRevision!=='string'||!group.records||typeof group.records!=='object'||Array.isArray(group.records)||Object.values(group.records).some(row=>!row||row.schoolId!==m.schoolId))fail(502,'Foreign or invalid school delta');}
   return result;
  }
  // Inactive controlled-import foundation. No arbitrary managed Sheet edits.
