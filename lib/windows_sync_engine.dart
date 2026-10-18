@@ -224,6 +224,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (!automaticScheduleExpected) return;
       _remoteChangeGeneration++;
       _remoteResetPending = true;
+      // Heads may be cached for five seconds on another broker. One bounded
+      // catch-up after that window prevents a reset from hiding recent writes.
+      _changeWatch.reset(notBefore: DateTime.now().add(const Duration(seconds: 6)));
+      final resetProfile = _activeProfileId;
+      Timer(const Duration(seconds: 6), () {
+        if (_activeProfileId == resetProfile) unawaited(_discoverManagedChanges());
+      });
       if (_syncing) _rerunRequested = true;
       scheduleSoon();
     },
@@ -258,7 +265,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       );
       // Healthy server notifications already report remote changes. Keep heads
       // polling only as a fallback; normal reconciliation remains hourly.
-      if (_remoteFeed.isHealthy) return;
+      if (_remoteFeed.isHealthy && _changeWatch.hasVerifiedDiscovery) return;
     }
     if (!automaticScheduleExpected ||
         _syncing ||
@@ -276,6 +283,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         origin = _activeProfileId,
         school = _activeSchoolSyncId;
     final watch = Stopwatch()..start();
+    final discoveryGeneration = _remoteChangeGeneration;
     try {
       final revisions = <String, String>{};
       for (final col in _firebaseCollections.where((c) => c != 'backups')) {
@@ -295,7 +303,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           db.activeProfileId != origin ||
           school != _activeSchoolSyncId)
         return;
-      _changeWatch.succeeded(DateTime.now());
+      // A listener reset/change during this request may post-date a cached
+      // head response. Keep one catch-up pending instead of trusting that read.
+      if (discoveryGeneration == _remoteChangeGeneration) {
+        _changeWatch.succeeded(DateTime.now());
+      } else {
+        _changeWatch.reset(notBefore: DateTime.now().add(const Duration(seconds: 6)));
+      }
       metrics['changeHeadRequests'] = (metrics['changeHeadRequests'] ?? 0) + 1;
       _sample('changeDiscoveryMicros', watch.elapsedMicroseconds);
       _remoteCollections.addAll(changedWindowsCollections(revisions, heads));

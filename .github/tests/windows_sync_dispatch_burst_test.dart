@@ -21,6 +21,21 @@ class ObservedTimer implements Timer {
 }
 
 void main() {
+  final discovery = WindowsCloudChangeWatch();
+  final discoveryNow = DateTime.utc(2026, 10, 18);
+  if (discovery.hasVerifiedDiscovery) throw StateError('Missing initial catch-up');
+  discovery.succeeded(discoveryNow);
+  if (!discovery.hasVerifiedDiscovery) throw StateError('Healthy listener must suppress duplicate heads');
+  discovery.failed(discoveryNow);
+  if (discovery.hasVerifiedDiscovery || discovery.due(discoveryNow)) {
+    throw StateError('Failed catch-up must retain bounded retry');
+  }
+  discovery.succeeded(discoveryNow);
+  discovery.reset();
+  if (discovery.hasVerifiedDiscovery || !discovery.due(discoveryNow)) {
+    throw StateError('Listener reset must require a fresh catch-up');
+  }
+
   if (windowsIdPublicationTargets({'notices': {'N1'}})!.isNotEmpty) {
     throw StateError('Notice scheduled unrelated ID work');
   }
@@ -29,6 +44,12 @@ void main() {
   })!;
   if (mixed.length != 1 || mixed['studentId']?.single != 'S1') {
     throw StateError('Mixed mutation lost precise student target');
+  }
+
+  discovery.reset(notBefore: discoveryNow.add(const Duration(seconds: 6)));
+  if (discovery.hasVerifiedDiscovery || discovery.due(discoveryNow) ||
+      !discovery.due(discoveryNow.add(const Duration(seconds: 6)))) {
+    throw StateError('Catch-up must wait for cached heads to expire');
   }
 
   var now = DateTime.utc(2026, 10, 11), calls = 0;

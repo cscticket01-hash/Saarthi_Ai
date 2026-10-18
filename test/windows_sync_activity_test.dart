@@ -55,7 +55,9 @@ void main() {
     final now=DateTime.utc(2026,10,17);
     final watch=WindowsCloudChangeWatch();
     expect(watch.due(now),true);
+    expect(watch.hasVerifiedDiscovery, false);
     watch.succeeded(now);
+    expect(watch.hasVerifiedDiscovery, true);
     expect(watch.due(now.add(const Duration(seconds:29))),false);
     expect(watch.due(now.add(const Duration(seconds:30))),true);
     final known={'fee_payments':'fee-1','students_directory':'students-1'};
@@ -66,6 +68,7 @@ void main() {
     expect(watch.nextCheck!.difference(now),const Duration(minutes:15));
     watch.succeeded(now);expect(watch.failures,0);
     watch.reset();expect(watch.due(now),true);
+    expect(watch.hasVerifiedDiscovery, false);
   });
   const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   final db = FirebaseFirestore.instance;
