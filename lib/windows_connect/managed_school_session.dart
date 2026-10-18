@@ -30,9 +30,9 @@ class ManagedSchoolSession {
   /// Metadata changes no credential, registry admission or authorization rule.
   static Map<String,dynamic> deviceRegistrationBody({bool web=kIsWeb,
       String Function()? hostname}) {
-    if(web) return {'action':'managed/device/register','deviceName':'Web browser','deviceOs':'Web','type':'pc'};
+    if(web) return {'action':'managed/device/register','deviceManagementProtocol':2,'deviceName':'Web browser','deviceOs':'Web','type':'pc'};
     final name=(hostname ?? (()=>Platform.localHostname))();
-    return {'action':'managed/device/register','deviceName':name.isNotEmpty&&name.length<=100?name:'Windows PC','deviceOs':'Windows','type':'pc'};
+    return {'action':'managed/device/register','deviceManagementProtocol':2,'deviceName':name.isNotEmpty&&name.length<=100?name:'Windows PC','deviceOs':'Windows','type':'pc'};
   }
   static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) => callForSchool(null, action, body);
   static Future<Map<String,dynamic>> callForSchool(String? expectedSchoolId, String action, Map<String,dynamic> body) async {

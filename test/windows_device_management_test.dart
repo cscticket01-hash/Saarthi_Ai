@@ -141,6 +141,19 @@ void main() {
     expect(light.color,const Color(0xff9caac0));
     await close(tester);
   });
+  testWidgets('enrollment-only list shows real devices but cannot send an unenforced revoke', (tester) async {
+    final actions=<String>[];
+    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(a,b)async {
+      actions.add(a);return {...response(),'canRevoke':false};
+    })));
+    await tester.pumpAndSettle();
+    expect(find.text('School Office PC'),findsOneWidget);
+    expect(find.text('Recently active'),findsOneWidget);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton,'Revoke')).onPressed,isNull);
+    expect(find.textContaining('Device enrollment is active'),findsOneWidget);
+    expect(actions,['managed/device/list']);
+    await close(tester);
+  });
   testWidgets('native page renders desktop and narrow high-DPI layout', (tester) async {
     await tester.runAsync(() async {
       final font=File('C:/Windows/Fonts/segoeui.ttf');

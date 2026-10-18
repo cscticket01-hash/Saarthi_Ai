@@ -26,7 +26,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   int readGeneration=0;
   Timer? refreshTimer, activityTimer;
   String? cacheScope;
-  bool hasSnapshot=false;
+  bool hasSnapshot=false, canRevoke=false;
   String activityFrame='';
   int? serverTime;
   final freshness = Stopwatch();
@@ -126,6 +126,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
         devices = ordered; hasSnapshot=true; error=null;
         current = marked['deviceIdentity'] as String;
         verified = true;
+        canRevoke = response['canRevoke'] != false;
       });
       final scope=cacheScope;
       if(scope!=null) {
@@ -142,14 +143,14 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   Future<void> revoke(Map<String,dynamic> row) async {
     final identity = row['deviceIdentity'];
     final session = ManagedSchoolSession.changed.value;
-    if (!verified || revoking || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
+    if (!verified || !canRevoke || revoking || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
     final approved = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
       title: const Text('Revoke this PC?'),
       content: Text('${row['name'] ?? 'PC'} will lose online school access. An offline PC receives this change when it reconnects; its existing offline authorization policy still applies. Local records will remain preserved.'),
       actions: [TextButton(onPressed: () => Navigator.pop(context,false), child: const Text('Cancel')),
         FilledButton(onPressed: () => Navigator.pop(context,true), child: const Text('Revoke'))],
     ));
-    if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || !verified || revoking || identity==current) return;
+    if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || !verified || !canRevoke || revoking || identity==current) return;
     readGeneration++; // A prior list response cannot undo this mutation.
     setState(() { busy = true; revoking=true; error = null; });
     try {
@@ -199,7 +200,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   const SizedBox(width:8),Expanded(child:Text(recentlyActive(row)?'Recently active':row['status']=='revoked'?'Revoked':'Activity unknown',style:TextStyle(color:recentlyActive(row)?const Color(0xff6ed6aa):muted))),
                 ]);
                 Widget action(Map<String,dynamic> row) => row['status']=='active' && row['deviceIdentity']!=current
-                  ? TextButton(onPressed:revoking || !verified ? null:()=>revoke(row),child:const Text('Revoke'))
+                  ? TextButton(onPressed:revoking || !verified || !canRevoke ? null:()=>revoke(row),child:const Text('Revoke'))
                   : const Text('—',style:TextStyle(color:muted));
                 return Column(children:[
                   if(!compact) const Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[
@@ -212,6 +213,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                 ]);
               }),
             ])),
+          if(verified && !canRevoke) const Padding(padding:EdgeInsets.only(top:12),child:Text("Device enrollment is active. Revoke will be available after this school's device-access setup is completed.",style:TextStyle(color:muted,fontSize:12))),
           const Padding(padding:EdgeInsets.only(top:14),child:Text('Activity is based on the last heartbeat. A missing heartbeat does not confirm a PC is offline.',style:TextStyle(color:muted,fontSize:12))),
         ]),
       )),

@@ -102,3 +102,9 @@ test('management rollout is explicit and does not turn on TEST offline enforceme
  assert.throws(()=>managedFeatureOptions({SAARTHI_DEVICE_MANAGEMENT_ENABLED:'TRUE'},null));
  assert.throws(()=>managedFeatureOptions({SAARTHI_DEVICE_MANAGEMENT_ENABLED:'true',SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true'},null));
 });
+
+test('enrollment rollout is separately opt-in without changing access enforcement',()=>{
+ assert.deepEqual(managedFeatureOptions({SAARTHI_DEVICE_ENROLLMENT_ENABLED:'true'},null),
+  {deviceAccessEnforced:false,studentImportEnabled:false,deviceEnrollmentEnabled:true});
+ for(const value of ['TRUE','1',''])assert.throws(()=>managedFeatureOptions({SAARTHI_DEVICE_ENROLLMENT_ENABLED:value},null));
+});
