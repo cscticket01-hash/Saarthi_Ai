@@ -240,7 +240,11 @@ class WindowsDocumentTemplates {
 
   /// Uses the same selected renderer and the existing durable document outbox.
   /// Only changed person/profile/template inputs create a new immutable package.
-  static Future<void> publishChangedIdCards({Future<Map<String, dynamic>> Function()? readInventory}) async {
+  static Future<void> publishChangedIdCards({
+    Future<Map<String, dynamic>> Function()? readInventory,
+    Map<String, Set<String>>? affectedPeople,
+  }) async {
+    if (affectedPeople != null && affectedPeople.values.every((ids) => ids.isEmpty)) return;
     final db = FirebaseFirestore.instance, origin = db.activeProfileId;
     final identity = await CentralSchoolCloud.saved();
     if (identity['managed'] != true) return;
@@ -273,8 +277,13 @@ class WindowsDocumentTemplates {
       final collection = kind == 'studentId'
           ? 'students_directory'
           : 'teachers_directory';
-      final people = await db.collection(collection).get();
-      for (final doc in people.docs) {
+      final targets = affectedPeople?[kind];
+      if (affectedPeople != null && (targets == null || targets.isEmpty)) continue;
+      final people = targets == null
+          ? (await db.collection(collection).get()).docs
+          : await Future.wait(targets.map((id) => db.collection(collection).doc(id).get()));
+      for (final doc in people) {
+        if (!doc.exists) continue;
         if (db.activeProfileId != origin)
           throw StateError('School changed during ID publication.');
         // Retained file/metadata conflicts must be explicitly reviewed before

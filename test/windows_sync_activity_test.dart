@@ -23,6 +23,19 @@ class _ObservedTimer implements Timer {
 }
 
 void main() {
+  test('notice-only publication excludes unrelated identity work', () {
+    expect(windowsIdPublicationTargets({'notices': {'N1'}}), isEmpty);
+    expect(windowsIdPublicationTargets({
+      'notices': {'N1'}, 'students_directory': {'S2'},
+      'attendance': {'A1'}, 'fees': {'F1'},
+    }), {'studentId': {'S2'}});
+    expect(windowsIdPublicationTargets({'teachers_directory': {'T1'}}),
+        {'teacherId': {'T1'}});
+    expect(windowsIdPublicationTargets({'school_config': {'gps'}}), isEmpty);
+    expect(windowsIdPublicationTargets({'school_config': {'school_profile_cache'}}), isNull);
+    expect(windowsIdPublicationTargets({'school_settings': {'document_templates'}}), isNull);
+    expect(windowsIdPublicationTargets({}, audit: true), isNull);
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
   test('unverified checkpoints do not turn targeted remote changes into repeated full audits', () {
     final attempt=DateTime.utc(2026,10,17);

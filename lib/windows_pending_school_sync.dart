@@ -56,6 +56,8 @@ class WindowsPendingSchoolSync {
         onActivity?.call({
           'queueCollection': '_windows_firebase_outbox',
           'queueId': queueId,
+          'collection': item['collection'],
+          'documentId': item['documentId'],
           'operationId': item['operationId'],
           'schoolId':
               item['schoolId'] ?? db.activeProfileIdentity['schoolSyncId'],

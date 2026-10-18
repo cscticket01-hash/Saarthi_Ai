@@ -95,7 +95,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     pendingWork:
         _hasAutomaticWork ||
         _remoteCollections.isNotEmpty ||
-        _remoteResetPending,
+        _remoteResetPending || _pendingIdInputs.isNotEmpty,
   );
   Future<void> _automaticSync() async {
     if (_automaticDue) await syncNow();
@@ -203,6 +203,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   bool _changeFeedSupported = false;
   int _remoteChangeGeneration = 0;
   bool _remoteResetPending = false;
+  final _pendingIdInputs = <String, Set<String>>{};
+
+  void _noteIdInput(String collection, String id) {
+    if (collection == 'students_directory' || collection == 'teachers_directory' ||
+        collection == 'school_config' && id == 'school_profile_cache' ||
+        collection == 'school_settings' && id == 'document_templates') {
+      (_pendingIdInputs[collection] ??= <String>{}).add(id);
+    }
+  }
   late final _remoteFeed = WindowsRemoteChangeFeed(
     allowedCollections: _firebaseCollections
         .where((c) => c != 'backups')
@@ -317,6 +326,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final school =
         FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
     if (event['schoolId'] != school) return;
+    if (event['stage'] == 'verified' &&
+        event['queueCollection'] == '_windows_firebase_outbox' &&
+        event['collection'] is String && event['documentId'] is String) {
+      _noteIdInput(event['collection'] as String, event['documentId'] as String);
+    }
     if (event['stage'] == 'retry' && event['retryAt'] is int) {
       _nextRetry = DateTime.fromMillisecondsSinceEpoch(event['retryAt'] as int);
       if (event['failureCategory'] == 'quota') _quotaRetryAt = _nextRetry;
@@ -1296,6 +1310,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _lastPull = null;
       _remoteResetPending = false;
       _remoteCollections.clear();
+      _pendingIdInputs.clear();
       _changeWatch.reset();
       _changeHeadsSupported = false;
       _changeFeedSupported = false;
@@ -1649,6 +1664,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     // Even the normal manual Sync Now button transfers changes only.
     // Broad verification requires a separate explicit caller opt-in.
     final integrityAudit = verifyInventory;
+    // Recover interrupted card preparation on idle maintenance, never on a
+    // notice-only mutation. Explicit inventory audits retain full coverage.
+    final auditCards = integrityAudit ||
+        (scheduledCheck && !_hasAutomaticWork && _remoteCollections.isEmpty);
     if (scheduledCheck) {
       _lastIntegrityAttempt = now;
       _schedule.armCheckpoint(_lastIntegrityAttempt);
@@ -1801,28 +1820,52 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         _admitBatch();
         _setCheckingCloud(false);
-        await WindowsDocumentTemplates.publishChangedIdCards();
-        // ID preparation may create credential metadata; drain only those new
-        // durable operations before uploading their published files.
+        final idInputs = {
+          for (final entry in _pendingIdInputs.entries)
+            entry.key: {...entry.value},
+        };
+        _pendingIdInputs.clear();
+        final targets = windowsIdPublicationTargets(idInputs, audit: auditCards);
+        final publishIds = targets == null || targets.isNotEmpty;
         try {
-          _admitBatch();
-          await _pushManagedOutbox();
-        } catch (e) {
-          if (!windowsSyncRecovery(e).independentRecords &&
-              !isRecordSyncConflict(e))
-            rethrow;
-        }
-        await runDocumentAndDownloadStages(
-          documents: () async {
-            _admitBatch();
-            await WindowsBackendBridge.flushDocumentPending(
-              canAdmit: () => !isPaused,
-              respectBackoff: true,
-              onActivity: _recordActivity,
+          if (publishIds) {
+            await WindowsDocumentTemplates.publishChangedIdCards(affectedPeople: targets);
+          }
+          // Only card preparation can create a second set of credential writes.
+          if (publishIds) {
+            try {
+              _admitBatch();
+              await _pushManagedOutbox();
+            } catch (e) {
+              if (!windowsSyncRecovery(e).independentRecords &&
+                  !isRecordSyncConflict(e)) rethrow;
+            }
+          }
+          final documentQueue = await FirebaseFirestore.instance
+              .collection('_windows_document_outbox').get();
+          final ownerChanges = idInputs.containsKey('students_directory') ||
+              idInputs.containsKey('teachers_directory');
+          if (auditCards || ownerChanges || documentQueue.docs.isNotEmpty) {
+            await runDocumentAndDownloadStages(
+              documents: () async {
+                _admitBatch();
+                await WindowsBackendBridge.flushDocumentPending(
+                  canAdmit: () => !isPaused,
+                  respectBackoff: true,
+                  onActivity: _recordActivity,
+                );
+              },
+              download: () async {},
             );
-          },
-          download: () async {},
-        );
+          }
+        } catch (_) {
+          if (_activeProfileId == syncOrigin) {
+            for (final entry in idInputs.entries) {
+              (_pendingIdInputs[entry.key] ??= <String>{}).addAll(entry.value);
+            }
+          }
+          rethrow;
+        }
         _admitBatch();
         await refreshDetails();
         if ((details.value['needsAttention'] as num? ?? 0) > 0)
@@ -1970,7 +2013,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               _failures <= 5) ||
           _rerunRequested ||
           (lastError == null &&
-              (_remoteCollections.isNotEmpty || _remoteResetPending))) {
+              (_remoteCollections.isNotEmpty || _remoteResetPending ||
+                  _pendingIdInputs.isNotEmpty))) {
         final independentMutation =
             _rerunRequested && recoveryDecision?.independentRecords == true;
         _rerunRequested = false;
@@ -2634,6 +2678,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           'deletedIds': deletedIds.toList(),
         }),
       );
+      for (final id in records.keys) {
+        _noteIdInput(collection, id);
+      }
       await progress.set({
         'state': remaining == 0 ? 'verified' : 'needsReview',
         'finishedAt': DateTime.now().millisecondsSinceEpoch,

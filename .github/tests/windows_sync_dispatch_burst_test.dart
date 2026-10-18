@@ -21,6 +21,16 @@ class ObservedTimer implements Timer {
 }
 
 void main() {
+  if (windowsIdPublicationTargets({'notices': {'N1'}})!.isNotEmpty) {
+    throw StateError('Notice scheduled unrelated ID work');
+  }
+  final mixed = windowsIdPublicationTargets({
+    'notices': {'N1'}, 'students_directory': {'S1'}, 'fees': {'F1'},
+  })!;
+  if (mixed.length != 1 || mixed['studentId']?.single != 'S1') {
+    throw StateError('Mixed mutation lost precise student target');
+  }
+
   var now = DateTime.utc(2026, 10, 11), calls = 0;
   final timers = <ObservedTimer>[];
   final dispatch = WindowsSyncDispatch(
