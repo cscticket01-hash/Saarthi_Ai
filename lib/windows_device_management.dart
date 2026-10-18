@@ -36,7 +36,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
     if(age<0) return deviceTimeLabel(seen);
     if(age<60000) return 'Just now';
     if(age<3600000) return '${age~/60000} min ago';
-    if(age<86400000) return '${age~/3600000} hours ago';
+    if(age<86400000) return '${age~/3600000} ${age<7200000 ? 'hour' : 'hours'} ago';
     if(age<172800000) return 'Yesterday';
     return deviceTimeLabel(seen);
   }
@@ -174,7 +174,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   ])),
                   for(final row in devices) Container(padding:const EdgeInsets.symmetric(horizontal:20,vertical:14),decoration:const BoxDecoration(border:Border(top:BorderSide(color:Color(0xff26364f)))),child:compact
                     ? Column(crossAxisAlignment:CrossAxisAlignment.start,children:[name(row),const SizedBox(height:12),activity(row),const SizedBox(height:6),Text('Last seen: ${lastSeen(row)}',style:const TextStyle(color:muted)),Align(alignment:Alignment.centerRight,child:action(row))])
-                    : Row(children:[Expanded(flex:4,child:name(row)),Expanded(flex:3,child:activity(row)),Expanded(flex:3,child:Text(lastSeen(row),style:const TextStyle(color:muted))),SizedBox(width:80,child:action(row))])),
+                    : Row(children:[Expanded(flex:4,child:Padding(padding:const EdgeInsets.only(right:16),child:name(row))),Expanded(flex:3,child:activity(row)),Expanded(flex:3,child:Text(lastSeen(row),style:const TextStyle(color:muted))),SizedBox(width:80,child:action(row))])),
                   if(devices.isEmpty) Padding(padding:const EdgeInsets.all(24),child:Text(busy ? 'Loading devices…' : 'No verified device list available.',style:const TextStyle(color:muted))),
                 ]);
               }),
