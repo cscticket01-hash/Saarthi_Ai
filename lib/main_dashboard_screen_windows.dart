@@ -486,7 +486,14 @@ class WindowsLicenseStore {
 
   static Future<void> save(String key) async {
     final normalized = key.trim();
-    if((await CentralSchoolCloud.saved())['managed']==true){await ManagedSchoolSession.call('managed/licence/activate',{'key':normalized});ManagedSchoolSession.changed.value++;}
+    final managed = (await CentralSchoolCloud.saved())['managed'] == true;
+    if(managed){
+      await ManagedSchoolSession.call('managed/licence/activate',{'key':normalized});
+      // Refresh the full signed school/device session before signalling reload;
+      // an old cached unactivated session must not undo the newly verified lock.
+      final verified = await ManagedSchoolSession.call('managed/session');
+      await WindowsPlatformClient.instance.applyManagedActivation(verified);
+    }
     else {await WindowsPlatformClient.instance.refresh();await WindowsPlatformClient.instance.activate(normalized);}
     await _secure.write(key: _windowsLicenseKeyStorageKey, value: normalized);
     await _secure.write(
@@ -497,6 +504,7 @@ class WindowsLicenseStore {
       key: _windowsLicenseSavedAtStorageKey,
       value: DateTime.now().toIso8601String(),
     );
+    if (managed) ManagedSchoolSession.changed.value++;
   }
 
   static Future<void> clear() async {
@@ -554,6 +562,19 @@ class _WindowsLicenseSettingsPanelState
     });
   }
 
+  bool get _licenceLocked {
+    final licence = WindowsPlatformClient.instance.state.value;
+    return licence.allowed && licence.status == 'licensed' &&
+        (!_centralManaged || licence.activated) &&
+        licence.expiresAt.isAfter(DateTime.now());
+  }
+
+  bool get _renewalRequired {
+    final licence = WindowsPlatformClient.instance.state.value;
+    return licence.status == 'expired' || licence.status == 'licensed' &&
+        !licence.expiresAt.isAfter(DateTime.now());
+  }
+
   String _maskedKey(String key) {
     if (key.length <= 8) return key;
     return '${key.substring(0, 4)}••••${key.substring(key.length - 4)}';
@@ -562,24 +583,24 @@ class _WindowsLicenseSettingsPanelState
   String _statusText() {
     final real=WindowsPlatformClient.instance.state.value;
     if (_centralManaged) return real.status=='licensed' && real.allowed && real.activated ? 'License Activated ✓' : real.status=='trial' ? 'Trial active' : real.allowed && !real.activated ? 'License activation required' : 'License ${real.status}';
-    if (_savedKey.isEmpty) return 'License Key not added';
     final state = WindowsPlatformClient.instance.state.value;
     if (state.allowed && state.status == 'licensed') return 'License Active';
+    if (_savedKey.isEmpty) return 'License Key not added';
     if (!state.allowed) return 'License Expired';
     return 'Key saved — online verification pending';
   }
 
   Color _statusColor() {
     if (_centralManaged) return WindowsPlatformClient.instance.state.value.allowed?const Color(0xFF00D9A5):Colors.redAccent;
-    if (_savedKey.isEmpty) return Colors.white54;
     final state = WindowsPlatformClient.instance.state.value;
     if (state.allowed && state.status == 'licensed') return const Color(0xFF00D9A5);
+    if (_savedKey.isEmpty) return Colors.white54;
     if (!state.allowed) return Colors.redAccent;
     return Colors.orangeAccent;
   }
 
   Future<void> _save() async {
-    if (_saving) return;
+    if (_saving || _licenceLocked) return;
     final key = _licenseKey.text.trim();
     if (key.length < 8) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -621,7 +642,7 @@ class _WindowsLicenseSettingsPanelState
   }
 
   Future<void> _clear() async {
-    if (_saving) return;
+    if (_saving || _licenceLocked) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -642,7 +663,7 @@ class _WindowsLicenseSettingsPanelState
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true || _licenceLocked) return;
 
     if (!mounted) return;
     setState(() => _saving = true);
@@ -745,25 +766,30 @@ class _WindowsLicenseSettingsPanelState
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Saved Key',
+                        Text(_licenceLocked ? 'School licence' : 'Saved Key',
                             style:
                                 TextStyle(color: Colors.white38, fontSize: 10)),
                         const SizedBox(height: 3),
                         SelectableText(
-                          _savedKey.isEmpty ? 'No key saved on this device' : _maskedKey(_savedKey),
+                          _licenceLocked ? 'Licence verified and locked' :
+                              _savedKey.isEmpty ? 'No key saved on this device' : _maskedKey(_savedKey),
                           style: const TextStyle(
                               color: Colors.white, fontWeight: FontWeight.w700),
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          _savedKey.isEmpty ? 'The school licence status is shown above.' : 'Saved: ${_savedAtText()}',
+                          _licenceLocked ? 'Renewal requires a new key from the developer.' :
+                              _savedKey.isEmpty ? 'The school licence status is shown above.' : 'Saved: ${_savedAtText()}',
                           style: const TextStyle(
                               color: Colors.white38, fontSize: 10),
                         ),
                       ],
                     ),
                   ),
-                  IconButton(
+                  if (_licenceLocked)
+                    const Icon(Icons.lock_rounded, key: ValueKey('windows-licence-locked'),
+                        color: Color(0xFF00D9A5))
+                  else IconButton(
                     key: const ValueKey('windows-licence-remove'),
                     tooltip: WindowsUiLanguage.translate('Remove key'),
                     onPressed: _saving ? null : _clear,
@@ -775,15 +801,20 @@ class _WindowsLicenseSettingsPanelState
             ),
             const SizedBox(height: 12),
           ],
-          if (!_centralManaged || WindowsPlatformClient.instance.state.value.status != 'licensed' || !WindowsPlatformClient.instance.state.value.allowed || !WindowsPlatformClient.instance.state.value.activated) ...[
+          if (_licenceLocked)
+            const Text('Licence locked until renewal.',
+                style: TextStyle(color: Color(0xFF00D9A5), fontSize: 12)),
+          if (!_licenceLocked) ...[
+          if (_renewalRequired) const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text('Licence expired. Enter the new renewal key issued by the developer.'),
+          ),
           TextField(
             controller: _licenseKey,
             textCapitalization: TextCapitalization.characters,
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
-              labelText: _savedKey.isEmpty
-                  ? 'Enter Licensing Key'
-                  : 'Replace Licensing Key',
+              labelText: _renewalRequired ? 'New renewal licence key' : 'Enter Licensing Key',
               prefixIcon: const Icon(Icons.key_rounded),
               filled: true,
               fillColor: const Color(0xFF0F191F),
