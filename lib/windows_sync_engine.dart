@@ -39,6 +39,7 @@ import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_runtime_flags.dart';
 import 'windows_sync_recovery.dart';
+import 'windows_sync_comparison.dart';
 import 'sync_recovery_policy.dart';
 import 'windows_platform_client.dart';
 
@@ -352,7 +353,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _nextRetry = DateTime.fromMillisecondsSinceEpoch(event['retryAt'] as int);
       if (event['failureCategory'] == 'quota') _quotaRetryAt = _nextRetry;
     }
-    if (event['stage'] == 'automaticRepair' ||
+    if (event['stage'] == 'duplicateReconciled' || event['stage'] == 'automaticRepair' ||
         (event['stage'] == 'verified' &&
             _activity.any(
               (previous) =>
@@ -363,9 +364,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       recoveryHistory.add({
         'atUtc': DateTime.now().toUtc().toIso8601String(),
         'category': event['failureCategory'] ?? 'recoverable',
-        'outcome': event['stage'] == 'verified'
+        'outcome': event['stage'] == 'duplicateReconciled'
+            ? 'duplicate_reconciled'
+            : event['stage'] == 'verified'
             ? 'repaired_and_verified'
             : 'safe_retry_reopened',
+        if (event['stage'] == 'duplicateReconciled') 'attempt': 1,
       });
       unawaited(
         _persistRepairHistory(FirebaseFirestore.instance.activeProfileId),
@@ -2661,6 +2665,23 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               queued.data(),
               data,
             );
+            if (automaticDuplicateReadback(queued.data(), data)) {
+              final history = (await db.collection('_windows_sync_conflict_history')
+                  .doc(queued.data()['operationId'] as String).get()).data();
+              if (db.activeProfileId != origin)
+                throw StateError('School changed after duplicate reconciliation.');
+              if (history?['resolution'] == 'automatic identical authenticated readback' &&
+                  history?['verifiedCloud'] is Map &&
+                  history!['verifiedCloud']['_syncRevision'] == data['_syncRevision']) {
+                _recordActivity({
+                  'schoolId': school, 'queueCollection': '_windows_firebase_outbox',
+                  'queueId': queued.id, 'operationId': queued.data()['operationId'],
+                  'collection': collection, 'documentId': entry.key,
+                  'stage': 'duplicateReconciled', 'failureCategory': 'verifiedDuplicate',
+                  'at': DateTime.now().millisecondsSinceEpoch,
+                });
+              }
+            }
           }
           incoming[entry.key] = data;
         }

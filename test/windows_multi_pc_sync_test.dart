@@ -204,6 +204,8 @@ void main() {
     expect((await rig.db.collection('school_notices').doc('N1').get()).data()?['_syncRevision'],cloud['_syncRevision']);
     final archived = (await rig.db.collection('_windows_sync_conflict_history').get()).docs.single.data();
     expect(archived['operationId'],original['operationId']);
+    expect(WindowsSyncEngine.instance.recoveryHistory.any((e) =>
+      e['category']=='verifiedDuplicate' && e['outcome']=='duplicate_reconciled'),true);
     await rig.open('pc2');
     expect(await rig.queue(),isEmpty);
 
