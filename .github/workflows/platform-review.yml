@@ -229,9 +229,9 @@ jobs:
         PY
     - run: flutter pub get
     - name: Analyze Settings-only presentation
-      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_settings_design.dart lib/windows_settings_panel.dart test/windows_settings_design_test.dart
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_settings_design.dart lib/windows_settings_panel.dart lib/windows_device_management.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart
     - name: Verify actual Windows Settings and render responsive review screenshots
-      run: flutter test --concurrency=1 test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144
+      run: flutter test --concurrency=1 test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -239,6 +239,7 @@ jobs:
         path: |
           build/settings-preview
           build/ui-previews
+          build/device-preview
     - name: SQLite migration, integrity, atomicity and production API regression
       run: |
         flutter test --concurrency=1 test/windows_sqlite_storage_test.dart test/windows_sqlite_api_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true

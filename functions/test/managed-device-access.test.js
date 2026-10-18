@@ -5,9 +5,9 @@ const {createManagedDeviceAccess,verifyOfflineDeviceLease,MAX_OFFLINE_MS}=requir
 const {generateDeviceCredential,createManagedDeviceRegistry}=require('../managed-device-registry');
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),keys=generateKeyPairSync('ed25519');
 const hash=value=>createHash('sha256').update(value).digest('hex');
-function fixture(enforced=true){let time=1000000,tail=Promise.resolve();const rows=new Map(),audit=[];
+function fixture(enforced=true,managementEnabled=false){let time=1000000,tail=Promise.resolve();const rows=new Map(),audit=[];
  const store={transaction(school,work){const result=tail.then(async()=>{const change=await work(rows.has(school)?structuredClone(rows.get(school)):null);rows.set(school,structuredClone(change.state));if(change.audit)audit.push(change.audit);return change.result;});tail=result.catch(()=>{});return result;}};
- const access=createManagedDeviceAccess({store,enforced,offlinePrivateKey:keys.privateKey,now:()=>time});
+ const access=createManagedDeviceAccess({store,enforced,managementEnabled,offlinePrivateKey:keys.privateKey,now:()=>time});
  const identity={schoolId:A,uid:'school-admin',authenticatedAt:time};
  const entitlement={allowed:true,expiresAt:time+86400000};
  const proof=n=>({'x-vidya-device-id':String(n).padStart(32,'0'),'x-vidya-device-credential':generateDeviceCredential()});
@@ -80,4 +80,23 @@ test('successful managed session includes signed offline authorization only in e
   deviceIdentity:session.device.deviceIdentity,generationHash:session.device.generationHash,now:f.time}).expiresAt,session.offlineExpiresAt);
  const legacy=await fixture(false).call('managed/session',{});
  assert.equal(legacy.deviceEnforced,false);assert.equal(legacy.offlineLease,undefined);
+});
+
+test('management mode preserves offline policy but checks registration and revocation online',async()=>{
+ const f=fixture(false,true),one=f.proof(1),two=f.proof(2);
+ const first=(await f.call('managed/device/register',one)).result;
+ assert.equal(first.deviceManaged,true);assert.equal(first.deviceEnforced,false);
+ assert.equal(first.offlineLease,undefined);
+ const second=(await f.call('managed/device/register',two)).result;
+ const session=await f.call('managed/session',one);
+ assert.equal(session.deviceManaged,true);assert.equal(session.deviceEnforced,false);
+ const list=(await f.call('managed/device/list',one)).result;
+ assert.equal(list.devices.length,2);assert.equal(list.devices.filter(d=>d.current).length,1);
+ assert.equal(list.deviceLimit,5);assert.equal(list.serverTime,f.time());
+ await assert.rejects(f.call('managed/presence',{}),{code:'DEVICE_PROOF_REQUIRED'});
+ await f.call('managed/device/revoke',one,{targetDeviceIdentity:second.device.deviceIdentity});
+ for(const action of ['managed/session','managed/presence','managed/records']) {
+  await assert.rejects(f.call(action,two),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ }
+ assert.equal((await f.call('managed/device/list',one)).result.devices.filter(d=>d.status==='active').length,1);
 });
