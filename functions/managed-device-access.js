@@ -9,7 +9,7 @@ function header(req,key){const value=req?.headers?.[key];if(typeof value!=='stri
  * a request's asserted identity here. Mobile/developer routes run before this.
  * Enabling enforcement must be an explicit TEST-approved server configuration.
  */
-function createManagedDeviceAccess({store,enforced=false,offlinePrivateKey,now=Date.now}){
+function createManagedDeviceAccess({store,enforced=false,managementEnabled=false,offlinePrivateKey,now=Date.now}){
  let key;
  if(enforced){if(!offlinePrivateKey)throw new Error('Offline device signing key required for enforced rollout');
   key=typeof offlinePrivateKey==='string'||Buffer.isBuffer(offlinePrivateKey)?createPrivateKey(offlinePrivateKey):offlinePrivateKey;
@@ -26,28 +26,30 @@ function createManagedDeviceAccess({store,enforced=false,offlinePrivateKey,now=D
   // Independent Android school-session and developer protocols are preserved.
   if(action==='managed/mobile'||typeof action!=='string'||!action.startsWith('managed/'))return {handled:false,mode:'non_pc'};
   const auth=context(identity,body),isDeviceAction=action.startsWith('managed/device/');
-  if(!enforced){if(isDeviceAction)reject(503,'DEVICE_ROLLOUT_DISABLED');return {handled:false,mode:'legacy_unenforced',deviceEnforced:false};}
+  if(!enforced&&!managementEnabled){if(isDeviceAction)reject(503,'DEVICE_ROLLOUT_DISABLED');return {handled:false,mode:'legacy_unenforced',deviceEnforced:false};}
   if(entitlement?.allowed!==true||Number(entitlement.expiresAt)<=now())reject(403,'DEVICE_ENTITLEMENT_EXPIRED');
+  const mode=enforced?'enforced':'managed';
+  const access=device=>enforced?{deviceEnforced:true,...lease(auth,device,entitlement)}:{deviceManaged:true,deviceEnforced:false,device};
   const proof={deviceId:header(req,'x-vidya-device-id'),credential:header(req,'x-vidya-device-credential')};
   const registry=createManagedDeviceRegistry({store,schoolId:auth.schoolId,now,requireFreshAuthentication:true});
   if(action==='managed/device/register'){
    // Device retries present the same locally persisted credential, not a newly
    // generated secret. A revoked device must reauthenticate and use a new one.
    const device=await registry.register(auth,{...proof,name:body.deviceName,os:body.deviceOs});
-   return {handled:true,mode:'enforced',result:{success:true,schoolId:auth.schoolId,deviceEnforced:true,...lease(auth,device,entitlement)}};
+   return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,...access(device)}};
   }
   // Every protected request reads the registry transactionally: no cached
   // presence/session/offline lease may authorize an online server request.
   const device=await registry.verify(proof);
-  if(action==='managed/device/check')return {handled:true,mode:'enforced',result:{success:true,schoolId:auth.schoolId,deviceEnforced:true,...lease(auth,device,entitlement)}};
-  if(action==='managed/device/list')return {handled:true,mode:'enforced',result:{success:true,schoolId:auth.schoolId,devices:(await registry.list(auth)).map(row=>({...row,current:row.deviceIdentity===device.deviceIdentity}))}};
+  if(action==='managed/device/check')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,...access(device)}};
+  if(action==='managed/device/list')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,serverTime:now(),deviceLimit:5,recentActivityWindowMs:120000,devices:(await registry.list(auth)).map(row=>({...row,current:row.deviceIdentity===device.deviceIdentity}))}};
   if(action==='managed/device/revoke'){
    const target=await registry.revoke(auth,{currentDeviceId:proof.deviceId,currentCredential:proof.credential,targetDeviceIdentity:body.targetDeviceIdentity});
-   return {handled:true,mode:'enforced',result:{success:true,schoolId:auth.schoolId,device:target}};
+   return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,device:target}};
   }
   if(isDeviceAction)reject(400,'UNKNOWN_DEVICE_ACTION');
-  if(action==='managed/session')return {handled:false,mode:'enforced',deviceEnforced:true,...lease(auth,device,entitlement)};
-  return {handled:false,mode:'enforced',deviceEnforced:true,device};
+  if(action==='managed/session')return {handled:false,mode,...access(device)};
+  return {handled:false,mode,deviceManaged:managementEnabled,deviceEnforced:enforced,device};
  }};
 }
 /** Pure signature/context check for independently cached OFFLINE access only.

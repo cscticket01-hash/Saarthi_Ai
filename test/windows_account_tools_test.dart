@@ -27,6 +27,14 @@ void main() {
     expect(()=>ManagedSchoolSession.verifyDeviceRegistration({'success':true},'identity'),throwsStateError);
     expect(()=>ManagedSchoolSession.verifyDeviceRegistration({'success':true,'deviceEnforced':false},'identity'),throwsStateError);
   });
+  test('Management-only registration keeps offline enforcement explicit', () {
+    final id='a' * 64;
+    final result=<String,dynamic>{'success':true,'deviceManaged':true,'deviceEnforced':false,
+      'schoolId':'vs-' + 'b' * 32,'device':{'deviceIdentity':id,'status':'active','generationHash':'c' * 64,'authorizedAt':1800000000000}};
+    expect(()=>ManagedSchoolSession.verifyDeviceRegistration(result,id),returnsNormally);
+    expect(()=>ManagedSchoolSession.verifyDeviceRegistration({...result,'deviceEnforced':true},id),throwsStateError);
+    expect(()=>ManagedSchoolSession.verifyDeviceRegistration(result,'d' * 64),throwsStateError);
+  });
   test('School credential rotation preserves other school and install identity', () async {
     const endpoint='https://test.example/school-cloud';
     final a=await ManagedDeviceCredentials.proof(accountUid:'school-a',endpoint:endpoint);

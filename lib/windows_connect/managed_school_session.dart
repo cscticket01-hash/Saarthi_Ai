@@ -119,10 +119,10 @@ class ManagedSchoolSession {
   }
   static void verifyDeviceRegistration(Map<String,dynamic> result, String deviceIdentity) {
     final device=result['device'];
-    if(result['success']!=true || result['deviceEnforced']!=true || !validSchoolId(result['schoolId']?.toString()??'') ||
+    if(result['success']!=true || (result['deviceEnforced']!=true && !(result['deviceManaged']==true && result['deviceEnforced']==false)) || !validSchoolId(result['schoolId']?.toString()??'') ||
         device is! Map || device['deviceIdentity']!=deviceIdentity || device['status']!='active' ||
         device['generationHash'] is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(device['generationHash']) ||
-        device['authorizedAt'] is! int || result['offlineLease'] is! String) {
+        device['authorizedAt'] is! int || (result['deviceEnforced']==true && result['offlineLease'] is! String)) {
       throw StateError('PC registration proof could not be verified. Existing data remains preserved.');
     }
   }

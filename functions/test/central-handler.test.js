@@ -95,3 +95,10 @@ test('new managed rollout flags are strict and isolated TEST only',()=>{
   SAARTHI_TEST_STUDENT_IMPORT_ENABLED:'true',SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY:'synthetic-key'},school),
   {deviceAccessEnforced:true,studentImportEnabled:true,deviceOfflinePrivateKey:'synthetic-key'});
 });
+
+test('management rollout is explicit and does not turn on TEST offline enforcement',()=>{
+ assert.deepEqual(managedFeatureOptions({SAARTHI_DEVICE_MANAGEMENT_ENABLED:'true'},null),
+  {deviceAccessEnforced:false,studentImportEnabled:false,deviceManagementEnabled:true});
+ assert.throws(()=>managedFeatureOptions({SAARTHI_DEVICE_MANAGEMENT_ENABLED:'TRUE'},null));
+ assert.throws(()=>managedFeatureOptions({SAARTHI_DEVICE_MANAGEMENT_ENABLED:'true',SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true'},null));
+});
