@@ -1831,6 +1831,33 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           if (publishIds) {
             await WindowsDocumentTemplates.publishChangedIdCards(affectedPeople: targets);
           }
+          // Only card preparation can create a second set of credential writes.
+          if (publishIds) {
+            try {
+              _admitBatch();
+              await _pushManagedOutbox();
+            } catch (e) {
+              if (!windowsSyncRecovery(e).independentRecords &&
+                  !isRecordSyncConflict(e)) rethrow;
+            }
+          }
+          final documentQueue = await FirebaseFirestore.instance
+              .collection('_windows_document_outbox').get();
+          final ownerChanges = idInputs.containsKey('students_directory') ||
+              idInputs.containsKey('teachers_directory');
+          if (auditCards || ownerChanges || documentQueue.docs.isNotEmpty) {
+            await runDocumentAndDownloadStages(
+              documents: () async {
+                _admitBatch();
+                await WindowsBackendBridge.flushDocumentPending(
+                  canAdmit: () => !isPaused,
+                  respectBackoff: true,
+                  onActivity: _recordActivity,
+                );
+              },
+              download: () async {},
+            );
+          }
         } catch (_) {
           if (_activeProfileId == syncOrigin) {
             for (final entry in idInputs.entries) {
@@ -1838,33 +1865,6 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             }
           }
           rethrow;
-        }
-        // Only card preparation can create a second set of credential writes.
-        if (publishIds) {
-          try {
-            _admitBatch();
-            await _pushManagedOutbox();
-          } catch (e) {
-            if (!windowsSyncRecovery(e).independentRecords &&
-                !isRecordSyncConflict(e)) rethrow;
-          }
-        }
-        final documentQueue = await FirebaseFirestore.instance
-            .collection('_windows_document_outbox').get();
-        final ownerChanges = idInputs.containsKey('students_directory') ||
-            idInputs.containsKey('teachers_directory');
-        if (auditCards || ownerChanges || documentQueue.docs.isNotEmpty) {
-          await runDocumentAndDownloadStages(
-            documents: () async {
-              _admitBatch();
-              await WindowsBackendBridge.flushDocumentPending(
-                canAdmit: () => !isPaused,
-                respectBackoff: true,
-                onActivity: _recordActivity,
-              );
-            },
-            download: () async {},
-          );
         }
         _admitBatch();
         await refreshDetails();
