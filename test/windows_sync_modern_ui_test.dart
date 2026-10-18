@@ -184,6 +184,7 @@ void main() {
       RepaintBoundary(
         key: key,
         child: MaterialApp(
+          debugShowCheckedModeBanner: false,
           theme: ThemeData(brightness: Brightness.dark,
             fontFamily: Platform.isWindows ? 'Segoe UI' : 'Preview'),
           home: page(),
