@@ -57,12 +57,16 @@ void main() {
     ]) {
       await tester.binding.setSurfaceSize(spec.$2);
       final key = GlobalKey();
-      await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(useMaterial3: true).copyWith(
+      final navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(MaterialApp(navigatorKey: navigator, theme: ThemeData.dark(useMaterial3: true).copyWith(
         textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Roboto')),
         builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(
           textScaler: TextScaler.linear(spec.$4)), child: child!),
-        home: RepaintBoundary(key: key, child: const SettingsScreen())));
+        home: const Scaffold()));
+      navigator.currentState!.push(MaterialPageRoute<void>(builder: (_) =>
+        RepaintBoundary(key: key, child: const SettingsScreen())));
       await tester.pumpAndSettle();
+      expect(find.byType(BackButton), findsOneWidget);
       expect(find.byType(WindowsSettingsCard), findsNWidgets(2));
       expect(find.text('Windows master app update • Current v$windowsAppVersion'), findsOneWidget);
       expect(find.text('Sync Status • Synced'), findsOneWidget);
