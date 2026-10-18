@@ -470,6 +470,7 @@ function VS_managedRecord(b) {
   try{return VS_managedRecordUnlocked(b);}finally{lock.releaseLock();}
 }
 function VS_managedRecordUnlocked(b,readContext) {
+  if(b.operation==='read'&&b.knownRecordRevisions!==undefined)return VS_managedIncrementalRecords(b,readContext);
   const store=VS_managedSheet(b.collection,readContext), school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
   if(b.operation==='read') {
     VS_recoverMissingBackupRows(b.collection,store);
@@ -874,19 +875,12 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',scriptBundleVersion:'2026-10-17.3',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,scriptBundleVersion:'2026-10-18.1',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
-    else if(b.action==='managed_attendance_batch'){
-      if(!Array.isArray(b.operations)||b.operations.length>25)throw new Error('Invalid attendance batch');
-      result={acknowledgements:b.operations.map(op=>{
-        if(!/^[a-f0-9]{64}$/.test(op.operationId||''))throw new Error('Invalid attendance operation');
-        try{VS_managedMobile(Object.assign({},op.request,{action:'mobile_mark_attendance',operationId:op.operationId}),b.lease);return {operationId:op.operationId,success:true};}
-        catch(e){const authoritative=/School (session expired|record or ID|licence|is closed)|already recorded|Attendance can be marked|own school ID|Accurate school location/.test(e.message||'');return {operationId:op.operationId,success:false,authoritative:authoritative};}
-      })};
-    }
+    else if(b.action==='managed_attendance_batch'){result=VS_managedAttendanceBatch(b);}
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
     else if(['managed_import_sheet_setup','managed_import_sheet_read'].indexOf(b.action)>=0){result=VS_importSheet(b);}
     else if(b.action==='managed_records'){result=VS_managedRecord(b);}
@@ -1264,7 +1258,8 @@ function VS_managedDelta(b) {
     let recoveryBackup=null;if(VS_testBackupRecoveryEnabled()&&p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP')){
       try{recoveryBackup=VS_verifiedRecordBackup(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP'));}catch(_){p.setProperty('VS_LAST_RECORD_RECOVERY',JSON.stringify({at:Date.now(),verified:false,needsReview:true,code:'BACKUP_INTEGRITY_UNVERIFIED'}));}
     }
-    b.collections.forEach(col=>{if(VS_sheetLifecycleEnabled()){changes[col]=VS_managedRecordUnlocked({operation:'read',collection:col,syncProtocol:2,knownRevision:b.knownRevisions&&b.knownRevisions[col]},readContext);return;}if(VS_jsonEnabled())VS_jsonStore(col);if(recoveryBackup&&recoveryBackup.records[col])VS_recoverMissingBackupRows(col,VS_managedSheet(col),recoveryBackup);const revision=p.getProperty('VS_RECORD_REV_'+col)||'legacy';if(col==='students_directory'&&b.knownRevisions&&b.knownRevisions[col]===revision)VS_refreshStudentReadable(VS_managedSheet(col));changes[col]=b.knownRevisions&&b.knownRevisions[col]===revision?{records:{},unchanged:true,collectionRevision:revision,syncProtocol:2}:VS_managedRecordUnlocked({operation:'read',collection:col,syncProtocol:2});});
+    if(b.knownRecordRevisions!==undefined)VS_validateRecordCheckpoints(b.knownRecordRevisions,b.collections);
+    b.collections.forEach(col=>{if(VS_sheetLifecycleEnabled()){changes[col]=VS_managedRecordUnlocked({operation:'read',collection:col,syncProtocol:2,knownRevision:b.knownRevisions&&b.knownRevisions[col],...(b.knownRecordRevisions&&Object.prototype.hasOwnProperty.call(b.knownRecordRevisions,col)?{knownRecordRevisions:b.knownRecordRevisions[col]}:{})},readContext);return;}if(VS_jsonEnabled())VS_jsonStore(col);if(recoveryBackup&&recoveryBackup.records[col])VS_recoverMissingBackupRows(col,VS_managedSheet(col),recoveryBackup);const revision=p.getProperty('VS_RECORD_REV_'+col)||'legacy';if(col==='students_directory'&&b.knownRevisions&&b.knownRevisions[col]===revision)VS_refreshStudentReadable(VS_managedSheet(col));changes[col]=b.knownRevisions&&b.knownRevisions[col]===revision?{records:{},unchanged:true,collectionRevision:revision,syncProtocol:2}:VS_managedRecordUnlocked({operation:'read',collection:col,syncProtocol:2});});
     if(JSON.stringify(changes).length>20*1024*1024)throw new Error('Delta export exceeds safe limit');return {syncProtocol:2,changes:changes};
   }finally{lock.releaseLock();}
 }
@@ -1473,6 +1468,9 @@ function VS_saveRecordHead(store,item){
   if(!VS_sheetLifecycleEnabled()||store.json||store.backup)return;
   const d=item.data,sheet=VS_syncStateSheet(true,store.collection),old=VS_recordHead(store.collection,item.id);
   const head={schoolId:store.school,collection:store.collection,id:item.id,revision:d._syncRevision||'',operationId:d._syncOperationId||'',requestHash:d._syncRequestHash||'',deleted:d._syncDeleted===true,generation:d.mobileStableId||d._syncDeletedOwner||'',retiredGenerations:d._syncRetiredStudentGenerations||[],payloadHash:VS_layoutHash(d)};
+  // A verified identical head already is the receipt after a lost ACK.
+  // Avoid rewriting the sync-state row and flushing on every safe retry.
+  if(old&&VS_layoutHash(old.head)===VS_layoutHash(head))return;
   const row=old?old.row:Math.max(2,sheet.getLastRow()+1);if(row>sheet.getMaxRows())sheet.insertRowsAfter(sheet.getMaxRows(),100);
   sheet.getRange(row,1,1,2).setValues([[VS_layoutHash([store.collection,item.id]),JSON.stringify(head)]]);SpreadsheetApp.flush();
   if(VS_layoutHash(VS_recordHead(store.collection,item.id).head)!==VS_layoutHash(head))throw new Error('Sync state verification failed');
@@ -1552,7 +1550,7 @@ function VS_seedRecordHeads(store,records,readContext){
   if(!VS_sheetLifecycleEnabled()||store.json||store.partitions)return;
   const p=PropertiesService.getScriptProperties(),key='VS_HEAD_SEEDED_'+store.collection+':'+p.getProperty('VS_MANAGED_SHEET_ID');
   if(p.getProperty(key)==='1')return;
-  const ids=Object.keys(records);if(!ids.length)return;
+  const ids=Object.keys(records);if(!ids.length){p.setProperty(key,'1');return;}
   const sheet=VS_syncStateSheet(true,store.collection,readContext),last=sheet.getLastRow(),known={};
   if(last>=2)sheet.getRange(2,1,last-1,2).getValues().forEach(row=>{if(row[0])known[row[0]]=true;});
   const rows=[];ids.forEach(id=>{const d=records[id],hash=VS_layoutHash([store.collection,id]);if(known[hash]||!d._syncRevision)return;rows.push([hash,JSON.stringify({schoolId:store.school,collection:store.collection,id:id,revision:d._syncRevision,operationId:d._syncOperationId||'',requestHash:d._syncRequestHash||'',deleted:d._syncDeleted===true,generation:d.mobileStableId||d._syncDeletedOwner||'',retiredGenerations:d._syncRetiredStudentGenerations||[],payloadHash:VS_layoutHash(d)})]);});
@@ -1619,4 +1617,69 @@ function VS_reusableStudentChild(b,existing){
   const owner=existing.data._syncDeletedOwner;if(owner===b.data.personId)return false;
   const parent=VS_sheetItem(VS_managedSheet('students_directory'),b.data.studentId);
   return !!(parent&&!parent.data._syncDeleted&&parent.data.mobileStableId===b.data.personId&&(owner||parent.data.replacesStudentGeneration));
+}
+
+// Return verified per-operation receipts before the broker's 90-second deadline.
+// Unstarted operations have no receipt: the durable central queue retains them.
+// This bounds admission of additional work, not the duration of a Google RPC.
+function VS_managedAttendanceBatch(b) {
+  if(!Array.isArray(b.operations)||b.operations.length>25)throw new Error('Invalid attendance batch');
+  const seen=new Set();
+  b.operations.forEach(op=>{
+    if(!op||!/^[a-f0-9]{64}$/.test(op.operationId||'')||seen.has(op.operationId)||
+       !op.request||typeof op.request!=='object'||Array.isArray(op.request))throw new Error('Invalid attendance operation');
+    seen.add(op.operationId);
+  });
+  const acknowledgements=[],started=Date.now(),budget=45000;let longest=0;
+  for(const op of b.operations){
+    const elapsed=Date.now()-started;
+    if(acknowledgements.length&&(elapsed>=budget||elapsed+longest>=budget))break;
+    const before=Date.now();
+    try{VS_managedMobile(Object.assign({},op.request,{action:'mobile_mark_attendance',operationId:op.operationId}),b.lease);acknowledgements.push({operationId:op.operationId,success:true});}
+    catch(e){const authoritative=/School (session expired|record or ID|licence|is closed)|already recorded|Attendance can be marked|own school ID|Accurate school location/.test(e.message||'');acknowledgements.push({operationId:op.operationId,success:false,authoritative:authoritative});}
+    longest=Math.max(longest,Date.now()-before);
+  }
+  return {acknowledgements:acknowledgements,deferredCount:b.operations.length-acknowledgements.length,partial:acknowledgements.length<b.operations.length};
+}
+
+// Incremental checkpoints contain revision metadata only, never record payloads.
+function VS_validateRecordCheckpoints(checkpoints,collections){
+  if(!checkpoints||typeof checkpoints!=='object'||Array.isArray(checkpoints))throw new Error('Invalid record checkpoint');
+  let count=0;
+  Object.keys(checkpoints).forEach(col=>{
+    if(collections.indexOf(col)<0)throw new Error('Invalid record checkpoint');
+    const known=checkpoints[col];if(!known||typeof known!=='object'||Array.isArray(known))throw new Error('Invalid record checkpoint');
+    Object.keys(known).forEach(id=>{if(++count>100000||!id||id.length>200||id.indexOf('/')>=0||['.','..'].indexOf(id)>=0||typeof known[id]!=='string'||!known[id]||known[id].length>1000)throw new Error('Invalid record checkpoint');});
+  });
+}
+function VS_managedIncrementalRecords(b,readContext){
+  VS_validateManagedCollection(b.collection);
+  VS_validateRecordCheckpoints({[b.collection]:b.knownRecordRevisions},[b.collection]);
+  if(!VS_sheetLifecycleEnabled())throw new Error('Incremental Sheet protocol unavailable');
+  const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID'),revision=p.getProperty('VS_RECORD_REV_'+b.collection)||'legacy';
+  // Normal unchanged checks must never scan Sheets, backfill or repair storage.
+  if(b.knownRevision===revision)return {syncProtocol:2,collectionRevision:revision,records:{},unchanged:true,partialRecords:true};
+  const store=VS_managedSheet(b.collection,readContext);
+  if(store.json||store.partitions)throw new Error('Incremental Sheet protocol unavailable');
+  const seeded='VS_HEAD_SEEDED_'+store.collection+':'+p.getProperty('VS_MANAGED_SHEET_ID');
+  if(p.getProperty(seeded)!=='1')throw new Error('Initial verified record baseline required');
+  const sheet=VS_syncStateSheet(false,b.collection,readContext),records=Object.create(null),missing=[],seen=new Set();
+  if(!sheet&&(revision!=='legacy'||Object.keys(b.knownRecordRevisions).length))throw new Error('Sync state unavailable; recovery requires review');
+  const rows=sheet&&sheet.getLastRow()>=2?sheet.getRange(2,1,sheet.getLastRow()-1,2).getValues():[];
+  rows.forEach(row=>{
+    if(!row[0]&&!row[1])return;
+    const head=JSON.parse(row[1]);
+    if(head.schoolId!==school||head.collection!==b.collection||typeof head.id!=='string'||!head.id||typeof head.revision!=='string'||!head.revision||row[0]!==VS_layoutHash([b.collection,head.id])||seen.has(head.id))throw new Error('Sync state identity mismatch');
+    seen.add(head.id);
+    if(Object.prototype.hasOwnProperty.call(b.knownRecordRevisions,head.id)&&b.knownRecordRevisions[head.id]===head.revision)return;
+    const item=VS_sheetItem(store,head.id);
+    if(!item){
+      if(!head.deleted){missing.push({id:head.id,revision:head.revision,deleted:false});return;}
+      records[head.id]={schoolId:school,_syncRevision:head.revision,_syncDeleted:true,...(head.generation?{_syncDeletedOwner:head.generation}:{}),_syncRetiredStudentGenerations:head.retiredGenerations||[]};return;
+    }
+    if(item.data._syncRevision!==head.revision||VS_layoutHash(item.data)!==head.payloadHash)throw new Error('School record verification failed');
+    records[head.id]=item.data;
+  });
+  if(JSON.stringify(records).length>20*1024*1024)throw new Error('Delta export exceeds safe limit');
+  return {syncProtocol:2,collectionRevision:revision,records:records,partialRecords:true,...(missing.length?{missingRecords:missing}:{})};
 }
