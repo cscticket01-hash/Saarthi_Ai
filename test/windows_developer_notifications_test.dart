@@ -20,7 +20,7 @@ void main(){
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('notification-${DateTime.now().microsecondsSinceEpoch}',identity:{'schoolSyncId':school});
  });
- testWidgets('broadcast and own notifications deduplicate, paginate, open and retain read status offline without creating sync work',(tester)async{
+ test('broadcast and own notifications deduplicate, paginate and retain read status offline without creating sync work',()async{
   var offline=false;
   final inbox=DeveloperInbox(readPage:(audience,cursor)async{
    if(offline)throw StateError('Offline');
@@ -30,16 +30,22 @@ void main(){
   expect(inbox.unread,2);expect(inbox.hasMore,true);
   await inbox.refresh();expect(inbox.messages.length,2);
   await inbox.refresh(more:true);expect(inbox.messages.length,4);
-  await tester.pumpWidget(MaterialApp(home:DeveloperInboxScreen(inbox:inbox)));
-  await tester.tap(find.text('Developer message').first);await tester.pumpAndSettle();
-  expect(find.text('Synthetic developer notification body'),findsOneWidget);
-  await tester.tap(find.text('Close'));await tester.pumpAndSettle();
+  await inbox.markRead(inbox.messages.first);
   expect(inbox.unread,3);
   expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
-  await tester.pumpWidget(const SizedBox());inbox.dispose();
+  inbox.dispose();
   final cached=DeveloperInbox(readPage:(a,c)async=>throw StateError('Offline'));
   await cached.initialize();expect(cached.messages.length,4);expect(cached.unread,3);expect(cached.error,isNotNull);
   cached.dispose();
+ });
+ testWidgets('notification inbox opens full developer message',(tester)async{
+  final inbox=DeveloperInbox(readPage:(audience,cursor)async=>{'documents':[note(audience,'message')]});
+  await tester.runAsync(inbox.initialize);
+  await tester.pumpWidget(MaterialApp(home:DeveloperInboxScreen(inbox:inbox)));
+  await tester.tap(find.text('Developer message').first);await tester.pumpAndSettle();
+  expect(find.text('Synthetic developer notification body'),findsOneWidget);
+  inbox.dispose();
+  await tester.pumpWidget(const SizedBox());
  });
  test('foreign path and changed profile during a response cannot write cache or expose another school',()async{
   final bad=DeveloperInbox(readPage:(a,c)async=>{'documents':[note('foreign-school','bad')]});

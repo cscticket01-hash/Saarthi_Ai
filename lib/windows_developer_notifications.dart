@@ -109,7 +109,7 @@ class DeveloperInbox extends ChangeNotifier {
     finally { busy = false; _notify(); }
   }
   Future<void> markRead(Map<String,dynamic> message) async {
-    if (!current || _disposed || !messages.any((m) => m['key'] == message['key'])) return;
+    if (!current || _disposed || _read.contains(message['key']) || !messages.any((m) => m['key'] == message['key'])) return;
     try {
       await _db.collection('_developer_inbox_read').doc(message['key'] as String).set({'readAt':DateTime.now().millisecondsSinceEpoch});
       if (!current || _disposed) return;
