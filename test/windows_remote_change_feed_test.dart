@@ -19,6 +19,33 @@ Map<String, dynamic> event(
 };
 
 void main() {
+  test('verified listener health disables duplicate discovery until an error', () {
+    fakeAsync((clock) {
+      var failRead = false;
+      final feed = WindowsRemoteChangeFeed(
+        allowedCollections: {'notices'},
+        read: (school, cursor) async {
+          if (failRead) throw StateError('Offline');
+          return event(school);
+        },
+        onHint: (_) {},
+      );
+      feed.start('profile', 'school');
+      expect(feed.isHealthy, false);
+      clock.flushMicrotasks();
+      expect(feed.isHealthy, true);
+      failRead = true;
+      clock.elapse(const Duration(milliseconds: 250));
+      clock.flushMicrotasks();
+      expect(feed.isHealthy, false);
+      failRead = false;
+      clock.elapse(const Duration(seconds: 2));
+      clock.flushMicrotasks();
+      expect(feed.isHealthy, true);
+      feed.stop();
+      expect(feed.isHealthy, false);
+    });
+  });
   testWidgets(
     'image rebuild retains its download future; changed source replaces it',
     (tester) async {

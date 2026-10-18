@@ -18,6 +18,8 @@ class WindowsRemoteChangeFeed {
   Timer? _timer;
   String? _scope, _school, _cursor;
   int _generation = 0, _failures = 0;
+  bool _healthy = false;
+  bool get isHealthy => _scope != null && _healthy;
   void start(String scope, String school) {
     if (_scope == scope) return;
     stop();
@@ -34,6 +36,7 @@ class WindowsRemoteChangeFeed {
     _school = null;
     _cursor = null;
     _failures = 0;
+    _healthy = false;
   }
 
   Future<void> _poll(int generation) async {
@@ -56,6 +59,7 @@ class WindowsRemoteChangeFeed {
           names.toSet().length != names.length) {
         throw StateError('Unverified school change notification.');
       }
+      _healthy = true;
       _cursor = cursor;
       _failures = 0;
       if (out['reset'] == true && onReset != null)
@@ -64,6 +68,7 @@ class WindowsRemoteChangeFeed {
         onHint(names.cast<String>().toSet());
     } catch (error) {
       if (generation != _generation) return;
+      _healthy = false;
       _failures = (_failures + 1).clamp(1, 6);
       delay = Duration(seconds: (1 << _failures).clamp(2, 60));
       onError?.call(error);

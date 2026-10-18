@@ -12,6 +12,7 @@ import '../lib/windows_local_storage.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_sync_engine.dart';
+import '../lib/windows_sync_dependencies.dart';
 
 const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -187,6 +188,31 @@ void main() {
     await rig.start();
   });
   tearDown(() async => rig.close());
+
+  test('dependent work survives SQLite restart without requiring a full idle scan', () async {
+    await WindowsSyncDependencies.retain(school, 'notices', 'N1', 'notice-1');
+    expect(await WindowsSyncDependencies.read(school), isEmpty);
+    await WindowsSyncDependencies.retain(school, 'students_directory', 'S1', 'r1');
+    await WindowsSyncDependencies.retain(school, 'students_directory', 'S1', 'r1');
+    await rig.open('pc1');
+    final captured = await WindowsSyncDependencies.read(school);
+    expect(captured.length, 1);
+    expect(captured.single.data()['documentId'], 'S1');
+    expect((await rig.db.collection('_windows_firebase_outbox').get()).docs, isEmpty);
+    // A later input arriving while the captured work runs must survive its ACK.
+    await WindowsSyncDependencies.retain(school, 'students_directory', 'S1', 'r2');
+    await WindowsSyncDependencies.complete(school, captured);
+    await rig.open('pc1');
+    final remaining = await WindowsSyncDependencies.read(school);
+    expect(remaining.single.data()['revision'], 'r2');
+    await rig.open('pc2');
+    expect(await WindowsSyncDependencies.read(school), isEmpty);
+    await expectLater(WindowsSyncDependencies.read('vs-foreign'), throwsStateError);
+    await rig.open('pc1');
+    await WindowsSyncDependencies.complete(school, await WindowsSyncDependencies.read(school));
+    await rig.open('pc1');
+    expect(await WindowsSyncDependencies.read(school), isEmpty);
+  });
 
   test('restart uses durable heads once and requests only changed or missing baselines', () async {
     final engine = WindowsSyncEngine.instance;

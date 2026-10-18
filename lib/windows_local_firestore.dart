@@ -1155,7 +1155,7 @@ class _LocalSchoolDatabase {
           o.acknowledgedRevision != null && o.data?['operationId'] is String);
         final metadataOnly = operations.every((o) => const {
           '_windows_verified_cloud_records','_windows_sync_downloads',
-          '_windows_sync_manifest','_windows_sync_status',
+          '_windows_sync_manifest','_windows_sync_status','_windows_sync_dependencies',
         }.contains(o.collection) && o.acknowledgedRevision == null);
         final downloadOnly = !WindowsLocalFirestoreSyncControl.trackingEnabled &&
           operations.every((o) => o.preservePending && !o.collection.startsWith('_windows_'));
