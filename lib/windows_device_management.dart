@@ -29,7 +29,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
     ManagedSchoolSession.changed.addListener(sessionChanged);
     load();
     refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) load();
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed && ModalRoute.of(context)?.isCurrent == true) load();
     });
   }
   void sessionChanged() {
@@ -67,7 +67,9 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
         final row = Map<String,dynamic>.from(item);
         final id = row['deviceIdentity'];
         if (id is! String || !identityPattern.hasMatch(id) || !ids.add(id) ||
-            !['active','revoked'].contains(row['status'])) {
+            !['active','revoked'].contains(row['status']) ||
+            row['lastSeenAt'] is! int || (row['lastSeenAt'] as int) <= 0 ||
+            (row['lastSeenAt'] as int) > 8640000000000000) {
           throw StateError('Invalid device response.');
         }
         rows.add(row);
