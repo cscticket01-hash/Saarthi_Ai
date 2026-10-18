@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_runtime_flags.dart';
+import '../lib/windows_sync_comparison.dart';
 import '../lib/windows_sync_schedule.dart';
 
 class _DispatchTimer implements Timer {
@@ -36,6 +37,98 @@ void main() {
       identity: {'schoolSyncId':school,'schoolId':school});
   });
   tearDown(() async { await db.resetVolatileSession(); });
+
+  test('identical independently published value retires only pending copy and persists cloud baseline', () async {
+    final ref = db.collection('teachers_directory').doc('same-record');
+    await ref.set({'name':'Same person','phone':'9999999999'});
+    final queued = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original = queued.data();
+    final remote = {...Map<String,dynamic>.from(original['data'] as Map),
+      'schoolId':school,'id':'same-record','_syncRevision':'verified-other-pc',
+      '_syncOperationId':'other-pc-operation'};
+    expect(await db.recordOutboxConflict(queued.reference,original,remote),false);
+    expect((await queued.reference.get()).exists,false);
+    expect((await ref.get()).data()?['_syncRevision'],'verified-other-pc');
+    final history = (await db.collection('_windows_sync_conflict_history').get()).docs.single.data();
+    expect(history['operationId'],original['operationId']);
+    expect(history['resolution'],'automatic identical authenticated readback');
+    expect(history['data']['name'],'Same person');
+    final origin = db.activeProfileId;
+    await db.switchProfile('other-profile');
+    await db.switchProfile(origin,identity:{'schoolSyncId':school,'schoolId':school});
+    expect((await queued.reference.get()).exists,false);
+    expect((await ref.get()).data()?['_syncRevision'],'verified-other-pc');
+    await ref.update({'phone':'8888888888'});
+    final next = (await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+    expect(next['baseCloudRevision'],'verified-other-pc');
+  });
+
+  test('automatic readback never discards different data, different student generation or a raced local edit', () async {
+    final ref = db.collection('students_directory').doc('VI_Roll_1');
+    await ref.set({'name':'Same name','mobileStableId':'local-generation'});
+    final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original = queue.data();
+    final cloud = {...Map<String,dynamic>.from(original['data'] as Map),
+      'id':'VI_Roll_1','schoolId':school,'mobileStableId':'another-student-generation',
+      '_syncRevision':'cloud-generation','_syncOperationId':'other-operation'};
+    expect(await db.recordOutboxConflict(queue.reference,original,cloud),true);
+    expect((await queue.reference.get()).data()?['syncState'],'conflict');
+    expect((await ref.get()).data()?['mobileStableId'],'local-generation');
+    final stale = (await queue.reference.get()).data()!;
+    final newer = ref.update({'name':'Edited while readback pending'});
+    final reconciliation = db.recordOutboxConflict(queue.reference,stale,
+      {...Map<String,dynamic>.from(stale['data'] as Map),
+        'schoolId':school,'id':'VI_Roll_1','_syncRevision':'late-readback'});
+    await newer;
+    expect(await reconciliation,false);
+    expect((await ref.get()).data()?['name'],'Edited while readback pending');
+    expect((await queue.reference.get()).exists,true);
+  });
+
+  test('fresh duplicate student adopts original cloud generation without losing linked offline work', () async {
+    final ref = db.collection('students_directory').doc('VI_Roll_2');
+    final values = {'name':'Student','parentName':'Parent','dateOfBirth':'2015-01-01',
+      'class':'VI','rollNo':'2','mobileStableId':'offline-generation','createdAt':123,'updatedAt':123};
+    await ref.set(values);
+    var queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final remote = {...values,'schoolId':school,'id':'VI_Roll_2',
+      'mobileStableId':'original-cloud-generation','createdAt':100,'updatedAt':100,
+      '_syncRevision':'original-revision','_syncOperationId':'original-operation'};
+    expect(await db.recordOutboxConflict(queue.reference,queue.data(),remote),false);
+    expect((await queue.reference.get()).exists,false);
+    expect((await ref.get()).data()?['mobileStableId'],'original-cloud-generation');
+
+    // A second offline entry has linked attendance: retain it for review.
+    final second = db.collection('students_directory').doc('VI_Roll_3');
+    await second.set({...values,'rollNo':'3'});
+    await db.collection('attendance_records').doc('VI_Roll_3').set({
+      'studentId':'VI_Roll_3','personId':'offline-generation','present':true});
+    queue = (await db.collection('_windows_firebase_outbox').get()).docs
+      .singleWhere((r)=>r.data()['collection']=='students_directory');
+    expect(await db.recordOutboxConflict(queue.reference,queue.data(),
+      {...remote,'id':'VI_Roll_3','rollNo':'3'}),true);
+    expect((await queue.reference.get()).exists,true);
+    expect((await second.get()).data()?['mobileStableId'],'offline-generation');
+    expect((await db.collection('attendance_records').doc('VI_Roll_3').get()).data()?['present'],true);
+  });
+
+  test('automatic duplicate proof refuses wrong identity, foreign school, partial writes and deletion intents', () {
+    final queued = {'collection':'school_notices','documentId':'notice','schoolId':school,
+      'operation':'set','data':{'text':'Same'}};
+    final cloud = {'id':'notice','schoolId':school,'text':'Same','_syncRevision':'verified'};
+    expect(automaticDuplicateReadback(queued,cloud),true);
+    for (final invalid in [
+      {...cloud,'id':'another-notice'}, {...cloud,'schoolId':foreign},
+      {...cloud,'_syncRevision':''}, {...cloud,'_syncDeleted':true},
+      {...cloud,'text':'Changed'}, {...cloud,'extraField':'Must not lose this'},
+    ]) { expect(automaticDuplicateReadback(queued,invalid),false); }
+    for (final invalid in [
+      {...queued,'operation':'update'}, {...queued,'operation':'delete'},
+      {...queued,'priorDeletion':{}}, {...queued,'reviewedFromOperationId':'reviewed'},
+      {...queued,'collection':'documents'},
+      {...queued,'data':{'text':'Same','schoolId':foreign}},
+    ]) { expect(automaticDuplicateReadback(invalid,cloud),false); }
+  });
 
   test('fresh mutation advances long retry timer without duplicating dispatch', () {
     var now = DateTime.utc(2026,10,11);

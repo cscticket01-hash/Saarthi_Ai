@@ -2,6 +2,7 @@ import 'student_lifecycle_policy.dart';
 import 'deleted_owner_document_policy.dart';
 import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
+import 'windows_sync_comparison.dart';
 export 'school_timestamp.dart' show Timestamp;
 import 'dart:async';
 import 'dart:convert';
@@ -1676,8 +1677,13 @@ class _LocalSchoolDatabase {
           throw StateError('Original same-school operation and verified revision required.');
         }
         final parentId=expected['data'] is Map?expected['data']['studentId']:null;
+        final freshStudent = automaticDuplicateReadback(expected, remote) &&
+            identicalFreshStudent(expected, remote);
+        final childCollections = <String>{...studentOwnedCollections,
+          '_local_student_documents', '_windows_document_outbox'};
         final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
-          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_baselines','_windows_recycle_requests',if(parentId is String)'students_directory'},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
+          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_baselines','_windows_recycle_requests',if(parentId is String)'students_directory',
+          if(freshStudent)...childCollections},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
         final current = queue is Map ? queue[queueId] : null;
@@ -1688,6 +1694,50 @@ class _LocalSchoolDatabase {
             _jsonStableMap(Map<String,dynamic>.from(current)) != _jsonStableMap(_encodeMap(expected))) {
           completer.complete(false);
           return;
+        }
+        // A different PC may already have published this exact intended value.
+        // Reconciliation is a verified readback, not an ACK for our operation.
+        // Commit cloud cache, baseline, audit and queue retirement in one writer.
+        // Same-operation lost-ACK retries still use the original server receipt.
+        final linkedStudent = freshStudent && (
+          childCollections.any((name) {
+            final rows = collections[name];
+            return rows is Map && rows.entries.any((entry) => entry.value is Map &&
+              recordBelongsToStudent(name, entry.key.toString(), entry.value as Map,
+                id, (expected['data'] as Map)['mobileStableId'] as String));
+          }) ||
+          (queue.values.any((row) => row is Map &&
+            !(row['collection'] == 'students_directory' && row['documentId'] == id) &&
+            row['data'] is Map && recordBelongsToStudent(
+              row['collection'].toString(), row['documentId'].toString(), row['data'] as Map,
+              id, (expected['data'] as Map)['mobileStableId'] as String)))
+        );
+        if (automaticDuplicateReadback(expected, remote) &&
+            remote['_syncOperationId'] != operationId && !linkedStudent) {
+          final local = (collections[collection] as Map?)?[id];
+          if (local is Map &&
+              syncPayloadHash(_decodeMap(Map<String,dynamic>.from(local))) ==
+                  syncPayloadHash(expected['data'] as Map)) {
+            final history = collections.putIfAbsent('_windows_sync_conflict_history',
+                () => <String,dynamic>{}) as Map;
+            history[operationId] = _encodeMap({...expected,
+              'verifiedCloud': remote,
+              'resolution': 'automatic identical authenticated readback',
+              'resolvedAt': DateTime.now().millisecondsSinceEpoch});
+            (collections[collection] as Map)[id] = _encodeMap(remote);
+            queue.remove(queueId);
+            final baselines = collections.putIfAbsent('_windows_sync_baselines',
+                () => <String,dynamic>{}) as Map;
+            baselines[queueId] = {'revision': revision, 'deleted': false};
+            _storeCollections(root, collections);
+            await _writeRoot(root);
+            for (final name in [collection, '_windows_firebase_outbox']) {
+              final signal = _signals[name];
+              if (signal != null && !signal.isClosed) signal.add(null);
+            }
+            completer.complete(false);
+            return;
+          }
         }
         // A verified inventory can contain our committed operation after its
         // response was lost; another device may also have completed a delete.

@@ -2611,6 +2611,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           final data = Map<String, dynamic>.from(entry.value as Map);
           if (data['schoolId'] != school)
             throw StateError('Foreign school manifest rejected.');
+          if (data['id'] != null && data['id'] != entry.key)
+            throw StateError('Cloud record identity mismatch.');
+          data['id'] = entry.key;
           if (collection == 'students_directory' &&
               data['_syncRevision'] is String) {
             for (final generation in verifiedDeletedStudentGenerations(data)) {
